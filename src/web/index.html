@@ -3,136 +3,118 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="SHEIN 全托销量、接入状态与受控自动化运营工作台">
+    <meta name="theme-color" content="#171814">
     <meta name="color-scheme" content="light">
     <title>SHEIN 全托运营驾驶舱</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/styles.css">
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <div class="page-shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">FULL-MANAGED OPERATIONS</p>
-          <h1>全托运营驾驶舱</h1>
-          <p class="subtitle">只读销量视图 <span aria-hidden="true">·</span> 本地开发版</p>
-        </div>
-        <div class="topbar-status" aria-live="polite">
-          <span id="dataset-badge" class="badge badge-neutral">正在读取</span>
-          <p id="updated-at">更新时间：--</p>
-        </div>
-      </header>
+    <a class="skip-link" href="#content">跳到主要内容</a>
 
-      <main>
-        <section class="permission-panel" aria-labelledby="permission-heading">
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="全托运营工作台">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">FM</div>
           <div>
-            <p class="section-kicker">数据权限</p>
-            <h2 id="permission-heading">销量查询权限</h2>
+            <strong>SHEIN BI</strong>
+            <span>全托运营工作台</span>
           </div>
-          <div class="permission-summary">
-            <span id="permission-dot" class="status-dot" aria-hidden="true"></span>
-            <div>
-              <strong id="permission-label">待确认</strong>
-              <p id="permission-count">-- / -- 家店铺</p>
-            </div>
-          </div>
-        </section>
-
-        <section aria-labelledby="overview-heading">
-          <div class="section-heading">
-            <div>
-              <p class="section-kicker">SALES VOLUME</p>
-              <h2 id="overview-heading">销量概览</h2>
-            </div>
-            <p>单位：件</p>
-          </div>
-          <div class="metric-grid">
-            <article class="metric-card metric-card-accent">
-              <p>今日销量</p>
-              <strong id="metric-today">--</strong>
-              <span>当日累计</span>
-            </article>
-            <article class="metric-card">
-              <p>昨日销量</p>
-              <strong id="metric-yesterday">--</strong>
-              <span>完整自然日</span>
-            </article>
-            <article class="metric-card">
-              <p>近 7 日销量</p>
-              <strong id="metric-7d">--</strong>
-              <span>滚动 7 日</span>
-            </article>
-            <article class="metric-card">
-              <p>近 30 日销量</p>
-              <strong id="metric-30d">--</strong>
-              <span>滚动 30 日</span>
-            </article>
-          </div>
-        </section>
-
-        <div class="ranking-grid">
-          <section class="ranking-panel" aria-labelledby="store-heading">
-            <div class="section-heading compact">
-              <div>
-                <p class="section-kicker">STORE RANKING</p>
-                <h2 id="store-heading">店铺销量排行</h2>
-              </div>
-              <p>按近 30 日</p>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">排名</th>
-                    <th scope="col">店铺</th>
-                    <th scope="col">今日</th>
-                    <th scope="col">7 日</th>
-                    <th scope="col">30 日</th>
-                  </tr>
-                </thead>
-                <tbody id="store-ranking"></tbody>
-              </table>
-            </div>
-            <p id="store-empty" class="empty-state" hidden>暂无店铺销量数据</p>
-          </section>
-
-          <section class="ranking-panel" aria-labelledby="sku-heading">
-            <div class="section-heading compact">
-              <div>
-                <p class="section-kicker">SKU RANKING</p>
-                <h2 id="sku-heading">SKU 销量排行</h2>
-              </div>
-              <p>按近 30 日</p>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">排名</th>
-                    <th scope="col">SKU</th>
-                    <th scope="col">今日</th>
-                    <th scope="col">7 日</th>
-                    <th scope="col">30 日</th>
-                  </tr>
-                </thead>
-                <tbody id="sku-ranking"></tbody>
-              </table>
-            </div>
-            <p id="sku-empty" class="empty-state" hidden>暂无 SKU 销量数据</p>
-          </section>
         </div>
 
-        <section id="error-panel" class="error-panel" hidden aria-live="assertive">
-          <strong>数据加载失败</strong>
-          <p id="error-message">请检查本地数据文件后重试。</p>
+        <nav class="primary-nav" aria-label="主导航">
+          <a href="#home" data-route="home"><span>总控驾驶舱</span><small>HOME</small></a>
+          <a href="#sales" data-route="sales"><span>销量分析</span><small>SALES</small></a>
+          <a href="#products" data-route="products"><span>商品中心</span><small>PRODUCT</small></a>
+          <a href="#compliance" data-route="compliance"><span>合规中心</span><small>COMPLY</small></a>
+          <a href="#supply" data-route="supply"><span>备货履约</span><small>SUPPLY</small></a>
+          <a href="#inventory" data-route="inventory"><span>库存管理</span><small>STOCK</small></a>
+          <a href="#finance" data-route="finance"><span>财务对账</span><small>FINANCE</small></a>
+          <a href="#ops" data-route="ops"><span>自动化运营</span><small>OPS</small></a>
+          <a href="#system" data-route="system"><span>系统健康</span><small>SYS</small></a>
+        </nav>
+
+        <div class="sidebar-context" aria-live="polite">
+          <span class="context-label">当前数据环境</span>
+          <strong id="sidebar-dataset">正在读取</strong>
+          <p id="sidebar-permission">销量权限待确认</p>
+          <div class="context-flags">
+            <span class="flag">本地服务</span>
+            <span class="flag">只读</span>
+          </div>
+        </div>
+
+        <div id="sidebar-sample-note" class="sample-note" hidden>
+          <strong>示例数据</strong>
+          <span>当前数值仅用于界面与流程验证，不代表真实经营结果。</span>
+        </div>
+      </aside>
+
+      <div class="workspace">
+        <header class="command-bar" aria-label="全局销量筛选">
+          <div class="mobile-title">
+            <span>FULL-MANAGED OPERATIONS</span>
+            <strong id="mobile-page-title">总控驾驶舱</strong>
+          </div>
+
+          <div class="filter-field search-field">
+            <label for="global-search">SKU / 商品</label>
+            <input id="global-search" type="search" placeholder="搜索 SKU 或商品名" autocomplete="off">
+          </div>
+
+          <div class="filter-field store-field">
+            <label for="store-filter">店铺</label>
+            <select id="store-filter">
+              <option value="ALL">全部店铺</option>
+            </select>
+          </div>
+
+          <div class="range-filter" role="group" aria-label="销量时间口径">
+            <span>时间口径</span>
+            <div>
+              <button type="button" data-range="today" aria-pressed="true">今日</button>
+              <button type="button" data-range="yesterday" aria-pressed="false">昨日</button>
+              <button type="button" data-range="last7Days" aria-pressed="false">近 7 日</button>
+              <button type="button" data-range="last30Days" aria-pressed="false">近 30 日</button>
+            </div>
+          </div>
+
+          <button id="clear-filters" class="clear-button" type="button">清空</button>
+
+          <div class="top-status" aria-live="polite">
+            <span id="dataset-badge" class="status-badge neutral">正在读取</span>
+            <p id="updated-at">更新时间：--</p>
+          </div>
+        </header>
+
+        <section id="error-panel" class="global-error" hidden role="alert" aria-live="assertive">
+          <div>
+            <strong>销量数据加载失败</strong>
+            <p id="error-message">本地只读数据服务暂不可用。</p>
+          </div>
           <button id="retry-button" type="button">重新加载</button>
         </section>
-      </main>
 
-      <footer>
-        <span>只读模式</span>
-        <span aria-hidden="true">·</span>
-        <span>数据仅供内部运营分析</span>
-      </footer>
+        <main id="content" tabindex="-1">
+          <div id="view" aria-busy="true" aria-live="polite">
+            <section class="loading-shell" role="status">
+              <span class="loading-line wide"></span>
+              <span class="loading-line"></span>
+              <div class="loading-grid">
+                <span></span><span></span><span></span><span></span>
+              </div>
+              <p>正在读取全托销量与接入状态…</p>
+            </section>
+          </div>
+        </main>
+
+        <footer class="footer">
+          <span>全托 BI · 只读运营视图</span>
+          <span>金额、订单、库存与利润事实接入前不展示推导值</span>
+        </footer>
+      </div>
     </div>
   </body>
 </html>

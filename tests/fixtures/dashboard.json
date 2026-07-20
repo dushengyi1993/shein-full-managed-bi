@@ -12,6 +12,64 @@
     "last7Days": 4628,
     "last30Days": 18742
   },
+  "readiness": [
+    {
+      "key": "applications",
+      "label": "全托应用审核",
+      "status": "complete",
+      "completed": 18,
+      "total": 18,
+      "note": "18 家非 HL 全托应用已审核通过"
+    },
+    {
+      "key": "sales_permission",
+      "label": "销量权限包",
+      "status": "pending",
+      "completed": 18,
+      "total": 18,
+      "note": "已逐店提交，当前等待平台审批"
+    },
+    {
+      "key": "store_authorization",
+      "label": "店铺授权",
+      "status": "not_started",
+      "completed": 0,
+      "total": 18,
+      "note": "权限包通过后逐店完成授权"
+    },
+    {
+      "key": "sales_probe",
+      "label": "接口探针",
+      "status": "not_started",
+      "completed": 0,
+      "total": 18,
+      "note": "以 query-sku-sales 真实业务成功为准"
+    },
+    {
+      "key": "fact_load",
+      "label": "事实入仓",
+      "status": "not_started",
+      "completed": 0,
+      "total": 18,
+      "note": "探针和字段对账通过后开始"
+    }
+  ],
+  "salesTrend": [
+    { "date": "2026-07-07", "unitsSold": 590 },
+    { "date": "2026-07-08", "unitsSold": 620 },
+    { "date": "2026-07-09", "unitsSold": 604 },
+    { "date": "2026-07-10", "unitsSold": 670 },
+    { "date": "2026-07-11", "unitsSold": 615 },
+    { "date": "2026-07-12", "unitsSold": 699 },
+    { "date": "2026-07-13", "unitsSold": 665 },
+    { "date": "2026-07-14", "unitsSold": 610 },
+    { "date": "2026-07-15", "unitsSold": 655 },
+    { "date": "2026-07-16", "unitsSold": 703 },
+    { "date": "2026-07-17", "unitsSold": 688 },
+    { "date": "2026-07-18", "unitsSold": 752 },
+    { "date": "2026-07-19", "unitsSold": 734 },
+    { "date": "2026-07-20", "unitsSold": 486 }
+  ],
   "storeRanking": [
     {
       "code": "DL",

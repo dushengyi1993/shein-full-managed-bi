@@ -19,6 +19,14 @@ const DATASET_LABELS = Object.freeze({
   sample: '本地示例数据',
 });
 
+const READINESS_LABELS = Object.freeze({
+  complete: '已完成',
+  pending: '进行中',
+  not_started: '待开始',
+  blocked: '受阻',
+  unknown: '待确认',
+});
+
 function record(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
@@ -35,6 +43,13 @@ function nonNegativeInteger(value) {
   return Math.floor(parsed);
 }
 
+function optionalNonNegativeInteger(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
 function unitCount(value) {
   if (!Number.isSafeInteger(value) || value < 0) return null;
   return value;
@@ -42,6 +57,10 @@ function unitCount(value) {
 
 function permissionStatus(value) {
   return Object.hasOwn(PERMISSION_LABELS, value) ? value : 'unknown';
+}
+
+function readinessStatus(value) {
+  return Object.hasOwn(READINESS_LABELS, value) ? value : 'unknown';
 }
 
 function normalizeUnits(value, includeYesterday = false) {
@@ -88,6 +107,47 @@ function normalizeSku(item) {
   };
 }
 
+function normalizeReadinessStage(item) {
+  const source = record(item);
+  const status = readinessStatus(source.status);
+  const total = optionalNonNegativeInteger(source.total);
+  const completedSource = optionalNonNegativeInteger(source.completed);
+  const completed = total === null || completedSource === null
+    ? completedSource
+    : Math.min(completedSource, total);
+
+  return {
+    key: text(source.key, 'unknown', 48),
+    label: text(source.label, '待确认阶段', 80),
+    status,
+    statusLabel: READINESS_LABELS[status],
+    completed,
+    total,
+    note: text(source.note, '', 180),
+  };
+}
+
+function normalizeSalesTrend(items) {
+  if (!Array.isArray(items)) return [];
+
+  const byDate = new Map();
+  for (const item of items.slice(0, 366)) {
+    const source = record(item);
+    const date = text(source.date, '', 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const parsedDate = new Date(`${date}T00:00:00.000Z`);
+    if (Number.isNaN(parsedDate.valueOf()) || parsedDate.toISOString().slice(0, 10) !== date) {
+      continue;
+    }
+    byDate.set(date, {
+      date,
+      unitsSold: unitCount(source.unitsSold),
+    });
+  }
+
+  return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+}
+
 function sortRanking(items) {
   const rankValue = (value) => (Number.isSafeInteger(value) ? value : -1);
   return items
@@ -126,9 +186,12 @@ export function normalizeDashboardData(input) {
   const skuRanking = Array.isArray(source.skuRanking)
     ? sortRanking(source.skuRanking.map(normalizeSku))
     : [];
+  const readiness = Array.isArray(source.readiness)
+    ? source.readiness.slice(0, 12).map(normalizeReadinessStage)
+    : [];
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     readOnly: true,
     dataset: {
       status: datasetStatus,
@@ -142,6 +205,8 @@ export function normalizeDashboardData(input) {
       totalStores,
     },
     unitsSold: normalizeUnits(source.unitsSold, true),
+    readiness,
+    salesTrend: normalizeSalesTrend(source.salesTrend),
     storeRanking,
     skuRanking,
   };

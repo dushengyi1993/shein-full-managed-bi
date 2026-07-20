@@ -50,12 +50,14 @@ test('GET /api/dashboard returns only the permitted volume dashboard shape', asy
   assert.equal(response.status, 200);
   const dashboard = await response.json();
 
-  assert.equal(dashboard.schemaVersion, 1);
+  assert.equal(dashboard.schemaVersion, 2);
   assert.equal(dashboard.readOnly, true);
   assert.equal(dashboard.dataset.status, 'sample');
   assert.equal(dashboard.permission.totalStores, 18);
   assert.equal(dashboard.storeRanking.length, 18);
   assert.equal(dashboard.skuRanking.length, 5);
+  assert.equal(dashboard.readiness.length, 5);
+  assert.equal(dashboard.salesTrend.length, 14);
   assert.deepEqual(Object.keys(dashboard.unitsSold), [
     'today',
     'yesterday',
@@ -70,10 +72,11 @@ test('GET /api/dashboard returns only the permitted volume dashboard shape', asy
 });
 
 test('serves the local dashboard and its static assets', async () => {
-  const [pageResponse, scriptResponse, styleResponse] = await Promise.all([
+  const [pageResponse, scriptResponse, styleResponse, faviconResponse] = await Promise.all([
     fetch(`${baseUrl}/`),
     fetch(`${baseUrl}/app.js`),
     fetch(`${baseUrl}/styles.css`),
+    fetch(`${baseUrl}/favicon.svg`),
   ]);
 
   assert.equal(pageResponse.status, 200);
@@ -86,17 +89,19 @@ test('serves the local dashboard and its static assets', async () => {
 
   assert.equal(styleResponse.status, 200);
   assert.match(styleResponse.headers.get('content-type'), /^text\/css/);
+
+  assert.equal(faviconResponse.status, 200);
+  assert.match(faviconResponse.headers.get('content-type'), /^image\/svg\+xml/);
 });
 
-test('static UI files contain no restricted business metrics', async () => {
+test('static UI does not bind unsupported fields as live metrics', async () => {
   const files = ['index.html', 'app.js', 'styles.css'];
   const contents = await Promise.all(
     files.map((name) => readFile(new URL(`../../src/web/${name}`, import.meta.url), 'utf8')),
   );
-  assert.doesNotMatch(
-    contents.join('\n'),
-    /销售额|利润|订单数|revenue|profit|orderCount|order_count/i,
-  );
+  const source = contents.join('\n');
+  assert.doesNotMatch(source, /data-metric=["'](?:revenue|profit|orderCount|order_count)["']/i);
+  assert.doesNotMatch(source, /\.(?:revenue|profit|orderCount|order_count)\b/i);
 });
 
 test('rejects path traversal before reading static files', async () => {

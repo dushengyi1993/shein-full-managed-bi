@@ -28,6 +28,22 @@ test('normalizes dashboard data through an explicit read-only whitelist', () => 
     },
     profit: 12345,
     orderCount: 88,
+    readiness: [
+      {
+        key: 'applications',
+        label: '全托应用审核',
+        status: 'complete',
+        completed: 18,
+        total: 18,
+        note: '可展示说明',
+        secret: 'must not be returned',
+      },
+    ],
+    salesTrend: [
+      { date: '2026-07-19', unitsSold: 11, revenue: 800 },
+      { date: 'invalid', unitsSold: 12 },
+      { date: '2026-07-20', unitsSold: 10 },
+    ],
     storeRanking: [
       {
         code: 'LOW',
@@ -46,9 +62,23 @@ test('normalizes dashboard data through an explicit read-only whitelist', () => 
   });
 
   assert.equal(dashboard.readOnly, true);
+  assert.equal(dashboard.schemaVersion, 2);
   assert.equal(dashboard.dataset.status, 'live');
   assert.equal(dashboard.unitsSold.today, 10);
   assert.equal(dashboard.storeRanking[0].code, 'HIGH');
+  assert.deepEqual(dashboard.salesTrend, [
+    { date: '2026-07-19', unitsSold: 11 },
+    { date: '2026-07-20', unitsSold: 10 },
+  ]);
+  assert.deepEqual(dashboard.readiness[0], {
+    key: 'applications',
+    label: '全托应用审核',
+    status: 'complete',
+    statusLabel: '已完成',
+    completed: 18,
+    total: 18,
+    note: '可展示说明',
+  });
 
   const serialized = JSON.stringify(dashboard);
   assert.doesNotMatch(serialized, /revenue|profit|orderCount|secretNote/i);
@@ -135,4 +165,28 @@ test('accepts an explicit empty dataset without inventing an update time', () =>
   assert.equal(dashboard.dataset.status, 'empty');
   assert.equal(dashboard.dataset.label, '暂无销量快照');
   assert.equal(dashboard.updatedAt, null);
+  assert.deepEqual(dashboard.readiness, []);
+  assert.deepEqual(dashboard.salesTrend, []);
+});
+
+test('keeps unknown readiness counts and trend values missing instead of inventing zero', () => {
+  const dashboard = normalizeDashboardData({
+    datasetStatus: 'live',
+    updatedAt: '2026-07-20T08:30:00.000Z',
+    permission: { status: 'unknown', authorizedStores: 0, totalStores: 18 },
+    readiness: [
+      { key: 'probe', label: '接口探针', status: 'unexpected', note: '待核验' },
+    ],
+    salesTrend: [
+      { date: '2026-07-20', unitsSold: null },
+      { date: '2026-02-30', unitsSold: 9 },
+    ],
+  });
+
+  assert.equal(dashboard.readiness[0].status, 'unknown');
+  assert.equal(dashboard.readiness[0].completed, null);
+  assert.equal(dashboard.readiness[0].total, null);
+  assert.deepEqual(dashboard.salesTrend, [
+    { date: '2026-07-20', unitsSold: null },
+  ]);
 });
