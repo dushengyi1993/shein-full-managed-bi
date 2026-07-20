@@ -1,0 +1,16 @@
+[Unit]
+Description=Back up SHEIN full-managed PostgreSQL
+Requires=shein-fm-db.service
+After=shein-fm-db.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+Environment=FULL_BI_BACKUP_DIR=/srv/shein-fm/backups/db
+ExecStart=/usr/bin/bash scripts/backup_full_managed_db.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

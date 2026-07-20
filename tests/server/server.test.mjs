@@ -36,13 +36,22 @@ test('GET /health reports a read-only healthy service with security headers', as
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     status: 'ok',
-    service: 'full-managed-bi-local',
+    service: 'shein-full-managed-bi',
     readOnly: true,
   });
   assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(response.headers.get('x-frame-options'), 'DENY');
   assert.match(response.headers.get('content-security-policy'), /default-src 'self'/);
   assert.equal(response.headers.get('cache-control'), 'no-store');
+});
+
+test('GET /ready verifies that the dashboard dataset is readable', async () => {
+  const response = await fetch(`${baseUrl}/ready`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.status, 'ready');
+  assert.equal(body.service, 'shein-full-managed-bi');
+  assert.equal(body.datasetStatus, 'sample');
 });
 
 test('GET /api/dashboard returns only the permitted volume dashboard shape', async () => {
@@ -136,6 +145,12 @@ test('rejects mutation methods', async () => {
   assert.match(await response.text(), /METHOD_NOT_ALLOWED/);
 });
 
+test('does not expose auth endpoints when loopback development auth is disabled', async () => {
+  const response = await fetch(`${baseUrl}/api/logout`, { method: 'POST' });
+  assert.equal(response.status, 404);
+  assert.match(await response.text(), /NOT_FOUND/);
+});
+
 test('returns a generic error when the selected data file cannot be read', async () => {
   const unavailableServer = createDashboardServer({ dataFile: `${fixture}.missing` });
   await new Promise((resolve, reject) => {
@@ -145,7 +160,10 @@ test('returns a generic error when the selected data file cannot be read', async
   const address = unavailableServer.address();
 
   try {
-    const response = await fetch(`http://127.0.0.1:${address.port}/api/dashboard`);
+    const [response, readiness] = await Promise.all([
+      fetch(`http://127.0.0.1:${address.port}/api/dashboard`),
+      fetch(`http://127.0.0.1:${address.port}/ready`),
+    ]);
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), {
       error: {
@@ -153,6 +171,8 @@ test('returns a generic error when the selected data file cannot be read', async
         message: '看板数据暂不可用',
       },
     });
+    assert.equal(readiness.status, 503);
+    assert.equal((await readiness.json()).status, 'not_ready');
   } finally {
     await new Promise((resolve) => unavailableServer.close(resolve));
   }

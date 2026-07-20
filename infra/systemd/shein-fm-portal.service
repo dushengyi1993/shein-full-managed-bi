@@ -1,0 +1,50 @@
+[Unit]
+Description=SHEIN full-managed BI portal
+Wants=network-online.target
+Requires=shein-fm-db-migrate.service
+After=network-online.target shein-fm-db-migrate.service
+
+[Service]
+Type=simple
+User=sheinfm
+Group=sheinfm
+UMask=0027
+WorkingDirectory=/opt/shein-fm/current
+Environment=NODE_ENV=production
+Environment=FULL_BI_HOST=127.0.0.1
+Environment=FULL_BI_PORT=8788
+Environment=FULL_BI_TRUST_PROXY=true
+Environment=FULL_BI_COOKIE_SECURE=true
+Environment=FULL_BI_PUBLIC_ORIGIN=https://fm.dushengyi.cc
+Environment=FULL_BI_DATA_FILE=/srv/shein-fm/runtime/dashboard.json
+Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/openapi.json
+Environment=FULL_BI_AUTH_FILE=/srv/shein-fm/secrets/bi_users.json
+Environment=FULL_BI_SESSION_SECRET_FILE=/srv/shein-fm/secrets/session-secret
+EnvironmentFile=/srv/shein-fm/secrets/warehouse.env
+EnvironmentFile=-/srv/shein-fm/secrets/portal.env
+ExecStartPre=/usr/bin/node scripts/materialize_full_managed_dashboard.mjs
+ExecStart=/usr/bin/node src/server/index.mjs
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/srv/shein-fm/runtime /srv/shein-fm/logs
+MemoryHigh=512M
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

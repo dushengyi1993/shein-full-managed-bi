@@ -60,6 +60,7 @@ const elements = {
   errorPanel: document.querySelector('#error-panel'),
   errorMessage: document.querySelector('#error-message'),
   retryButton: document.querySelector('#retry-button'),
+  logoutButton: document.querySelector('#logout-button'),
 };
 
 function routeFromLocation() {
@@ -862,9 +863,9 @@ function datasetOverview() {
     ? `${numberFormatter.format(permission.authorizedStores)} / ${numberFormatter.format(permission.totalStores)} 家店铺`
     : '店铺范围待确认';
   const healthOk = state.health?.status === 'ok';
-  const runtimeLabel = healthOk ? '本地服务响应正常' : '未取得 /health 运行态';
+  const runtimeLabel = healthOk ? '云端服务响应正常' : '未取得 /health 运行态';
   const runtimeNote = healthOk
-    ? `${state.health.service || 'full-managed-bi-local'} · ${state.health.readOnly === true ? '只读' : '模式待确认'}`
+    ? `${state.health.service || 'shein-full-managed-bi'} · ${state.health.readOnly === true ? '只读' : '模式待确认'}`
     : (state.healthError || '运行态接口尚未返回');
   const dataTone = datasetStatus() === 'live' ? 'complete' : datasetStatus() === 'sample' ? 'pending' : 'unknown';
   const permissionTone = permission.status === 'granted'
@@ -876,7 +877,7 @@ function datasetOverview() {
     ['销量数据集', datasetLabel(), state.data?.updatedAt ? `快照：${formatDateTime(state.data.updatedAt)}` : '暂无有效快照', dataTone],
     ['销量权限', permission.label || '权限待确认', permissionCount, permissionTone],
     ['接口模式', state.data?.readOnly === true ? '只读白名单' : '模式待确认', `schema v${isUnit(state.data?.schemaVersion) ? state.data.schemaVersion : '—'}`, state.data?.readOnly === true ? 'complete' : 'unknown'],
-    ['本地运行态', runtimeLabel, runtimeNote, healthOk ? 'complete' : 'unknown'],
+    ['云端运行态', runtimeLabel, runtimeNote, healthOk ? 'complete' : 'unknown'],
   ];
   return `
     <div class="system-overview">
@@ -909,7 +910,7 @@ function renderSystem() {
     ${pageIntro(
       'SYSTEM HEALTH',
       '系统健康',
-      '把数据集、权限、接口探针、事实入仓和本地运行态分开判断。',
+      '把数据集、权限、接口探针、事实入仓和云端运行态分开判断。',
       `<span>API schema</span><strong>v${isUnit(state.data?.schemaVersion) ? state.data.schemaVersion : '—'}</strong><small>/api/dashboard · GET only</small>`,
     )}
     ${datasetOverview()}
@@ -957,7 +958,7 @@ function renderLoading() {
 function renderUnavailable() {
   return `
     <section class="page-intro unavailable-page">
-      <div><span class="eyebrow">DATA UNAVAILABLE</span><h1>暂时无法读取运营数据</h1><p>错误已显示在首屏。修复本地数据服务后重新加载，不会使用旧快照或占位数冒充结果。</p></div>
+      <div><span class="eyebrow">DATA UNAVAILABLE</span><h1>暂时无法读取运营数据</h1><p>错误已显示在首屏。修复云端数据服务后重新加载，不会使用旧快照或占位数冒充结果。</p></div>
     </section>`;
 }
 
@@ -1063,7 +1064,7 @@ async function fetchJson(path) {
     } catch {
       message = '';
     }
-    throw new Error(message || `本地数据服务返回 HTTP ${response.status}`);
+    throw new Error(message || `云端数据服务返回 HTTP ${response.status}`);
   }
   return response.json();
 }
@@ -1087,7 +1088,7 @@ async function loadDashboard() {
     populateStoreOptions();
   } catch (error) {
     state.data = null;
-    state.error = error instanceof Error ? error.message : '本地只读数据服务暂不可用。';
+    state.error = error instanceof Error ? error.message : '云端只读数据服务暂不可用。';
   }
 
   const healthResult = await healthPromise;
@@ -1144,6 +1145,18 @@ elements.clearFilters.addEventListener('click', () => {
 });
 
 elements.retryButton.addEventListener('click', loadDashboard);
+elements.logoutButton.addEventListener('click', async () => {
+  elements.logoutButton.disabled = true;
+  try {
+    await fetch('/api/logout', {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      credentials: 'same-origin',
+    });
+  } finally {
+    window.location.assign('/login');
+  }
+});
 window.addEventListener('hashchange', syncRouteFromLocation);
 
 const initialHashRoute = String(window.location.hash || '').replace(/^#/, '');

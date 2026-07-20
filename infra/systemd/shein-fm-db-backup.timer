@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily SHEIN full-managed PostgreSQL backup
+
+[Timer]
+OnCalendar=*-*-* 02:20:00 Asia/Shanghai
+RandomizedDelaySec=5m
+Persistent=true
+Unit=shein-fm-db-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "cooperationMode": "FULL_MANAGED",
+  "baseUrl": "https://openapi.sheincorp.com",
+  "allowFakeBaseUrl": false,
+  "timeoutMs": 20000,
+  "pageSize": 100,
+  "permissionPackageCode": "FULL_MANAGED_SKU_SALES",
+  "notes": "Copy to config/shein_openapi.secret.json on the cloud server. Never reuse or import the semi-managed credential file.",
+  "stores": [
+    { "storeCode": "DL", "storeName": "DL", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "DX", "storeName": "DX", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "FY", "storeName": "FY", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "LQ", "storeName": "LQ", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "NM", "storeName": "NM", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "JY", "storeName": "JY", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "ZL", "storeName": "ZL", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "TS", "storeName": "TS", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "MZ", "storeName": "MZ", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "CX", "storeName": "CX", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "YJ", "storeName": "YJ", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "XL", "storeName": "XL", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "QY", "storeName": "QY", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "QH", "storeName": "QH", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "TZ", "storeName": "TZ", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "JSH", "storeName": "JSH", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "TZZ", "storeName": "TZZ", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "XC", "storeName": "XC", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null }
+  ]
+}

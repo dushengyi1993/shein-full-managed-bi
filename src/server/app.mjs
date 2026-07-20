@@ -4,6 +4,13 @@ import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadDashboardData } from './dashboard-data.mjs';
+import {
+  createAuthService,
+  isSameOriginPost,
+  loginPage,
+  parseLoginBody,
+  RequestBodyError,
+} from './auth.mjs';
 
 const DEFAULT_WEB_ROOT = fileURLToPath(new URL('../web/', import.meta.url));
 
@@ -16,7 +23,7 @@ const CONTENT_TYPES = Object.freeze({
 });
 
 const SECURITY_HEADERS = Object.freeze({
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Resource-Policy': 'same-origin',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
@@ -51,6 +58,31 @@ function sendJson(response, statusCode, value, method) {
     `${JSON.stringify(value)}\n`,
     'application/json; charset=utf-8',
     method,
+  );
+}
+
+function redirect(response, location, method = 'GET') {
+  response.statusCode = 303;
+  response.setHeader('Cache-Control', 'no-store');
+  response.setHeader('Location', location);
+  response.setHeader('Content-Length', '0');
+  response.end();
+}
+
+function sendLoginPage(response, method, error = '', statusCode = 200) {
+  const page = loginPage({ error });
+  response.setHeader(
+    'Content-Security-Policy',
+    `default-src 'none'; style-src 'nonce-${page.nonce}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+  );
+  response.setHeader('Cache-Control', 'no-store');
+  send(response, statusCode, page.html, 'text/html; charset=utf-8', method);
+}
+
+function requestWantsJson(request) {
+  return (
+    String(request.headers['content-type'] || '').toLowerCase().includes('application/json') ||
+    String(request.headers.accept || '').toLowerCase().includes('application/json')
   );
 }
 
@@ -101,21 +133,19 @@ function staticFilePath(pathname, webRoot) {
 export function createRequestHandler(options = {}) {
   const dataFile = options.dataFile;
   const webRoot = options.webRoot || DEFAULT_WEB_ROOT;
+  const runtimeEnvironment = options.runtimeEnvironment || options.auth?.runtimeEnvironment || 'development';
+  const auth = options.authService || createAuthService({
+    ...(options.auth || {}),
+    host: options.host || options.auth?.host,
+    runtimeEnvironment,
+  });
+  if (String(runtimeEnvironment).toLowerCase() === 'production' && !dataFile) {
+    throw new TypeError('FULL_BI_DATA_FILE is required in production.');
+  }
 
   return async function requestHandler(request, response) {
     setSecurityHeaders(response);
     const method = request.method || 'GET';
-
-    if (method !== 'GET' && method !== 'HEAD') {
-      response.setHeader('Allow', 'GET, HEAD');
-      sendJson(
-        response,
-        405,
-        { error: { code: 'METHOD_NOT_ALLOWED', message: '仅支持只读请求' } },
-        method,
-      );
-      return;
-    }
 
     if (rawPathHasTraversal(request.url)) {
       sendJson(
@@ -141,10 +171,151 @@ export function createRequestHandler(options = {}) {
     }
 
     if (url.pathname === '/health') {
+      if (method !== 'GET' && method !== 'HEAD') {
+        response.setHeader('Allow', 'GET, HEAD');
+        sendJson(response, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' } }, method);
+        return;
+      }
       sendJson(
         response,
         200,
-        { status: 'ok', service: 'full-managed-bi-local', readOnly: true },
+        { status: 'ok', service: 'shein-full-managed-bi', readOnly: true },
+        method,
+      );
+      return;
+    }
+
+    if (url.pathname === '/ready') {
+      if (method !== 'GET' && method !== 'HEAD') {
+        response.setHeader('Allow', 'GET, HEAD');
+        sendJson(response, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' } }, method);
+        return;
+      }
+      try {
+        const dashboard = await loadDashboardData(dataFile, { runtimeEnvironment });
+        sendJson(response, 200, {
+          status: 'ready',
+          service: 'shein-full-managed-bi',
+          datasetStatus: dashboard.dataset.status,
+          updatedAt: dashboard.updatedAt,
+        }, method);
+      } catch {
+        sendJson(response, 503, {
+          status: 'not_ready',
+          service: 'shein-full-managed-bi',
+        }, method);
+      }
+      return;
+    }
+
+    if (url.pathname === '/login') {
+      if (method !== 'GET' && method !== 'HEAD') {
+        response.setHeader('Allow', 'GET, HEAD');
+        sendJson(response, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' } }, method);
+        return;
+      }
+      if (!auth.enabled) {
+        redirect(response, '/', method);
+        return;
+      }
+      if (auth.authenticateRequest(request)) {
+        redirect(response, '/', method);
+        return;
+      }
+      sendLoginPage(response, method);
+      return;
+    }
+
+    if (url.pathname === '/api/login') {
+      if (!auth.enabled) {
+        sendJson(response, 404, { error: { code: 'NOT_FOUND', message: '页面不存在' } }, method);
+        return;
+      }
+      if (method !== 'POST') {
+        response.setHeader('Allow', 'POST');
+        sendJson(response, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' } }, method);
+        return;
+      }
+      if (!isSameOriginPost(request, auth)) {
+        sendJson(response, 403, { error: { code: 'CROSS_ORIGIN_REJECTED', message: '请求来源无效' } }, method);
+        return;
+      }
+
+      try {
+        const body = await parseLoginBody(request, auth.maxBodyBytes);
+        const result = await auth.authenticate(request, body.username, body.password);
+        if (result.busy) {
+          response.setHeader('Retry-After', String(result.retryAfterSeconds));
+          sendJson(response, 503, { error: { code: 'AUTH_BUSY', message: '登录服务繁忙，请稍后再试' } }, method);
+          return;
+        }
+        if (result.rateLimited) {
+          response.setHeader('Retry-After', String(result.retryAfterSeconds));
+          sendJson(response, 429, { error: { code: 'LOGIN_RATE_LIMITED', message: '登录尝试过多，请稍后再试' } }, method);
+          return;
+        }
+        if (!result.ok) {
+          if (body.json || requestWantsJson(request)) {
+            sendJson(response, 401, { error: { code: 'INVALID_CREDENTIALS', message: '账号或密码错误' } }, method);
+          } else {
+            sendLoginPage(response, method, '账号或密码错误', 401);
+          }
+          return;
+        }
+
+        response.setHeader('Set-Cookie', result.cookie);
+        if (body.json || requestWantsJson(request)) {
+          sendJson(response, 200, { ok: true, user: result.user }, method);
+        } else {
+          redirect(response, '/', method);
+        }
+      } catch (error) {
+        if (error instanceof RequestBodyError) {
+          sendJson(response, error.statusCode, { error: { code: error.code, message: error.message } }, method);
+          return;
+        }
+        sendJson(response, 500, { error: { code: 'AUTH_UNAVAILABLE', message: '登录服务暂不可用' } }, method);
+      }
+      return;
+    }
+
+    const signedInUser = auth.enabled ? auth.authenticateRequest(request) : null;
+    if (auth.enabled && !signedInUser) {
+      if (url.pathname.startsWith('/api/')) {
+        response.setHeader('WWW-Authenticate', 'Session');
+        sendJson(response, 401, { error: { code: 'AUTH_REQUIRED', message: '请先登录' } }, method);
+      } else {
+        redirect(response, '/login', method);
+      }
+      return;
+    }
+
+    if (auth.enabled && method === 'POST' && !isSameOriginPost(request, auth)) {
+      sendJson(response, 403, { error: { code: 'CROSS_ORIGIN_REJECTED', message: '请求来源无效' } }, method);
+      return;
+    }
+
+    if (url.pathname === '/api/logout') {
+      if (!auth.enabled) {
+        sendJson(response, 404, { error: { code: 'NOT_FOUND', message: '页面不存在' } }, method);
+        return;
+      }
+      if (method !== 'POST') {
+        response.setHeader('Allow', 'POST');
+        sendJson(response, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' } }, method);
+        return;
+      }
+      response.setHeader('Set-Cookie', auth.clearCookie());
+      sendJson(response, 200, { ok: true }, method);
+      return;
+    }
+
+    if (method !== 'GET' && method !== 'HEAD') {
+      response.setHeader('Allow', 'GET, HEAD');
+      sendJson(
+        response,
+        405,
+        { error: { code: 'METHOD_NOT_ALLOWED', message: '仅支持只读请求' } },
         method,
       );
       return;

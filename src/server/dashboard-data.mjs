@@ -212,7 +212,13 @@ export function normalizeDashboardData(input) {
   };
 }
 
-export async function loadDashboardData(dataFile = process.env.FULL_BI_DATA_FILE) {
+export async function loadDashboardData(
+  dataFile = process.env.FULL_BI_DATA_FILE,
+  { runtimeEnvironment = process.env.NODE_ENV || 'development' } = {},
+) {
+  if (!dataFile && String(runtimeEnvironment).toLowerCase() === 'production') {
+    throw new TypeError('FULL_BI_DATA_FILE is required in production.');
+  }
   const selectedFile = dataFile || DEFAULT_DASHBOARD_DATA_FILE;
   const content = await readFile(selectedFile, 'utf8');
   return normalizeDashboardData(JSON.parse(content));

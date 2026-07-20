@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh SHEIN full-managed sales facts every two hours
+
+[Timer]
+OnCalendar=*-*-* 00/2:15:00 Asia/Shanghai
+RandomizedDelaySec=3m
+Persistent=true
+Unit=shein-fm-sales-sync.service
+
+[Install]
+WantedBy=timers.target

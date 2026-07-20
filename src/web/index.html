@@ -41,9 +41,10 @@
           <strong id="sidebar-dataset">正在读取</strong>
           <p id="sidebar-permission">销量权限待确认</p>
           <div class="context-flags">
-            <span class="flag">本地服务</span>
+            <span class="flag">云端运行</span>
             <span class="flag">只读</span>
           </div>
+          <button id="logout-button" class="logout-button" type="button">退出登录</button>
         </div>
 
         <div id="sidebar-sample-note" class="sample-note" hidden>
@@ -92,7 +93,7 @@
         <section id="error-panel" class="global-error" hidden role="alert" aria-live="assertive">
           <div>
             <strong>销量数据加载失败</strong>
-            <p id="error-message">本地只读数据服务暂不可用。</p>
+            <p id="error-message">云端只读数据服务暂不可用。</p>
           </div>
           <button id="retry-button" type="button">重新加载</button>
         </section>
@@ -111,7 +112,7 @@
         </main>
 
         <footer class="footer">
-          <span>全托 BI · 只读运营视图</span>
+          <span>全托 BI · 云端只读运营视图</span>
           <span>金额、订单、库存与利润事实接入前不展示推导值</span>
         </footer>
       </div>

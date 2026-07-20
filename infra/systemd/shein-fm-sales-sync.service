@@ -1,0 +1,39 @@
+[Unit]
+Description=Refresh SHEIN full-managed read-only sales facts
+Wants=network-online.target
+Requires=shein-fm-db-migrate.service
+After=network-online.target shein-fm-db-migrate.service
+
+[Service]
+Type=oneshot
+User=sheinfm
+Group=sheinfm
+UMask=0027
+WorkingDirectory=/opt/shein-fm/current
+Environment=NODE_ENV=production
+Environment=SHEIN_FM_CLOUD_EXECUTION=1
+Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/openapi.json
+Environment=FULL_BI_DATA_FILE=/srv/shein-fm/runtime/dashboard.json
+EnvironmentFile=/srv/shein-fm/secrets/warehouse.env
+EnvironmentFile=-/srv/shein-fm/secrets/openapi.env
+ExecStart=/usr/bin/flock -n /srv/shein-fm/runtime/sales-sync.lock /usr/bin/node scripts/sync_full_managed_sales.mjs --all
+TimeoutStartSec=45min
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/srv/shein-fm/runtime /srv/shein-fm/logs
+MemoryHigh=768M
+MemoryMax=1536M
+
+[Install]
+WantedBy=multi-user.target

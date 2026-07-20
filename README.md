@@ -1,6 +1,6 @@
 # SHEIN 全托运营自动驾驶舱
 
-这是一个本地优先的 SHEIN 全托管 BI 与自动运营项目。当前阶段先建立可信的销量数量链路和只读驾驶舱；云端服务器扩容完成前，不部署、不迁移半托生产事实源，也不在本地保存真实凭证。
+这是一个独立部署的 SHEIN 全托管 BI 与自动运营项目。生产入口为 `https://fm.dushengyi.cc`；它与半托系统隔离运行，只消费全托应用和店铺授权取得的 OpenAPI 数据，不复用半托凭据或事实表。
 
 ## 当前进度
 
@@ -8,7 +8,8 @@
 - 18 家应用的“销量查询”权限包已于 2026-07-20 提交，平台回读均为“审核中”。
 - 已建立 `/open-api/goods/query-sku-sales` 的领域模型：SKU 去重、每批最多 100 条、严格响应校验、缺失 SKU 禁止补零。
 - 已建立 PostgreSQL `raw / dim / fact / mart / ops` 五层首版 Schema。
-- 已提供本地只读 BI 门户、九个一级业务视图、健康检查和 Dashboard API。
+- 已提供云端只读 BI 门户、九个一级业务视图、应用内登录、健康检查和 Dashboard API。
+- 已建立独立 PostgreSQL、OpenAPI 探针、销量同步、Dashboard 物化、systemd 定时任务和每日备份链路。
 
 应用审核通过或权限包提交成功，不等于店铺授权、OpenAPI 探针成功或生产数据可用。权限获批后仍要完成店铺级授权、凭证交换、首店只读探针和字段对账。
 
@@ -84,7 +85,7 @@ db/             PostgreSQL 迁移与契约验证
 docs/           架构、模型与能力边界
 scripts/        应用与权限管理脚本
 src/domain/     全托销量领域规则与投影
-src/server/     本地只读 HTTP 服务
+src/server/     本地与云端共用的只读 HTTP 服务
 src/web/        驾驶舱前端
 tests/          脱敏 fixture 与自动测试
 ```
@@ -95,6 +96,10 @@ tests/          脱敏 fixture 与自动测试
 
 浏览器 Profile、Cookie、token、密钥、`.local.json`、日志、输出数据和数据库文件均被排除在版本库外。
 
-## 云端状态
+## 云端运行
 
-当前只在本地开发并使用私有 GitHub 仓库做版本管理。云端服务器扩容完成前，不配置部署工作流，不写入服务器，也不切换任何生产事实源。
+生产环境使用独立的 `sheinfm` 系统用户和 `/opt/shein-fm`、`/srv/shein-fm` 目录，Node 门户监听 `127.0.0.1:8788`，Nginx 监听 `127.0.0.1:8081`，PostgreSQL 监听 `127.0.0.1:54330`。公网链路为 Cloudflare → HAProxy → Caddy → Nginx → Node，不改变半托服务的端口与数据库。
+
+生产凭据只保存在 `/srv/shein-fm/secrets`，不进入 Git。全托销量定时任务只有在店铺授权完成并写入独立全托凭据后才启用；权限未获批时，门户显示 `pending / empty`，不会回退到测试 fixture。
+
+部署、回滚、服务名和验收命令见 [云端部署手册](docs/cloud-deployment.md)。

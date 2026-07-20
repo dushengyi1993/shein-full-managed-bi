@@ -1,0 +1,16 @@
+[Unit]
+Description=Migrate and verify SHEIN full-managed PostgreSQL
+Requires=shein-fm-db.service
+After=shein-fm-db.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+ExecStart=/usr/bin/bash scripts/migrate_full_managed_db.sh
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

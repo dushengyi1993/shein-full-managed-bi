@@ -145,6 +145,13 @@ test('uses FULL_BI_DATA_FILE when no function argument is supplied', async () =>
   }
 });
 
+test('production never falls back to the bundled sample fixture', async () => {
+  await assert.rejects(
+    () => loadDashboardData(undefined, { runtimeEnvironment: 'production' }),
+    /FULL_BI_DATA_FILE is required in production/,
+  );
+});
+
 test('rejects data without a valid update timestamp', () => {
   assert.throws(
     () => normalizeDashboardData({ updatedAt: 'not-a-date' }),

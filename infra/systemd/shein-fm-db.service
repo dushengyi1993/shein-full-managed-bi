@@ -1,0 +1,17 @@
+[Unit]
+Description=SHEIN full-managed PostgreSQL container
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/shein-fm/current
+ExecStart=/usr/bin/docker compose -f infra/docker/compose.yml up -d --wait db
+ExecStop=/usr/bin/docker compose -f infra/docker/compose.yml stop db
+TimeoutStartSec=3min
+TimeoutStopSec=2min
+
+[Install]
+WantedBy=multi-user.target
