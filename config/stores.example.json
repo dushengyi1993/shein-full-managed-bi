@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "cooperationMode": "FULL_MANAGED",
+  "notes": "Public store-code inventory only. Put platform identifiers and credentials in ignored local configuration.",
+  "stores": [
+    { "storeCode": "DL", "enabled": false },
+    { "storeCode": "DX", "enabled": false },
+    { "storeCode": "FY", "enabled": false },
+    { "storeCode": "LQ", "enabled": false },
+    { "storeCode": "NM", "enabled": false },
+    { "storeCode": "JY", "enabled": false },
+    { "storeCode": "ZL", "enabled": false },
+    { "storeCode": "TS", "enabled": false },
+    { "storeCode": "MZ", "enabled": false },
+    { "storeCode": "CX", "enabled": false },
+    { "storeCode": "YJ", "enabled": false },
+    { "storeCode": "XL", "enabled": false },
+    { "storeCode": "QY", "enabled": false },
+    { "storeCode": "QH", "enabled": false },
+    { "storeCode": "TZ", "enabled": false },
+    { "storeCode": "JSH", "enabled": false },
+    { "storeCode": "TZZ", "enabled": false },
+    { "storeCode": "XC", "enabled": false }
+  ]
+}

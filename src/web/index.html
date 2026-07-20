@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>SHEIN 全托运营驾驶舱</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">FULL-MANAGED OPERATIONS</p>
+          <h1>全托运营驾驶舱</h1>
+          <p class="subtitle">只读销量视图 <span aria-hidden="true">·</span> 本地开发版</p>
+        </div>
+        <div class="topbar-status" aria-live="polite">
+          <span id="dataset-badge" class="badge badge-neutral">正在读取</span>
+          <p id="updated-at">更新时间：--</p>
+        </div>
+      </header>
+
+      <main>
+        <section class="permission-panel" aria-labelledby="permission-heading">
+          <div>
+            <p class="section-kicker">数据权限</p>
+            <h2 id="permission-heading">销量查询权限</h2>
+          </div>
+          <div class="permission-summary">
+            <span id="permission-dot" class="status-dot" aria-hidden="true"></span>
+            <div>
+              <strong id="permission-label">待确认</strong>
+              <p id="permission-count">-- / -- 家店铺</p>
+            </div>
+          </div>
+        </section>
+
+        <section aria-labelledby="overview-heading">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">SALES VOLUME</p>
+              <h2 id="overview-heading">销量概览</h2>
+            </div>
+            <p>单位：件</p>
+          </div>
+          <div class="metric-grid">
+            <article class="metric-card metric-card-accent">
+              <p>今日销量</p>
+              <strong id="metric-today">--</strong>
+              <span>当日累计</span>
+            </article>
+            <article class="metric-card">
+              <p>昨日销量</p>
+              <strong id="metric-yesterday">--</strong>
+              <span>完整自然日</span>
+            </article>
+            <article class="metric-card">
+              <p>近 7 日销量</p>
+              <strong id="metric-7d">--</strong>
+              <span>滚动 7 日</span>
+            </article>
+            <article class="metric-card">
+              <p>近 30 日销量</p>
+              <strong id="metric-30d">--</strong>
+              <span>滚动 30 日</span>
+            </article>
+          </div>
+        </section>
+
+        <div class="ranking-grid">
+          <section class="ranking-panel" aria-labelledby="store-heading">
+            <div class="section-heading compact">
+              <div>
+                <p class="section-kicker">STORE RANKING</p>
+                <h2 id="store-heading">店铺销量排行</h2>
+              </div>
+              <p>按近 30 日</p>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">排名</th>
+                    <th scope="col">店铺</th>
+                    <th scope="col">今日</th>
+                    <th scope="col">7 日</th>
+                    <th scope="col">30 日</th>
+                  </tr>
+                </thead>
+                <tbody id="store-ranking"></tbody>
+              </table>
+            </div>
+            <p id="store-empty" class="empty-state" hidden>暂无店铺销量数据</p>
+          </section>
+
+          <section class="ranking-panel" aria-labelledby="sku-heading">
+            <div class="section-heading compact">
+              <div>
+                <p class="section-kicker">SKU RANKING</p>
+                <h2 id="sku-heading">SKU 销量排行</h2>
+              </div>
+              <p>按近 30 日</p>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">排名</th>
+                    <th scope="col">SKU</th>
+                    <th scope="col">今日</th>
+                    <th scope="col">7 日</th>
+                    <th scope="col">30 日</th>
+                  </tr>
+                </thead>
+                <tbody id="sku-ranking"></tbody>
+              </table>
+            </div>
+            <p id="sku-empty" class="empty-state" hidden>暂无 SKU 销量数据</p>
+          </section>
+        </div>
+
+        <section id="error-panel" class="error-panel" hidden aria-live="assertive">
+          <strong>数据加载失败</strong>
+          <p id="error-message">请检查本地数据文件后重试。</p>
+          <button id="retry-button" type="button">重新加载</button>
+        </section>
+      </main>
+
+      <footer>
+        <span>只读模式</span>
+        <span aria-hidden="true">·</span>
+        <span>数据仅供内部运营分析</span>
+      </footer>
+    </div>
+  </body>
+</html>

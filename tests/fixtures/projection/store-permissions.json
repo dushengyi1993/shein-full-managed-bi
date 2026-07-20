@@ -1,0 +1,20 @@
+[
+  { "storeCode": "DL", "storeName": "DL 全托店", "permissionStatus": "granted" },
+  { "storeCode": "DX", "storeName": "DX 全托店", "permissionStatus": "granted" },
+  { "storeCode": "FY", "storeName": "FY 全托店", "permissionStatus": "pending" },
+  { "storeCode": "LQ", "storeName": "LQ 全托店", "permissionStatus": "pending" },
+  { "storeCode": "NM", "storeName": "NM 全托店", "permissionStatus": "pending" },
+  { "storeCode": "JY", "storeName": "JY 全托店", "permissionStatus": "pending" },
+  { "storeCode": "ZL", "storeName": "ZL 全托店", "permissionStatus": "pending" },
+  { "storeCode": "TS", "storeName": "TS 全托店", "permissionStatus": "pending" },
+  { "storeCode": "MZ", "storeName": "MZ 全托店", "permissionStatus": "pending" },
+  { "storeCode": "CX", "storeName": "CX 全托店", "permissionStatus": "pending" },
+  { "storeCode": "YJ", "storeName": "YJ 全托店", "permissionStatus": "pending" },
+  { "storeCode": "XL", "storeName": "XL 全托店", "permissionStatus": "pending" },
+  { "storeCode": "QY", "storeName": "QY 全托店", "permissionStatus": "pending" },
+  { "storeCode": "QH", "storeName": "QH 全托店", "permissionStatus": "pending" },
+  { "storeCode": "TZ", "storeName": "TZ 全托店", "permissionStatus": "pending" },
+  { "storeCode": "JSH", "storeName": "JSH 全托店", "permissionStatus": "pending" },
+  { "storeCode": "TZZ", "storeName": "TZZ 全托店", "permissionStatus": "pending" },
+  { "storeCode": "XC", "storeName": "XC 全托店", "permissionStatus": "pending" }
+]

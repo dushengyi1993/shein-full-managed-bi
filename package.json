@@ -1,0 +1,27 @@
+{
+  "name": "shein-full-managed-bi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first SHEIN full-managed sales-volume BI and operations cockpit.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node src/server/index.mjs",
+    "start": "node src/server/index.mjs",
+    "check": "node --check src/domain/sku-sales-snapshot.mjs && node --check src/domain/dashboard-projection.mjs && node --check src/server/index.mjs && node --check scripts/build_dashboard_data.mjs && node --check scripts/apply_full_managed_openapi_app.mjs && node --check scripts/apply_full_managed_sales_permission.mjs",
+    "build:dashboard": "node scripts/build_dashboard_data.mjs",
+    "test": "node --test",
+    "test:domain": "node --test tests/domain/*.test.mjs",
+    "test:server": "node --test tests/server/*.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dushengyi1993/shein-full-managed-bi.git"
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}

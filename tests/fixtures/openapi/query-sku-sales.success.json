@@ -1,0 +1,26 @@
+{
+  "code": "0",
+  "msg": "OK",
+  "info": {
+    "dataList": [
+      {
+        "skuCode": "SKU-002",
+        "realTimeSaleCnt": 0,
+        "cydSaleCnt": 1,
+        "c7dSaleCnt": 7,
+        "c30dSaleCnt": 28,
+        "dt": "20260720"
+      },
+      {
+        "skuCode": "SKU-001",
+        "realTimeSaleCnt": 3,
+        "cydSaleCnt": 2,
+        "c7dSaleCnt": 14,
+        "c30dSaleCnt": 55,
+        "dt": "20260720"
+      }
+    ]
+  },
+  "bbl": null,
+  "traceId": "fixture-trace-query-sku-sales"
+}

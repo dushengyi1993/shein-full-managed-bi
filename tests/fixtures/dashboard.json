@@ -1,0 +1,152 @@
+{
+  "datasetStatus": "sample",
+  "updatedAt": "2026-07-20T08:00:00.000Z",
+  "permission": {
+    "status": "pending",
+    "authorizedStores": 0,
+    "totalStores": 18
+  },
+  "unitsSold": {
+    "today": 486,
+    "yesterday": 734,
+    "last7Days": 4628,
+    "last30Days": 18742
+  },
+  "storeRanking": [
+    {
+      "code": "DL",
+      "name": "DL",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 52, "last7Days": 489, "last30Days": 2035 }
+    },
+    {
+      "code": "DX",
+      "name": "DX",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 47, "last7Days": 451, "last30Days": 1968 }
+    },
+    {
+      "code": "FY",
+      "name": "FY",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 44, "last7Days": 423, "last30Days": 1812 }
+    },
+    {
+      "code": "LQ",
+      "name": "LQ",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 41, "last7Days": 398, "last30Days": 1704 }
+    },
+    {
+      "code": "NM",
+      "name": "NM",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 38, "last7Days": 371, "last30Days": 1578 }
+    },
+    {
+      "code": "JY",
+      "name": "JY",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 36, "last7Days": 342, "last30Days": 1463 }
+    },
+    {
+      "code": "ZL",
+      "name": "ZL",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 33, "last7Days": 318, "last30Days": 1346 }
+    },
+    {
+      "code": "TS",
+      "name": "TS",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 31, "last7Days": 296, "last30Days": 1249 }
+    },
+    {
+      "code": "MZ",
+      "name": "MZ",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 28, "last7Days": 274, "last30Days": 1168 }
+    },
+    {
+      "code": "CX",
+      "name": "CX",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 25, "last7Days": 252, "last30Days": 1081 }
+    },
+    {
+      "code": "YJ",
+      "name": "YJ",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 23, "last7Days": 231, "last30Days": 994 }
+    },
+    {
+      "code": "XL",
+      "name": "XL",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 20, "last7Days": 209, "last30Days": 907 }
+    },
+    {
+      "code": "QY",
+      "name": "QY",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 18, "last7Days": 188, "last30Days": 826 }
+    },
+    {
+      "code": "QH",
+      "name": "QH",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 16, "last7Days": 169, "last30Days": 748 }
+    },
+    {
+      "code": "TZ",
+      "name": "TZ",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 13, "last7Days": 146, "last30Days": 657 }
+    },
+    {
+      "code": "JSH",
+      "name": "JSH",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 9, "last7Days": 119, "last30Days": 548 }
+    },
+    {
+      "code": "TZZ",
+      "name": "TZZ",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 7, "last7Days": 96, "last30Days": 431 }
+    },
+    {
+      "code": "XC",
+      "name": "XC",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 5, "last7Days": 78, "last30Days": 322 }
+    }
+  ],
+  "skuRanking": [
+    {
+      "sku": "SAMPLE-001",
+      "name": "示例商品 A",
+      "unitsSold": { "today": 61, "last7Days": 512, "last30Days": 2106 }
+    },
+    {
+      "sku": "SAMPLE-002",
+      "name": "示例商品 B",
+      "unitsSold": { "today": 54, "last7Days": 476, "last30Days": 1984 }
+    },
+    {
+      "sku": "SAMPLE-003",
+      "name": "示例商品 C",
+      "unitsSold": { "today": 49, "last7Days": 438, "last30Days": 1817 }
+    },
+    {
+      "sku": "SAMPLE-004",
+      "name": "示例商品 D",
+      "unitsSold": { "today": 43, "last7Days": 396, "last30Days": 1652 }
+    },
+    {
+      "sku": "SAMPLE-005",
+      "name": "示例商品 E",
+      "unitsSold": { "today": 37, "last7Days": 354, "last30Days": 1486 }
+    }
+  ]
+}

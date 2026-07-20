@@ -1,0 +1,32 @@
+[
+  {
+    "storeCode": "DL",
+    "skuCode": "SAMPLE-SKU-A",
+    "salesToday": 3,
+    "salesYesterday": 4,
+    "sales7Days": 20,
+    "sales30Days": 80,
+    "statisticsDate": "2026-07-20",
+    "fetchedAt": "2026-07-20T08:30:00.000Z"
+  },
+  {
+    "storeCode": "DX",
+    "skuCode": "SAMPLE-SKU-A",
+    "salesToday": 2,
+    "salesYesterday": 3,
+    "sales7Days": 12,
+    "sales30Days": 51,
+    "statisticsDate": "2026-07-20",
+    "fetchedAt": "2026-07-20T08:31:00.000Z"
+  },
+  {
+    "storeCode": "DL",
+    "skuCode": "SAMPLE-SKU-B",
+    "salesToday": 1,
+    "salesYesterday": 1,
+    "sales7Days": 6,
+    "sales30Days": 24,
+    "statisticsDate": "2026-07-20",
+    "fetchedAt": "2026-07-20T08:30:00.000Z"
+  }
+]
