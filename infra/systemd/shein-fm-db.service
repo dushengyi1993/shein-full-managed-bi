@@ -8,6 +8,7 @@ Requires=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/shein-fm/current
+ExecStartPre=/usr/bin/docker volume create shein-fm-postgres
 ExecStart=/usr/bin/docker compose -f infra/docker/compose.yml up -d --wait db
 ExecStop=/usr/bin/docker compose -f infra/docker/compose.yml stop db
 TimeoutStartSec=3min

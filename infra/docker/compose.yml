@@ -22,4 +22,5 @@ services:
 
 volumes:
   shein-fm-postgres:
+    external: true
     name: shein-fm-postgres
