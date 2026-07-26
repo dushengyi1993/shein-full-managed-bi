@@ -58,6 +58,30 @@ test('identity observation-set migration enforces sealed append-only envelopes',
     sql,
     /GRANT UPDATE \(status, member_count, sealed_at\)[\s\S]*TO sheinfm_supply_loader/,
   );
+  assert.match(
+    sql,
+    /pg_get_serial_sequence\(\s*'raw\.product_identity_observation_set',\s*'identity_observation_set_id'\s*\)::regclass/,
+  );
+  assert.match(
+    sql,
+    /pg_get_serial_sequence\(\s*'raw\.identifier_observation',\s*'identifier_observation_id'\s*\)::regclass/,
+  );
+  assert.match(
+    sql,
+    /EXECUTE format\(\s*'REVOKE USAGE, UPDATE ON SEQUENCE %s FROM sheinfm_app'/,
+  );
+  assert.match(
+    sql,
+    /EXECUTE format\(\s*'GRANT USAGE, SELECT ON SEQUENCE %s TO sheinfm_supply_loader'/,
+  );
+  assert.doesNotMatch(
+    sql,
+    /product_identity_observation_set_identity_observation_set_id_seq/,
+  );
+  assert.doesNotMatch(
+    sql,
+    /identifier_observation_identifier_observation_id_seq/,
+  );
   assert.doesNotMatch(sql, /\bTRUNCATE\s+(?:TABLE\s+)?raw\.|\bDROP TABLE\b/);
   assert.doesNotMatch(
     sql,

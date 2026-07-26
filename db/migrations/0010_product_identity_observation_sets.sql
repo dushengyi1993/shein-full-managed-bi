@@ -377,14 +377,26 @@ DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION ops.verify_product_identity_observation_set_sealed();
 
 DO $$
+DECLARE
+    observation_set_sequence regclass :=
+        pg_get_serial_sequence(
+            'raw.product_identity_observation_set',
+            'identity_observation_set_id'
+        )::regclass;
+    identifier_observation_sequence regclass :=
+        pg_get_serial_sequence(
+            'raw.identifier_observation',
+            'identifier_observation_id'
+        )::regclass;
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_app') THEN
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE
             ON raw.product_identity_observation_set
             FROM sheinfm_app;
-        REVOKE USAGE, UPDATE
-            ON SEQUENCE raw.product_identity_observation_set_identity_observation_set_id_seq
-            FROM sheinfm_app;
+        EXECUTE format(
+            'REVOKE USAGE, UPDATE ON SEQUENCE %s FROM sheinfm_app',
+            observation_set_sequence
+        );
         GRANT SELECT ON raw.product_identity_observation_set TO sheinfm_app;
     END IF;
 
@@ -398,12 +410,14 @@ BEGIN
         GRANT SELECT, INSERT
             ON raw.identifier_observation
             TO sheinfm_supply_loader;
-        GRANT USAGE, SELECT
-            ON SEQUENCE raw.product_identity_observation_set_identity_observation_set_id_seq
-            TO sheinfm_supply_loader;
-        GRANT USAGE, SELECT
-            ON SEQUENCE raw.identifier_observation_identifier_observation_id_seq
-            TO sheinfm_supply_loader;
+        EXECUTE format(
+            'GRANT USAGE, SELECT ON SEQUENCE %s TO sheinfm_supply_loader',
+            observation_set_sequence
+        );
+        EXECUTE format(
+            'GRANT USAGE, SELECT ON SEQUENCE %s TO sheinfm_supply_loader',
+            identifier_observation_sequence
+        );
     END IF;
 END;
 $$;
