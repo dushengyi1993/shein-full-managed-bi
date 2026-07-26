@@ -192,6 +192,10 @@ test('9999 grants one group per login and proves cross-domain negative privilege
   }
   assert.match(migration, /GRANT SELECT, INSERT ON ops\.permission_probe/);
   assert.match(migration, /GRANT SELECT, INSERT ON ops\.sales_quality_event/);
+  assert.match(
+    migration,
+    /GRANT SELECT ON[\s\S]*ops\.sales_quality_event,[\s\S]*TO sheinfm_materializer_ro, sheinfm_app/,
+  );
   assert.match(migration, /GRANT SELECT ON ops\.sales_sync_run\s+TO sheinfm_supply_loader/);
   assert.match(migration, /fact\.supply_projection_member/);
   assert.match(migration, /ops\.webhook_runtime_heartbeat/);

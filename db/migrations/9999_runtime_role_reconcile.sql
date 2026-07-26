@@ -351,6 +351,7 @@ GRANT SELECT ON
     raw.openapi_fetch_batch,
     ops.permission_probe,
     ops.sales_sync_run,
+    ops.sales_quality_event,
     ops.sales_business_watermark,
     ops.employee_principal,
     ops.employee_store_assignment,
