@@ -36,6 +36,20 @@ function exactLocationBlock(config, locationPath) {
   assert.fail(`location ${locationPath} has no closing brace`);
 }
 
+test('Nginx applies host-scoped HSTS without descendant or preload scope', async () => {
+  const config = await readFile(NGINX_CONFIG, 'utf8');
+  const directives = [
+    ...config.matchAll(
+      /add_header\s+Strict-Transport-Security\s+"([^"]+)"\s+always;/gi,
+    ),
+  ];
+
+  assert.match(config, /\bserver_name fm\.dushengyi\.cc;/);
+  assert.equal(directives.length, 1, 'HSTS must be emitted exactly once');
+  assert.equal(directives[0][1], 'max-age=31536000');
+  assert.doesNotMatch(directives[0][1], /includeSubDomains|preload/i);
+});
+
 test('Nginx exposes the receiver callback path instead of sending it to the BI portal', async () => {
   assert.equal(WEBHOOK_CALLBACK_PATH, '/api/shein/webhook/v1/events');
   const config = await readFile(NGINX_CONFIG, 'utf8');
