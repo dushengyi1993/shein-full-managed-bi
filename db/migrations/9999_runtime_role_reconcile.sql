@@ -383,7 +383,7 @@ GRANT INSERT, DELETE ON mart.full_store_sales_latest, mart.full_product_sales_la
 TO sheinfm_sales_loader;
 GRANT SELECT, INSERT ON ops.permission_probe
 TO sheinfm_sales_loader;
-GRANT INSERT ON ops.sales_quality_event
+GRANT SELECT, INSERT ON ops.sales_quality_event
 TO sheinfm_sales_loader;
 GRANT SELECT, INSERT ON ops.sales_sync_run
 TO sheinfm_sales_loader;

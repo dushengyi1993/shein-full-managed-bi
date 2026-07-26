@@ -416,8 +416,14 @@ BEGIN
         'sheinfm_sales_login', 'ops.permission_probe', 'SELECT'
     ) OR NOT has_table_privilege(
         'sheinfm_sales_login', 'ops.permission_probe', 'INSERT'
+    ) OR NOT has_table_privilege(
+        'sheinfm_sales_login', 'ops.sales_quality_event', 'SELECT'
+    ) OR NOT has_table_privilege(
+        'sheinfm_sales_login', 'ops.sales_quality_event', 'INSERT'
     ) OR has_table_privilege(
         'sheinfm_sales_login', 'ops.permission_probe', 'UPDATE'
+    ) OR has_table_privilege(
+        'sheinfm_sales_login', 'ops.sales_quality_event', 'UPDATE'
     ) OR has_table_privilege(
         'sheinfm_sales_login', 'fact.inventory_snapshot', 'INSERT'
     ) OR has_table_privilege(

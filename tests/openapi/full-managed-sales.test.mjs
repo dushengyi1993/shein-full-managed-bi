@@ -249,4 +249,9 @@ test('permission review failures map to pending rather than a zero dataset', () 
   });
   assert.equal(classifySalesProbeError(pending), 'PENDING');
   assert.equal(classifySalesProbeError(new Error('connection reset')), 'ERROR');
+  const databasePermissionError = Object.assign(
+    new Error('permission denied for table sales_quality_event'),
+    { code: '42501' },
+  );
+  assert.equal(classifySalesProbeError(databasePermissionError), 'ERROR');
 });

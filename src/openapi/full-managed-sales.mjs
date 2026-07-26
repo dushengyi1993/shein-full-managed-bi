@@ -290,6 +290,7 @@ const DENIED_PATTERN = /\b(denied|rejected|forbidden)\b|拒绝|驳回|禁止/i;
 const PENDING_PATTERN = /permission|authorize|authorise|scope|package|pending|审核|权限|授权|申请/i;
 
 export function classifySalesProbeError(error) {
+  if (!(error instanceof SheinOpenApiError)) return 'ERROR';
   const details = error?.details ?? {};
   const combined = `${details.platformCode ?? ''} ${details.platformMessage ?? ''} ${error?.message ?? ''}`;
   if (DENIED_PATTERN.test(combined)) return 'DENIED';
