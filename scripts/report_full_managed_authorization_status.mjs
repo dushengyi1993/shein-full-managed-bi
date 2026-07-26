@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -80,9 +81,17 @@ export async function main({
   }
 }
 
-const isMain = process.argv[1]
-  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+function isMainModule(entryPath = process.argv[1], moduleUrl = import.meta.url) {
+  if (!entryPath) return false;
+  const resolvedEntryPath = path.resolve(entryPath);
+  const modulePath = fileURLToPath(moduleUrl);
+  try {
+    return realpathSync(resolvedEntryPath) === realpathSync(modulePath);
+  } catch {
+    return resolvedEntryPath === modulePath;
+  }
+}
 
-if (isMain) {
+if (isMainModule()) {
   process.exitCode = await main();
 }

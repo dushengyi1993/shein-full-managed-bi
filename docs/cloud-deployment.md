@@ -40,6 +40,40 @@
 随后必须回读确认店铺代码与仓库清单精确同序、总数为 24，且全部仍为
 `enabled: false`、没有店铺凭据。旧的 18 店清单或任何已有凭据都会使迁移失败关闭。
 
+OpenAPI 配置迁移完成后，还必须独立对 PostgreSQL `dim.store` 做一次清单对齐。
+脚本以发布包内 `config/stores.example.json` 的 24 个公开店铺代码为唯一目标清单，
+只插入或更新 `dim.store`，不删除旧店，也不修改任何抓取、SKU、销量、汇总或权限探针记录。
+默认命令会在事务内完成全部检查和模拟变更，核验 24 店精确后置条件后执行
+`ROLLBACK`：
+
+```bash
+sudo /usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/bash \
+  /opt/shein-fm/current/scripts/migrate_full_managed_warehouse_store_inventory.sh
+```
+
+确认 dry-run 的计数符合预期后，记录其 64 位 `planHash`。正式提交必须同时使用固定
+确认词和同一次预演的哈希；脚本拿锁后会重新计算，任何清单或计数漂移都会在写入前回滚：
+
+```bash
+sudo /usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/bash \
+  /opt/shein-fm/current/scripts/migrate_full_managed_warehouse_store_inventory.sh \
+  --confirm SHEIN_FULL_WAREHOUSE_STORE_INVENTORY_APPLY \
+  --plan-hash <DRY_RUN_PLAN_HASH>
+```
+
+迁移持有事务级 advisory lock，并锁定维表及其历史引用表以阻断并发同步/探针写入。
+生产包装器必须由 root 运行，并仅在进程内读取数据库 owner 凭据；不得改用权限受限的
+`sheinfm_app` 运行角色，也不得把连接串放入命令行、日志或历史记录。
+运行前必须确认 `/srv`、`/srv/shein-fm`、`/srv/shein-fm/secrets` 均为 root 所有且
+组和其他用户不可写；`postgres.env` 必须是 root 所有、非符号链接的 `0600/0640`
+普通文件。包装器会以最小环境重新验证这些条件并拒绝权限漂移。
+预期清单外的活跃旧店仅在没有 `platform_shop_id`、主体名、抓取/SKU/销量/汇总历史，
+且权限探针全部为 `PENDING` 时才会被标记 `is_active: false`；这些允许保留的
+`PENDING` 探针及旧店行仍原样存在。任一安全条件不满足、并发计数漂移或最终活跃代码
+不精确等于 24 店清单，整笔事务都会回滚。
+未完成店铺授权、销量权限核验和首店只读探针之前，`shein-fm-sales-sync.timer`
+必须继续保持禁用。
+
 授权 Broker 只读
 `/srv/shein-fm-auth/secrets/application.secret.json` 中的 DL 全托应用凭据，并只写
 `/srv/shein-fm-auth/secrets/receipts`。待核验 receipt 不会被销量同步读取；只有管理员核对
@@ -64,8 +98,9 @@
 8. 创建 `sheinfm-auth` 系统用户和专用目录，安装授权服务；验证端口仅 loopback 监听。
 9. 确认 Nginx 对 `/authorize` 与 `/openapi/authorize/callback` 只写不含查询参数的安全日志，
    安装 `infra/logrotate/shein-fm-auth`。
-10. 完成生产店铺清单的 dry-run、显式确认迁移和 `24 店 / 0 enabled / 0 凭据` 回读后，
-    再生成一次性授权批次。交接文件写入 broker 无法读取的 root 管控临时位置，安全传输后立即删除服务器副本。
+10. 完成生产 OpenAPI 清单与 PostgreSQL 维表两次独立 dry-run、显式确认迁移，
+    并回读 `24 店 / 0 enabled / 0 凭据 / 24 个活跃维表店铺` 后，再生成一次性授权批次。
+    交接文件写入 broker 无法读取的 root 管控临时位置，安全传输后立即删除服务器副本。
 
 HAProxy 同时承载 443 SSH，严禁 restart；只能在保留现有 SSH 会话的前提下执行 `haproxy -c` 后 reload。
 
