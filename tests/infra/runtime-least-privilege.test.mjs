@@ -222,6 +222,8 @@ test('9999 grants one group per login and proves cross-domain negative privilege
 test('9999 preserves only append permissions needed by the identity evidence and resolution pipeline', async () => {
   const migration = await text('db/migrations/9999_runtime_role_reconcile.sql');
   const verify = await text('db/verify/9999_runtime_role_reconcile.sql');
+  const evidenceCountFunction =
+    'ops.distinct_identity_evidence_count(text[])';
 
   for (const relation of [
     'raw.product_identity_observation_set',
@@ -317,6 +319,59 @@ test('9999 preserves only append permissions needed by the identity evidence and
     migration,
     /GRANT SELECT, INSERT, UPDATE ON\s+raw\.product_identity_observation_set/,
   );
+  assert.match(
+    migration,
+    /GRANT EXECUTE ON FUNCTION ops\.distinct_identity_evidence_count\(text\[\]\)\s+TO sheinfm_supply_loader;/,
+  );
+  const runtimeFunctionGrants = [
+    ...migration.matchAll(
+      /GRANT EXECUTE ON FUNCTION\s+([a-z_]+\.[a-z_]+\([^;]+\))\s+TO\s+([^;]+);/g,
+    ),
+  ].map((match) => ({
+    functionName: match[1].replace(/\s+/g, ' '),
+    grantee: match[2].trim(),
+  }));
+  assert.deepEqual(runtimeFunctionGrants, [{
+    functionName: evidenceCountFunction,
+    grantee: 'sheinfm_supply_loader',
+  }]);
+  assert.match(
+    verify,
+    /'sheinfm_supply_loader',\s*'ops\.distinct_identity_evidence_count\(text\[\]\)',\s*'EXECUTE'/,
+  );
+  assert.match(
+    verify,
+    /'sheinfm_supply_login',\s*'ops\.distinct_identity_evidence_count\(text\[\]\)',\s*'EXECUTE'/,
+  );
+  assert.match(
+    verify,
+    /runtime principal % can execute supply-only function %/,
+  );
+  assert.match(
+    verify,
+    /identity evidence count function is not immutable SQL invoker code/,
+  );
+  assert.match(
+    verify,
+    /supply runtime can execute another warehouse project function/,
+  );
+  for (const functionName of [
+    'ops.touch_updated_at()',
+    'ops.reject_append_only_identity_mutation()',
+    'ops.guard_product_identity_observation_set_mutation()',
+    'ops.require_building_product_identity_observation_set()',
+    'ops.verify_product_identity_observation_set_sealed()',
+    'ops.guard_webhook_receipt_immutable()',
+    'ops.reject_webhook_runtime_heartbeat_mutation()',
+    'ops.guard_webhook_store_gate_recovery()',
+    'ops.reopen_webhook_authorization_gate_after_probe(text,bigint)',
+    'ops.reject_supply_append_only_mutation()',
+  ]) {
+    assert.ok(
+      verify.includes(`'${functionName}'`),
+      `9999 verification omits negative EXECUTE check for ${functionName}`,
+    );
+  }
 });
 
 test('migration passwords come from one root-private manifest and values never enter docker argv', async () => {

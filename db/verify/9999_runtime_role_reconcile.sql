@@ -733,9 +733,76 @@ BEGIN
         END IF;
     END LOOP;
 
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_proc AS procedure
+        JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+        JOIN pg_language AS language ON language.oid = procedure.prolang
+        WHERE procedure.oid =
+              'ops.distinct_identity_evidence_count(text[])'::regprocedure
+          AND procedure.provolatile = 'i'
+          AND procedure.prosecdef = false
+          AND language.lanname = 'sql'
+    ) THEN
+        RAISE EXCEPTION
+            'identity evidence count function is not immutable SQL invoker code';
+    END IF;
+    IF NOT has_function_privilege(
+        'sheinfm_supply_loader',
+        'ops.distinct_identity_evidence_count(text[])',
+        'EXECUTE'
+    ) OR NOT has_function_privilege(
+        'sheinfm_supply_login',
+        'ops.distinct_identity_evidence_count(text[])',
+        'EXECUTE'
+    ) THEN
+        RAISE EXCEPTION
+            'supply identity evidence count function privilege is missing';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM pg_proc AS procedure
+        JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+        WHERE namespace.nspname = ANY (ARRAY['raw', 'dim', 'fact', 'mart', 'ops'])
+          AND procedure.oid <>
+              'ops.distinct_identity_evidence_count(text[])'::regprocedure
+          AND (
+              has_function_privilege(
+                  'sheinfm_supply_loader', procedure.oid, 'EXECUTE'
+              )
+              OR has_function_privilege(
+                  'sheinfm_supply_login', procedure.oid, 'EXECUTE'
+              )
+          )
+    ) THEN
+        RAISE EXCEPTION
+            'supply runtime can execute another warehouse project function';
+    END IF;
+    FOREACH expected_group IN ARRAY ARRAY[
+        'sheinfm_app',
+        'sheinfm_materializer_ro',
+        'sheinfm_materializer_login',
+        'sheinfm_sales_loader',
+        'sheinfm_sales_login',
+        'sheinfm_webhook_ingress',
+        'sheinfm_webhook_ingress_login',
+        'sheinfm_webhook_worker',
+        'sheinfm_webhook_worker_login'
+    ]
+    LOOP
+        IF has_function_privilege(
+            expected_group,
+            'ops.distinct_identity_evidence_count(text[])',
+            'EXECUTE'
+        ) THEN
+            RAISE EXCEPTION 'runtime principal % can execute supply-only function %',
+                expected_group,
+                'ops.distinct_identity_evidence_count(text[])';
+        END IF;
+    END LOOP;
+
     FOREACH required_name IN ARRAY ARRAY[
         'ops.touch_updated_at()',
-        'ops.distinct_identity_evidence_count(text[])',
         'ops.reject_append_only_identity_mutation()',
         'ops.guard_product_identity_observation_set_mutation()',
         'ops.require_building_product_identity_observation_set()',
@@ -748,16 +815,21 @@ BEGIN
     ]
     LOOP
         FOREACH expected_group IN ARRAY ARRAY[
+            'sheinfm_materializer_ro',
             'sheinfm_materializer_login',
+            'sheinfm_sales_loader',
             'sheinfm_sales_login',
+            'sheinfm_supply_loader',
             'sheinfm_supply_login',
+            'sheinfm_webhook_ingress',
             'sheinfm_webhook_ingress_login',
+            'sheinfm_webhook_worker',
             'sheinfm_webhook_worker_login',
             'sheinfm_app'
         ]
         LOOP
             IF has_function_privilege(expected_group, required_name, 'EXECUTE') THEN
-                RAISE EXCEPTION 'runtime login % can execute %',
+                RAISE EXCEPTION 'runtime principal % can execute %',
                     expected_group,
                     required_name;
             END IF;

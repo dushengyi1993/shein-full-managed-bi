@@ -339,6 +339,9 @@ TO sheinfm_supply_loader;
 GRANT USAGE ON SCHEMA raw, dim, ops
 TO sheinfm_webhook_ingress, sheinfm_webhook_worker;
 
+GRANT EXECUTE ON FUNCTION ops.distinct_identity_evidence_count(text[])
+TO sheinfm_supply_loader;
+
 -- Materializer and legacy sheinfm_app are read-only. The raw webhook grant is
 -- column-scoped so neither role can read encrypted payloads.
 GRANT SELECT ON
