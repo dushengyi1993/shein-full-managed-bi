@@ -864,6 +864,59 @@ test('member-count and hierarchy drift are rejected without planner guessing', a
   );
 });
 
+test('placeholder hierarchy identifiers fail even when raw, set header and dimension agree', async (t) => {
+  const cases = [
+    {
+      identifierType: 'PLATFORM_SPU',
+      field: 'platform_spu_id',
+      scope: 'PRODUCT',
+      scopeKey: 'SPU:---',
+    },
+    {
+      identifierType: 'PLATFORM_SKC',
+      field: 'platform_skc_id',
+      scope: null,
+      scopeKey: null,
+    },
+    {
+      identifierType: 'PLATFORM_SKU',
+      field: 'platform_sku_id',
+      scope: 'VARIANT',
+      scopeKey: 'SKU:---',
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.identifierType, async () => {
+      const fixture = baseFixture();
+      fixture.universe[0][scenario.field] = '---';
+      for (const row of fixture.evidenceRows.filter(
+        ({ identity_observation_set_id: setId }) => setId === 101,
+      )) {
+        row[scenario.field] = '---';
+        if (scenario.scope && row.identity_scope === scenario.scope) {
+          row.scope_key = scenario.scopeKey;
+        }
+      }
+      const hierarchyMember = fixture.evidenceRows.find((row) => (
+        row.identity_observation_set_id === 101
+        && row.identifier_type === scenario.identifierType
+      ));
+      hierarchyMember.raw_value = '---';
+      hierarchyMember.normalized_value = null;
+
+      await assert.rejects(
+        () => prepareProductIdentityResolutionPlan(
+          pool(new FakeResolutionDatabase(fixture)),
+          options(),
+        ),
+        (error) => error.code
+          === PRODUCT_IDENTITY_RESOLUTION_ERROR_CODES.evidenceSetInvalid,
+      );
+    });
+  }
+});
+
 test('MODEL, barcode and single-value product fields are normalized fail-closed', async () => {
   const wrongModelFixture = baseFixture();
   const modelRows = wrongModelFixture.evidenceRows.filter(
@@ -925,6 +978,70 @@ test('MODEL, barcode and single-value product fields are normalized fail-closed'
   await assert.rejects(
     () => prepareProductIdentityResolutionPlan(
       pool(new FakeResolutionDatabase(ambiguousBrandFixture)),
+      options(),
+    ),
+    (error) => error.code
+      === PRODUCT_IDENTITY_RESOLUTION_ERROR_CODES.evidenceSetInvalid,
+  );
+});
+
+test('placeholder MODEL members are ignored and cannot create an automatic identity merge', async () => {
+  const fixture = baseFixture();
+  for (const row of fixture.evidenceRows.filter(
+    ({ identifier_type: type }) => type === 'MODEL',
+  )) {
+    row.raw_value = '---';
+    row.normalized_value = null;
+    row.source_value_key = `product.attribute:1000546:${hash('---').slice(0, 24)}`;
+  }
+
+  const plan = await prepareProductIdentityResolutionPlan(
+    pool(new FakeResolutionDatabase(fixture)),
+    options(),
+  );
+
+  assert.equal(plan.summary.inputNodeCount, 2);
+  assert.equal(plan.summary.acceptedComponentCount, 0);
+  assert.equal(plan.summary.acceptedNodeCount, 0);
+  assert.equal(plan.summary.rejectedRecallGroupCount, 2);
+  assert.equal(
+    plan.rejectedRecallGroups.every((group) => (
+      group.counts.nodeCount === 1
+      && group.reasonCodes.length === 1
+      && group.reasonCodes[0] === 'MISSING_EXACT_RECALL_IDENTITY'
+    )),
+    true,
+  );
+});
+
+test('a genuinely drifted normalized readback remains fail-closed', async () => {
+  const nonNullExpectedFixture = baseFixture();
+  const nonNullExpectedModel = nonNullExpectedFixture.evidenceRows.find(
+    ({ identifier_type: type }) => type === 'MODEL',
+  );
+  nonNullExpectedModel.normalized_value = null;
+
+  await assert.rejects(
+    () => prepareProductIdentityResolutionPlan(
+      pool(new FakeResolutionDatabase(nonNullExpectedFixture)),
+      options(),
+    ),
+    (error) => error.code
+      === PRODUCT_IDENTITY_RESOLUTION_ERROR_CODES.evidenceSetInvalid,
+  );
+
+  const nullExpectedFixture = baseFixture();
+  const nullExpectedModel = nullExpectedFixture.evidenceRows.find(
+    ({ identifier_type: type }) => type === 'MODEL',
+  );
+  nullExpectedModel.raw_value = '---';
+  nullExpectedModel.normalized_value = 'MODEL-X';
+  nullExpectedModel.source_value_key =
+    `product.attribute:1000546:${hash('---').slice(0, 24)}`;
+
+  await assert.rejects(
+    () => prepareProductIdentityResolutionPlan(
+      pool(new FakeResolutionDatabase(nullExpectedFixture)),
       options(),
     ),
     (error) => error.code

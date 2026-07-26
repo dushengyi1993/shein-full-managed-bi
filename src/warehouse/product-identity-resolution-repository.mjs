@@ -13,6 +13,11 @@ const AUDIT_RUN_PATTERN = /^[A-Za-z0-9._:-]{8,120}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const ATTRIBUTE_ID_PATTERN = /^[0-9]{1,32}$/;
 const OFFICIAL_MODEL_ATTRIBUTE_ID = '1000546';
+const HIERARCHY_IDENTIFIER_TYPES = new Set([
+  'PLATFORM_SPU',
+  'PLATFORM_SKC',
+  'PLATFORM_SKU',
+]);
 const DEFAULT_MATCHER_VERSION = 'observed-matcher-v1';
 const DEFAULT_POLICY_VERSION = 'strict-global-clique-v1';
 const DEFAULT_ACTOR_PREFIX = 'resolution';
@@ -456,10 +461,11 @@ function normalizedMember(row, evidenceSet) {
     });
   }
   const expectedNormalizedValue = normalizeIdentifierValue(identifierType, rawValue);
-  if (
-    !expectedNormalizedValue
-    || row.normalized_value !== expectedNormalizedValue
-  ) {
+  const normalizedReadbackMatches = expectedNormalizedValue === null
+    ? !HIERARCHY_IDENTIFIER_TYPES.has(identifierType)
+      && row.normalized_value === null
+    : row.normalized_value === expectedNormalizedValue;
+  if (!normalizedReadbackMatches) {
     fail(
       PRODUCT_IDENTITY_RESOLUTION_ERROR_CODES.evidenceSetInvalid,
       'An identifier observation normalized value failed exact readback.',
@@ -654,6 +660,11 @@ function attributeId(member) {
   return result;
 }
 
+function hasNormalizedIdentityValue(member) {
+  return typeof member?.normalizedValue === 'string'
+    && member.normalizedValue.length > 0;
+}
+
 function productAttributeMembers(evidenceSet) {
   const members = [];
   for (const member of evidenceSet.members) {
@@ -677,6 +688,7 @@ function productAttributeMembers(evidenceSet) {
         'A product attribute type or source key disagrees with its attribute id.',
       );
     }
+    if (!hasNormalizedIdentityValue(member)) continue;
     members.push(member);
   }
   return members.sort((left, right) => (
@@ -692,6 +704,7 @@ function singleProductMember(evidenceSet, identifierType, sourceValueKey) {
       member.identifierType === identifierType
       && member.identityScope === 'PRODUCT'
       && member.sourceValueKey === sourceValueKey
+      && hasNormalizedIdentityValue(member)
     ))
     .sort((left, right) => (
       left.normalizedValue.localeCompare(right.normalizedValue)
@@ -776,6 +789,7 @@ function plannerBarcodes(evidenceSet) {
     ) {
       continue;
     }
+    if (!hasNormalizedIdentityValue(member)) continue;
     const standard = String(member.evidence.barcodeStandard ?? '').toUpperCase();
     const valid = isValidGtin(member.normalizedValue);
     if (
