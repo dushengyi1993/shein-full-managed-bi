@@ -8,6 +8,8 @@
 - `ops.touch_updated_at()` 统一维护所有可变表的 `updated_at`。
 - SHA-256 指纹使用 64 位小写十六进制字符串。
 - 所有原始 JSON 和探针证据必须先脱敏；禁止落库 token、cookie、签名、密钥和请求头。
+- 未知数量使用 `NULL`，不能为了图表或汇总方便转成零。
+- 追加式证据表发生幂等冲突时必须精确回读指纹；同键不同内容立即失败。
 
 ## 表与粒度
 
@@ -23,7 +25,7 @@
 
 ### `raw.openapi_fetch_batch`
 
-粒度：一个店铺的一次逻辑 OpenAPI 请求批次一行。分页范围属于幂等键的一部分；同一批次可以从 `CREATED` 更新到终态，但不得另建重复批次。
+粒度：一个店铺的一次逻辑 OpenAPI 请求批次一行。分页范围属于幂等键的一部分。当前销量与供应链 loader 只在完整校验后写终态，并把它作为不可变证据；旧 schema 保留的运行态不能被新 loader 用来静默改写终态。
 
 - 主键：`fetch_batch_id`
 - 唯一键：`(store_id, idempotency_key)`
@@ -43,8 +45,9 @@
 - 复合唯一键：`(store_id, full_sku_id)`，供事实表强制校验店铺与 SKU 归属一致
 - `product_key` 为生成列，聚合优先级是 `SPU → SKC → SKU`
 - `source_fetch_batch_id` 指向最近一次确认该身份的原始批次
+- `is_active / catalog_run_key / retired_at` 表示最新完整稳定 `number-list` 的成员关系
 
-`product_key` 只是首版聚合键，不是跨店统一商品主数据。后续如需跨店 canonical product，必须另建映射和对账规则。
+稳定成员关系只由销量 `number-list` 管理。商品目录与详情可以补充属性，但不能激活或复活 SKU。
 
 ### `fact.full_sku_sales_snapshot`
 
@@ -90,6 +93,48 @@
 
 当前有效权限状态由 `(store_id, capability_code)` 下 `probed_at` 最新一行决定；不要覆盖历史结果，也不要把 HTTP 200 单独判定为授权成功。
 
+### 销量可信层
+
+- `ops.sales_sync_run`：一店一次销量同步结果，分别记录运行状态、业务日期锚定、质量状态、SKU 覆盖和四个销量窗口；
+- `ops.sales_quality_event`：具体质量原因和影响 SKU 数，合法零销量使用信息级事件；
+- `ops.sales_business_watermark`：每店最新已接受业务日期，质量阻断运行不能推进；
+- `LEGAL_ZERO_UNANCHORED` 表示完整零响应无 `dt`，是合法零而不是错误；非零无日期必须隔离。
+
+### 标准商品与员工分配
+
+- `dim.canonical_product / dim.canonical_variant`：跨店标准商品与变体；
+- `raw.identifier_observation`：店铺内型号、供应商货号等脱敏标识观察；
+- `ops.product_match_candidate / ops.product_identity_decision`：候选、冲突和人工决定；
+- `dim.full_sku_canonical_assignment`：店内 SKU 到标准变体的当前映射；
+- `ops.employee_principal / ops.employee_store_assignment`：员工身份与 `PRIMARY / SUPPORT / VIEW_ONLY` 店铺分配。
+
+裸 SKU 相同或标题相似不能直接跨店归并。登录员工读取全店数据；这些分配只作为负责人筛选和未来写权限依据。
+
+### 供应链事实
+
+- `raw.openapi_fetch_page`：分页级脱敏响应证据；
+- `ops.supply_sync_attempt`：店铺 × 域 × 子类型 × 模式的追加式 `STARTED / SUCCEEDED / PARTIAL / FAILED` 账本；
+- `fact.supply_projection_batch / fact.supply_projection_member`：库存和缺货建议的可信当前批次成员关系；完整空批次可以清空当前投影，部分批次不能替代上一完整投影；
+- `dim.full_warehouse`：全托仓库身份；
+- `fact.inventory_snapshot / fact.warehouse_inventory_snapshot`：PI / VI / JI 库存总量与仓库明细；
+- `fact.stock_advice_snapshot / fact.shortage_event`：缺货建议与缺货观察；
+- `fact.purchase_order / fact.purchase_order_line / fact.purchase_order_jit_relation`：采购单、行和 JIT 关系；
+- `fact.delivery / fact.delivery_line`：交付单、行和里程碑；
+- `ops.reconciliation_result`：数量与关系对账。
+
+库存请求集合来自最新可接受销量清单。最新销量运行失败、成员数量漂移或无证据时必须关闭库存同步，不能改用商品目录清单。
+
+### Webhook
+
+- `raw.webhook_receipt`：验签后密文、指纹和重复计数；
+- `ops.webhook_job`：异步解密/标准化租约、重试和死信；
+- `ops.operational_event`：脱敏标准化事件；
+- `ops.webhook_hydration_directive`：需要后续只读回查的指令，不等于已完成回查；
+- `ops.webhook_subscription_state / ops.webhook_store_gate`：订阅回读与店铺授权门禁；
+- `ops.webhook_runtime_heartbeat`：Receiver 与 Worker 的追加式运行心跳。
+
+Webhook 使用 10 分钟签名投递窗口的至少一次语义。同窗口同密文重试合并，跨窗口同载荷形成新事件；窗口边界可能重复，因此所有下游写入必须幂等。
+
 ## 关系
 
 ```mermaid
@@ -102,6 +147,11 @@ erDiagram
     FULL_SKU ||--o{ SKU_SALES_SNAPSHOT : measures
     STORE ||--o{ STORE_SALES_LATEST : aggregates
     STORE ||--o{ PRODUCT_SALES_LATEST : aggregates
+    STORE ||--o{ SUPPLY_SYNC_ATTEMPT : monitors
+    STORE ||--o{ INVENTORY_SNAPSHOT : observes
+    STORE ||--o{ PURCHASE_ORDER : owns
+    STORE ||--o{ DELIVERY : owns
+    STORE ||--o{ WEBHOOK_RECEIPT : receives
 ```
 
 ## Upsert 与幂等规则
@@ -109,10 +159,13 @@ erDiagram
 | 对象 | 冲突目标 | 处理 |
 | --- | --- | --- |
 | 店铺 | `store_code` | 更新名称、主体、平台 ID、活跃态和 `last_seen_at` |
-| 抓取批次 | `store_id + idempotency_key` | 接续原批次；终态批次默认不回退到运行态 |
+| 抓取批次 | `store_id + idempotency_key` | 内容相同 no-op；请求、响应、时间或记录数漂移则失败 |
 | SKU | `store_id + platform_sku_id` | 更新当前属性和 `last_seen_at`，不改变主键 |
-| 销量事实 | 源唯一键或业务唯一键 | 内容相同则 no-op；指纹不同则告警后受控更正，禁止静默累加 |
+| 销量事实 | 源唯一键或业务唯一键 | 内容相同 no-op；指纹不同直接失败，禁止静默累加 |
 | Mart | 自然复合主键 | 以一次事务的最新事实聚合覆盖，并推进新鲜度字段 |
-| 权限探针 | `store_id + idempotency_key` | 同一探针重试 no-op；新的探针时间生成新键并保留历史 |
+| 权限探针 | `store_id + idempotency_key` | 同一探针精确重放 no-op；任一证据漂移失败 |
+| 供应链尝试 | 店铺、域、子类型、attempt、status | STARTED 与一个终态分别追加；LIVE 与 BACKFILL 隔离 |
+| 投影批次 | 店铺、域、子类型、观察时间 | 成员集合顺序无关；同观察时点内容漂移失败 |
+| Webhook 回执 | 有界 occurrence idempotency key | 同窗口重试增加重复计数；跨窗口形成新回执 |
 
 数据库约束负责阻止重复，应用层仍须记录受影响行数并核对期望值。迁移文件本身可重复执行用于首次安装恢复；已经部署后的结构升级必须新增迁移文件。

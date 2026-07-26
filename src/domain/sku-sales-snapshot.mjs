@@ -155,6 +155,57 @@ function normalizeFetchedAt(value) {
   return date.toISOString();
 }
 
+const SALES_COUNT_FIELDS = Object.freeze([
+  'salesToday',
+  'salesYesterday',
+  'sales7Days',
+  'sales30Days',
+]);
+
+/**
+ * Classify whether one already-normalized sales row can be attached to a
+ * business date.
+ *
+ * An explicit empty `dt` is not proof of missing permission. SHEIN can return
+ * that shape for a complete, successful zero-sales response. Non-zero values
+ * without a date remain observable, but must be quarantined by the warehouse
+ * rather than assigned an invented date.
+ */
+export function classifySkuSalesDateQuality(snapshot) {
+  const row = requireRecord(snapshot, 'snapshot');
+  if (row.statisticsDate !== null) {
+    if (
+      typeof row.statisticsDate !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}$/.test(row.statisticsDate)
+    ) {
+      fail('INVALID_STATISTICS_DATE', 'snapshot.statisticsDate must use YYYY-MM-DD format', {
+        path: 'snapshot.statisticsDate',
+        skuCode: row.skuCode,
+        value: row.statisticsDate,
+      });
+    }
+    normalizeStatisticsDate(
+      row.statisticsDate.replaceAll('-', ''),
+      'snapshot.statisticsDate',
+      row.skuCode,
+    );
+    return 'DATED';
+  }
+
+  const hasNonZeroSales = SALES_COUNT_FIELDS.some((field) => {
+    const value = row[field];
+    if (!Number.isSafeInteger(value) || value < 0) {
+      fail('INVALID_SALES_COUNT', `snapshot.${field} must be a non-negative safe integer`, {
+        path: `snapshot.${field}`,
+        skuCode: row.skuCode,
+        value,
+      });
+    }
+    return value > 0;
+  });
+  return hasNonZeroSales ? 'UNANCHORED_NONZERO' : 'LEGAL_ZERO_UNANCHORED';
+}
+
 /**
  * Trim and deduplicate SKU codes while retaining first-seen order.
  *
@@ -301,8 +352,8 @@ function normalizeSkuSalesResponseRows({
  * Validate that a successful response proves the sales endpoint can be used.
  *
  * SHEIN's current official example and live response can return an explicit
- * empty `dt`. Permission probing accepts only that exact degraded shape while
- * preserving the strict mapper for any warehouse-bound sales snapshot.
+ * empty `dt`. Permission probing keeps that shape observable so the warehouse
+ * can accept complete zero rows and quarantine non-zero rows independently.
  */
 export function inspectSkuSalesResponseForPermissionProbe({
   requestedSkuCodes,
@@ -316,10 +367,19 @@ export function inspectSkuSalesResponseForPermissionProbe({
   const missingStatisticsDateCount = rows.filter(
     ({ statisticsDate }) => statisticsDate === null,
   ).length;
+  const legalZeroUnanchoredCount = rows.filter(
+    (row) => classifySkuSalesDateQuality(row) === 'LEGAL_ZERO_UNANCHORED',
+  ).length;
+  const unanchoredNonzeroCount = rows.filter(
+    (row) => classifySkuSalesDateQuality(row) === 'UNANCHORED_NONZERO',
+  ).length;
   return {
     recordCount: rows.length,
     statisticsDateAvailable: missingStatisticsDateCount === 0,
     missingStatisticsDateCount,
+    legalZeroUnanchoredCount,
+    unanchoredNonzeroCount,
+    dataLoadable: unanchoredNonzeroCount === 0,
   };
 }
 
@@ -346,7 +406,11 @@ export function mapSkuSalesResponseToSnapshots({
 } = {}) {
   const normalizedStoreCode = requireNonEmptyString(storeCode, 'storeCode');
   const normalizedFetchedAt = normalizeFetchedAt(fetchedAt);
-  return normalizeSkuSalesResponseRows({ requestedSkuCodes, response }).map((row) => ({
+  return normalizeSkuSalesResponseRows({
+    requestedSkuCodes,
+    response,
+    allowEmptyStatisticsDate: true,
+  }).map((row) => ({
     storeCode: normalizedStoreCode,
     ...row,
     fetchedAt: normalizedFetchedAt,

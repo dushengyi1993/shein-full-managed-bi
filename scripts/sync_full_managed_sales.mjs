@@ -133,7 +133,13 @@ async function main() {
           inventory,
           sales,
         });
-        results.push({ storeCode: store.storeCode, status: 'loaded', ...loaded });
+        results.push({
+          storeCode: store.storeCode,
+          status: loaded.qualityStatus === 'UNANCHORED_NONZERO'
+            ? 'quality_blocked'
+            : 'loaded',
+          ...loaded,
+        });
       } catch (error) {
         const probe = failedProbe(store.storeCode, error);
         await persistPermissionProbe(pool, {
@@ -154,13 +160,15 @@ async function main() {
 
   const loaded = results.filter(({ status }) => status === 'loaded').length;
   const errors = results.filter(({ status }) => status === 'error').length;
+  const qualityBlocked = results.filter(({ status }) => status === 'quality_blocked').length;
   console.log(JSON.stringify({
-    ok: errors === 0,
+    ok: errors === 0 && qualityBlocked === 0,
     config: summarizeFullManagedConfig(config),
     loadedStores: loaded,
+    qualityBlockedStores: qualityBlocked,
     results,
   }, null, 2));
-  if (errors > 0) process.exitCode = 2;
+  if (errors > 0 || qualityBlocked > 0) process.exitCode = 2;
 }
 
 main().catch((error) => {

@@ -1,0 +1,48 @@
+[Unit]
+Description=SHEIN full-managed Webhook asynchronous worker
+Wants=network-online.target
+Requires=shein-fm-db.service
+After=network-online.target shein-fm-db.service shein-fm-db-migrate.service
+ConditionPathExists=/srv/shein-fm/runtime/webhook-worker.enabled
+
+[Service]
+Type=simple
+User=sheinfm-webhook-worker
+Group=sheinfm-webhook-worker
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+Environment=NODE_ENV=production
+Environment=FULL_BI_WEBHOOK_WORKER_POLL_MS=1000
+Environment=FULL_BI_WEBHOOK_WORKER_LEASE_MS=120000
+Environment=FULL_BI_WEBHOOK_DB_POOL_MAX=4
+Environment=FULL_BI_WEBHOOK_DB_APPLICATION_NAME=shein_fm_webhook_worker
+Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/webhook-worker/stores.json
+Environment=FULL_BI_WEBHOOK_APPLICATION_FILE=/srv/shein-fm/secrets/webhook-worker/application.secret.json
+EnvironmentFile=/srv/shein-fm/secrets/webhook-worker/database.env
+ExecStart=/usr/bin/node scripts/run_full_managed_webhook_worker.mjs
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/srv/shein-fm/secrets/webhook-worker/stores.json
+ReadOnlyPaths=/srv/shein-fm/secrets/webhook-worker/application.secret.json
+ReadOnlyPaths=/srv/shein-fm/secrets/webhook-worker/database.env
+MemoryHigh=384M
+MemoryMax=768M
+
+[Install]
+WantedBy=multi-user.target

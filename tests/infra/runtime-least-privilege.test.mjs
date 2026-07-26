@@ -1,0 +1,249 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+const root = new URL('../../', import.meta.url);
+
+async function text(path) {
+  return readFile(new URL(path, root), 'utf8');
+}
+
+function unitUser(unit) {
+  return unit.match(/^User=(.+)$/m)?.[1] ?? null;
+}
+
+test('portal serves only the promoted dashboard JSON and has no warehouse or OpenAPI environment', async () => {
+  const portal = await text('infra/systemd/shein-fm-portal.service');
+  assert.equal(unitUser(portal), 'sheinfm-portal');
+  assert.match(portal, /SupplementaryGroups=sheinfm-dashboard/);
+  assert.match(
+    portal,
+    /FULL_BI_DATA_FILE=\/srv\/shein-fm\/runtime\/dashboard\/dashboard\.json/,
+  );
+  assert.match(portal, /ConditionPathExists=\/srv\/shein-fm\/runtime\/portal\.enabled/);
+  assert.match(portal, /ReadOnlyPaths=.*dashboard\.json/);
+  assert.doesNotMatch(portal, /DATABASE_URL|database\.env|warehouse\.env/i);
+  assert.doesNotMatch(portal, /OPENAPI|openapi\.json/i);
+  assert.doesNotMatch(portal, /materialize_full_managed_dashboard|ExecStartPre/);
+  assert.doesNotMatch(portal, /ReadWritePaths/);
+  assert.doesNotMatch(portal, /shein-fm-db(?:-migrate)?\.service/);
+});
+
+test('materializer is a separate gated read-only runtime with atomic promotion', async () => {
+  const service = await text(
+    'infra/systemd/shein-fm-dashboard-materialize.service',
+  );
+  const timer = await text(
+    'infra/systemd/shein-fm-dashboard-materialize.timer',
+  );
+  assert.equal(unitUser(service), 'sheinfm-materializer');
+  assert.match(service, /SupplementaryGroups=sheinfm-dashboard/);
+  assert.match(service, /secrets\/materializer\/database\.env/);
+  assert.match(service, /dashboard\/dashboard\.next\.json/);
+  assert.match(service, /chgrp sheinfm-dashboard/);
+  assert.match(service, /chmod 0640/);
+  assert.match(
+    service,
+    /mv -f .*dashboard\.next\.json .*dashboard\.json/,
+  );
+  assert.match(
+    service,
+    /ConditionPathExists=\/srv\/shein-fm\/runtime\/materializer\.enabled/,
+  );
+  assert.doesNotMatch(
+    service,
+    /FULL_BI_OPENAPI_CONFIG|openapi\.json|warehouse\.env/i,
+  );
+  assert.match(timer, /OnUnitInactiveSec=5m/);
+  assert.match(
+    timer,
+    /ConditionPathExists=\/srv\/shein-fm\/runtime\/materializer\.enabled/,
+  );
+});
+
+test('sales, supply, ingress and worker use distinct users and private credentials', async () => {
+  const units = {
+    portal: await text('infra/systemd/shein-fm-portal.service'),
+    materializer: await text(
+      'infra/systemd/shein-fm-dashboard-materialize.service',
+    ),
+    sales: await text('infra/systemd/shein-fm-sales-sync.service'),
+    supply: await text('infra/systemd/shein-fm-supply-sync.service'),
+    ingress: await text('infra/systemd/shein-fm-webhook-receiver.service'),
+    worker: await text('infra/systemd/shein-fm-webhook-worker.service'),
+  };
+  const users = Object.values(units).map(unitUser);
+  assert.deepEqual(users, [
+    'sheinfm-portal',
+    'sheinfm-materializer',
+    'sheinfm-sales',
+    'sheinfm-supply',
+    'sheinfm-webhook-ingress',
+    'sheinfm-webhook-worker',
+  ]);
+  assert.equal(new Set(users).size, users.length);
+
+  assert.match(units.sales, /secrets\/sales\/database\.env/);
+  assert.match(units.sales, /secrets\/sales\/openapi\.json/);
+  assert.match(units.supply, /secrets\/supply\/database\.env/);
+  assert.match(units.supply, /secrets\/supply\/openapi\.json/);
+  assert.match(units.ingress, /secrets\/webhook-ingress\/database\.env/);
+  assert.match(
+    units.ingress,
+    /secrets\/webhook-ingress\/application\.secret\.json/,
+  );
+  assert.match(units.worker, /secrets\/webhook-worker\/database\.env/);
+  assert.match(
+    units.worker,
+    /secrets\/webhook-worker\/application\.secret\.json/,
+  );
+  for (const [name, unit] of Object.entries(units)) {
+    assert.doesNotMatch(unit, /secrets\/warehouse\.env/, `${name} shares warehouse.env`);
+    assert.doesNotMatch(
+      unit,
+      /secrets\/openapi\.json/,
+      `${name} shares a root OpenAPI credential`,
+    );
+  }
+});
+
+test('domain sync units never materialize and trigger the independent projection after success', async () => {
+  for (const path of [
+    'infra/systemd/shein-fm-sales-sync.service',
+    'infra/systemd/shein-fm-supply-sync.service',
+  ]) {
+    const unit = await text(path);
+    assert.doesNotMatch(unit, /FULL_BI_DATA_FILE/);
+    assert.doesNotMatch(unit, /materialize_full_managed_dashboard/);
+    assert.match(unit, /OnSuccess=shein-fm-dashboard-materialize\.service/);
+  }
+});
+
+test('all mutable application runtimes and timers are fail-closed behind explicit gates', async () => {
+  const expectations = new Map([
+    ['infra/systemd/shein-fm-authorization.service', 'authorization.enabled'],
+    ['infra/systemd/shein-fm-portal.service', 'portal.enabled'],
+    ['infra/systemd/shein-fm-dashboard-materialize.service', 'materializer.enabled'],
+    ['infra/systemd/shein-fm-dashboard-materialize.timer', 'materializer.enabled'],
+    ['infra/systemd/shein-fm-sales-sync.service', 'sales-sync.enabled'],
+    ['infra/systemd/shein-fm-sales-sync.timer', 'sales-sync.enabled'],
+    ['infra/systemd/shein-fm-supply-sync.service', 'supply-sync.enabled'],
+    ['infra/systemd/shein-fm-supply-sync.timer', 'supply-sync.enabled'],
+    ['infra/systemd/shein-fm-webhook-receiver.service', 'webhook-ingress.enabled'],
+    ['infra/systemd/shein-fm-webhook-worker.service', 'webhook-worker.enabled'],
+  ]);
+  for (const [path, gate] of expectations) {
+    assert.match(
+      await text(path),
+      new RegExp(`ConditionPathExists=.*${gate.replace('.', '\\.')}`),
+      `${path} is not fail-closed`,
+    );
+  }
+});
+
+test('9999 preflight tracks every 0001-0006 table and project function', async () => {
+  const reconcile = await text('db/migrations/9999_runtime_role_reconcile.sql');
+  const migrations = await Promise.all(
+    ['0001_full_managed_bi.sql', '0002_runtime_role.sql', '0003_sales_trust.sql',
+      '0004_product_identity_and_access.sql', '0005_webhook_runtime.sql',
+      '0006_supply_domains.sql']
+      .map((name) => text(`db/migrations/${name}`)),
+  );
+  const allSql = migrations.join('\n');
+  const tables = [
+    ...allSql.matchAll(/CREATE TABLE IF NOT EXISTS\s+([a-z_]+\.[a-z_]+)/g),
+  ].map((match) => match[1]);
+  assert.ok(tables.length > 30);
+  for (const table of new Set(tables)) {
+    assert.match(
+      reconcile,
+      new RegExp(`'${table.replace('.', '\\.')}'`),
+      `9999 preflight omits ${table}`,
+    );
+  }
+  const functions = [
+    ...allSql.matchAll(/CREATE OR REPLACE FUNCTION\s+([a-z_]+\.[a-z_]+)/g),
+  ].map((match) => match[1]);
+  for (const functionName of new Set(functions)) {
+    assert.match(
+      reconcile,
+      new RegExp(`'${functionName.replace('.', '\\.')}`),
+      `9999 preflight omits ${functionName}`,
+    );
+  }
+  assert.match(reconcile, /REVOKE ALL PRIVILEGES ON ALL SEQUENCES/);
+  assert.match(reconcile, /class\.relkind = 'S'/);
+  assert.match(reconcile, /ALTER DEFAULT PRIVILEGES[\s\S]*ON TABLES FROM PUBLIC/);
+  assert.match(reconcile, /ALTER DEFAULT PRIVILEGES[\s\S]*ON SEQUENCES FROM PUBLIC/);
+  assert.match(reconcile, /ALTER DEFAULT PRIVILEGES[\s\S]*ON FUNCTIONS FROM PUBLIC/);
+});
+
+test('9999 grants one group per login and proves cross-domain negative privileges', async () => {
+  const migration = await text('db/migrations/9999_runtime_role_reconcile.sql');
+  const verify = await text('db/verify/9999_runtime_role_reconcile.sql');
+  for (const pair of [
+    ['sheinfm_materializer_ro', 'sheinfm_materializer_login'],
+    ['sheinfm_sales_loader', 'sheinfm_sales_login'],
+    ['sheinfm_supply_loader', 'sheinfm_supply_login'],
+    ['sheinfm_webhook_ingress', 'sheinfm_webhook_ingress_login'],
+    ['sheinfm_webhook_worker', 'sheinfm_webhook_worker_login'],
+  ]) {
+    assert.match(migration, new RegExp(`GRANT ${pair[0]} TO ${pair[1]}`));
+  }
+  assert.match(migration, /GRANT SELECT, INSERT ON ops\.permission_probe/);
+  assert.match(migration, /GRANT SELECT ON ops\.sales_sync_run\s+TO sheinfm_supply_loader/);
+  assert.match(migration, /fact\.supply_projection_member/);
+  assert.match(migration, /ops\.webhook_runtime_heartbeat/);
+  assert.match(migration, /store_id, store_code, is_active/);
+  assert.match(verify, /^BEGIN;[\s\S]*ROLLBACK;\s*$/);
+  assert.match(verify, /sales loader privilege boundary is invalid/);
+  assert.match(verify, /supply loader domain boundary is invalid/);
+  assert.match(verify, /webhook ingress receipt\/job boundary is invalid/);
+  assert.match(verify, /webhook worker privilege boundary is invalid/);
+  assert.match(verify, /materializer retained % on %/);
+  assert.match(verify, /unsafe warehouse default privilege remains/);
+  assert.match(verify, /ciphertext/);
+});
+
+test('migration passwords come from one root-private manifest and values never enter docker argv', async () => {
+  const service = await text('infra/systemd/shein-fm-db-migrate.service');
+  const runner = await text('scripts/migrate_full_managed_db.sh');
+  const manifest = await text(
+    'infra/systemd/shein-fm-db-migrate-secrets.env.example',
+  );
+  const secretPath = '/srv/shein-fm/secrets/db-migrate/runtime-role-passwords.env';
+  assert.match(
+    service,
+    new RegExp(`EnvironmentFile=${secretPath.replaceAll('/', '\\/')}`),
+  );
+  assert.match(
+    service,
+    new RegExp(`ReadOnlyPaths=${secretPath.replaceAll('/', '\\/')}`),
+  );
+  assert.match(manifest, /root:root 0600/);
+  const names = [
+    'SHEIN_FM_APP_DB_PASSWORD',
+    'SHEIN_FM_MATERIALIZER_DB_PASSWORD',
+    'SHEIN_FM_SALES_DB_PASSWORD',
+    'SHEIN_FM_SUPPLY_DB_PASSWORD',
+    'SHEIN_FM_WEBHOOK_INGRESS_DB_PASSWORD',
+    'SHEIN_FM_WEBHOOK_WORKER_DB_PASSWORD',
+  ];
+  for (const name of names) {
+    assert.match(manifest, new RegExp(`^${name}=$`, 'm'));
+    assert.match(runner, new RegExp(`\\b${name}\\b`));
+  }
+  assert.match(runner, /docker_secret_env_args\+=\(--env "\$secret_name"\)/);
+  assert.match(
+    runner,
+    /docker exec -i "\$\{docker_secret_env_args\[@\]\}" "\$container_name"/,
+  );
+  assert.doesNotMatch(runner, /--env\s+["']?\$\{?!secret_name\}[^"'=\s]*=/);
+  assert.doesNotMatch(runner, /set -x|printf[^\n]*secret_value|echo[^\n]*PASSWORD/);
+  assert.match(
+    manifest,
+    /SHEIN_FM_APP_DB_PASSWORD must be the exact current production value/,
+  );
+  assert.match(manifest, /Generate five new, mutually[\s\S]*independent/);
+  assert.doesNotMatch(manifest, /Generate six independent/i);
+});

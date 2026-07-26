@@ -18,8 +18,11 @@ SELECT current_database() AS sheinfm_database
 GRANT CONNECT ON DATABASE :"sheinfm_database" TO sheinfm_app;
 GRANT USAGE ON SCHEMA raw, dim, fact, mart, ops TO sheinfm_app;
 
-REVOKE ALL ON ALL TABLES IN SCHEMA raw, dim, fact, mart, ops FROM sheinfm_app;
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA raw, dim, fact, mart, ops FROM sheinfm_app;
+-- Do not revoke existing object grants here. This bootstrap migration runs
+-- before later schema migrations, and each migration is committed separately.
+-- Revoking all grants at this point would leave an already deployed runtime
+-- broken if any later migration failed. The final 9999 reconcile migration
+-- atomically revokes and restores the complete least-privilege contract.
 ALTER DEFAULT PRIVILEGES IN SCHEMA raw, dim, fact, mart, ops
     REVOKE ALL ON TABLES FROM sheinfm_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA raw, dim, fact, mart, ops

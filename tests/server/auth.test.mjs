@@ -49,7 +49,16 @@ before(async () => {
         {
           username: 'operator',
           displayName: 'Test Operator',
+          role: 'admin',
           passwordSha256: sha256('correct-test-password'),
+        },
+        {
+          username: 'store-viewer',
+          displayName: 'Store Viewer',
+          role: 'viewer',
+          employeeCode: 'EMP-001',
+          storeCodes: ['DL4412', 'CX1234', 'dl4412'],
+          passwordSha256: sha256('viewer-test-password'),
         },
         {
           username: 'pbkdf2-user',
@@ -228,7 +237,14 @@ test('rejects tampered and expired HMAC session tokens', async () => {
   assert.equal(login.ok, true);
   const token = cookiePair(login.cookie).split('=', 2)[1];
   const tamperedToken = `${token.slice(0, -1)}${token.endsWith('a') ? 'b' : 'a'}`;
-  assert.equal(auth.verifyToken(token, now).username, 'operator');
+  assert.deepEqual(auth.verifyToken(token, now), {
+    username: 'operator',
+    displayName: 'Test Operator',
+    employeeCode: 'operator',
+    role: 'admin',
+    allStores: true,
+    storeCodes: [],
+  });
   assert.equal(auth.verifyToken(tamperedToken, now), null);
   assert.equal(auth.verifyToken(token, now + 2_000), null);
 });
@@ -301,7 +317,14 @@ test('logs in with a legacy SHA-256 hash, authorizes APIs, and logs out safely',
   assert.equal(login.status, 200);
   assert.deepEqual(await login.json(), {
     ok: true,
-    user: { username: 'operator', displayName: 'Test Operator' },
+    user: {
+      username: 'operator',
+      displayName: 'Test Operator',
+      employeeCode: 'operator',
+      role: 'admin',
+      allStores: true,
+      storeCodes: [],
+    },
   });
   const setCookie = login.headers.get('set-cookie');
   assert.match(setCookie, /^fm_bi_session=/);
@@ -313,7 +336,7 @@ test('logs in with a legacy SHA-256 hash, authorizes APIs, and logs out safely',
 
   const dashboard = await fetch(`${baseUrl}/api/dashboard`, { headers: { Cookie: cookie } });
   assert.equal(dashboard.status, 200);
-  assert.equal((await dashboard.json()).schemaVersion, 2);
+  assert.equal((await dashboard.json()).schemaVersion, 4);
 
   const crossOriginLogout = await fetch(`${baseUrl}/api/logout`, {
     method: 'POST',
@@ -341,6 +364,54 @@ test('logs in with a legacy SHA-256 hash, authorizes APIs, and logs out safely',
   assert.equal(afterLogout.status, 401);
 });
 
+test('normalizes employee write assignments while allowing unassigned read-only users', async () => {
+  const auth = createAuthService({
+    usersFile,
+    sessionSecret,
+    secureCookie: false,
+  });
+  const login = await auth.authenticate(
+    { socket: { remoteAddress: '127.0.0.1' } },
+    'store-viewer',
+    'viewer-test-password',
+  );
+  assert.equal(login.ok, true);
+  assert.deepEqual(login.user, {
+    username: 'store-viewer',
+    displayName: 'Store Viewer',
+    employeeCode: 'EMP-001',
+    role: 'viewer',
+    allStores: false,
+    storeCodes: ['CX1234', 'DL4412'],
+  });
+
+  const invalidUsersFile = join(temporaryDirectory, 'unscoped-viewer.json');
+  await writeFile(
+    invalidUsersFile,
+    JSON.stringify({
+      users: [{
+        username: 'unscoped',
+        role: 'viewer',
+        passwordSha256: sha256('password'),
+      }],
+    }),
+    'utf8',
+  );
+  if (process.platform !== 'win32') await chmod(invalidUsersFile, 0o600);
+  const unscopedAuth = createAuthService({
+    usersFile: invalidUsersFile,
+    sessionSecret,
+    secureCookie: false,
+  });
+  const unscopedLogin = await unscopedAuth.authenticate(
+    { socket: { remoteAddress: '127.0.0.1' } },
+    'unscoped',
+    'password',
+  );
+  assert.equal(unscopedLogin.ok, true);
+  assert.deepEqual(unscopedLogin.user.storeCodes, []);
+});
+
 test('accepts PBKDF2-SHA256 passwordHash credentials', async () => {
   const login = await fetch(`${baseUrl}/api/login`, {
     method: 'POST',
@@ -349,6 +420,9 @@ test('accepts PBKDF2-SHA256 passwordHash credentials', async () => {
   });
   assert.equal(login.status, 200);
   assert.match(login.headers.get('set-cookie'), /^fm_bi_session=/);
+  const payload = await login.json();
+  assert.equal(payload.user.role, 'viewer');
+  assert.equal(payload.user.allStores, false);
 });
 
 test('verifies a strict Apache APR1 htpasswd vector without shell commands', async () => {

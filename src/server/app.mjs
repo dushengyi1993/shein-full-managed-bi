@@ -4,6 +4,7 @@ import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadDashboardData } from './dashboard-data.mjs';
+import { projectDashboardForUser } from './dashboard-access.mjs';
 import {
   createAuthService,
   isSameOriginPost,
@@ -310,6 +311,25 @@ export function createRequestHandler(options = {}) {
       return;
     }
 
+    if (url.pathname === '/api/me') {
+      if (method !== 'GET' && method !== 'HEAD') {
+        response.setHeader('Allow', 'GET, HEAD');
+        sendJson(response, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' } }, method);
+        return;
+      }
+      sendJson(response, 200, {
+        user: signedInUser || {
+          username: null,
+          displayName: '本地开发',
+          employeeCode: null,
+          role: 'viewer',
+          allStores: false,
+          storeCodes: [],
+        },
+      }, method);
+      return;
+    }
+
     if (method !== 'GET' && method !== 'HEAD') {
       response.setHeader('Allow', 'GET, HEAD');
       sendJson(
@@ -324,7 +344,7 @@ export function createRequestHandler(options = {}) {
     if (url.pathname === '/api/dashboard') {
       try {
         const dashboard = await loadDashboardData(dataFile);
-        sendJson(response, 200, dashboard, method);
+        sendJson(response, 200, projectDashboardForUser(dashboard, signedInUser), method);
       } catch {
         sendJson(
           response,

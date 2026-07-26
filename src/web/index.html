@@ -26,12 +26,15 @@
 
         <nav class="primary-nav" aria-label="主导航">
           <a href="#home" data-route="home"><span>总控驾驶舱</span><small>HOME</small></a>
+          <a href="#procurement" data-route="procurement"><span>采购单中心</span><small>PO</small></a>
+          <a href="#fulfilment" data-route="fulfilment"><span>交付与入仓</span><small>INBOUND</small></a>
+          <a href="#products" data-route="products"><span>商品与货号</span><small>MDM</small></a>
           <a href="#sales" data-route="sales"><span>销量分析</span><small>SALES</small></a>
-          <a href="#products" data-route="products"><span>商品中心</span><small>PRODUCT</small></a>
-          <a href="#compliance" data-route="compliance"><span>合规中心</span><small>COMPLY</small></a>
-          <a href="#supply" data-route="supply"><span>备货履约</span><small>SUPPLY</small></a>
-          <a href="#inventory" data-route="inventory"><span>库存管理</span><small>STOCK</small></a>
-          <a href="#finance" data-route="finance"><span>财务对账</span><small>FINANCE</small></a>
+          <a href="#inventory" data-route="inventory"><span>库存与供给</span><small>SUPPLY</small></a>
+          <a href="#returns" data-route="returns"><span>采购退货</span><small>RETURN</small></a>
+          <a href="#compliance" data-route="compliance"><span>合规与价格</span><small>COMPLY</small></a>
+          <a href="#finance" data-route="finance"><span>财务结算</span><small>FINANCE</small></a>
+          <a href="#platform" data-route="platform"><span>平台动态</span><small>WEBHOOK</small></a>
           <a href="#ops" data-route="ops"><span>自动化运营</span><small>OPS</small></a>
           <a href="#system" data-route="system"><span>系统健康</span><small>SYS</small></a>
         </nav>
@@ -61,8 +64,15 @@
           </div>
 
           <div class="filter-field search-field">
-            <label for="global-search">SKU / 商品</label>
-            <input id="global-search" type="search" placeholder="搜索 SKU 或商品名" autocomplete="off">
+            <label for="global-search">商品 / 货号</label>
+            <input id="global-search" type="search" placeholder="标准货号、SKC、SKU 或商品名" autocomplete="off">
+          </div>
+
+          <div class="filter-field owner-field">
+            <label for="owner-filter">负责人</label>
+            <select id="owner-filter">
+              <option value="ALL">全部负责人</option>
+            </select>
           </div>
 
           <div class="filter-field store-field">

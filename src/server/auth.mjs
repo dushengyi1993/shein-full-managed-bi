@@ -17,6 +17,8 @@ const DEFAULT_MAX_CONCURRENT_KDFS = 8;
 const MIN_SESSION_SECRET_BYTES = 32;
 const MIN_PBKDF2_ITERATIONS = 100_000;
 const MAX_PBKDF2_ITERATIONS = 2_000_000;
+const AUTH_ROLES = Object.freeze(new Set(['admin', 'manager', 'operator', 'viewer']));
+const STORE_CODE_PATTERN = /^[A-Z0-9_-]+$/;
 
 export class AuthConfigurationError extends Error {
   constructor(message) {
@@ -276,6 +278,51 @@ function parsePasswordHash(value) {
   throw new AuthConfigurationError('Unsupported passwordHash format.');
 }
 
+function parseUserAccess(record, username) {
+  const roleSource = record.role === undefined || record.role === null
+    ? 'viewer'
+    : String(record.role).trim().toLowerCase();
+  if (!AUTH_ROLES.has(roleSource)) {
+    throw new AuthConfigurationError(
+      `Authentication user ${username} has an unsupported role.`,
+    );
+  }
+
+  const allStores = roleSource === 'admin';
+  const storeCodesSource = record.storeCodes ?? record.stores ?? [];
+  if (!Array.isArray(storeCodesSource)) {
+    throw new AuthConfigurationError(
+      `Authentication user ${username} storeCodes must be an array.`,
+    );
+  }
+  const storeCodes = [...new Set(storeCodesSource.map((value) => String(value).trim().toUpperCase()))]
+    .filter(Boolean);
+  if (storeCodes.some((value) => !STORE_CODE_PATTERN.test(value))) {
+    throw new AuthConfigurationError(
+      `Authentication user ${username} contains an invalid store code.`,
+    );
+  }
+  const employeeCode = record.employeeCode === undefined || record.employeeCode === null
+    ? username
+    : String(record.employeeCode).trim();
+  if (
+    !employeeCode
+    || employeeCode.length > 128
+    || /[\u0000-\u001f\u007f]/.test(employeeCode)
+  ) {
+    throw new AuthConfigurationError(
+      `Authentication user ${username} has an invalid employeeCode.`,
+    );
+  }
+
+  return Object.freeze({
+    role: roleSource,
+    allStores,
+    storeCodes: Object.freeze(allStores ? [] : storeCodes.sort()),
+    employeeCode,
+  });
+}
+
 function parseUsers(usersFile) {
   let source;
   try {
@@ -326,13 +373,18 @@ function parseUsers(usersFile) {
       credential = apacheApr1Credential(record.htpasswdHash);
     }
 
+    const access = parseUserAccess(record, username);
     const credentialTag = createHash('sha256')
-      .update(`${username}\0${credential.fingerprint}`, 'utf8')
+      .update(
+        `${username}\0${credential.fingerprint}\0${JSON.stringify(access)}`,
+        'utf8',
+      )
       .digest('base64url')
       .slice(0, 22);
     users.set(key, {
       username,
       displayName: String(record.displayName || username).slice(0, 128),
+      ...access,
       credential,
       credentialTag,
     });
@@ -579,7 +631,14 @@ export function createAuthService(options = {}) {
 
     const user = users.get(session.u.toLocaleLowerCase('en-US'));
     if (!user || user.username !== session.u || user.credentialTag !== session.c) return null;
-    return { username: user.username, displayName: user.displayName };
+    return {
+      username: user.username,
+      displayName: user.displayName,
+      employeeCode: user.employeeCode,
+      role: user.role,
+      allStores: user.allStores,
+      storeCodes: [...user.storeCodes],
+    };
   }
 
   function authenticateRequest(request, now) {
@@ -680,7 +739,14 @@ export function createAuthService(options = {}) {
     completeRateLimitReservation(limit, 'success');
     return {
       ok: true,
-      user: { username: user.username, displayName: user.displayName },
+      user: {
+        username: user.username,
+        displayName: user.displayName,
+        employeeCode: user.employeeCode,
+        role: user.role,
+        allStores: user.allStores,
+        storeCodes: [...user.storeCodes],
+      },
       cookie: sessionCookie(user, now),
     };
   }

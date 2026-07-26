@@ -59,7 +59,7 @@ test('GET /api/dashboard returns only the permitted volume dashboard shape', asy
   assert.equal(response.status, 200);
   const dashboard = await response.json();
 
-  assert.equal(dashboard.schemaVersion, 2);
+  assert.equal(dashboard.schemaVersion, 4);
   assert.equal(dashboard.readOnly, true);
   assert.equal(dashboard.dataset.status, 'sample');
   assert.equal(dashboard.permission.totalStores, 24);
@@ -103,14 +103,22 @@ test('serves the local dashboard and its static assets', async () => {
   assert.match(faviconResponse.headers.get('content-type'), /^image\/svg\+xml/);
 });
 
-test('static UI does not bind unsupported fields as live metrics', async () => {
+test('static UI excludes consumer commerce metrics while allowing SHEIN purchase-order counts', async () => {
   const files = ['index.html', 'app.js', 'styles.css'];
   const contents = await Promise.all(
     files.map((name) => readFile(new URL(`../../src/web/${name}`, import.meta.url), 'utf8')),
   );
   const source = contents.join('\n');
-  assert.doesNotMatch(source, /data-metric=["'](?:revenue|profit|orderCount|order_count)["']/i);
-  assert.doesNotMatch(source, /\.(?:revenue|profit|orderCount|order_count)\b/i);
+  assert.doesNotMatch(
+    source,
+    /data-metric=["'](?:revenue|profit|gmv|consumerOrderCount|consumerReturnCount)["']/i,
+  );
+  assert.doesNotMatch(
+    source,
+    /\.(?:revenue|profit|gmv|consumerOrderCount|consumerReturnCount)\b/i,
+  );
+  assert.match(source, /purchaseOrderStatus/);
+  assert.match(source, /\.orderCount\b/);
 });
 
 test('rejects path traversal before reading static files', async () => {

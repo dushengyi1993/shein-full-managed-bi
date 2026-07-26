@@ -2,6 +2,7 @@
 Description=SHEIN full-managed remote authorization broker
 Wants=network-online.target
 After=network-online.target
+ConditionPathExists=/srv/shein-fm-auth/runtime/authorization.enabled
 
 [Service]
 Type=simple

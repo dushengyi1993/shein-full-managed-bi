@@ -1,5 +1,6 @@
 [Unit]
 Description=Refresh SHEIN full-managed sales facts every two hours
+ConditionPathExists=/srv/shein-fm/runtime/sales-sync.enabled
 
 [Timer]
 OnCalendar=*-*-* 00/2:15:00 Asia/Shanghai

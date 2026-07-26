@@ -1,22 +1,24 @@
 [Unit]
 Description=Refresh SHEIN full-managed read-only sales facts
 Wants=network-online.target
-Requires=shein-fm-db-migrate.service
-After=network-online.target shein-fm-db-migrate.service
+Requires=shein-fm-db.service
+After=network-online.target shein-fm-db.service shein-fm-db-migrate.service
+OnSuccess=shein-fm-dashboard-materialize.service
+ConditionPathExists=/srv/shein-fm/runtime/sales-sync.enabled
 
 [Service]
 Type=oneshot
-User=sheinfm
-Group=sheinfm
-UMask=0027
+User=sheinfm-sales
+Group=sheinfm-sales
+UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
 Environment=SHEIN_FM_CLOUD_EXECUTION=1
-Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/openapi.json
-Environment=FULL_BI_DATA_FILE=/srv/shein-fm/runtime/dashboard.json
-EnvironmentFile=/srv/shein-fm/secrets/warehouse.env
-EnvironmentFile=-/srv/shein-fm/secrets/openapi.env
-ExecStart=/usr/bin/flock -n /srv/shein-fm/runtime/sales-sync.lock /usr/bin/node scripts/sync_full_managed_sales.mjs --all
+Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/sales/openapi.json
+EnvironmentFile=/srv/shein-fm/secrets/sales/database.env
+RuntimeDirectory=shein-fm-sales
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/flock -n /run/shein-fm-sales/sync.lock /usr/bin/node scripts/sync_full_managed_sales.mjs --all
 TimeoutStartSec=45min
 NoNewPrivileges=true
 PrivateTmp=true
@@ -31,7 +33,9 @@ LockPersonality=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/srv/shein-fm/runtime /srv/shein-fm/logs
+ReadOnlyPaths=/srv/shein-fm/secrets/sales/openapi.json
+ReadOnlyPaths=/srv/shein-fm/secrets/sales/database.env
+ReadWritePaths=/run/shein-fm-sales
 MemoryHigh=768M
 MemoryMax=1536M
 

@@ -1,125 +1,257 @@
 # 全托 BI 云端部署手册
 
-## 生产拓扑
+最后更新：2026-07-26
 
-`fm.dushengyi.cc` 通过 Cloudflare 回源到共享 HAProxy 443 入口，再依次进入全托专用、仅 loopback 监听的 Caddy TLS `127.0.0.1:11443`、Nginx `127.0.0.1:8081` 和 Node `127.0.0.1:8788`。全托 PostgreSQL 独立监听 `127.0.0.1:54330`。
+## 1. 生产拓扑与边界
 
-全托与半托共享的只有服务器和边缘反代进程；应用用户、发布目录、运行目录、数据库、端口、systemd 单元和凭据全部隔离：
+`fm.dushengyi.cc` 的公网链路为：
 
-- 运行用户：`sheinfm`
+```text
+Cloudflare
+  -> HAProxy 443
+  -> Caddy 127.0.0.1:11443
+  -> Nginx 127.0.0.1:8081
+       -> Portal 127.0.0.1:8788
+       -> Webhook Receiver 127.0.0.1:8793
+       -> Authorization Broker 127.0.0.1:8789
+```
+
+PostgreSQL 独立监听 `127.0.0.1:54330`。全托与半托只共享服务器和边缘反代进程；发布目录、运行身份、数据库、端口、凭据、事实表和 systemd 单元全部隔离。
+
 - 发布目录：`/opt/shein-fm/releases/<git-commit>`
 - 当前版本：`/opt/shein-fm/current`
-- 运行与备份：`/srv/shein-fm/{runtime,logs,backups}`
-- 私密配置：`/srv/shein-fm/secrets`
+- 运行、日志和备份：`/srv/shein-fm/{runtime,logs,backups}`
+- 私密配置：`/srv/shein-fm/secrets/<component>`
+- 授权服务：`/opt/shein-fm-auth/current`、`/srv/shein-fm-auth`
 - systemd 前缀：`shein-fm-*`
 
-远程店铺授权使用独立服务和 Linux 账号，不改变 BI 门户的只读声明：
+任何 SHEIN 写操作、平台 Webhook 订阅创建和自动化执行均不属于部署步骤，默认关闭。
 
-- 运行用户：`sheinfm-auth`
-- 发布目录：`/opt/shein-fm-auth/releases/<git-commit>`
-- 当前版本：`/opt/shein-fm-auth/current`
-- Node 监听：`127.0.0.1:8789`
-- 状态目录：`/srv/shein-fm-auth/runtime`
-- 应用凭据与待核验收件箱：`/srv/shein-fm-auth/secrets`
-- systemd 单元：`shein-fm-authorization.service`
+## 2. 运行身份
 
-## 私密配置
+不得再用一个 `sheinfm` 用户承载所有进程。创建以下不可登录系统用户和共享 Dashboard 只读组：
 
-以下文件必须为 `root:sheinfm` 且不得允许 other 访问：
+| 组件 | Unix 用户/组 | 数据库 LOGIN | 数据库能力组 |
+| --- | --- | --- | --- |
+| Portal | `sheinfm-portal` | 无 | 无 |
+| Dashboard 物化 | `sheinfm-materializer` | `sheinfm_materializer_login` | `sheinfm_materializer_ro` |
+| 销量同步 | `sheinfm-sales` | `sheinfm_sales_login` | `sheinfm_sales_loader` |
+| 供应链同步 | `sheinfm-supply` | `sheinfm_supply_login` | `sheinfm_supply_loader` |
+| Webhook Receiver | `sheinfm-webhook-ingress` | `sheinfm_webhook_ingress_login` | `sheinfm_webhook_ingress` |
+| Webhook Worker | `sheinfm-webhook-worker` | `sheinfm_webhook_worker_login` | `sheinfm_webhook_worker` |
+| 授权 Broker | `sheinfm-auth` | 无 | 无 |
+| 数据库迁移/备份 | `root` | 容器 owner | owner |
 
-- `bi_users.json`：应用登录账号的密码散列；
-- `session-secret`：独立 HMAC 会话密钥；
-- `postgres.env`：容器数据库初始化凭据；
-- `warehouse.env`：Node 到 PostgreSQL 的连接串；
-- `openapi.json`：逐店全托应用与授权凭据。
-
-`openapi.json` 中未授权店铺保持 `enabled: false`。不得复制半托的 `openKeyId / secretKey`，也不得把应用审核通过或权限包提交当成店铺授权成功。
-
-生成首个授权批次前，先对生产 `openapi.json` 执行
-`npm run openapi:migrate-store-inventory` 的默认 dry-run；核对输出后再带显式确认词执行。
-随后必须回读确认店铺代码与仓库清单精确同序、总数为 24，且全部仍为
-`enabled: false`、没有店铺凭据。旧的 18 店清单或任何已有凭据都会使迁移失败关闭。
-
-OpenAPI 配置迁移完成后，还必须独立对 PostgreSQL `dim.store` 做一次清单对齐。
-脚本以发布包内 `config/stores.example.json` 的 24 个公开店铺代码为唯一目标清单，
-只插入或更新 `dim.store`，不删除旧店，也不修改任何抓取、SKU、销量、汇总或权限探针记录。
-默认命令会在事务内完成全部检查和模拟变更，核验 24 店精确后置条件后执行
-`ROLLBACK`：
+示例创建方式：
 
 ```bash
-sudo /usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/bash \
-  /opt/shein-fm/current/scripts/migrate_full_managed_warehouse_store_inventory.sh
+sudo groupadd --system --force sheinfm-dashboard
+for account in \
+  sheinfm-portal sheinfm-materializer sheinfm-sales sheinfm-supply \
+  sheinfm-webhook-ingress sheinfm-webhook-worker
+do
+  getent group "$account" >/dev/null || sudo groupadd --system "$account"
+  id "$account" >/dev/null 2>&1 || sudo useradd \
+    --system --no-create-home --shell /usr/sbin/nologin \
+    --gid "$account" "$account"
+done
+sudo usermod -a -G sheinfm-dashboard sheinfm-portal
+sudo usermod -a -G sheinfm-dashboard sheinfm-materializer
 ```
 
-确认 dry-run 的计数符合预期后，记录其 64 位 `planHash`。正式提交必须同时使用固定
-确认词和同一次预演的哈希；脚本拿锁后会重新计算，任何清单或计数漂移都会在写入前回滚：
+Portal 只能读取原子发布的 Dashboard JSON，不得获得数据库连接串或平台凭据。
+
+## 3. 目录与权限清单
+
+先验证 `/srv`、`/srv/shein-fm` 和 `/srv/shein-fm/secrets` 均为 root 所有，组和其他用户不可写。建议清单：
 
 ```bash
-sudo /usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/bash \
-  /opt/shein-fm/current/scripts/migrate_full_managed_warehouse_store_inventory.sh \
-  --confirm SHEIN_FULL_WAREHOUSE_STORE_INVENTORY_APPLY \
-  --plan-hash <DRY_RUN_PLAN_HASH>
+sudo install -d -o root -g root -m 0755 /srv/shein-fm
+sudo install -d -o root -g root -m 0755 \
+  /srv/shein-fm/runtime /srv/shein-fm/logs /srv/shein-fm/backups
+sudo install -d -o root -g root -m 0700 /srv/shein-fm/secrets
+sudo install -d -o sheinfm-materializer -g sheinfm-dashboard -m 0750 \
+  /srv/shein-fm/runtime/dashboard
+
+sudo install -d -o root -g sheinfm-portal -m 0750 \
+  /srv/shein-fm/secrets/portal
+sudo install -d -o root -g sheinfm-materializer -m 0750 \
+  /srv/shein-fm/secrets/materializer
+sudo install -d -o root -g sheinfm-sales -m 0750 \
+  /srv/shein-fm/secrets/sales
+sudo install -d -o root -g sheinfm-supply -m 0750 \
+  /srv/shein-fm/secrets/supply
+sudo install -d -o root -g sheinfm-webhook-ingress -m 0750 \
+  /srv/shein-fm/secrets/webhook-ingress
+sudo install -d -o root -g sheinfm-webhook-worker -m 0750 \
+  /srv/shein-fm/secrets/webhook-worker
+sudo install -d -o root -g root -m 0700 \
+  /srv/shein-fm/secrets/db-migrate
 ```
 
-迁移持有事务级 advisory lock，并锁定维表及其历史引用表以阻断并发同步/探针写入。
-生产包装器必须由 root 运行，并仅在进程内读取数据库 owner 凭据；不得改用权限受限的
-`sheinfm_app` 运行角色，也不得把连接串放入命令行、日志或历史记录。
-运行前必须确认 `/srv`、`/srv/shein-fm`、`/srv/shein-fm/secrets` 均为 root 所有且
-组和其他用户不可写；`postgres.env` 必须是 root 所有、非符号链接的 `0600/0640`
-普通文件。包装器会以最小环境重新验证这些条件并拒绝权限漂移。
-预期清单外的活跃旧店仅在没有 `platform_shop_id`、主体名、抓取/SKU/销量/汇总历史，
-且权限探针全部为 `PENDING` 时才会被标记 `is_active: false`；这些允许保留的
-`PENDING` 探针及旧店行仍原样存在。任一安全条件不满足、并发计数漂移或最终活跃代码
-不精确等于 24 店清单，整笔事务都会回滚。
-未完成店铺授权、销量权限核验和首店只读探针之前，`shein-fm-sales-sync.timer`
-必须继续保持禁用。
+文件清单：
 
-授权 Broker 只读
-`/srv/shein-fm-auth/secrets/application.secret.json` 中的 DL 全托应用凭据，并只写
-`/srv/shein-fm-auth/secrets/receipts`。待核验 receipt 不会被销量同步读取；只有管理员核对
-`supplierId` 后，受控晋级脚本才可原子更新正式 `openapi.json`。
+| 路径 | 所有者/模式 | 用途 |
+| --- | --- | --- |
+| `portal/bi_users.json` | `root:sheinfm-portal 0640` | 登录账号散列 |
+| `portal/session-secret` | `root:sheinfm-portal 0640` | 会话 HMAC |
+| `materializer/database.env` | `root:sheinfm-materializer 0640` | 只读物化连接 |
+| `sales/database.env` | `root:sheinfm-sales 0640` | 销量 loader 连接 |
+| `sales/openapi.json` | `root:sheinfm-sales 0640` | 24 店只读凭据 |
+| `supply/database.env` | `root:sheinfm-supply 0640` | 供应链 loader 连接 |
+| `supply/openapi.json` | `root:sheinfm-supply 0640` | 24 店只读凭据副本 |
+| `webhook-ingress/database.env` | `root:sheinfm-webhook-ingress 0640` | 回执入仓连接 |
+| `webhook-ingress/stores.json` | `root:sheinfm-webhook-ingress 0640` | 最小店铺路由身份 |
+| `webhook-ingress/application.secret.json` | `root:sheinfm-webhook-ingress 0640` | 验签/密文接收应用凭据 |
+| `webhook-worker/database.env` | `root:sheinfm-webhook-worker 0640` | Worker 连接 |
+| `webhook-worker/stores.json` | `root:sheinfm-webhook-worker 0640` | 解密后的店铺映射 |
+| `webhook-worker/application.secret.json` | `root:sheinfm-webhook-worker 0640` | 解密应用凭据 |
+| `db-migrate/runtime-role-passwords.env` | `root:root 0600` | 迁移期间注入六个密码 |
 
-授权专用文件权限：
+不同组件使用独立普通文件；不得用指向更宽权限目录的符号链接。数据库 `database.env` 只包含该组件 LOGIN 的连接串。Webhook Worker 当前不会调用实际 OpenAPI 回查客户端，即使其配置中存在店铺映射。
 
-- `application.secret.json`：`root:sheinfm-auth 0640`，Broker 只读；
-- `runtime` 与 `receipts`：`sheinfm-auth:sheinfm-auth 0700`；
-- `/srv/shein-fm/secrets/store-identity-map.secret.json`：`root:root 0600`，只保存从独立来源核验的 `storeCode → platformSupplierId`，Broker 不可读写；
-- 正式晋级必须设置 `SHEIN_FM_CLOUD_EXECUTION=1`，并在写配置前用 receipt 凭据实时回读 `query-store-info`。
+## 4. 数据库密码与兼容切换
 
-## 发布顺序
-
-1. 运行 `npm test`、`npm run check`、`npm audit --omit=dev` 和 `git diff --check`。
-2. 将确定的 Git 提交解压到新的 release 目录，并执行 `npm ci --omit=dev --ignore-scripts`。
-3. 启动独立数据库，按编号执行 `db/migrations/`，再执行 `db/verify/`。
-4. 从生产库物化 `/srv/shein-fm/runtime/dashboard.json`；空库必须生成 `empty + null`，不得复制 fixture。
-5. 切换 `current` 软链接，安装并启动 Portal、备份与数据同步单元。
-6. 安装 Nginx 站点；对共享 Caddy、HAProxy 配置先备份和验证，再只执行 reload。
-7. 从公网验证 TLS、登录墙、会话登录、Dashboard API、九个路由和退出登录。
-8. 创建 `sheinfm-auth` 系统用户和专用目录，安装授权服务；验证端口仅 loopback 监听。
-9. 确认 Nginx 对 `/authorize` 与 `/openapi/authorize/callback` 只写不含查询参数的安全日志，
-   安装 `infra/logrotate/shein-fm-auth`。
-10. 完成生产 OpenAPI 清单与 PostgreSQL 维表两次独立 dry-run、显式确认迁移，
-    并回读 `24 店 / 0 enabled / 0 凭据 / 24 个活跃维表店铺` 后，再生成一次性授权批次。
-    交接文件写入 broker 无法读取的 root 管控临时位置，安全传输后立即删除服务器副本。
-
-HAProxy 同时承载 443 SSH，严禁 restart；只能在保留现有 SSH 会话的前提下执行 `haproxy -c` 后 reload。
-
-## 服务与验收
+复制模板：
 
 ```bash
-systemctl status shein-fm-db.service shein-fm-portal.service
+sudo install -o root -g root -m 0600 \
+  infra/systemd/shein-fm-db-migrate-secrets.env.example \
+  /srv/shein-fm/secrets/db-migrate/runtime-role-passwords.env
+```
+
+重要：
+
+- `SHEIN_FM_APP_DB_PASSWORD` 必须复用当前生产 `sheinfm_app` 密码。本次切换期间不得旋转它；
+- 其余五个 LOGIN 密码应独立生成、至少 24 个 URL-safe 字符，彼此不得复用；
+- 密码值不得出现在命令行、日志、Git 或 shell history；
+- `scripts/migrate_full_managed_db.sh` 只把变量名通过 `docker exec --env NAME` 注入容器，值来自 root-private EnvironmentFile；
+- 只有在五个新服务完成切换并确认没有旧进程使用 `sheinfm_app` 后，才可另行规划旧密码轮换。
+
+迁移若在 `0002` 之后失败，旧 Portal 仍只读 JSON；旧数据库客户端依赖复用的 `sheinfm_app` 密码继续工作。不要在迁移失败后删除或重建现有数据库卷。
+
+## 5. 发布前本地门禁
+
+```bash
+npm ci --ignore-scripts
+npm test
+npm run check
+npm audit --omit=dev
+git diff --check
+```
+
+必须满足：
+
+- 测试 0 失败；平台相关跳过项要在 Linux/云端补跑；
+- 仓库秘密扫描无数据库密码、OpenAPI secret、token、cookie 或签名；
+- 当前提交已推送到 GitHub，发布包来源于该精确提交；
+- Nginx 和所有 systemd 单元先做静态验证。
+
+## 6. PostgreSQL 临时库演练
+
+生产迁移前，必须在同一 PostgreSQL 版本创建名称明确的临时数据库，完整执行全部 migration 与 verify。不要只测试 `9999`。
+
+1. 记录生产容器、镜像版本和目标提交；
+2. 创建唯一临时库，例如 `shein_fm_rehearsal_20260726_<suffix>`；
+3. 以同一组迁移密码执行 `0001` 到 `9999`；
+4. 执行 `db/verify/` 全部脚本；
+5. 使用五个 LOGIN 分别做允许/拒绝的最小权限探针；
+6. 重跑全部 migration/verify，确认幂等；
+7. 只在精确核对临时库名后删除该临时库。
+
+任何脚本失败都禁止进入生产。
+
+## 7. 生产发布顺序
+
+1. 对生产 PostgreSQL 做可恢复备份并校验文件非空；
+2. 将目标 Git 提交安装到新的 `/opt/shein-fm/releases/<commit>`，执行 `npm ci --omit=dev --ignore-scripts`；
+3. 不切换 `current`，先在 release 内跑静态检查；
+4. 安装 root-private 迁移 EnvironmentFile；
+5. 运行 `shein-fm-db-migrate.service`，确认全部 migration 与 verify 成功；
+6. 为五个组件写入独立 `database.env`，LOGIN 与能力组必须一一对应；
+7. 安装 systemd 单元，执行 `systemd-analyze verify` 和 `systemctl daemon-reload`；
+8. 手工运行一次 Dashboard 物化，检查 staging 原子替换、文件所有权和 JSON 契约；
+9. 切换 `/opt/shein-fm/current`；
+10. 只创建 `portal.enabled` 与 `materializer.enabled` 门禁，启动 Portal 和物化 timer；
+11. 安装 Nginx 和 logrotate，执行 `nginx -t` 成功后只 reload；
+12. 从 loopback 和公网验证登录墙、Dashboard API、12 个路由和退出登录；
+13. 再按下节逐域开启数据服务。
+
+共享 HAProxy 同时承载 443 SSH，严禁 restart；只允许在保留现有 SSH 会话时执行 `haproxy -c` 后 reload。
+
+## 8. 销量、供应链与 Webhook 分阶段开启
+
+### 销量
+
+1. 使用新 `sheinfm-sales` 身份对一个已知店铺运行权限探针；
+2. 对一个有销量日期的店铺完成同步与仓库回读；
+3. 对一个完整零销量、无 `dt` 的店铺验证 `LEGAL_ZERO_UNANCHORED`，不得告警为失败；
+4. 扩大到 24 店并核对权限、SKU 数、业务日期、四窗口总量和店铺覆盖；
+5. 物化并回读 Portal；
+6. 只有全部门禁通过后创建 `sales-sync.enabled` 并启用 timer。
+
+### 供应链
+
+1. 先完成销量稳定 SKU 成员关系；
+2. 对一店一域探针商品、库存、缺货建议、采购和交付字段；
+3. 显式运行历史回填；回填失败、部分覆盖或未知字段均不可视为完成；
+4. 执行一次正常增量并回读同步尝试账本、投影批次和 Dashboard；
+5. 只有历史回填与增量均通过后，才创建 `supply-backfill.verified` 和 `supply-sync.enabled`；
+6. 供应链 timer 默认保持禁用，部署脚本不得自动创建两个门禁。
+
+库存请求集合必须来自最新可接受的销量稳定清单。最新销量运行失败或清单证据缺失时，库存同步要显示部分/阻断，不能回退到商品接口清单。
+
+### Webhook
+
+1. 配置独立 ingress/worker secrets 和数据库 LOGIN；
+2. 安装 Nginx 精确路由 `/api/shein/webhook/v1/events`，执行 `nginx -t`；
+3. 创建 `webhook-ingress.enabled` 与 `webhook-worker.enabled` 后启动两个进程；
+4. 回读 Receiver 和 Worker 新鲜心跳；空队列本身不算健康；
+5. 对错误签名请求验证安全 `401`，日志不得出现签名、查询参数或密文；
+6. 用受控测试事件验证 receipt、job、标准化事件和 Dashboard；
+7. 所有事件采用 10 分钟签名投递窗口的至少一次语义：同窗口同密文重试去重，跨窗口同载荷形成新事件；窗口边界可能重复，所有下游处理必须幂等。
+
+本次不创建 SHEIN 平台订阅。订阅属于外部写操作，须另行实时读回、dry-run、明确确认和结果回读。
+
+## 9. 服务与验收
+
+```bash
+systemctl status \
+  shein-fm-db.service \
+  shein-fm-portal.service \
+  shein-fm-dashboard-materialize.timer \
+  shein-fm-webhook-receiver.service \
+  shein-fm-webhook-worker.service
+
 systemctl list-timers 'shein-fm-*'
 curl -fsS http://127.0.0.1:8788/health
-curl -fsS http://127.0.0.1:8789/health
 curl -I https://fm.dushengyi.cc/
 docker exec shein-fm-db pg_isready -U sheinfm -d shein_fm
 ```
 
-未登录访问 `/api/dashboard` 必须返回 `401`，页面访问必须跳转 `/login`。销量定时任务只有在真实全托凭据写入并完成首店只读探针后启用；权限待审期间，生产页面应显示 24 店待授权和空销量。
+验收要求：
 
-授权入口 `/authorize` 必须可以在不登录 BI 的情况下打开，但没有 URL 片段口令或授权会话时不得读取批次。交接链接口令及 callback 查询参数不得出现在 Nginx 日志；安全日志只能包含
-`method + uri + status + request_time`。SHEIN callback 完成后必须立即跳转到无查询参数结果页。
+- 未登录 `/api/dashboard` 返回 `401`，登录后只读；
+- Portal 进程环境无数据库与平台凭据；
+- 首页显示真实今日/昨日/7日/30日、逐日趋势、店铺和标准商品排行；
+- 页面明确业务日期、24 店覆盖和具体质量原因；
+- 合法零销量不报错，缺数/部分覆盖不显示为零；
+- 员工可读全部店铺，负责人/店铺仅用于筛选；
+- 所有 mutation 和 SHEIN 写开关保持关闭；
+- Webhook Receiver/Worker 心跳分别新鲜；
+- Nginx、systemd、数据库角色和文件权限均通过实机验证。
 
-## 回滚
+## 10. 回滚
 
-代码回滚只把 `/opt/shein-fm/current` 原子切换到上一个已验证 release，然后重启 `shein-fm-portal.service`。数据库 schema 采用向前迁移，不通过覆盖旧迁移回滚。边缘配置回滚使用部署前保存在 `/srv/shein-fm/backups/edge-*` 的精确副本，并在 reload 前重新验证。
+代码回滚只将 `/opt/shein-fm/current` 原子切回上一个已验证 release，并重启受影响的 Portal/worker。数据库 schema 使用向前迁移，不覆盖旧 migration，也不删除新角色或事实表。
+
+如果新数据服务失败：
+
+1. 删除对应 `*.enabled` 门禁并停止该组件；
+2. 保留旧 Dashboard JSON，Portal 继续只读；
+3. 切回旧 release；
+4. 保留追加式 raw/ops 证据用于诊断；
+5. 不删除数据库卷、不回滚已提交事实、不旋转旧 `sheinfm_app` 密码；
+6. 修复后重新走临时库、迁移、逐域探针与回读。
+
+边缘配置回滚使用部署前保存在 `/srv/shein-fm/backups/edge-*` 的精确副本，并在 reload 前重新验证。删除任何门禁或旧 release 前必须先精确解析目标路径。

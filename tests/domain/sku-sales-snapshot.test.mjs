@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   MAX_SKUS_PER_SALES_QUERY,
   SkuSalesDomainError,
+  classifySkuSalesDateQuality,
   createSkuSalesQueryBatches,
   deduplicateSkuCodes,
   inspectSkuSalesResponseForPermissionProbe,
@@ -162,9 +163,9 @@ test('rejects an invalid statistics date', () => {
   assertDomainError(() => mapFixture({ response }), 'INVALID_STATISTICS_DATE');
 });
 
-test('permission inspection accepts only an explicit empty statistics date without inventing one', () => {
+test('an explicit empty statistics date remains observable without inventing one', () => {
   const response = clone(successFixture);
-  response.info.dataList[0].dt = '';
+  response.info.dataList.find(({ skuCode }) => skuCode === 'SKU-001').dt = '';
 
   assert.deepEqual(
     inspectSkuSalesResponseForPermissionProbe({
@@ -175,9 +176,41 @@ test('permission inspection accepts only an explicit empty statistics date witho
       recordCount: 2,
       statisticsDateAvailable: false,
       missingStatisticsDateCount: 1,
+      legalZeroUnanchoredCount: 0,
+      unanchoredNonzeroCount: 1,
+      dataLoadable: false,
     },
   );
-  assertDomainError(() => mapFixture({ response }), 'STATISTICS_DATE_UNAVAILABLE');
+  const [unanchored] = mapFixture({ response });
+  assert.equal(unanchored.statisticsDate, null);
+  assert.equal(classifySkuSalesDateQuality(unanchored), 'UNANCHORED_NONZERO');
+});
+
+test('complete zero sales with empty dt is a legal unanchored zero observation', () => {
+  const response = clone(successFixture);
+  const index = response.info.dataList.findIndex(({ skuCode }) => skuCode === 'SKU-001');
+  response.info.dataList[index] = {
+    skuCode: 'SKU-001',
+    realTimeSaleCnt: 0,
+    cydSaleCnt: 0,
+    c7dSaleCnt: 0,
+    c30dSaleCnt: 0,
+    dt: '',
+  };
+
+  const [zero] = mapFixture({ response });
+
+  assert.deepEqual(zero, {
+    storeCode: 'DL5477',
+    skuCode: 'SKU-001',
+    salesToday: 0,
+    salesYesterday: 0,
+    sales7Days: 0,
+    sales30Days: 0,
+    statisticsDate: null,
+    fetchedAt: '2026-07-20T03:04:05.000Z',
+  });
+  assert.equal(classifySkuSalesDateQuality(zero), 'LEGAL_ZERO_UNANCHORED');
 });
 
 test('permission inspection still rejects missing, null and invalid non-empty statistics dates', () => {

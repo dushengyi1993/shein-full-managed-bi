@@ -321,22 +321,36 @@ export async function probeFullManagedSalesPermission(client, { storeCode } = {}
       requestedSkuCodes: [skuCode],
       response: response.data,
     });
+    const hasUnanchoredNonzero = validation.unanchoredNonzeroCount > 0;
+    const hasLegalUnanchoredZero = validation.legalZeroUnanchoredCount > 0;
     return {
       outcome: 'GRANTED',
       probedAt,
       httpStatus: 200,
       platformErrorCode: null,
-      platformMessage: validation.statisticsDateAvailable
-        ? 'query-sku-sales returned code 0.'
-        : 'query-sku-sales returned code 0, but dt was empty; permission is granted and fact loading remains blocked.',
+      platformMessage: hasUnanchoredNonzero
+        ? 'query-sku-sales returned code 0, but a non-zero row had no dt and must be quarantined.'
+        : hasLegalUnanchoredZero
+          ? 'query-sku-sales returned code 0 with a complete legal zero row and empty dt.'
+          : 'query-sku-sales returned code 0.',
       evidence: {
         storeCode,
         endpointReached: QUERY_SKU_SALES_PATH,
         salesEndpointExercised: true,
         statisticsDateAvailable: validation.statisticsDateAvailable,
-        dataLoadable: validation.statisticsDateAvailable,
-        dataQualityStatus: validation.statisticsDateAvailable ? 'VALID' : 'DEGRADED',
-        dataQualityReason: validation.statisticsDateAvailable ? null : 'MISSING_STATISTICS_DATE',
+        dataLoadable: validation.dataLoadable,
+        dataQualityStatus: hasUnanchoredNonzero
+          ? 'BLOCKED'
+          : validation.statisticsDateAvailable
+            ? 'VALID'
+            : 'DEGRADED',
+        dataQualityReason: hasUnanchoredNonzero
+          ? 'UNANCHORED_NONZERO'
+          : hasLegalUnanchoredZero
+            ? 'LEGAL_ZERO_UNANCHORED'
+            : validation.statisticsDateAvailable
+              ? null
+              : 'MISSING_STATISTICS_DATE',
       },
     };
   } catch (error) {

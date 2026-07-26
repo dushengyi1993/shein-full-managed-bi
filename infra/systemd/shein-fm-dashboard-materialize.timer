@@ -1,0 +1,16 @@
+[Unit]
+Description=Refresh SHEIN full-managed dashboard JSON every five minutes
+ConditionPathExists=/srv/shein-fm/runtime/materializer.enabled
+
+[Timer]
+OnBootSec=2m
+OnUnitInactiveSec=5m
+RandomizedDelaySec=30s
+Persistent=true
+Unit=shein-fm-dashboard-materialize.service
+
+# Deliberately disabled by default. Creating materializer.enabled is necessary
+# but not sufficient; deployment must also explicitly enable this timer.
+
+[Install]
+WantedBy=timers.target
