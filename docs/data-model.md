@@ -116,7 +116,7 @@
 - `ops.supply_sync_attempt`：店铺 × 域 × 子类型 × 模式的追加式 `STARTED / SUCCEEDED / PARTIAL / FAILED` 账本；
 - `fact.supply_projection_batch / fact.supply_projection_member`：库存和缺货建议的可信当前批次成员关系；完整空批次可以清空当前投影，部分批次不能替代上一完整投影；
 - `dim.full_warehouse`：全托仓库身份；
-- `fact.inventory_snapshot / fact.warehouse_inventory_snapshot`：PI / VI / JI 库存总量与仓库明细；
+- `fact.inventory_snapshot / fact.warehouse_inventory_snapshot`：PI / JI 全托生产库存总量与仓库明细；模型兼容保留 VI，但不把无商家虚拟库存的全托店判为缺数；
 - `fact.stock_advice_snapshot / fact.shortage_event`：缺货建议与缺货观察；
 - `fact.purchase_order / fact.purchase_order_line / fact.purchase_order_jit_relation`：采购单、行和 JIT 关系；
 - `fact.delivery / fact.delivery_line`：交付单、行和里程碑；

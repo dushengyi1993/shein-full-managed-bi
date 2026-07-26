@@ -38,7 +38,6 @@ const SUPPLY_COVERAGE_GRAINS = Object.freeze({
   ]),
   inventory: Object.freeze([
     Object.freeze({ domainCode: 'INVENTORY', subtypeCode: 'PI' }),
-    Object.freeze({ domainCode: 'INVENTORY', subtypeCode: 'VI' }),
     Object.freeze({ domainCode: 'INVENTORY', subtypeCode: 'JI' }),
   ]),
   stockAdvice: Object.freeze([

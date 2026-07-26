@@ -87,12 +87,10 @@ test('supply coverage distinguishes successful, failed and missing stores', asyn
       return {
         rows: [
           attempt(1, 'AA1000', 'PI', 'SUCCEEDED'),
-          attempt(1, 'AA1000', 'VI', 'SUCCEEDED'),
           attempt(1, 'AA1000', 'JI', 'SUCCEEDED'),
           attempt(2, 'BB2000', 'PI', 'FAILED', {
             completed_at: '2026-07-26T08:10:00.000Z',
           }),
-          attempt(2, 'BB2000', 'VI', 'SUCCEEDED'),
           attempt(2, 'BB2000', 'JI', 'SUCCEEDED'),
         ],
       };

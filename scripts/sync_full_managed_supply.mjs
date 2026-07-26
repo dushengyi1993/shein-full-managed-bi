@@ -29,7 +29,6 @@ export const DEFAULT_SUPPLY_DOMAINS = Object.freeze([
   'product-catalog',
   'product-details',
   'inventory:PI',
-  'inventory:VI',
   'inventory:JI',
   'stock-advice',
   'purchase-orders',
@@ -48,7 +47,10 @@ const MAX_PENDING_DELIVERY_CODES = 10_000;
 const DOMAIN_ALIASES = Object.freeze({
   all: DEFAULT_SUPPLY_DOMAINS,
   products: Object.freeze(['product-catalog', 'product-details']),
-  inventory: Object.freeze(['inventory:PI', 'inventory:VI', 'inventory:JI']),
+  // Full-managed stores expose SHEIN physical stock (PI) and JIT stock (JI).
+  // VI is merchant-managed virtual stock and remains an explicit diagnostic
+  // domain; it is not a required full-managed production grain.
+  inventory: Object.freeze(['inventory:PI', 'inventory:JI']),
   'inventory-pi': Object.freeze(['inventory:PI']),
   'inventory-vi': Object.freeze(['inventory:VI']),
   'inventory-ji': Object.freeze(['inventory:JI']),
@@ -1131,10 +1133,17 @@ async function syncStore({
         dependency: !selected.has('product-catalog'),
         catalogMissingActiveSkuCount,
         catalogExtraSkuCount,
-        coverageStatus: Number.isSafeInteger(catalogMissingActiveSkuCount)
-          && catalogMissingActiveSkuCount > 0
-          ? 'PARTIAL'
-          : 'COMPLETE',
+        // product/query is complete only after two identical, terminal-page
+        // sweeps. A difference from number-list is a cross-source scope
+        // reconciliation result, not evidence that either source was truncated.
+        coverageStatus: 'COMPLETE',
+        membershipReconciliationStatus: (
+          Number.isSafeInteger(catalogMissingActiveSkuCount)
+          && Number.isSafeInteger(catalogExtraSkuCount)
+          && (catalogMissingActiveSkuCount > 0 || catalogExtraSkuCount > 0)
+        )
+          ? 'SOURCE_SCOPE_DIFFERENCE'
+          : 'MATCHED',
       }));
     } catch (error) {
       setDomainResult(storeResult, makeDomainResult('product-catalog', 'fetch_error', {

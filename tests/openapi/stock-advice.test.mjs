@@ -115,3 +115,56 @@ test('stock warnings are known only for explicit normal or warning semantics', a
   assert.equal(empty.observed, false);
   assert.equal(empty.isWarning, null);
 });
+
+test('stock advice preserves production decimal daily-sales forecasts', async () => {
+  const client = {
+    async request() {
+      return {
+        data: {
+          code: '0',
+          info: {
+            count: 1,
+            list: [{
+              ...goods('DECIMAL'),
+              skuList: [{
+                ...goods('DECIMAL').skuList[0],
+                predictDaySales: 0.125,
+              }],
+            }],
+          },
+        },
+      };
+    },
+  };
+
+  const result = await fetchFullManagedStockAdvice(client);
+  assert.equal(result.advice[0].predictedDailySales, 0.125);
+});
+
+test('stock advice still rejects decimal actual unit counts', async () => {
+  const client = {
+    async request() {
+      return {
+        data: {
+          code: '0',
+          info: {
+            count: 1,
+            list: [{
+              ...goods('COUNT'),
+              skuList: [{
+                ...goods('COUNT').skuList[0],
+                predictDaySales: 0.125,
+                stock: 1.5,
+              }],
+            }],
+          },
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => fetchFullManagedStockAdvice(client),
+    /stock must be a non-negative integer/,
+  );
+});

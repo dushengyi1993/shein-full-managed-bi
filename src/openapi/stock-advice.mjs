@@ -102,7 +102,10 @@ function mapSku(value, product, location) {
     spuName: product.spuName,
     supplierCode: product.supplierCode,
     variantName: optionalText(row.suffixZh ?? row.attr, `${location}.suffixZh`),
-    predictedDailySales: optionalQuantity(row.predictDaySales, `${location}.predictDaySales`),
+    // The official schema still labels predictDaySales as an integer, but the
+    // production full-managed response exposes a non-negative decimal rate.
+    // Preserve the platform value instead of rounding a forecast into a count.
+    predictedDailySales: optionalNumber(row.predictDaySales, `${location}.predictDaySales`),
     pendingOrderQuantity: optionalQuantity(row.orderCnt, `${location}.orderCnt`),
     totalSalesQuantity: optionalQuantity(row.totalSaleVolume, `${location}.totalSaleVolume`),
     sales7Days: optionalQuantity(row.c7dSaleCnt, `${location}.c7dSaleCnt`),

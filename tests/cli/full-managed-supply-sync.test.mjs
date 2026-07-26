@@ -266,11 +266,11 @@ test('orchestrator uses only read-only endpoints, bounded batches and explicit i
   assert.deepEqual(details.map(({ options }) => options.body.skuCodes.length), [100, 100, 5]);
 
   const inventory = calls.filter(({ path: apiPath }) => apiPath === STOCK_QUERY_PATH);
-  assert.equal(inventory.length, 9);
+  assert.equal(inventory.length, 6);
   assert.ok(inventory.every(({ options }) => options.body.skuCodeList.length <= 100));
   assert.deepEqual(
     [...new Set(inventory.map(({ options }) => options.body.invType))].sort(),
-    ['JI', 'PI', 'VI'],
+    ['JI', 'PI'],
   );
 
   const stockAdvice = calls.find(({ path: apiPath }) => apiPath === STOCK_GOODS_LIST_PATH);
@@ -295,10 +295,9 @@ test('orchestrator uses only read-only endpoints, bounded batches and explicit i
     DELIVERY_QUERY_PATH,
   ]);
   assert.ok(calls.every(({ path: apiPath }) => allowedReadOnlyPaths.has(apiPath)));
-  assert.equal(loads.length, 4);
+  assert.equal(loads.length, 3);
   assert.deepEqual(loads.slice(1).map(({ runId }) => runId), [
     'supply-fixed:DL5477:inventory:PI',
-    'supply-fixed:DL5477:inventory:VI',
     'supply-fixed:DL5477:inventory:JI',
   ]);
 });
@@ -377,20 +376,21 @@ test('inventory follows sales number-list membership even when product enrichmen
     },
   });
 
-  assert.equal(summary.ok, false);
-  assert.equal(summary.results[0].status, 'partial');
+  assert.equal(summary.ok, true);
+  assert.equal(summary.results[0].status, 'loaded');
   assert.deepEqual(requested, ['SKU-AUTHORITATIVE']);
   assert.equal(loads.length, 2);
   const catalog = summary.results[0].domains.find(({ domain }) => (
     domain === 'product-catalog'
   ));
   assert.equal(catalog.catalogMissingActiveSkuCount, 1);
-  assert.equal(catalog.coverageStatus, 'PARTIAL');
+  assert.equal(catalog.coverageStatus, 'COMPLETE');
+  assert.equal(catalog.membershipReconciliationStatus, 'SOURCE_SCOPE_DIFFERENCE');
   const terminal = attempts.filter(({ status }) => status !== 'STARTED');
   assert.deepEqual(
     terminal.map(({ domain, subtype, status }) => ({ domain, subtype, status })),
     [
-      { domain: 'productCatalog', subtype: 'ALL', status: 'PARTIAL' },
+      { domain: 'productCatalog', subtype: 'ALL', status: 'SUCCEEDED' },
       { domain: 'inventory', subtype: 'PI', status: 'SUCCEEDED' },
     ],
   );
