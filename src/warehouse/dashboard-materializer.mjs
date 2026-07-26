@@ -45,20 +45,27 @@ export async function readDashboardProjectionInput(pool) {
           WHERE capability_code = 'FULL_MANAGED_SKU_SALES'
           ORDER BY store_id, probed_at DESC, permission_probe_id DESC
         ), latest_run AS (
-          SELECT DISTINCT ON (store_id)
-                 store_id, status, business_date, date_anchor_status, quality_status,
-                 requested_sku_count, response_sku_count, dated_sku_count,
-                 unanchored_zero_sku_count, quarantined_sku_count,
-                 sales_today, sales_yesterday, sales_7_days, sales_30_days,
-                 source_fetched_at
-          FROM ops.sales_sync_run
-          ORDER BY store_id, source_fetched_at DESC, sales_sync_run_id DESC
+          SELECT DISTINCT ON (run.store_id)
+                 run.store_id, run.status, run.business_date,
+                 run.date_anchor_status, run.quality_status,
+                 run.requested_sku_count, run.response_sku_count,
+                 run.dated_sku_count, run.unanchored_zero_sku_count,
+                 run.quarantined_sku_count, run.sales_today,
+                 run.sales_yesterday, run.sales_7_days, run.sales_30_days,
+                 run.source_fetched_at,
+                 quality.details->'affectedSkuCodes' AS quarantined_sku_codes
+          FROM ops.sales_sync_run run
+          LEFT JOIN ops.sales_quality_event quality
+            ON quality.sales_sync_run_id = run.sales_sync_run_id
+           AND quality.event_code = 'SALES_DATE_UNANCHORED_NONZERO'
+          ORDER BY run.store_id, run.source_fetched_at DESC, run.sales_sync_run_id DESC
         )
         SELECT s.store_code, s.store_name, p.outcome, p.evidence, p.probed_at,
                r.status AS run_status, r.business_date, r.date_anchor_status,
                r.quality_status, r.requested_sku_count, r.response_sku_count,
                r.dated_sku_count, r.unanchored_zero_sku_count,
-               r.quarantined_sku_count, r.sales_today, r.sales_yesterday,
+               r.quarantined_sku_count, r.quarantined_sku_codes,
+               r.sales_today, r.sales_yesterday,
                r.sales_7_days, r.sales_30_days, r.source_fetched_at,
                w.business_date AS watermark_date,
                w.coverage_status AS watermark_coverage_status,
@@ -310,6 +317,13 @@ export async function readDashboardProjectionInput(pool) {
           || row.quarantined_sku_count === undefined
           ? null
           : pgInteger(row.quarantined_sku_count, `${row.store_code}.quarantinedSkuCount`),
+        quarantinedSkuCodes: Array.isArray(row.quarantined_sku_codes)
+          ? [...new Set(
+              row.quarantined_sku_codes
+                .filter((value) => typeof value === 'string' && value.trim() !== '')
+                .map((value) => value.trim().slice(0, 64)),
+            )].slice(0, 100)
+          : [],
         unitsSold: row.sales_today === null || row.sales_today === undefined
           ? null
           : {
@@ -604,6 +618,8 @@ function salesCoverage({
     status,
     label,
     reason,
+    partialStores,
+    quarantinedRows,
     datedRows: selectedSnapshots.length,
     totalRows,
   };
@@ -630,7 +646,8 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
       salesCoverage: {
         businessDate: null, coveredStores: 0, legalZeroStores: 0,
         totalStores: storeCatalog.length, status: 'unknown', label: '等待销量数据',
-        reason: '尚无完整、可解释的销量观测', datedRows: 0, totalRows: 0,
+        reason: '尚无完整、可解释的销量观测',
+        partialStores: 0, quarantinedRows: 0, datedRows: 0, totalRows: 0,
       },
       quality: {
         status: 'unavailable', label: '暂无销量数据',
@@ -715,9 +732,13 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
       qualityReason = '销量完整返回为0，但统计日期未锚定';
     } else if (rows.length > 0) {
       qualityStatus = health?.dateAnchorStatus === 'PARTIAL' ? 'partial' : 'healthy';
+      const quarantinedPreview = (health?.quarantinedSkuCodes ?? []).slice(0, 5);
+      const quarantinedSuffix = quarantinedPreview.length > 0
+        ? `：${quarantinedPreview.join('、')}${(health?.quarantinedSkuCount ?? 0) > quarantinedPreview.length ? ' 等' : ''}`
+        : '';
       qualityReason = health?.dateAnchorStatus === 'PARTIAL'
         ? (health?.quarantinedSkuCount ?? 0) > 0
-          ? `${health.quarantinedSkuCount} 个非零SKU缺少统计日期，已隔离`
+          ? `${health.quarantinedSkuCount} 个非零SKU缺少统计日期，已隔离${quarantinedSuffix}`
           : '部分零销量SKU缺少统计日期'
         : '销量已按统一业务日入仓';
     } else if (health?.watermarkDate && health.watermarkDate !== businessDate) {
@@ -772,9 +793,13 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
     reason: coverage.reason,
     impact: coverage.status === 'complete'
       ? '销售卡片、趋势和排行榜均使用同一业务日'
+      : coverage.quarantinedRows > 0
+        ? '销售卡片、趋势和排行榜仅汇总有日期的SKU；隔离SKU未计入，当前数值不是完整总量'
       : '首页只汇总可解释的同日数据，其他店铺保持空值或单独标注',
     nextStep: coverage.status === 'blocked'
       ? '检查被隔离SKU并等待SHEIN返回有效dt'
+      : coverage.quarantinedRows > 0
+        ? '检查隔离SKU并等待SHEIN返回有效dt后重跑'
       : coverage.status === 'partial'
         ? '继续同步未覆盖店铺，不要跨日补零'
         : null,

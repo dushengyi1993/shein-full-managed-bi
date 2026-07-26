@@ -69,6 +69,7 @@ function validateSalesLoadCoverage(store, inventory, sales) {
   let datedSkuCount = 0;
   let unanchoredZeroSkuCount = 0;
   let quarantinedSkuCount = 0;
+  const quarantinedSkuCodes = [];
   const totals = {
     salesToday: 0,
     salesYesterday: 0,
@@ -100,6 +101,7 @@ function validateSalesLoadCoverage(store, inventory, sales) {
       unanchoredZeroSkuCount += 1;
     } else {
       quarantinedSkuCount += 1;
+      quarantinedSkuCodes.push(skuCode);
     }
     if (dateQuality === 'DATED') {
       for (const field of Object.keys(totals)) {
@@ -178,6 +180,7 @@ function validateSalesLoadCoverage(store, inventory, sales) {
     datedSkuCount,
     unanchoredZeroSkuCount,
     quarantinedSkuCount,
+    quarantinedSkuCodes,
     ...totals,
   };
 }
@@ -531,6 +534,9 @@ async function upsertSalesQualityEvents(client, {
   }
   if (coverage.quarantinedSkuCount > 0) {
     const blocked = coverage.status === 'QUALITY_BLOCKED';
+    const affectedSkuCodes = coverage.quarantinedSkuCodes
+      .slice(0, 100)
+      .map((skuCode) => skuCode.slice(0, 64));
     events.push({
       code: 'SALES_DATE_UNANCHORED_NONZERO',
       severity: blocked ? 'ERROR' : 'WARNING',
@@ -540,6 +546,9 @@ async function upsertSalesQualityEvents(client, {
         impact: blocked
           ? 'No dated rows were available, so the store was excluded from BI.'
           : 'Unanchored non-zero rows were excluded; dated rows remain visible as partial coverage.',
+        affectedSkuCodes,
+        affectedSkuCodesTruncated:
+          coverage.quarantinedSkuCodes.length > affectedSkuCodes.length,
       },
     });
   }
@@ -955,7 +964,7 @@ export async function loadFullManagedSalesSync(pool, {
         evidence: {
           endpointReached: SKU_SALES_ENDPOINT,
           salesEndpointExercised: true,
-          statisticsDateAvailable: isAnchored,
+          statisticsDateAvailable: coverage.businessDate !== null,
           dataLoadable: !isBlocked,
           dataQualityStatus: isBlocked ? 'BLOCKED' : isAnchored ? 'VALID' : 'DEGRADED',
           dataQualityReason: isBlocked
@@ -982,6 +991,7 @@ export async function loadFullManagedSalesSync(pool, {
       result.qualityStatus = coverage.qualityStatus;
       result.businessDate = coverage.businessDate;
       result.quarantinedSkuCount = coverage.quarantinedSkuCount;
+      result.quarantinedSkuCodes = coverage.quarantinedSkuCodes.slice(0, 100);
       result.unanchoredZeroSkuCount = coverage.unanchoredZeroSkuCount;
     }
     return result;

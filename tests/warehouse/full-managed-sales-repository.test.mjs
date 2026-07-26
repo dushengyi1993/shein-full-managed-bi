@@ -130,6 +130,87 @@ function syncInput() {
   };
 }
 
+function nm7397ShapeInput() {
+  const storeCode = 'NM7397';
+  const skuCodes = Array.from(
+    { length: 548 },
+    (_, index) => `NM-SKU-${String(index + 1).padStart(4, '0')}`,
+  );
+  const items = skuCodes.map((skuCode) => ({
+    skuCode,
+    skc: `SKC-${skuCode}`,
+    supplierSku: `SUP-${skuCode}`,
+    attribute: 'Default',
+  }));
+  const snapshots = skuCodes.map((skuCode, index) => {
+    if (index < 83) {
+      return {
+        storeCode,
+        skuCode,
+        statisticsDate: '2026-07-25',
+        fetchedAt: '2026-07-26T17:00:00.000Z',
+        salesToday: 1,
+        salesYesterday: 2,
+        sales7Days: 7,
+        sales30Days: 30,
+      };
+    }
+    if (index < 546) {
+      return {
+        storeCode,
+        skuCode,
+        statisticsDate: null,
+        fetchedAt: '2026-07-26T17:00:00.000Z',
+        salesToday: 0,
+        salesYesterday: 0,
+        sales7Days: 0,
+        sales30Days: 0,
+      };
+    }
+    return {
+      storeCode,
+      skuCode,
+      statisticsDate: null,
+      fetchedAt: '2026-07-26T17:00:00.000Z',
+      salesToday: index === 546 ? 1 : 0,
+      salesYesterday: index === 547 ? 2 : 0,
+      sales7Days: 2,
+      sales30Days: 3,
+    };
+  });
+  const batches = [];
+  const pages = [];
+  for (let offset = 0, batchIndex = 0; offset < skuCodes.length; offset += 100, batchIndex += 1) {
+    const size = Math.min(100, skuCodes.length - offset);
+    batches.push({
+      batchIndex,
+      skuCount: size,
+      responseRecordCount: size,
+      traceId: `trace-${batchIndex + 1}`,
+      message: 'OK',
+    });
+    pages.push({
+      page: batchIndex + 1,
+      perPage: 100,
+      recordCount: size,
+      skcCount: size,
+      traceId: `catalog-${batchIndex + 1}`,
+    });
+  }
+  return {
+    store: { storeCode, storeName: storeCode },
+    runId: 'sync-20260726:NM7397',
+    permissionPackageCode: 'SALES',
+    inventory: {
+      items,
+      pages,
+      advertisedCount: 548,
+      sweepCount: 2,
+    },
+    sales: { snapshots, batches },
+  };
+}
+
 test('stable fingerprints do not depend on object key order', () => {
   assert.equal(stableJson({ b: 2, a: 1 }), '{"a":1,"b":2}');
   assert.equal(sha256(stableJson({ b: 2, a: 1 })), sha256(stableJson({ a: 1, b: 2 })));
@@ -216,6 +297,7 @@ test('accepts a complete unanchored zero response, records legal zero and does n
     qualityStatus: 'LEGAL_ZERO_UNANCHORED',
     businessDate: null,
     quarantinedSkuCount: 0,
+    quarantinedSkuCodes: [],
     unanchoredZeroSkuCount: 2,
   });
   assert.equal(
@@ -268,12 +350,18 @@ test('quarantines unanchored non-zero rows while publishing dated rows as partia
   const eventInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.sales_quality_event'));
   assert.equal(eventInsert.values[2], 'SALES_DATE_UNANCHORED_NONZERO');
   assert.equal(eventInsert.values[3], 'WARNING');
+  assert.deepEqual(JSON.parse(eventInsert.values[5]), {
+    affectedSkuCodes: ['SKU-1'],
+    affectedSkuCodesTruncated: false,
+    impact: 'Unanchored non-zero rows were excluded; dated rows remain visible as partial coverage.',
+    loadDecision: 'QUARANTINE',
+  });
   const probeInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.permission_probe'));
   assert.equal(probeInsert.values[5], 'GRANTED');
   assert.deepEqual(JSON.parse(probeInsert.values[9]), {
     endpointReached: 'goods.query-sku-sales',
     salesEndpointExercised: true,
-    statisticsDateAvailable: false,
+    statisticsDateAvailable: true,
     dataLoadable: true,
     dataQualityStatus: 'DEGRADED',
     dataQualityReason: 'UNANCHORED_NONZERO',
@@ -300,6 +388,72 @@ test('blocks a store when every non-zero row lacks a statistics date', async () 
   );
   const eventInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.sales_quality_event'));
   assert.equal(eventInsert.values[3], 'ERROR');
+  assert.deepEqual(JSON.parse(eventInsert.values[5]).affectedSkuCodes, ['SKU-1', 'SKU-2']);
+});
+
+test('matches the live NM7397 83 dated, 463 zero-unanchored and 2 quarantined shape', async () => {
+  const client = new FakeClient();
+  const result = await loadFullManagedSalesSync(pool(client), nm7397ShapeInput());
+
+  assert.deepEqual(result, {
+    storeCode: 'NM7397',
+    skuCount: 548,
+    factCount: 332,
+    batchCount: 7,
+    qualityStatus: 'PARTIAL',
+    businessDate: '2026-07-25',
+    quarantinedSkuCount: 2,
+    quarantinedSkuCodes: ['NM-SKU-0547', 'NM-SKU-0548'],
+    unanchoredZeroSkuCount: 463,
+  });
+  const runInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.sales_sync_run'));
+  assert.deepEqual(runInsert.values.slice(2, 16), [
+    'SUCCEEDED',
+    '2026-07-25',
+    'PARTIAL',
+    'PARTIAL',
+    548,
+    548,
+    83,
+    463,
+    2,
+    83,
+    166,
+    581,
+    2490,
+    '2026-07-26T17:00:00.000Z',
+  ]);
+  assert.equal(
+    client.calls.filter(({ sql }) => sql.includes('INSERT INTO fact.full_sku_sales_snapshot')).length,
+    332,
+  );
+  const watermark = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.sales_business_watermark'));
+  assert.equal(watermark.values[3], 'PARTIAL');
+  const events = client.calls.filter(({ sql }) => sql.includes('INSERT INTO ops.sales_quality_event'));
+  assert.equal(events.length, 2);
+  const zeroEvent = events.find(({ values }) => values[2] === 'SALES_DATE_UNANCHORED_ZERO');
+  const quarantineEvent = events.find(({ values }) => values[2] === 'SALES_DATE_UNANCHORED_NONZERO');
+  assert.equal(zeroEvent.values[3], 'INFO');
+  assert.equal(zeroEvent.values[4], 463);
+  assert.equal(quarantineEvent.values[3], 'WARNING');
+  assert.equal(quarantineEvent.values[4], 2);
+  assert.deepEqual(
+    JSON.parse(quarantineEvent.values[5]).affectedSkuCodes,
+    ['NM-SKU-0547', 'NM-SKU-0548'],
+  );
+});
+
+test('the live-shaped partial observation replays without mutable facts or evidence drift', async () => {
+  const client = new ReplayClient();
+  const result = await loadFullManagedSalesSync(pool(client), nm7397ShapeInput());
+
+  assert.equal(result.qualityStatus, 'PARTIAL');
+  assert.equal(result.factCount, 332);
+  assert.equal(
+    client.calls.filter(({ sql }) => sql.includes('INSERT INTO fact.full_sku_sales_snapshot')).length,
+    0,
+  );
+  assert.equal(client.calls.at(-1).sql, 'COMMIT');
 });
 
 test('rolls back the entire store load when a fact fails', async () => {

@@ -239,6 +239,7 @@ test('dated rows remain visible as partial coverage when a small unanchored non-
       datedSkuCount: 1,
       unanchoredZeroSkuCount: 0,
       quarantinedSkuCount: 1,
+      quarantinedSkuCodes: ['SKU-UNANCHORED'],
       fetchedAt: '2026-07-20T04:00:00.000Z',
     }],
   });
@@ -246,14 +247,98 @@ test('dated rows remain visible as partial coverage when a small unanchored non-
   assert.equal(dashboard.datasetStatus, 'live');
   assert.equal(dashboard.businessDate, '2026-07-20');
   assert.equal(dashboard.salesCoverage.status, 'partial');
+  assert.equal(dashboard.salesCoverage.partialStores, 1);
+  assert.equal(dashboard.salesCoverage.quarantinedRows, 1);
   assert.deepEqual(dashboard.unitsSold, {
     today: 3, yesterday: 4, last7Days: 14, last30Days: 60,
   });
+  assert.equal(
+    dashboard.quality.impact,
+    '销售卡片、趋势和排行榜仅汇总有日期的SKU；隔离SKU未计入，当前数值不是完整总量',
+  );
+  assert.equal(
+    dashboard.quality.nextStep,
+    '检查隔离SKU并等待SHEIN返回有效dt后重跑',
+  );
   assert.equal(dashboard.storeRanking[0].qualityStatus, 'partial');
   assert.equal(
     dashboard.storeRanking[0].qualityReason,
-    '1 个非零SKU缺少统计日期，已隔离',
+    '1 个非零SKU缺少统计日期，已隔离：SKU-UNANCHORED',
   );
+});
+
+test('one partial store keeps the 24-store home globally partial and exposes quarantine evidence', () => {
+  const healthyCodes = Array.from(
+    { length: 23 },
+    (_, index) => `S${String(index + 1).padStart(2, '0')}`,
+  );
+  const storeCodes = [...healthyCodes, 'NM7397'];
+  const snapshots = storeCodes.map((storeCode) => ({
+    storeCode,
+    skuCode: `${storeCode}-DATED`,
+    salesToday: storeCode === 'NM7397' ? 3 : 1,
+    salesYesterday: storeCode === 'NM7397' ? 4 : 1,
+    sales7Days: storeCode === 'NM7397' ? 14 : 7,
+    sales30Days: storeCode === 'NM7397' ? 60 : 30,
+    statisticsDate: '2026-07-25',
+    fetchedAt: '2026-07-26T17:00:00.000Z',
+  }));
+  const dashboard = buildDashboardFromProjectionInput({
+    storePermissions: storeCodes.map((storeCode) => ({
+      storeCode,
+      storeName: storeCode,
+      permissionStatus: 'granted',
+    })),
+    snapshots,
+    skuNames: new Map(snapshots.map((row) => [
+      `${row.storeCode}\u001f${row.skuCode}`,
+      row.skuCode,
+    ])),
+    salesTrend: storeCodes.map((storeCode) => ({
+      storeCode,
+      date: '2026-07-25',
+      unitsSold: storeCode === 'NM7397' ? 3 : 1,
+    })),
+    storeHealth: storeCodes.map((storeCode) => ({
+      storeCode,
+      permissionStatus: 'granted',
+      hasFacts: true,
+      runStatus: 'SUCCEEDED',
+      qualityStatus: storeCode === 'NM7397' ? 'PARTIAL' : 'VALID',
+      dateAnchorStatus: storeCode === 'NM7397' ? 'PARTIAL' : 'ANCHORED',
+      businessDate: '2026-07-25',
+      watermarkDate: '2026-07-25',
+      requestedSkuCount: storeCode === 'NM7397' ? 548 : 1,
+      responseSkuCount: storeCode === 'NM7397' ? 548 : 1,
+      datedSkuCount: storeCode === 'NM7397' ? 83 : 1,
+      unanchoredZeroSkuCount: storeCode === 'NM7397' ? 463 : 0,
+      quarantinedSkuCount: storeCode === 'NM7397' ? 2 : 0,
+      quarantinedSkuCodes: storeCode === 'NM7397'
+        ? ['NM-SKU-0547', 'NM-SKU-0548']
+        : [],
+      fetchedAt: '2026-07-26T17:00:00.000Z',
+    })),
+  });
+
+  assert.equal(dashboard.datasetStatus, 'live');
+  assert.equal(dashboard.salesCoverage.status, 'partial');
+  assert.equal(dashboard.salesCoverage.coveredStores, 24);
+  assert.equal(dashboard.salesCoverage.totalStores, 24);
+  assert.equal(dashboard.salesCoverage.partialStores, 1);
+  assert.equal(dashboard.salesCoverage.quarantinedRows, 2);
+  assert.match(dashboard.salesCoverage.reason, /2 个非零SKU/);
+  assert.equal(dashboard.quality.status, 'partial');
+  assert.match(dashboard.quality.impact, /当前数值不是完整总量/);
+  assert.deepEqual(dashboard.unitsSold, {
+    today: 26,
+    yesterday: 27,
+    last7Days: 175,
+    last30Days: 750,
+  });
+  const nm = dashboard.storeRanking.find(({ code }) => code === 'NM7397');
+  assert.equal(nm.qualityStatus, 'partial');
+  assert.match(nm.qualityReason, /NM-SKU-0547、NM-SKU-0548/);
+  assert.equal(dashboard.productRanking.length, 24);
 });
 
 test('legal zero never turns blocked or missing stores into a global zero', () => {

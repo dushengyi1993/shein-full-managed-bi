@@ -318,6 +318,8 @@ function normalizeSalesCoverage(value, businessDate, totalStores) {
     status,
     label: text(source.label, '等待销量数据', 100),
     reason: text(source.reason, '尚无完整、可解释的销量观测', 280),
+    partialStores: limitToTotal(source.partialStores),
+    quarantinedRows: optionalNonNegativeInteger(source.quarantinedRows),
     datedRows: optionalNonNegativeInteger(source.datedRows),
     totalRows: optionalNonNegativeInteger(source.totalRows),
   };

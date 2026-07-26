@@ -96,9 +96,9 @@
 ### 销量可信层
 
 - `ops.sales_sync_run`：一店一次销量同步结果，分别记录运行状态、业务日期锚定、质量状态、SKU 覆盖和四个销量窗口；
-- `ops.sales_quality_event`：具体质量原因和影响 SKU 数，合法零销量使用信息级事件；
+- `ops.sales_quality_event`：具体质量原因、影响 SKU 数和最多 100 个受影响 SKU code；合法零销量使用信息级事件，非零隔离使用告警或错误事件；
 - `ops.sales_business_watermark`：每店最新已接受业务日期，质量阻断运行不能推进；
-- `LEGAL_ZERO_UNANCHORED` 表示完整零响应无 `dt`，是合法零而不是错误；非零无日期必须隔离。
+- `LEGAL_ZERO_UNANCHORED` 表示完整零响应无 `dt`，是合法零而不是错误；非零无日期必须隔离。有统一业务日的其他行仍可按 `PARTIAL` 入仓并推进部分水位；完全没有可锚定行时才整店 `QUALITY_BLOCKED`。
 
 ### 标准商品与员工分配
 
