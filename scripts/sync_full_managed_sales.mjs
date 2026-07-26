@@ -31,7 +31,11 @@ function parseArgs(argv) {
       continue;
     }
     if (['--config', '--database-url', '--stores', '--run-id', '--dashboard-out'].includes(flag)) {
-      result[flag.slice(2)] = argv[index + 1];
+      const value = argv[index + 1];
+      if (typeof value !== 'string' || value.trim() === '' || value.startsWith('--')) {
+        throw new Error(`${flag} requires a value.`);
+      }
+      result[flag.slice(2)] = value.trim();
       index += 1;
       continue;
     }

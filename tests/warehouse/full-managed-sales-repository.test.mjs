@@ -161,6 +161,8 @@ test('loads store, raw batches, SKU identities and four facts per SKU then refre
   assert.equal(client.calls.some(({ sql }) => sql.includes('INSERT INTO ops.sales_business_watermark')), true);
   assert.equal(client.calls.some(({ sql }) => sql.includes('DELETE FROM mart.full_store_sales_latest')), true);
   assert.equal(client.calls.some(({ sql }) => sql.includes('DELETE FROM mart.full_product_sales_latest')), true);
+  const factReadback = client.calls.find(({ sql }) => sql.includes('SELECT sales_snapshot_id, payload_fingerprint'));
+  assert.match(factReadback.sql, /\$5::text AS requested_payload_fingerprint/);
   const probeInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.permission_probe'));
   assert.deepEqual(JSON.parse(probeInsert.values[9]), {
     endpointReached: 'goods.query-sku-sales',

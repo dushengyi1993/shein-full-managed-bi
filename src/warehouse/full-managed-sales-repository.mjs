@@ -386,13 +386,15 @@ async function insertSnapshotFacts(client, {
       quantities[windowCode],
     ];
     const existing = await client.query(
-      `SELECT sales_snapshot_id, payload_fingerprint
+      `SELECT sales_snapshot_id, payload_fingerprint,
+              $5::text AS requested_payload_fingerprint
        FROM fact.full_sku_sales_snapshot
        WHERE (source_fetch_batch_id = $3 AND source_row_key = $4)
           OR (
             store_id = $1 AND full_sku_id = $2
-            AND metric_window_start = $6 AND metric_window_end = $7
-            AND snapshot_at = $8
+            AND metric_window_start = $6::timestamptz
+            AND metric_window_end = $7::timestamptz
+            AND snapshot_at = $8::timestamptz
           )`,
       values,
     );

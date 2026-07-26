@@ -69,7 +69,7 @@ Portal 只能读取原子发布的 Dashboard JSON，不得获得数据库连接�
 sudo install -d -o root -g root -m 0755 /srv/shein-fm
 sudo install -d -o root -g root -m 0755 \
   /srv/shein-fm/runtime /srv/shein-fm/logs /srv/shein-fm/backups
-sudo install -d -o root -g root -m 0700 /srv/shein-fm/secrets
+sudo install -d -o root -g root -m 0711 /srv/shein-fm/secrets
 sudo install -d -o sheinfm-materializer -g sheinfm-dashboard -m 0750 \
   /srv/shein-fm/runtime/dashboard
 
@@ -88,6 +88,8 @@ sudo install -d -o root -g sheinfm-webhook-worker -m 0750 \
 sudo install -d -o root -g root -m 0700 \
   /srv/shein-fm/secrets/db-migrate
 ```
+
+`/srv/shein-fm/secrets` 的 `0711` 仅允许服务账号沿已知路径穿越父目录，不允许列出目录内容。各运行组件子目录仍以 `0750` 隔离，`db-migrate` 子目录保持 `0700`；实际密钥文件继续按下表使用 `0640` 或 `0600`，因此组件不能读取其他组件的私密配置。
 
 文件清单：
 
