@@ -61,13 +61,15 @@ export async function readDashboardProjectionInput(pool) {
           ORDER BY run.store_id, run.source_fetched_at DESC, run.sales_sync_run_id DESC
         )
         SELECT s.store_code, s.store_name, p.outcome, p.evidence, p.probed_at,
-               r.status AS run_status, r.business_date, r.date_anchor_status,
+               r.status AS run_status,
+               to_char(r.business_date, 'YYYY-MM-DD') AS business_date,
+               r.date_anchor_status,
                r.quality_status, r.requested_sku_count, r.response_sku_count,
                r.dated_sku_count, r.unanchored_zero_sku_count,
                r.quarantined_sku_count, r.quarantined_sku_codes,
                r.sales_today, r.sales_yesterday,
                r.sales_7_days, r.sales_30_days, r.source_fetched_at,
-               w.business_date AS watermark_date,
+               to_char(w.business_date, 'YYYY-MM-DD') AS watermark_date,
                w.coverage_status AS watermark_coverage_status,
                (p.outcome = 'GRANTED' AND EXISTS (
                  SELECT 1
@@ -108,7 +110,7 @@ export async function readDashboardProjectionInput(pool) {
         SELECT s.store_code, sku.platform_sku_id, sku.platform_skc_id,
                sku.supplier_code, sku.supplier_sku, sku.product_key,
                COALESCE(NULLIF(sku.sku_name, ''), NULLIF(sku.product_name, ''), sku.platform_sku_id) AS display_name,
-               w.business_date,
+               to_char(w.business_date, 'YYYY-MM-DD') AS business_date,
                max(latest.snapshot_at) AS fetched_at,
                max(latest.sales_quantity) FILTER (WHERE split_part(latest.source_row_key, ':', 1) = 'today') AS sales_today,
                max(latest.sales_quantity) FILTER (WHERE split_part(latest.source_row_key, ':', 1) = 'yesterday') AS sales_yesterday,
@@ -168,7 +170,9 @@ export async function readDashboardProjectionInput(pool) {
                  ) AS date_recency
           FROM daily_store
         )
-        SELECT s.store_code, daily.sales_date, daily.units_sold
+        SELECT s.store_code,
+               to_char(daily.sales_date, 'YYYY-MM-DD') AS sales_date,
+               daily.units_sold
         FROM ranked_dates daily
         JOIN dim.store s ON s.store_id = daily.store_id
         WHERE daily.date_recency <= 30

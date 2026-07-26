@@ -493,6 +493,7 @@ test('empty production database emits no sample or invented zero metrics', () =>
 
 test('reads only complete four-window snapshots and latest probe state from PostgreSQL rows', async () => {
   const transactionQueries = [];
+  const readQueries = [];
   const client = {
     released: false,
     async query(sql) {
@@ -500,6 +501,7 @@ test('reads only complete four-window snapshots and latest probe state from Post
         transactionQueries.push(sql);
         return { rows: [] };
       }
+      readQueries.push(sql);
       if (sql.includes("HAVING count(DISTINCT")) return { rows: [{
         store_code: 'DL', platform_sku_id: 'SKU-1', fetched_at: new Date('2026-07-20T04:00:00Z'),
         business_date: '2026-07-20', display_name: 'Red', product_key: 'SKC:1',
@@ -526,6 +528,24 @@ test('reads only complete four-window snapshots and latest probe state from Post
   assert.equal(input.snapshots[0].statisticsDate, '2026-07-20');
   assert.equal(input.snapshots[0].salesToday, 0);
   assert.equal(input.storePermissions[0].permissionStatus, 'granted');
+  assert.equal(
+    readQueries.some((sql) => sql.includes(
+      "to_char(r.business_date, 'YYYY-MM-DD') AS business_date",
+    )),
+    true,
+  );
+  assert.equal(
+    readQueries.some((sql) => sql.includes(
+      "to_char(w.business_date, 'YYYY-MM-DD') AS watermark_date",
+    )),
+    true,
+  );
+  assert.equal(
+    readQueries.some((sql) => sql.includes(
+      "to_char(daily.sales_date, 'YYYY-MM-DD') AS sales_date",
+    )),
+    true,
+  );
   assert.deepEqual(transactionQueries, [
     'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY',
     'COMMIT',
