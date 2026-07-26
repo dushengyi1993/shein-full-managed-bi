@@ -247,7 +247,7 @@ test('preserves only the trusted sales date, coverage, quality, scoped trend, an
         storeCode: 'BB',
         sku: 'SKU-2',
         name: '商品2',
-        mappingStatus: 'UNMAPPED',
+        mappingStatus: 'MISSING_SPU_ID',
         unitsSold: { today: 2, yesterday: 0, last7Days: 2, last30Days: 2 },
       },
     ],
@@ -276,6 +276,12 @@ test('preserves only the trusted sales date, coverage, quality, scoped trend, an
   assert.equal(dashboard.productRanking[0].storeBreakdown.length, 2);
   assert.equal(dashboard.productIdentityCoverage.confirmedSkus, 1);
   assert.equal(dashboard.productIdentityCoverage.totalSkus, 2);
+  assert.equal(dashboard.productIdentityCoverage.missingSpuSkus, 1);
+  assert.match(dashboard.productIdentityCoverage.note, /1 个缺少平台SPU/);
+  assert.equal(
+    dashboard.storeSkuRanking.find(({ storeCode }) => storeCode === 'BB').mappingStatus,
+    'MISSING_SPU_ID',
+  );
   assert.doesNotMatch(JSON.stringify(dashboard), /secret|internalStack|revenue/i);
 });
 
@@ -508,6 +514,7 @@ test('product identity coverage uses the complete ranking and rejects malformed 
   assert.equal(dashboard.storeSkuRanking.length, 101);
   assert.equal(dashboard.productIdentityCoverage.confirmedSkus, 100);
   assert.equal(dashboard.productIdentityCoverage.totalSkus, 101);
+  assert.equal(dashboard.productIdentityCoverage.missingSpuSkus, 0);
   assert.equal(dashboard.productIdentityCoverage.status, 'partial');
   assert.deepEqual(dashboard.productRanking, []);
   assert.equal(dashboard.rankingMeta.storeSku.truncated, false);

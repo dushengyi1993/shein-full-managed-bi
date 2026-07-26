@@ -185,11 +185,27 @@ export async function readDashboardProjectionInput(pool) {
       SELECT
         to_regclass('dim.canonical_product') IS NOT NULL AS has_canonical_product,
         to_regclass('dim.full_sku_canonical_assignment') IS NOT NULL AS has_canonical_assignment,
+        EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'dim'
+            AND table_name = 'canonical_product'
+            AND column_name = 'identity_scope'
+        ) AS has_canonical_identity_scope,
+        EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'dim'
+            AND table_name = 'full_sku_canonical_assignment'
+            AND column_name = 'identity_scope'
+        ) AS has_assignment_identity_scope,
         to_regclass('ops.employee_principal') IS NOT NULL AS has_employee_principal,
         to_regclass('ops.employee_store_assignment') IS NOT NULL AS has_employee_assignment`);
     const hasCanonicalIdentity = (
       canonicalTablesResult.rows[0]?.has_canonical_product === true
       && canonicalTablesResult.rows[0]?.has_canonical_assignment === true
+      && canonicalTablesResult.rows[0]?.has_canonical_identity_scope === true
+      && canonicalTablesResult.rows[0]?.has_assignment_identity_scope === true
     );
     let canonicalAssignments = new Map();
     if (hasCanonicalIdentity) {
@@ -205,6 +221,9 @@ export async function readDashboardProjectionInput(pool) {
           ON cp.canonical_product_id = assignment.canonical_product_id
         WHERE assignment.assignment_status = 'CONFIRMED'
           AND assignment.valid_to IS NULL
+          AND assignment.identity_scope = 'GLOBAL'
+          AND cp.identity_scope = 'GLOBAL'
+          AND cp.status = 'ACTIVE'
           AND sku.is_active = true`);
       canonicalAssignments = new Map(canonicalResult.rows.map((row) => [
         storeSkuKey(row.store_code, row.platform_sku_id),
@@ -487,6 +506,11 @@ function buildTrendSeries(rows) {
 function buildStoreSkuRanking(snapshots, skuNames) {
   return snapshots.map((snapshot) => {
     const assignment = snapshot.canonicalAssignment;
+    const mappingStatus = assignment
+      ? 'CONFIRMED'
+      : String(snapshot.productKey ?? '').startsWith('SKC:')
+        ? 'MISSING_SPU_ID'
+        : 'UNMAPPED';
     return {
       storeCode: snapshot.storeCode,
       sku: snapshot.skuCode,
@@ -501,7 +525,7 @@ function buildStoreSkuRanking(snapshots, skuNames) {
       canonicalProductId: assignment?.canonicalProductId ?? null,
       standardProductCode: assignment?.standardProductCode ?? null,
       standardProductName: assignment?.standardProductName ?? null,
-      mappingStatus: assignment ? 'CONFIRMED' : 'UNMAPPED',
+      mappingStatus,
       businessDate: snapshot.statisticsDate,
       unitsSold: {
         today: snapshot.salesToday,
@@ -523,6 +547,11 @@ function buildProductRanking(snapshots) {
       : `STORE_PRODUCT:${snapshot.storeCode}:${snapshot.productKey ?? `SKU:${snapshot.skuCode}`}`;
     let group = groups.get(key);
     if (!group) {
+      const mappingStatus = assignment
+        ? 'CONFIRMED'
+        : String(snapshot.productKey ?? '').startsWith('SKC:')
+          ? 'MISSING_SPU_ID'
+          : 'UNVERIFIED';
       group = {
         canonicalProductId: assignment?.canonicalProductId ?? null,
         standardProductCode: assignment?.standardProductCode ?? null,
@@ -530,7 +559,7 @@ function buildProductRanking(snapshots) {
         storeCode: assignment ? null : snapshot.storeCode,
         productKey: assignment ? null : snapshot.productKey ?? `SKU:${snapshot.skuCode}`,
         identityLevel,
-        mappingStatus: assignment ? 'CONFIRMED' : 'UNVERIFIED',
+        mappingStatus,
         storeCodes: new Set(),
         rows: [],
       };

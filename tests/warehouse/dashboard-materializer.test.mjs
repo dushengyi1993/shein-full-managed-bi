@@ -101,6 +101,8 @@ test('never merges the same bare SKU across stores and only totals one unified b
   assert.equal(dashboard.unitsSold.today, 1);
   assert.equal(dashboard.storeSkuRanking.length, 1);
   assert.equal(dashboard.storeSkuRanking[0].storeCode, 'AA');
+  assert.equal(dashboard.storeSkuRanking[0].mappingStatus, 'MISSING_SPU_ID');
+  assert.equal(dashboard.productRanking[0].mappingStatus, 'MISSING_SPU_ID');
   assert.equal(dashboard.storeRanking.find(({ code }) => code === 'BB').unitsSold.today, null);
   assert.equal(dashboard.storeRanking.find(({ code }) => code === 'BB').qualityStatus, 'stale');
   assert.equal(dashboard.salesCoverage.status, 'partial');
@@ -473,6 +475,86 @@ test('confirmed canonical assignments aggregate across stores with an RBAC-safe 
     dashboard.productRanking[0].storeBreakdown.map(({ storeCode }) => storeCode),
     ['AA', 'BB'],
   );
+});
+
+test('database materialization admits only active GLOBAL canonical assignments', async () => {
+  let canonicalSql = '';
+  const client = {
+    async query(sql) {
+      if (sql.startsWith('BEGIN') || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [] };
+      }
+      if (sql.includes("to_regclass('dim.canonical_product')")) {
+        return { rows: [{
+          has_canonical_product: true,
+          has_canonical_assignment: true,
+          has_canonical_identity_scope: true,
+          has_assignment_identity_scope: true,
+          has_employee_principal: false,
+          has_employee_assignment: false,
+        }] };
+      }
+      if (sql.includes('FROM dim.full_sku_canonical_assignment assignment')) {
+        canonicalSql = sql;
+        return { rows: [{
+          store_code: 'DL',
+          platform_sku_id: 'SKU-1',
+          canonical_product_id: '42',
+          canonical_product_key: 'GLOBAL-42',
+          display_name: 'Global kettle',
+        }] };
+      }
+      if (sql.includes('HAVING count(DISTINCT')) {
+        return { rows: [{
+          store_code: 'DL',
+          platform_sku_id: 'SKU-1',
+          platform_skc_id: 'SKC-1',
+          product_key: 'SPU:1',
+          display_name: 'Kettle',
+          business_date: '2026-07-20',
+          fetched_at: new Date('2026-07-20T04:00:00Z'),
+          sales_today: '1',
+          sales_yesterday: '2',
+          sales_7_days: '7',
+          sales_30_days: '30',
+        }] };
+      }
+      if (sql.includes('FROM dim.store s')) {
+        return { rows: [{
+          store_code: 'DL',
+          store_name: 'DL',
+          outcome: 'GRANTED',
+          business_date: '2026-07-20',
+          watermark_date: '2026-07-20',
+          has_facts: true,
+        }] };
+      }
+      if (sql.includes('FROM dim.full_sku sku')) {
+        return { rows: [{
+          store_code: 'DL',
+          platform_sku_id: 'SKU-1',
+          display_name: 'Kettle',
+        }] };
+      }
+      if (sql.includes('daily_candidates')) return { rows: [] };
+      throw new Error(`Unexpected query: ${sql.slice(0, 80)}`);
+    },
+    release() {},
+  };
+
+  const input = await readDashboardProjectionInput({
+    async connect() { return client; },
+  });
+
+  assert.equal(
+    input.snapshots[0].canonicalAssignment.standardProductCode,
+    'GLOBAL-42',
+  );
+  assert.match(canonicalSql, /assignment\.identity_scope = 'GLOBAL'/);
+  assert.match(canonicalSql, /cp\.identity_scope = 'GLOBAL'/);
+  assert.match(canonicalSql, /cp\.status = 'ACTIVE'/);
+  assert.match(canonicalSql, /assignment\.assignment_status = 'CONFIRMED'/);
+  assert.match(canonicalSql, /assignment\.valid_to IS NULL/);
 });
 
 test('empty production database emits no sample or invented zero metrics', () => {

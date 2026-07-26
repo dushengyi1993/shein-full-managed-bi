@@ -141,12 +141,13 @@ test('all mutable application runtimes and timers are fail-closed behind explici
   }
 });
 
-test('9999 preflight tracks every runtime table and project function through 0010', async () => {
+test('9999 preflight tracks every runtime table and project function through 0011', async () => {
   const reconcile = await text('db/migrations/9999_runtime_role_reconcile.sql');
   const migrations = await Promise.all(
     ['0001_full_managed_bi.sql', '0002_runtime_role.sql', '0003_sales_trust.sql',
       '0004_product_identity_and_access.sql', '0005_webhook_runtime.sql',
-      '0006_supply_domains.sql', '0010_product_identity_observation_sets.sql']
+      '0006_supply_domains.sql', '0010_product_identity_observation_sets.sql',
+      '0011_product_identity_resolution.sql']
       .map((name) => text(`db/migrations/${name}`)),
   );
   const allSql = migrations.join('\n');
@@ -218,13 +219,15 @@ test('9999 grants one group per login and proves cross-domain negative privilege
   assert.match(verify, /ciphertext/);
 });
 
-test('9999 preserves only the identity evidence permissions needed by the supply loader', async () => {
+test('9999 preserves only append permissions needed by the identity evidence and resolution pipeline', async () => {
   const migration = await text('db/migrations/9999_runtime_role_reconcile.sql');
   const verify = await text('db/verify/9999_runtime_role_reconcile.sql');
 
   for (const relation of [
     'raw.product_identity_observation_set',
     'raw.identifier_observation',
+    'ops.canonical_product_observation_set',
+    'ops.product_match_candidate_evidence',
   ]) {
     assert.match(
       migration,
@@ -253,6 +256,45 @@ test('9999 preserves only the identity evidence permissions needed by the supply
   assert.match(
     migration,
     /\('sheinfm_supply_loader', 'raw\.identifier_observation', 'identifier_observation_id'\)/,
+  );
+  for (const [relation, sequenceColumn] of [
+    ['dim.canonical_product', 'canonical_product_id'],
+    [
+      'ops.canonical_product_observation_set',
+      'canonical_product_observation_set_id',
+    ],
+    ['ops.product_match_candidate', 'product_match_candidate_id'],
+    [
+      'ops.product_match_candidate_evidence',
+      'product_match_candidate_evidence_id',
+    ],
+    ['ops.product_identity_decision', 'product_identity_decision_id'],
+    [
+      'dim.full_sku_canonical_assignment',
+      'full_sku_canonical_assignment_id',
+    ],
+  ]) {
+    assert.match(
+      migration,
+      new RegExp(
+        `\\('sheinfm_supply_loader', '${relation.replace('.', '\\.')}', '${sequenceColumn}'\\)`,
+      ),
+    );
+    assert.match(
+      verify,
+      new RegExp(
+        `\\('sheinfm_supply_login', '${relation.replace('.', '\\.')}', '${sequenceColumn}'\\)`,
+      ),
+    );
+  }
+  const resolutionGrant = migration.match(
+    /GRANT SELECT, INSERT ON\s+dim\.canonical_product,[\s\S]*?dim\.full_sku_canonical_assignment\s+TO sheinfm_supply_loader/,
+  )?.[0] ?? '';
+  assert.notEqual(resolutionGrant, '');
+  assert.doesNotMatch(resolutionGrant, /\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/);
+  assert.match(
+    verify,
+    /supply product identity resolution boundary is invalid for %/,
   );
   assert.match(
     verify,

@@ -74,4 +74,7 @@ test('product identity page keeps unmapped store-local SKUs visible without cros
   assert.match(app, /店铺 \+ 原始货号\/SKC\/SKU/);
   assert.match(app, /不参与跨店标准商品合计/);
   assert.match(app, /function pendingProductMappingTable\(rows\)/);
+  assert.match(app, /缺少平台 SPU，无法自动归并/);
+  assert.match(app, /mappingStatusLabel\(item\.mappingStatus\)/);
+  assert.match(app, /缺少平台 SPU \$\{numberFormatter\.format\(missingSpuSkus\)\} 个/);
 });

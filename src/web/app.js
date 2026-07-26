@@ -343,6 +343,13 @@ function unmappedStoreSkuRows() {
   );
 }
 
+function mappingStatusLabel(value) {
+  const status = String(value || '').toUpperCase();
+  if (status === 'CONFIRMED') return '已确认归并';
+  if (status === 'MISSING_SPU_ID') return '缺少平台 SPU，无法自动归并';
+  return '等待证据归并';
+}
+
 function sumCompleteWindow(items, key) {
   if (!items.length) return null;
   const values = items.map((item) => item?.unitsSold?.[key]);
@@ -1348,7 +1355,7 @@ function pendingProductMappingTable(rows) {
             <td class="entity-column"><strong>${escapeHtml(item.supplierCode || item.supplierSku || item.productKey || '原始货号待确认')}</strong><span>${escapeHtml(item.skc || 'SKC 待确认')}</span></td>
             <td class="entity-column"><strong>${escapeHtml(item.sku || 'SKU 待确认')}</strong><span>${escapeHtml(item.productKey || '')}</span></td>
             <td>${escapeHtml(productName(item))}</td>
-            <td><span class="row-status partial">${escapeHtml(item.mappingStatus || 'UNMAPPED')}</span></td>
+            <td><span class="row-status partial">${escapeHtml(mappingStatusLabel(item.mappingStatus))}</span></td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
@@ -1359,6 +1366,9 @@ function renderProducts() {
   const rows = productRows();
   const source = scopedProductRanking();
   const pendingRows = unmappedStoreSkuRows();
+  const missingSpuSkus = Number.isSafeInteger(state.data?.productIdentityCoverage?.missingSpuSkus)
+    ? state.data.productIdentityCoverage.missingSpuSkus
+    : null;
   const identityStatus = source.canonical ? '标准商品身份已接入' : '店内商品身份待归并';
   return `
     ${sampleNotice()}
@@ -1366,7 +1376,7 @@ function renderProducts() {
       'PRODUCT IDENTITY',
       '商品与货号',
       '原始店铺货号、SKC、SKU 与标准商品分层保存；只有通过身份归并的商品才能跨店聚合。',
-      `<span>当前身份范围</span><strong>${escapeHtml(identityStatus)}</strong><small>${escapeHtml(source.canonical ? 'CANONICAL_CONFIRMED' : 'STORE_LOCAL_UNVERIFIED')}</small>`,
+      `<span>当前身份范围</span><strong>${escapeHtml(identityStatus)}</strong><small>${escapeHtml(source.canonical ? 'CANONICAL_CONFIRMED' : 'STORE_LOCAL_UNVERIFIED')}${missingSpuSkus === null ? '' : ` · 缺少平台 SPU ${numberFormatter.format(missingSpuSkus)} 个`}</small>`,
     )}
     <section class="process-panel">
       ${panelHeading('IDENTITY RESOLUTION', '货号科学归并', '原始值永不覆盖，合并与拆分均保留版本和审核记录')}
@@ -1389,7 +1399,7 @@ function renderProducts() {
                 <td class="entity-column"><strong>${escapeHtml(productName(item))}</strong><span>${escapeHtml(item.storeCode ? `店铺 ${item.storeCode}` : `${item.storeCount || '—'} 家店铺`)}</span></td>
                 <td class="number-column">${formatUnits(item?.unitsSold?.[state.range])}</td>
                 <td><span class="row-status ${source.canonical ? 'complete' : 'partial'}">${source.canonical ? '标准商品' : '店内未验证'}</span></td>
-                <td class="boundary-cell">${escapeHtml(item.mappingStatus || (source.canonical ? '已归并' : '等待 MDM 归并'))}</td>
+                <td class="boundary-cell">${escapeHtml(mappingStatusLabel(item.mappingStatus || (source.canonical ? 'CONFIRMED' : 'UNMAPPED')))}</td>
               </tr>`).join('')}</tbody>
           </table>
         </div>

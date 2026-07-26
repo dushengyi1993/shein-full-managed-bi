@@ -416,7 +416,26 @@ export async function readOperationsDashboard(pool) {
         to_regclass('ops.webhook_job') IS NOT NULL AS webhook_job_ready,
         to_regclass('ops.operational_event') IS NOT NULL AS operational_event_ready,
         to_regclass('ops.webhook_subscription_state') IS NOT NULL AS subscription_state_ready,
-        to_regclass('dim.canonical_product') IS NOT NULL AS product_identity_ready,
+        (
+          to_regclass('dim.canonical_product') IS NOT NULL
+          AND to_regclass('dim.full_sku_canonical_assignment') IS NOT NULL
+          AND to_regclass('ops.canonical_product_observation_set') IS NOT NULL
+          AND to_regclass('ops.product_match_candidate_evidence') IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'dim'
+              AND table_name = 'canonical_product'
+              AND column_name = 'identity_scope'
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'dim'
+              AND table_name = 'full_sku_canonical_assignment'
+              AND column_name = 'identity_scope'
+          )
+        ) AS product_identity_ready,
         to_regclass('ops.employee_store_assignment') IS NOT NULL AS employee_access_ready`);
     const schemaReadiness = readiness(schemaResult.rows[0] ?? {});
 

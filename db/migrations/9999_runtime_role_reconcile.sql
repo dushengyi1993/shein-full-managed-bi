@@ -33,7 +33,9 @@ BEGIN
         'dim.canonical_variant',
         'raw.product_identity_observation_set',
         'raw.identifier_observation',
+        'ops.canonical_product_observation_set',
         'ops.product_match_candidate',
+        'ops.product_match_candidate_evidence',
         'ops.product_identity_decision',
         'dim.full_sku_canonical_assignment',
         'ops.employee_principal',
@@ -410,6 +412,19 @@ TO sheinfm_supply_loader;
 GRANT UPDATE (status, member_count, sealed_at)
 ON raw.product_identity_observation_set
 TO sheinfm_supply_loader;
+-- The identity resolver is an internal warehouse pipeline. It may append
+-- deterministic products, provenance, candidates, relational evidence,
+-- decisions and first-current assignments, but it cannot mutate or delete any
+-- resolved identity row. A conflicting current assignment is a fail-closed
+-- planner outcome, not an UPDATE permission.
+GRANT SELECT, INSERT ON
+    dim.canonical_product,
+    ops.canonical_product_observation_set,
+    ops.product_match_candidate,
+    ops.product_match_candidate_evidence,
+    ops.product_identity_decision,
+    dim.full_sku_canonical_assignment
+TO sheinfm_supply_loader;
 GRANT SELECT ON ops.sales_sync_run
 TO sheinfm_supply_loader;
 GRANT SELECT, INSERT, UPDATE ON
@@ -491,6 +506,12 @@ BEGIN
             ('sheinfm_supply_loader', 'raw.openapi_fetch_page', 'openapi_fetch_page_id'),
             ('sheinfm_supply_loader', 'raw.product_identity_observation_set', 'identity_observation_set_id'),
             ('sheinfm_supply_loader', 'raw.identifier_observation', 'identifier_observation_id'),
+            ('sheinfm_supply_loader', 'dim.canonical_product', 'canonical_product_id'),
+            ('sheinfm_supply_loader', 'ops.canonical_product_observation_set', 'canonical_product_observation_set_id'),
+            ('sheinfm_supply_loader', 'ops.product_match_candidate', 'product_match_candidate_id'),
+            ('sheinfm_supply_loader', 'ops.product_match_candidate_evidence', 'product_match_candidate_evidence_id'),
+            ('sheinfm_supply_loader', 'ops.product_identity_decision', 'product_identity_decision_id'),
+            ('sheinfm_supply_loader', 'dim.full_sku_canonical_assignment', 'full_sku_canonical_assignment_id'),
             ('sheinfm_supply_loader', 'ops.supply_sync_attempt', 'supply_sync_attempt_event_id'),
             ('sheinfm_supply_loader', 'fact.supply_projection_batch', 'supply_projection_batch_id'),
             ('sheinfm_supply_loader', 'fact.supply_projection_member', 'supply_projection_member_id'),
@@ -537,6 +558,7 @@ DECLARE
     unexpected_membership record;
     relation_row record;
     privilege_name text;
+    required_name text;
 BEGIN
     FOR role_row IN
         SELECT role.rolname, role.rolcanlogin, role.rolsuper, role.rolcreatedb,
@@ -622,6 +644,31 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'supply attempt/projection ledgers must remain append-only';
     END IF;
+    FOREACH required_name IN ARRAY ARRAY[
+        'dim.canonical_product',
+        'ops.canonical_product_observation_set',
+        'ops.product_match_candidate',
+        'ops.product_match_candidate_evidence',
+        'ops.product_identity_decision',
+        'dim.full_sku_canonical_assignment'
+    ]
+    LOOP
+        IF NOT has_table_privilege(
+            'sheinfm_supply_login', required_name, 'SELECT'
+        ) OR NOT has_table_privilege(
+            'sheinfm_supply_login', required_name, 'INSERT'
+        ) OR has_table_privilege(
+            'sheinfm_supply_login', required_name, 'UPDATE'
+        ) OR has_table_privilege(
+            'sheinfm_supply_login', required_name, 'DELETE'
+        ) OR has_table_privilege(
+            'sheinfm_supply_login', required_name, 'TRUNCATE'
+        ) THEN
+            RAISE EXCEPTION
+                'supply product identity resolution boundary is invalid for %',
+                required_name;
+        END IF;
+    END LOOP;
     IF NOT has_table_privilege(
         'sheinfm_webhook_ingress_login',
         'raw.webhook_receipt',

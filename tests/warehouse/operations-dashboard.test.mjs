@@ -48,6 +48,25 @@ test('missing operational migrations remain pending without invented zero facts'
   assert.equal(dashboard.platform.queue, null);
   assert.equal(dashboard.actionPool.writeEnabled, false);
   assert.deepEqual(dashboard.actionPool.candidates, []);
+  const readinessSql = queries.find((sql) => (
+    sql.includes("to_regclass('fact.purchase_order')")
+  ));
+  assert.match(
+    readinessSql,
+    /to_regclass\('ops\.canonical_product_observation_set'\)/,
+  );
+  assert.match(
+    readinessSql,
+    /to_regclass\('ops\.product_match_candidate_evidence'\)/,
+  );
+  assert.match(
+    readinessSql,
+    /table_name = 'canonical_product'[\s\S]*column_name = 'identity_scope'/,
+  );
+  assert.match(
+    readinessSql,
+    /table_name = 'full_sku_canonical_assignment'[\s\S]*column_name = 'identity_scope'/,
+  );
   assert.equal(queries.at(-1), 'RELEASE');
 });
 

@@ -36,6 +36,8 @@ The migration chain is:
 - `0008`: latest product-detail identity projections without retaining image URLs;
 - `0009`: supplier product numbers as supporting, never strong, identity evidence;
 - `0010`: append-only sealed SPU/SKC/SKU identity observation sets;
+- `0011`: explicit-run product resolution, canonical provenance, relational match
+  evidence and composite decision/assignment integrity;
 - `9999`: final runtime-role reconciliation and least-privilege grants.
 
 `0002` reads `SHEIN_FM_APP_DB_PASSWORD`. During the first split-role production

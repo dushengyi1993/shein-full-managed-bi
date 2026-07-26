@@ -168,6 +168,9 @@ function normalizeSku(item) {
     && canonicalProductId !== null
     && standardProductCode !== null
   );
+  const unmappedStatus = source.mappingStatus === 'MISSING_SPU_ID'
+    ? 'MISSING_SPU_ID'
+    : 'UNMAPPED';
   return {
     storeCode: text(source.storeCode, '', 24) || null,
     sku: text(source.sku, '未知 SKU', 64),
@@ -181,7 +184,7 @@ function normalizeSku(item) {
     standardProductName: confirmed
       ? text(source.standardProductName, '', 160) || null
       : null,
-    mappingStatus: confirmed ? 'CONFIRMED' : 'UNMAPPED',
+    mappingStatus: confirmed ? 'CONFIRMED' : unmappedStatus,
     businessDate: isoDate(source.businessDate),
     unitsSold: normalizeUnits(source.unitsSold, true),
   };
@@ -214,6 +217,9 @@ function normalizeProduct(item) {
     && standardProductCode !== null
     && storeBreakdown.length > 0
   );
+  const unmappedStatus = source.mappingStatus === 'MISSING_SPU_ID'
+    ? 'MISSING_SPU_ID'
+    : 'UNVERIFIED';
   if (!canonicalConfirmed && !storeCode) return null;
   const unitsSold = canonicalConfirmed
     ? Object.fromEntries(
@@ -235,7 +241,7 @@ function normalizeProduct(item) {
     identityLevel: canonicalConfirmed
       ? 'CANONICAL_CONFIRMED'
       : 'STORE_LOCAL_UNVERIFIED',
-    mappingStatus: canonicalConfirmed ? 'CONFIRMED' : 'UNVERIFIED',
+    mappingStatus: canonicalConfirmed ? 'CONFIRMED' : unmappedStatus,
     storeCount: canonicalConfirmed ? storeBreakdown.length : 1,
     storeBreakdown: canonicalConfirmed ? storeBreakdown : [],
     unitsSold,
@@ -706,9 +712,13 @@ function productIdentityCoverage(storeSkuRanking) {
   const confirmedSkus = storeSkuRanking.filter(
     ({ mappingStatus }) => mappingStatus === 'CONFIRMED',
   ).length;
+  const missingSpuSkus = storeSkuRanking.filter(
+    ({ mappingStatus }) => mappingStatus === 'MISSING_SPU_ID',
+  ).length;
   return {
     confirmedSkus,
     totalSkus,
+    missingSpuSkus,
     coverageRate: totalSkus === 0
       ? null
       : Number((confirmedSkus / totalSkus).toFixed(4)),
@@ -721,7 +731,7 @@ function productIdentityCoverage(storeSkuRanking) {
           : 'not_started',
     note: totalSkus === 0
       ? '尚无可归并SKU'
-      : `已确认 ${confirmedSkus}/${totalSkus} 个店铺SKU；未确认商品保持店内隔离`,
+      : `已确认 ${confirmedSkus}/${totalSkus} 个店铺SKU；${missingSpuSkus} 个缺少平台SPU；未确认商品保持店内隔离`,
   };
 }
 
