@@ -329,13 +329,15 @@ test('mixed-date quality keeps permission granted while excluding the stale wate
     salesTrend: [],
     storeHealth: storeCodes.map((storeCode) => {
       const rollover = rolloverStoreCodes.includes(storeCode);
+      const quarantined = storeCode === currentStoreCodes[0];
       return {
         storeCode,
         permissionStatus: 'granted',
         hasFacts: true,
         runStatus: 'SUCCEEDED',
-        qualityStatus: rollover ? 'PARTIAL' : 'VALID',
-        dateAnchorStatus: rollover ? 'PARTIAL' : 'ANCHORED',
+        qualityStatus: rollover || quarantined ? 'PARTIAL' : 'VALID',
+        dateAnchorStatus: rollover || quarantined ? 'PARTIAL' : 'ANCHORED',
+        quarantinedSkuCount: quarantined ? 19 : 0,
         watermarkDate: rollover ? '2026-07-25' : '2026-07-26',
         fetchedAt: rollover
           ? '2026-07-27T02:18:00.000Z'
@@ -359,8 +361,11 @@ test('mixed-date quality keeps permission granted while excluding the stale wate
   assert.equal(dashboard.salesCoverage.status, 'partial');
   assert.equal(dashboard.salesCoverage.mixedStatisticsDateStores, 4);
   assert.match(dashboard.salesCoverage.reason, /沿用上一可信水位且未混算/);
+  assert.match(dashboard.salesCoverage.reason, /19 个非零SKU因缺少统计日期已隔离/);
   assert.match(dashboard.quality.impact, /不进入当前销售卡片和排行榜/);
+  assert.match(dashboard.quality.impact, /缺少统计日期的非零SKU也未计入/);
   assert.match(dashboard.quality.nextStep, /不要选择日期或跨日补零/);
+  assert.match(dashboard.quality.nextStep, /检查被隔离SKU并等待有效dt/);
 
   const rollover = dashboard.storeRanking.find(
     ({ code }) => code === rolloverStoreCodes[0],

@@ -778,6 +778,9 @@ function salesCoverage({
     label = '同日覆盖不完整';
     reason = mixedStatisticsDateStores > 0
       ? `${acceptedStores}/${totalStores} 家店进入当前统一业务日；${mixedStatisticsDateStores} 家本轮日切返回混合统计日期，沿用上一可信水位且未混算`
+        + (quarantinedRows > 0
+          ? `；另有 ${quarantinedRows} 个非零SKU因缺少统计日期已隔离`
+          : '')
       : quarantinedRows > 0
         ? `${acceptedStores}/${totalStores} 家店可用于当前口径，${quarantinedRows} 个非零SKU因缺少统计日期已隔离`
         : `${acceptedStores}/${totalStores} 家店可用于当前口径，未混合其他统计日`;
@@ -995,15 +998,24 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
       ? '销售卡片、趋势和排行榜均使用同一业务日'
       : coverage.mixedStatisticsDateStores > 0
         ? '首页仅汇总统一业务日；混合日期店保留上一可信水位，但不进入当前销售卡片和排行榜'
+          + (coverage.quarantinedRows > 0
+            ? '；缺少统计日期的非零SKU也未计入'
+            : '')
       : coverage.quarantinedRows > 0
         ? '销售卡片、趋势和排行榜仅汇总有日期的SKU；隔离SKU未计入，当前数值不是完整总量'
       : '首页只汇总可解释的同日数据，其他店铺保持空值或单独标注',
     nextStep: coverage.status === 'blocked'
       ? coverage.mixedStatisticsDateStores > 0
         ? '等待SHEIN日切收敛后由下一轮同步重试；不要选择日期或跨日补零'
+          + (coverage.quarantinedRows > 0
+            ? '；同时检查被隔离SKU并等待有效dt'
+            : '')
         : '检查被隔离SKU并等待SHEIN返回有效dt'
       : coverage.mixedStatisticsDateStores > 0
         ? '等待SHEIN日切收敛后由下一轮同步重试；不要选择日期或跨日补零'
+          + (coverage.quarantinedRows > 0
+            ? '；同时检查被隔离SKU并等待有效dt'
+            : '')
       : coverage.quarantinedRows > 0
         ? '检查隔离SKU并等待SHEIN返回有效dt后重跑'
       : coverage.status === 'partial'
