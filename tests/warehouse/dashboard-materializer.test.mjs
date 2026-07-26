@@ -9,6 +9,10 @@ import {
   buildDashboardFromProjectionInput,
   readDashboardProjectionInput,
 } from '../../src/warehouse/dashboard-materializer.mjs';
+import {
+  MIXED_STATISTICS_DATES_CODE,
+  MIXED_STATISTICS_DATES_MESSAGE,
+} from '../../src/warehouse/full-managed-sales-repository.mjs';
 
 function projectionInput() {
   return {
@@ -288,6 +292,101 @@ test('a latest quality-blocked run cannot leak an older accepted watermark into 
     unitsSold: 9,
     coveredStores: 1,
   }]);
+});
+
+test('mixed-date quality keeps permission granted while excluding the stale watermark from home totals', () => {
+  const currentStoreCodes = Array.from(
+    { length: 20 },
+    (_, index) => `CURRENT-${String(index + 1).padStart(2, '0')}`,
+  );
+  const rolloverStoreCodes = Array.from(
+    { length: 4 },
+    (_, index) => `ROLLOVER-${String(index + 1).padStart(2, '0')}`,
+  );
+  const storeCodes = [...currentStoreCodes, ...rolloverStoreCodes];
+  const dashboard = buildDashboardFromProjectionInput({
+    storePermissions: storeCodes.map((storeCode) => ({
+      storeCode,
+      storeName: storeCode,
+      permissionStatus: 'granted',
+    })),
+    snapshots: storeCodes.map((storeCode) => {
+      const rollover = rolloverStoreCodes.includes(storeCode);
+      return {
+        storeCode,
+        skuCode: `SKU-${storeCode}`,
+        salesToday: rollover ? 99 : 1,
+        salesYesterday: rollover ? 98 : 2,
+        sales7Days: rollover ? 700 : 7,
+        sales30Days: rollover ? 3000 : 30,
+        statisticsDate: rollover ? '2026-07-25' : '2026-07-26',
+        fetchedAt: rollover
+          ? '2026-07-27T02:18:00.000Z'
+          : '2026-07-27T04:18:00.000Z',
+      };
+    }),
+    skuNames: new Map(),
+    salesTrend: [],
+    storeHealth: storeCodes.map((storeCode) => {
+      const rollover = rolloverStoreCodes.includes(storeCode);
+      return {
+        storeCode,
+        permissionStatus: 'granted',
+        hasFacts: true,
+        runStatus: 'SUCCEEDED',
+        qualityStatus: rollover ? 'PARTIAL' : 'VALID',
+        dateAnchorStatus: rollover ? 'PARTIAL' : 'ANCHORED',
+        watermarkDate: rollover ? '2026-07-25' : '2026-07-26',
+        fetchedAt: rollover
+          ? '2026-07-27T02:18:00.000Z'
+          : '2026-07-27T04:18:00.000Z',
+        probeAt: '2026-07-27T04:18:00.000Z',
+        probeDataQualityReason: rollover ? MIXED_STATISTICS_DATES_CODE : null,
+        probeStatisticsDateCount: rollover ? 2 : null,
+      };
+    }),
+  });
+
+  assert.equal(dashboard.permission.authorizedStores, 24);
+  assert.equal(dashboard.permission.totalStores, 24);
+  assert.equal(dashboard.businessDate, '2026-07-26');
+  assert.deepEqual(dashboard.unitsSold, {
+    today: 20,
+    yesterday: 40,
+    last7Days: 140,
+    last30Days: 600,
+  });
+  assert.equal(dashboard.salesCoverage.status, 'partial');
+  assert.equal(dashboard.salesCoverage.mixedStatisticsDateStores, 4);
+  assert.match(dashboard.salesCoverage.reason, /沿用上一可信水位且未混算/);
+  assert.match(dashboard.quality.impact, /不进入当前销售卡片和排行榜/);
+  assert.match(dashboard.quality.nextStep, /不要选择日期或跨日补零/);
+
+  const rollover = dashboard.storeRanking.find(
+    ({ code }) => code === rolloverStoreCodes[0],
+  );
+  assert.equal(rollover.permissionStatus, 'granted');
+  assert.equal(rollover.businessDate, '2026-07-25');
+  assert.equal(rollover.qualityStatus, 'stale');
+  assert.match(rollover.qualityReason, /检测到 2 个统计日/);
+  assert.match(rollover.qualityReason, /未与首页业务日 2026-07-26 混算/);
+  assert.deepEqual(rollover.unitsSold, {
+    today: null,
+    yesterday: null,
+    last7Days: null,
+    last30Days: null,
+  });
+
+  const readiness = new Map(dashboard.readiness.map((stage) => [stage.key, stage]));
+  assert.deepEqual(
+    {
+      permission: readiness.get('sales_permission').completed,
+      probe: readiness.get('sales_probe').completed,
+      facts: readiness.get('fact_load').completed,
+    },
+    { permission: 24, probe: 24, facts: 20 },
+  );
+  assert.match(readiness.get('fact_load').note, /混合统计日期/);
 });
 
 test('dated rows remain visible as partial coverage when a small unanchored non-zero subset is quarantined', () => {
@@ -692,6 +791,108 @@ test('empty production database emits no sample or invented zero metrics', () =>
   });
   assert.deepEqual(dashboard.skuRanking, []);
   assert.equal(JSON.stringify(dashboard).includes('sample'), false);
+});
+
+test('legacy mixed-date probes are narrowly upgraded while other ERROR probes stay unknown', async () => {
+  const readQueries = [];
+  const storeRows = [
+    {
+      store_code: 'LEGACY-MIXED',
+      store_name: 'Legacy mixed',
+      outcome: 'ERROR',
+      platform_error_code: 'SYNC_ERROR',
+      platform_message: MIXED_STATISTICS_DATES_MESSAGE,
+      evidence: {},
+      probed_at: new Date('2026-07-27T04:18:00.000Z'),
+      watermark_date: '2026-07-25',
+      has_facts: true,
+    },
+    {
+      store_code: 'WRONG-CODE',
+      store_name: 'Wrong code',
+      outcome: 'ERROR',
+      platform_error_code: 'OTHER_ERROR',
+      platform_message: MIXED_STATISTICS_DATES_MESSAGE,
+      evidence: {},
+      probed_at: new Date('2026-07-27T04:18:00.000Z'),
+      has_facts: false,
+    },
+    {
+      store_code: 'WRONG-MESSAGE',
+      store_name: 'Wrong message',
+      outcome: 'ERROR',
+      platform_error_code: 'SYNC_ERROR',
+      platform_message: `${MIXED_STATISTICS_DATES_MESSAGE} changed`,
+      evidence: {},
+      probed_at: new Date('2026-07-27T04:18:00.000Z'),
+      has_facts: false,
+    },
+  ];
+  const client = {
+    async query(sql) {
+      if (sql.startsWith('BEGIN') || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [] };
+      }
+      readQueries.push(sql);
+      if (sql.includes('AS run_status')) return { rows: storeRows };
+      if (sql.includes('HAVING count(DISTINCT')) return { rows: [] };
+      if (sql.includes('daily_candidates')) return { rows: [] };
+      if (sql.includes('SELECT s.store_code, sku.platform_sku_id, sku.platform_spu_id')) {
+        return { rows: [] };
+      }
+      if (sql.includes("to_regclass('dim.canonical_product')")) {
+        return { rows: [{
+          has_canonical_product: false,
+          has_canonical_assignment: false,
+          has_canonical_identity_scope: false,
+          has_assignment_identity_scope: false,
+          has_employee_principal: false,
+          has_employee_assignment: false,
+        }] };
+      }
+      throw new Error(`Unexpected query: ${sql.slice(0, 80)}`);
+    },
+    release() {},
+  };
+
+  const input = await readDashboardProjectionInput({
+    async connect() { return client; },
+  });
+
+  assert.deepEqual(
+    input.storePermissions.map(({ storeCode, permissionStatus }) => ({
+      storeCode,
+      permissionStatus,
+    })),
+    [
+      { storeCode: 'LEGACY-MIXED', permissionStatus: 'granted' },
+      { storeCode: 'WRONG-CODE', permissionStatus: 'unknown' },
+      { storeCode: 'WRONG-MESSAGE', permissionStatus: 'unknown' },
+    ],
+  );
+  assert.equal(
+    input.storeHealth.find(({ storeCode }) => storeCode === 'LEGACY-MIXED')
+      .probeDataQualityReason,
+    MIXED_STATISTICS_DATES_CODE,
+  );
+  assert.equal(
+    input.storeHealth.find(({ storeCode }) => storeCode === 'WRONG-CODE')
+      .probeDataQualityReason,
+    null,
+  );
+  assert.equal(
+    input.storeHealth.find(({ storeCode }) => storeCode === 'WRONG-MESSAGE')
+      .probeDataQualityReason,
+    null,
+  );
+
+  const latestProbeQueries = readQueries.filter((sql) => sql.includes('WITH latest_probe AS'));
+  assert.equal(latestProbeQueries.length, 3);
+  for (const sql of latestProbeQueries) {
+    assert.match(sql, /outcome = 'ERROR'/);
+    assert.match(sql, /platform_error_code = 'SYNC_ERROR'/);
+    assert.ok(sql.includes(`platform_message = '${MIXED_STATISTICS_DATES_MESSAGE}'`));
+  }
 });
 
 test('reads only complete four-window snapshots and latest probe state from PostgreSQL rows', async () => {

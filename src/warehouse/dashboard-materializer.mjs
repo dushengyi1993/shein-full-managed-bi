@@ -4,6 +4,10 @@ import crypto from 'node:crypto';
 
 import { projectDashboardData } from '../domain/dashboard-projection.mjs';
 import { normalizeIdentifierValue } from '../domain/product-identity.mjs';
+import {
+  MIXED_STATISTICS_DATES_CODE,
+  MIXED_STATISTICS_DATES_MESSAGE,
+} from './full-managed-sales-repository.mjs';
 import { readOperationsDashboard } from './operations-dashboard.mjs';
 
 function pgInteger(value, location) {
@@ -19,6 +23,46 @@ function mapPermission(outcome) {
     DENIED: 'denied',
     ERROR: 'unknown',
   }[outcome] ?? 'unknown';
+}
+
+function isLegacyMixedStatisticsDatesProbe(probe) {
+  return (
+    probe?.outcome === 'ERROR'
+    && probe?.platform_error_code === 'SYNC_ERROR'
+    && probe?.platform_message === MIXED_STATISTICS_DATES_MESSAGE
+  );
+}
+
+function normalizeLatestSalesProbe(probe) {
+  const legacyMixedStatisticsDates = isLegacyMixedStatisticsDatesProbe(probe);
+  const evidence = probe?.evidence && typeof probe.evidence === 'object'
+    ? probe.evidence
+    : {};
+  const statisticsDateCount = Number.isSafeInteger(evidence.statisticsDateCount)
+    && evidence.statisticsDateCount >= 2
+    ? evidence.statisticsDateCount
+    : null;
+  return {
+    outcome: legacyMixedStatisticsDates ? 'GRANTED' : probe?.outcome,
+    dataQualityReason: legacyMixedStatisticsDates
+      ? MIXED_STATISTICS_DATES_CODE
+      : evidence.dataQualityReason === MIXED_STATISTICS_DATES_CODE
+        ? MIXED_STATISTICS_DATES_CODE
+        : null,
+    statisticsDateCount,
+  };
+}
+
+function grantedSalesProbeSql(alias) {
+  const message = MIXED_STATISTICS_DATES_MESSAGE.replaceAll("'", "''");
+  return `(
+    ${alias}.outcome = 'GRANTED'
+    OR (
+      ${alias}.outcome = 'ERROR'
+      AND ${alias}.platform_error_code = 'SYNC_ERROR'
+      AND ${alias}.platform_message = '${message}'
+    )
+  )`;
 }
 
 function stageStatus(completed, total, { pending = false, blocked = false } = {}) {
@@ -48,7 +92,9 @@ export async function readDashboardProjectionInput(pool) {
     const [storesResult, snapshotsResult, skuNamesResult, trendResult] = await Promise.all([
       client.query(`
         WITH latest_probe AS (
-          SELECT DISTINCT ON (store_id) store_id, outcome, evidence, probed_at
+          SELECT DISTINCT ON (store_id)
+                 store_id, outcome, evidence, probed_at,
+                 platform_error_code, platform_message
           FROM ops.permission_probe
           WHERE capability_code = 'FULL_MANAGED_SKU_SALES'
           ORDER BY store_id, probed_at DESC, permission_probe_id DESC
@@ -69,6 +115,7 @@ export async function readDashboardProjectionInput(pool) {
           ORDER BY run.store_id, run.source_fetched_at DESC, run.sales_sync_run_id DESC
         )
         SELECT s.store_code, s.store_name, p.outcome, p.evidence, p.probed_at,
+               p.platform_error_code, p.platform_message,
                r.status AS run_status,
                to_char(r.business_date, 'YYYY-MM-DD') AS business_date,
                r.date_anchor_status,
@@ -79,7 +126,7 @@ export async function readDashboardProjectionInput(pool) {
                r.sales_7_days, r.sales_30_days, r.source_fetched_at,
                to_char(w.business_date, 'YYYY-MM-DD') AS watermark_date,
                w.coverage_status AS watermark_coverage_status,
-               (p.outcome = 'GRANTED' AND EXISTS (
+               (${grantedSalesProbeSql('p')} AND EXISTS (
                  SELECT 1
                  FROM fact.full_sku_sales_snapshot f
                  JOIN dim.full_sku sku
@@ -97,7 +144,8 @@ export async function readDashboardProjectionInput(pool) {
         ORDER BY s.store_code`),
       client.query(`
         WITH latest_probe AS (
-          SELECT DISTINCT ON (store_id) store_id, outcome
+          SELECT DISTINCT ON (store_id)
+                 store_id, outcome, platform_error_code, platform_message
           FROM ops.permission_probe
           WHERE capability_code = 'FULL_MANAGED_SKU_SALES'
           ORDER BY store_id, probed_at DESC, permission_probe_id DESC
@@ -128,7 +176,9 @@ export async function readDashboardProjectionInput(pool) {
         FROM latest
         JOIN dim.store s ON s.store_id = latest.store_id
         JOIN dim.full_sku sku ON sku.full_sku_id = latest.full_sku_id
-        JOIN latest_probe p ON p.store_id = latest.store_id AND p.outcome = 'GRANTED'
+        JOIN latest_probe p
+          ON p.store_id = latest.store_id
+         AND ${grantedSalesProbeSql('p')}
         JOIN ops.sales_business_watermark w ON w.store_id = latest.store_id
         WHERE s.cooperation_mode = 'FULL_MANAGED'
           AND s.is_active = true
@@ -146,7 +196,8 @@ export async function readDashboardProjectionInput(pool) {
           AND s.is_active = true`),
       client.query(`
         WITH latest_probe AS (
-          SELECT DISTINCT ON (store_id) store_id, outcome
+          SELECT DISTINCT ON (store_id)
+                 store_id, outcome, platform_error_code, platform_message
           FROM ops.permission_probe
           WHERE capability_code = 'FULL_MANAGED_SKU_SALES'
           ORDER BY store_id, probed_at DESC, permission_probe_id DESC
@@ -160,7 +211,9 @@ export async function readDashboardProjectionInput(pool) {
                    ORDER BY f.snapshot_at DESC, f.updated_at DESC, f.sales_snapshot_id DESC
                  ) AS recency
           FROM fact.full_sku_sales_snapshot f
-          JOIN latest_probe p ON p.store_id = f.store_id AND p.outcome = 'GRANTED'
+          JOIN latest_probe p
+            ON p.store_id = f.store_id
+           AND ${grantedSalesProbeSql('p')}
           LEFT JOIN ops.sales_sync_run r
             ON r.store_id = f.store_id
            AND r.source_fetched_at = f.snapshot_at
@@ -273,10 +326,14 @@ export async function readDashboardProjectionInput(pool) {
       owners = [...byPrincipal.values()];
     }
 
+    const normalizedProbes = new Map(storesResult.rows.map((row) => [
+      row.store_code,
+      normalizeLatestSalesProbe(row),
+    ]));
     const storePermissions = storesResult.rows.map((row) => ({
       storeCode: row.store_code,
       storeName: row.store_name,
-      permissionStatus: mapPermission(row.outcome),
+      permissionStatus: mapPermission(normalizedProbes.get(row.store_code)?.outcome),
     }));
     const snapshots = snapshotsResult.rows.map((row, index) => ({
         storeCode: row.store_code,
@@ -324,7 +381,14 @@ export async function readDashboardProjectionInput(pool) {
         .sort((left, right) => left.date.localeCompare(right.date)),
       storeHealth: storesResult.rows.map((row) => ({
         storeCode: row.store_code,
-        permissionStatus: mapPermission(row.outcome),
+        permissionStatus: mapPermission(normalizedProbes.get(row.store_code)?.outcome),
+        probeDataQualityReason:
+          normalizedProbes.get(row.store_code)?.dataQualityReason ?? null,
+        probeStatisticsDateCount:
+          normalizedProbes.get(row.store_code)?.statisticsDateCount ?? null,
+        probeAt: row.probed_at === null || row.probed_at === undefined
+          ? null
+          : new Date(row.probed_at).toISOString(),
         hasFacts: row.has_facts === true,
         runStatus: row.run_status ?? null,
         businessDate: row.business_date === null || row.business_date === undefined
@@ -401,7 +465,13 @@ function readiness({ storeHealth, storeCatalog = [] }) {
   const denied = storeHealth.filter(({ permissionStatus }) => permissionStatus === 'denied').length;
   const pendingProbes = storeHealth.filter(({ permissionStatus }) => permissionStatus === 'pending').length;
   const facts = storeHealth.filter(
-    ({ hasFacts, qualityStatus }) => hasFacts || qualityStatus === 'LEGAL_ZERO_UNANCHORED',
+    ({ hasFacts, qualityStatus, probeDataQualityReason }) => (
+      probeDataQualityReason !== MIXED_STATISTICS_DATES_CODE
+      && (hasFacts || qualityStatus === 'LEGAL_ZERO_UNANCHORED')
+    ),
+  ).length;
+  const mixedStatisticsDateStores = storeHealth.filter(
+    ({ probeDataQualityReason }) => probeDataQualityReason === MIXED_STATISTICS_DATES_CODE,
   ).length;
   let applicationStatus = 'unknown';
   if (storeCatalog.length > 0) {
@@ -444,7 +514,9 @@ function readiness({ storeHealth, storeCatalog = [] }) {
       key: 'fact_load', label: '事实入仓',
       status: stageStatus(facts, total, { pending: granted > facts }),
       completed: facts, total,
-      note: '已落入四个销量窗口，或已确认合法零值但日期未锚定的店铺数',
+      note: mixedStatisticsDateStores > 0
+        ? `${mixedStatisticsDateStores} 家本轮日切返回混合统计日期，未推进事实水位`
+        : '已落入四个销量窗口，或已确认合法零值但日期未锚定的店铺数',
     },
   ];
 }
@@ -654,9 +726,17 @@ function salesCoverage({
   const blockedStores = storeHealth.filter(
     ({ runStatus }) => runStatus === 'QUALITY_BLOCKED',
   ).length;
-  const partialStores = storeHealth.filter(
-    ({ dateAnchorStatus }) => dateAnchorStatus === 'PARTIAL',
-  ).length;
+  const mixedStatisticsDateRows = storeHealth.filter(
+    ({ probeDataQualityReason }) => probeDataQualityReason === MIXED_STATISTICS_DATES_CODE,
+  );
+  const mixedStatisticsDateStores = mixedStatisticsDateRows.length;
+  const partialStoreCodes = new Set([
+    ...storeHealth
+      .filter(({ dateAnchorStatus }) => dateAnchorStatus === 'PARTIAL')
+      .map(({ storeCode }) => storeCode),
+    ...mixedStatisticsDateRows.map(({ storeCode }) => storeCode),
+  ]);
+  const partialStores = partialStoreCodes.size;
   const quarantinedRows = storeHealth.reduce(
     (sum, row) => sum + (row.quarantinedSkuCount ?? 0),
     0,
@@ -672,7 +752,14 @@ function salesCoverage({
   if (blockedStores > 0) {
     status = 'blocked';
     label = '存在隔离数据';
-    reason = `${blockedStores} 家店存在非零销量但统计日期缺失，相关行未进入BI`;
+    reason = `${blockedStores} 家店存在非零销量但统计日期缺失，相关行未进入BI`
+      + (mixedStatisticsDateStores > 0
+        ? `；另有 ${mixedStatisticsDateStores} 家本轮日切返回混合统计日期`
+        : '');
+  } else if (mixedStatisticsDateStores > 0 && acceptedStores === 0) {
+    status = 'blocked';
+    label = '日切数据待收敛';
+    reason = `${mixedStatisticsDateStores} 家本轮日切返回混合统计日期；沿用上一可信水位，未混入首页`;
   } else if (businessDate === null && legalZeroStores > 0) {
     status = acceptedStores === totalStores ? 'legal_zero' : 'partial';
     label = status === 'legal_zero' ? '合法零销量' : '部分店铺为合法零销量';
@@ -689,9 +776,11 @@ function salesCoverage({
   } else if (acceptedStores > 0) {
     status = 'partial';
     label = '同日覆盖不完整';
-    reason = quarantinedRows > 0
-      ? `${acceptedStores}/${totalStores} 家店可用于当前口径，${quarantinedRows} 个非零SKU因缺少统计日期已隔离`
-      : `${acceptedStores}/${totalStores} 家店可用于当前口径，未混合其他统计日`;
+    reason = mixedStatisticsDateStores > 0
+      ? `${acceptedStores}/${totalStores} 家店进入当前统一业务日；${mixedStatisticsDateStores} 家本轮日切返回混合统计日期，沿用上一可信水位且未混算`
+      : quarantinedRows > 0
+        ? `${acceptedStores}/${totalStores} 家店可用于当前口径，${quarantinedRows} 个非零SKU因缺少统计日期已隔离`
+        : `${acceptedStores}/${totalStores} 家店可用于当前口径，未混合其他统计日`;
   }
   return {
     businessDate,
@@ -702,6 +791,7 @@ function salesCoverage({
     label,
     reason,
     partialStores,
+    mixedStatisticsDateStores,
     quarantinedRows,
     datedRows: selectedSnapshots.length,
     totalRows,
@@ -730,7 +820,8 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
         businessDate: null, coveredStores: 0, legalZeroStores: 0,
         totalStores: storeCatalog.length, status: 'unknown', label: '等待销量数据',
         reason: '尚无完整、可解释的销量观测',
-        partialStores: 0, quarantinedRows: 0, datedRows: 0, totalRows: 0,
+        partialStores: 0, mixedStatisticsDateStores: 0,
+        quarantinedRows: 0, datedRows: 0, totalRows: 0,
       },
       quality: {
         status: 'unavailable', label: '暂无销量数据',
@@ -772,9 +863,17 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
       .filter(({ runStatus }) => runStatus === 'QUALITY_BLOCKED')
       .map(({ storeCode }) => storeCode),
   );
+  const mixedStatisticsDateStoreCodes = new Set(
+    storeHealth
+      .filter(({ probeDataQualityReason }) => (
+        probeDataQualityReason === MIXED_STATISTICS_DATES_CODE
+      ))
+      .map(({ storeCode }) => storeCode),
+  );
   const excludedCurrentStoreCodes = new Set([
     ...legalZeroStoreCodes,
     ...blockedStoreCodes,
+    ...mixedStatisticsDateStoreCodes,
   ]);
   const activeStoreCodes = new Set(
     input.storePermissions.map(({ storeCode }) => storeCode),
@@ -808,9 +907,24 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
     const rows = snapshotsByStore.get(permission.storeCode) ?? [];
     const legalZero = health?.qualityStatus === 'LEGAL_ZERO_UNANCHORED';
     const blocked = health?.runStatus === 'QUALITY_BLOCKED';
+    const mixedStatisticsDates =
+      health?.probeDataQualityReason === MIXED_STATISTICS_DATES_CODE;
     let qualityStatus = 'unavailable';
     let qualityReason = '尚无可信销量观测';
-    if (blocked) {
+    if (mixedStatisticsDates) {
+      const dateCount = health?.probeStatisticsDateCount;
+      const countText = Number.isSafeInteger(dateCount)
+        ? `，检测到 ${dateCount} 个统计日`
+        : '';
+      const watermarkText = health?.watermarkDate
+        ? `沿用上一可信水位 ${health.watermarkDate}`
+        : '未推进可信水位';
+      const currentDateText = businessDate
+        ? `，未与首页业务日 ${businessDate} 混算`
+        : '，未进入首页汇总';
+      qualityStatus = 'stale';
+      qualityReason = `本轮日切返回混合统计日期${countText}；${watermarkText}${currentDateText}`;
+    } else if (blocked) {
       qualityStatus = 'error';
       qualityReason = '非零销量缺少统计日期，相关行已隔离';
     } else if (legalZero) {
@@ -853,7 +967,7 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
   });
   const acceptedObservation = coverage.coveredStores > 0 || coverage.legalZeroStores > 0;
   const latestRunTime = storeHealth
-    .map(({ fetchedAt }) => fetchedAt)
+    .flatMap(({ fetchedAt, probeAt }) => [fetchedAt, probeAt])
     .filter(Boolean)
     .sort()
     .at(-1) ?? null;
@@ -879,11 +993,17 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
     reason: coverage.reason,
     impact: coverage.status === 'complete'
       ? '销售卡片、趋势和排行榜均使用同一业务日'
+      : coverage.mixedStatisticsDateStores > 0
+        ? '首页仅汇总统一业务日；混合日期店保留上一可信水位，但不进入当前销售卡片和排行榜'
       : coverage.quarantinedRows > 0
         ? '销售卡片、趋势和排行榜仅汇总有日期的SKU；隔离SKU未计入，当前数值不是完整总量'
       : '首页只汇总可解释的同日数据，其他店铺保持空值或单独标注',
     nextStep: coverage.status === 'blocked'
-      ? '检查被隔离SKU并等待SHEIN返回有效dt'
+      ? coverage.mixedStatisticsDateStores > 0
+        ? '等待SHEIN日切收敛后由下一轮同步重试；不要选择日期或跨日补零'
+        : '检查被隔离SKU并等待SHEIN返回有效dt'
+      : coverage.mixedStatisticsDateStores > 0
+        ? '等待SHEIN日切收敛后由下一轮同步重试；不要选择日期或跨日补零'
       : coverage.quarantinedRows > 0
         ? '检查隔离SKU并等待SHEIN返回有效dt后重跑'
       : coverage.status === 'partial'

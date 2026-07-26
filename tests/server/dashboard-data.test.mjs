@@ -214,6 +214,7 @@ test('preserves only the trusted sales date, coverage, quality, scoped trend, an
       label: '同日覆盖完整',
       reason: '两店同日',
       partialStores: 0,
+      mixedStatisticsDateStores: 0,
       quarantinedRows: 0,
       datedRows: 4,
       totalRows: 4,
@@ -269,6 +270,7 @@ test('preserves only the trusted sales date, coverage, quality, scoped trend, an
   assert.equal(dashboard.businessDate, '2026-07-20');
   assert.equal(dashboard.salesCoverage.status, 'complete');
   assert.equal(dashboard.salesCoverage.partialStores, 0);
+  assert.equal(dashboard.salesCoverage.mixedStatisticsDateStores, 0);
   assert.equal(dashboard.salesCoverage.quarantinedRows, 0);
   assert.equal(dashboard.quality.status, 'healthy');
   assert.equal(dashboard.salesTrend[0].coveredStores, 2);
@@ -485,9 +487,25 @@ test('missing permission and coverage counts remain unknown instead of becoming 
   assert.equal(dashboard.salesCoverage.legalZeroStores, null);
   assert.equal(dashboard.salesCoverage.totalStores, null);
   assert.equal(dashboard.salesCoverage.partialStores, null);
+  assert.equal(dashboard.salesCoverage.mixedStatisticsDateStores, null);
   assert.equal(dashboard.salesCoverage.quarantinedRows, null);
   assert.equal(dashboard.salesCoverage.datedRows, null);
   assert.equal(dashboard.salesCoverage.totalRows, null);
+});
+
+test('mixed statistics date store count is bounded by the trusted store total', () => {
+  const dashboard = normalizeDashboardData({
+    datasetStatus: 'live',
+    permission: { status: 'granted', authorizedStores: 24, totalStores: 24 },
+    salesCoverage: {
+      status: 'partial',
+      totalStores: 999,
+      mixedStatisticsDateStores: 999,
+    },
+  });
+
+  assert.equal(dashboard.salesCoverage.totalStores, 24);
+  assert.equal(dashboard.salesCoverage.mixedStatisticsDateStores, 24);
 });
 
 test('product identity coverage uses the complete ranking and rejects malformed canonical rows', () => {

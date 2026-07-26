@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 
 import {
@@ -12,10 +14,14 @@ import {
   classifySalesProbeError,
   fetchFullManagedSkuInventory,
   fetchFullManagedSkuSales,
+  QUERY_SKU_SALES_PATH,
 } from '../src/openapi/full-managed-sales.mjs';
 import {
   loadFullManagedSalesSync,
+  MIXED_STATISTICS_DATES_CODE,
+  MIXED_STATISTICS_DATES_MESSAGE,
   persistPermissionProbe,
+  SalesDataQualityError,
 } from '../src/warehouse/full-managed-sales-repository.mjs';
 import {
   atomicWriteJson,
@@ -62,7 +68,32 @@ function selectStores(stores, requested) {
   return selected;
 }
 
-function failedProbe(storeCode, error) {
+export function failedProbe(storeCode, error) {
+  if (
+    error instanceof SalesDataQualityError
+    && error.code === MIXED_STATISTICS_DATES_CODE
+  ) {
+    const statisticsDateCount = Number.isSafeInteger(error?.details?.statisticsDateCount)
+      && error.details.statisticsDateCount >= 2
+      ? error.details.statisticsDateCount
+      : null;
+    return {
+      outcome: 'GRANTED',
+      probedAt: new Date().toISOString(),
+      httpStatus: 200,
+      platformErrorCode: MIXED_STATISTICS_DATES_CODE,
+      platformMessage: MIXED_STATISTICS_DATES_MESSAGE,
+      evidence: {
+        endpointReached: QUERY_SKU_SALES_PATH,
+        salesEndpointExercised: true,
+        statisticsDateAvailable: true,
+        dataLoadable: false,
+        dataQualityStatus: 'BLOCKED',
+        dataQualityReason: MIXED_STATISTICS_DATES_CODE,
+        statisticsDateCount,
+      },
+    };
+  }
   return {
     outcome: classifySalesProbeError(error),
     probedAt: new Date().toISOString(),
@@ -70,6 +101,40 @@ function failedProbe(storeCode, error) {
     platformErrorCode: error?.details?.platformCode ?? error?.code ?? 'SYNC_ERROR',
     platformMessage: String(error?.details?.platformMessage ?? error?.message ?? 'Unknown sync error').slice(0, 240),
     evidence: { endpointReached: error?.details?.path ?? null, salesEndpointExercised: false, storeCode },
+  };
+}
+
+function isDirectExecution() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+export function failedResult(storeCode, probe) {
+  const qualityBlocked = (
+    probe.outcome === 'GRANTED'
+    && probe.evidence?.dataQualityReason === MIXED_STATISTICS_DATES_CODE
+  );
+  return {
+    storeCode,
+    status: qualityBlocked ? 'quality_blocked' : probe.outcome.toLowerCase(),
+    errorCode: probe.platformErrorCode,
+  };
+}
+
+export function summarizeSyncResults(results) {
+  const loaded = results.filter(({ status }) => status === 'loaded').length;
+  const errors = results.filter(({ status }) => status === 'error').length;
+  const qualityBlocked = results.filter(({ status }) => status === 'quality_blocked').length;
+  return {
+    loaded,
+    errors,
+    qualityBlocked,
+    ok: errors === 0 && qualityBlocked === 0,
+    exitCode: errors > 0 || qualityBlocked > 0 ? 2 : 0,
   };
 }
 
@@ -149,7 +214,7 @@ async function main() {
         await persistPermissionProbe(pool, {
           store, runId: storeRunId, permissionPackageCode: config.permissionPackageCode, probe,
         });
-        results.push({ storeCode: store.storeCode, status: probe.outcome.toLowerCase(), errorCode: probe.platformErrorCode });
+        results.push(failedResult(store.storeCode, probe));
       }
     }
 
@@ -162,20 +227,20 @@ async function main() {
     await pool.end();
   }
 
-  const loaded = results.filter(({ status }) => status === 'loaded').length;
-  const errors = results.filter(({ status }) => status === 'error').length;
-  const qualityBlocked = results.filter(({ status }) => status === 'quality_blocked').length;
+  const summary = summarizeSyncResults(results);
   console.log(JSON.stringify({
-    ok: errors === 0 && qualityBlocked === 0,
+    ok: summary.ok,
     config: summarizeFullManagedConfig(config),
-    loadedStores: loaded,
-    qualityBlockedStores: qualityBlocked,
+    loadedStores: summary.loaded,
+    qualityBlockedStores: summary.qualityBlocked,
     results,
   }, null, 2));
-  if (errors > 0 || qualityBlocked > 0) process.exitCode = 2;
+  if (summary.exitCode !== 0) process.exitCode = summary.exitCode;
 }
 
-main().catch((error) => {
-  console.error(JSON.stringify({ ok: false, error: String(error.message).slice(0, 400) }, null, 2));
-  process.exitCode = 1;
-});
+if (isDirectExecution()) {
+  main().catch((error) => {
+    console.error(JSON.stringify({ ok: false, error: String(error.message).slice(0, 400) }, null, 2));
+    process.exitCode = 1;
+  });
+}

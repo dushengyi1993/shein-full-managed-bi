@@ -6,6 +6,19 @@ const SALES_CAPABILITY = 'FULL_MANAGED_SKU_SALES';
 const NUMBER_LIST_ENDPOINT = 'goods.number-list';
 const SKU_SALES_ENDPOINT = 'goods.query-sku-sales';
 
+export const MIXED_STATISTICS_DATES_CODE = 'MIXED_STATISTICS_DATES';
+export const MIXED_STATISTICS_DATES_MESSAGE =
+  'All dated sales batches for one store must use one statistics date.';
+
+export class SalesDataQualityError extends Error {
+  constructor(code, message, details = {}) {
+    super(message);
+    this.name = 'SalesDataQualityError';
+    this.code = code;
+    this.details = Object.freeze({ ...details });
+  }
+}
+
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === 'object') {
@@ -127,7 +140,11 @@ function validateSalesLoadCoverage(store, inventory, sales) {
     throw new Error('All sales batches for one store must use one fetchedAt observation time.');
   }
   if (statisticsDates.size > 1) {
-    throw new Error('All dated sales batches for one store must use one statistics date.');
+    throw new SalesDataQualityError(
+      MIXED_STATISTICS_DATES_CODE,
+      MIXED_STATISTICS_DATES_MESSAGE,
+      { statisticsDateCount: statisticsDates.size },
+    );
   }
   const [businessDate = null] = statisticsDates;
   if (businessDate !== null) salesWindows(businessDate);
@@ -712,10 +729,15 @@ async function insertProbe(client, {
     dataQualityReason: [
       'MISSING_STATISTICS_DATE',
       'LEGAL_ZERO_UNANCHORED',
+      MIXED_STATISTICS_DATES_CODE,
       'UNANCHORED_NONZERO',
     ].includes(probe.evidence?.dataQualityReason)
       ? probe.evidence.dataQualityReason
       : null,
+    ...(Number.isSafeInteger(probe.evidence?.statisticsDateCount)
+      && probe.evidence.statisticsDateCount >= 2
+      ? { statisticsDateCount: probe.evidence.statisticsDateCount }
+      : {}),
   };
   const values = [
     storeId,

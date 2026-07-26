@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import {
   loadFullManagedSalesSync,
+  MIXED_STATISTICS_DATES_CODE,
+  MIXED_STATISTICS_DATES_MESSAGE,
   persistPermissionProbe,
   salesWindows,
   sha256,
@@ -536,6 +538,24 @@ test('refuses partial sales coverage before beginning a database transaction', a
   assert.equal(client.calls.length, 0);
 });
 
+test('mixed statistics dates fail before the transaction with a stable sanitized code', async () => {
+  const input = syncInput();
+  input.sales.snapshots[1].statisticsDate = '2026-07-21';
+  const client = new FakeClient();
+
+  await assert.rejects(
+    () => loadFullManagedSalesSync(pool(client), input),
+    (error) => {
+      assert.equal(error.code, MIXED_STATISTICS_DATES_CODE);
+      assert.equal(error.message, MIXED_STATISTICS_DATES_MESSAGE);
+      assert.deepEqual(error.details, { statisticsDateCount: 2 });
+      assert.deepEqual(Object.keys(error.details), ['statisticsDateCount']);
+      return true;
+    },
+  );
+  assert.equal(client.calls.length, 0);
+});
+
 test('fails closed on duplicate, mismatched, or incomplete sales load coverage', async (t) => {
   const cases = [
     {
@@ -630,6 +650,45 @@ test('persists sanitized permission and data-quality evidence without credential
     dataQualityReason: 'MISSING_STATISTICS_DATE',
   });
   assert.doesNotMatch(JSON.stringify(insert.values), /must-not-persist/);
+});
+
+test('persists only the mixed-date count and stable quality reason', async () => {
+  const client = new FakeClient();
+  await persistPermissionProbe(pool(client), {
+    store: { storeCode: 'DL', storeName: 'DL' },
+    runId: 'probe-20260727:DL',
+    permissionPackageCode: 'SALES',
+    probe: {
+      outcome: 'GRANTED',
+      probedAt: '2026-07-27T04:18:00.000Z',
+      httpStatus: 200,
+      platformErrorCode: MIXED_STATISTICS_DATES_CODE,
+      platformMessage: MIXED_STATISTICS_DATES_MESSAGE,
+      evidence: {
+        endpointReached: '/open-api/goods/query-sku-sales',
+        salesEndpointExercised: true,
+        statisticsDateAvailable: true,
+        dataLoadable: false,
+        dataQualityStatus: 'BLOCKED',
+        dataQualityReason: MIXED_STATISTICS_DATES_CODE,
+        statisticsDateCount: 2,
+        statisticsDates: ['2026-07-25', '2026-07-26'],
+        affectedSkuCodes: ['must-not-persist'],
+      },
+    },
+  });
+
+  const insert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.permission_probe'));
+  assert.deepEqual(JSON.parse(insert.values[9]), {
+    endpointReached: '/open-api/goods/query-sku-sales',
+    salesEndpointExercised: true,
+    statisticsDateAvailable: true,
+    dataLoadable: false,
+    dataQualityStatus: 'BLOCKED',
+    dataQualityReason: MIXED_STATISTICS_DATES_CODE,
+    statisticsDateCount: 2,
+  });
+  assert.doesNotMatch(JSON.stringify(insert.values), /2026-07-25|2026-07-26|must-not-persist/);
 });
 
 test('an exact permission-probe replay is read back immutably after the insert conflict', async () => {
