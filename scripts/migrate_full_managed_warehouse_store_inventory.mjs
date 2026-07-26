@@ -173,8 +173,8 @@ async function queryLegacySafety(client, storeCodes) {
            OR legacy.cooperation_mode <> 'FULL_MANAGED'
            OR EXISTS (
              SELECT 1
-             FROM raw.openapi_fetch_batch AS fetch
-             WHERE fetch.store_id = legacy.store_id
+             FROM raw.openapi_fetch_batch AS fetch_batch
+             WHERE fetch_batch.store_id = legacy.store_id
            )
            OR EXISTS (
              SELECT 1

@@ -266,6 +266,8 @@ test('legacy identity, warehouse history, or non-PENDING probes block before any
   assert.match(queries[5], /store_name <> legacy\.store_code/);
   assert.match(queries[5], /cooperation_mode <> 'FULL_MANAGED'/);
   assert.match(queries[5], /raw\.openapi_fetch_batch/);
+  assert.match(queries[5], /AS fetch_batch/);
+  assert.doesNotMatch(queries[5], /\bAS fetch\b/);
   assert.match(queries[5], /dim\.full_sku/);
   assert.match(queries[5], /fact\.full_sku_sales_snapshot/);
   assert.match(queries[5], /mart\.full_store_sales_latest/);
