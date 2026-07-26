@@ -51,6 +51,7 @@ test('creates one global canonical product transactionally with parameterized SQ
       brand: 'DL',
       category: 'Air Fryer',
       model: 'DL-PA4',
+      supplierCode: 'DL-PA4',
       coreAttributes: { material: 'ABS' },
     },
   });
@@ -67,7 +68,8 @@ test('creates one global canonical product transactionally with parameterized SQ
   assert.equal(insert.values[1], "DL's 6L fryer");
   assert.doesNotMatch(insert.sql, /DL's 6L fryer|AIRFRYER:DLPA4/);
   assert.doesNotMatch(insert.sql, /\bstore_id\b/);
-  assert.match(insert.values[7], /^[a-f0-9]{64}$/);
+  assert.equal(insert.values[6], 'DLPA4');
+  assert.match(insert.values[8], /^[a-f0-9]{64}$/);
 });
 
 test('keys a global variant within its canonical product rather than within a store', async () => {
@@ -192,8 +194,8 @@ test('records a scored candidate and auto-confirms it through an append-only dec
     platformSkuId: 'SKU-001',
     canonicalProductKey: 'AIRFRYER:DLPA4',
     candidateKey: 'candidate:SKU-001:DLPA4:v1',
-    sourceProfile: { barcode: '6901234567890', model: 'DL-PA4' },
-    targetProfile: { barcode: '6901234567890', model: 'DLPA4' },
+    sourceProfile: { barcode: '6901234567892', model: 'DL-PA4' },
+    targetProfile: { barcode: '6901234567892', model: 'DLPA4' },
     evaluatedAt: '2026-07-26T12:05:00.000Z',
   });
   assert.equal(candidate.evaluation.recommendation, 'CONFIRMED');

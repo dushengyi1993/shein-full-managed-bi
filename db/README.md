@@ -32,6 +32,10 @@ The migration chain is:
 - `0004`: canonical product identity and employee-store assignments;
 - `0005`: Webhook receipts, jobs, safe events, gates and runtime heartbeats;
 - `0006`: products, inventory, shortage, purchase, delivery and supply attempt evidence;
+- `0007`: live supply-shape alignment for product, inventory, purchase and delivery facts;
+- `0008`: latest product-detail identity projections without retaining image URLs;
+- `0009`: supplier product numbers as supporting, never strong, identity evidence;
+- `0010`: append-only sealed SPU/SKC/SKU identity observation sets;
 - `9999`: final runtime-role reconciliation and least-privilege grants.
 
 `0002` reads `SHEIN_FM_APP_DB_PASSWORD`. During the first split-role production

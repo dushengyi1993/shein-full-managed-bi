@@ -12,6 +12,36 @@ const ENDPOINTS = Object.freeze({
   deliveries: 'shipping.delivery',
 });
 
+function normalizedPublicImageUrl(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+    return null;
+  }
+  url.hash = '';
+  url.search = '';
+  url.hostname = url.hostname.toLowerCase();
+  if (
+    (url.protocol === 'https:' && url.port === '443')
+    || (url.protocol === 'http:' && url.port === '80')
+  ) {
+    url.port = '';
+  }
+  return url.toString();
+}
+
+export function productImageUrlHash(value) {
+  const normalizedUrl = normalizedPublicImageUrl(value);
+  return normalizedUrl === null
+    ? null
+    : payloadFingerprint({ normalizedPublicImageUrl: normalizedUrl });
+}
+
 export const SUPPLY_DASHBOARD_SQL = Object.freeze({
   purchaseOrderStatus: `
     SELECT
@@ -917,6 +947,7 @@ async function enrichProductDetails(client, {
   let enrichedCount = 0;
   let unresolvedCount = 0;
   for (const detail of productDetails.details) {
+    const mainImageUrlHash = productImageUrlHash(detail.mainImageUrl);
     const result = await client.query(
       `UPDATE dim.full_sku
        SET platform_skc_id = COALESCE($3, platform_skc_id),
@@ -924,13 +955,23 @@ async function enrichProductDetails(client, {
            supplier_sku = COALESCE($5, supplier_sku),
            supplier_code = COALESCE($6, supplier_code),
            product_name = COALESCE($7, product_name),
-           detail_source_fetch_batch_id = $8,
-           detail_source_fetched_at = $9
+           category_id = COALESCE($8, category_id),
+           category_name = COALESCE($9, category_name),
+           product_type_id = COALESCE($10, product_type_id),
+           brand_code = COALESCE($11, brand_code),
+           main_image_url_hash = COALESCE($12, main_image_url_hash),
+           dimension_length = COALESCE($13, dimension_length),
+           dimension_width = COALESCE($14, dimension_width),
+           dimension_height = COALESCE($15, dimension_height),
+           dimension_weight = COALESCE($16, dimension_weight),
+           stop_purchase_code = COALESCE($17, stop_purchase_code),
+           detail_source_fetch_batch_id = $18,
+           detail_source_fetched_at = $19
        WHERE store_id = $1
          AND platform_sku_id = $2
          AND (
            detail_source_fetched_at IS NULL
-           OR detail_source_fetched_at <= $9
+           OR detail_source_fetched_at <= $19
          )
        RETURNING full_sku_id`,
       [
@@ -941,6 +982,16 @@ async function enrichProductDetails(client, {
         detail.supplierSku,
         detail.supplierCode,
         detail.productName,
+        detail.categoryId,
+        detail.categoryName,
+        detail.productTypeId,
+        detail.brandCode,
+        mainImageUrlHash,
+        detail.dimensions?.length ?? null,
+        detail.dimensions?.width ?? null,
+        detail.dimensions?.height ?? null,
+        detail.dimensions?.weight ?? null,
+        detail.stopPurchaseCode,
         fetchBatchId,
         sourceFetchedAt,
       ],

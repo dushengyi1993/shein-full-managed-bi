@@ -141,12 +141,12 @@ test('all mutable application runtimes and timers are fail-closed behind explici
   }
 });
 
-test('9999 preflight tracks every 0001-0006 table and project function', async () => {
+test('9999 preflight tracks every runtime table and project function through 0010', async () => {
   const reconcile = await text('db/migrations/9999_runtime_role_reconcile.sql');
   const migrations = await Promise.all(
     ['0001_full_managed_bi.sql', '0002_runtime_role.sql', '0003_sales_trust.sql',
       '0004_product_identity_and_access.sql', '0005_webhook_runtime.sql',
-      '0006_supply_domains.sql']
+      '0006_supply_domains.sql', '0010_product_identity_observation_sets.sql']
       .map((name) => text(`db/migrations/${name}`)),
   );
   const allSql = migrations.join('\n');
@@ -197,6 +197,14 @@ test('9999 grants one group per login and proves cross-domain negative privilege
     /GRANT SELECT ON[\s\S]*ops\.sales_quality_event,[\s\S]*TO sheinfm_materializer_ro, sheinfm_app/,
   );
   assert.match(migration, /GRANT SELECT ON ops\.sales_sync_run\s+TO sheinfm_supply_loader/);
+  assert.match(
+    migration,
+    /GRANT SELECT, INSERT ON[\s\S]*raw\.product_identity_observation_set,[\s\S]*raw\.identifier_observation,[\s\S]*TO sheinfm_supply_loader/,
+  );
+  assert.match(
+    migration,
+    /GRANT UPDATE \(status, member_count, sealed_at\)\s+ON raw\.product_identity_observation_set\s+TO sheinfm_supply_loader/,
+  );
   assert.match(migration, /fact\.supply_projection_member/);
   assert.match(migration, /ops\.webhook_runtime_heartbeat/);
   assert.match(migration, /store_id, store_code, is_active/);
@@ -208,6 +216,65 @@ test('9999 grants one group per login and proves cross-domain negative privilege
   assert.match(verify, /materializer retained % on %/);
   assert.match(verify, /unsafe warehouse default privilege remains/);
   assert.match(verify, /ciphertext/);
+});
+
+test('9999 preserves only the identity evidence permissions needed by the supply loader', async () => {
+  const migration = await text('db/migrations/9999_runtime_role_reconcile.sql');
+  const verify = await text('db/verify/9999_runtime_role_reconcile.sql');
+
+  for (const relation of [
+    'raw.product_identity_observation_set',
+    'raw.identifier_observation',
+  ]) {
+    assert.match(
+      migration,
+      new RegExp(`'${relation.replace('.', '\\.')}'`),
+      `9999 preflight omits ${relation}`,
+    );
+  }
+  for (const functionName of [
+    'ops.guard_product_identity_observation_set_mutation()',
+    'ops.require_building_product_identity_observation_set()',
+    'ops.verify_product_identity_observation_set_sealed()',
+  ]) {
+    assert.ok(
+      migration.includes(`'${functionName}'`),
+      `9999 preflight omits ${functionName}`,
+    );
+    assert.ok(
+      verify.includes(`'${functionName}'`),
+      `9999 verification omits ${functionName}`,
+    );
+  }
+  assert.match(
+    migration,
+    /\('sheinfm_supply_loader', 'raw\.product_identity_observation_set', 'identity_observation_set_id'\)/,
+  );
+  assert.match(
+    migration,
+    /\('sheinfm_supply_loader', 'raw\.identifier_observation', 'identifier_observation_id'\)/,
+  );
+  assert.match(
+    verify,
+    /supply identity observation-set table boundary is invalid/,
+  );
+  assert.match(
+    verify,
+    /supply identity observation-set immutable column % is updatable/,
+  );
+  assert.match(verify, /supply identifier-observation boundary is invalid/);
+  assert.match(
+    verify,
+    /\('sheinfm_supply_login', 'raw\.product_identity_observation_set', 'identity_observation_set_id'\)/,
+  );
+  assert.match(
+    verify,
+    /\('sheinfm_supply_login', 'raw\.identifier_observation', 'identifier_observation_id'\)/,
+  );
+  assert.doesNotMatch(
+    migration,
+    /GRANT SELECT, INSERT, UPDATE ON\s+raw\.product_identity_observation_set/,
+  );
 });
 
 test('migration passwords come from one root-private manifest and values never enter docker argv', async () => {

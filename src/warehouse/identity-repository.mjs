@@ -144,17 +144,19 @@ export async function createCanonicalProduct(pool, input) {
     category: normalized.category,
     model: normalized.model,
     barcode: normalized.barcode,
+    supplierCode: normalized.supplierCode,
     coreAttributes: normalized.coreAttributes,
   };
   const fingerprint = identityFingerprint(source);
 
   return inTransaction(pool, async (client) => {
     const inserted = await client.query(
-      `INSERT INTO dim.canonical_product (
+       `INSERT INTO dim.canonical_product (
            canonical_product_key, display_name,
            brand_normalized, category_normalized, model_normalized,
-           barcode_normalized, core_attributes, source_payload_fingerprint
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+           barcode_normalized, supplier_code_normalized, core_attributes,
+           source_payload_fingerprint
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
        ON CONFLICT (canonical_product_key) DO NOTHING
        RETURNING canonical_product_id, source_payload_fingerprint`,
       [
@@ -164,6 +166,7 @@ export async function createCanonicalProduct(pool, input) {
         normalized.category,
         normalized.model,
         normalized.barcode,
+        normalized.supplierCode,
         JSON.stringify(normalized.coreAttributes),
         fingerprint,
       ],

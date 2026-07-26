@@ -24,6 +24,7 @@ BEGIN
         'ops.sales_business_watermark',
         'dim.canonical_product',
         'dim.canonical_variant',
+        'raw.product_identity_observation_set',
         'raw.identifier_observation',
         'ops.product_match_candidate',
         'ops.product_identity_decision',
@@ -63,6 +64,9 @@ BEGIN
         'ops.touch_updated_at()',
         'ops.distinct_identity_evidence_count(text[])',
         'ops.reject_append_only_identity_mutation()',
+        'ops.guard_product_identity_observation_set_mutation()',
+        'ops.require_building_product_identity_observation_set()',
+        'ops.verify_product_identity_observation_set_sealed()',
         'ops.guard_webhook_receipt_immutable()',
         'ops.reject_webhook_runtime_heartbeat_mutation()',
         'ops.guard_webhook_store_gate_recovery()',
@@ -463,6 +467,83 @@ BEGIN
             RAISE EXCEPTION 'supply append-only boundary is invalid for %', required_name;
         END IF;
     END LOOP;
+    IF NOT has_table_privilege(
+        'sheinfm_supply_login',
+        'raw.product_identity_observation_set',
+        'SELECT'
+    ) OR NOT has_table_privilege(
+        'sheinfm_supply_login',
+        'raw.product_identity_observation_set',
+        'INSERT'
+    ) OR has_table_privilege(
+        'sheinfm_supply_login',
+        'raw.product_identity_observation_set',
+        'UPDATE'
+    ) OR has_table_privilege(
+        'sheinfm_supply_login',
+        'raw.product_identity_observation_set',
+        'DELETE'
+    ) OR has_table_privilege(
+        'sheinfm_supply_login',
+        'raw.product_identity_observation_set',
+        'TRUNCATE'
+    ) THEN
+        RAISE EXCEPTION 'supply identity observation-set table boundary is invalid';
+    END IF;
+    FOREACH required_name IN ARRAY ARRAY['status', 'member_count', 'sealed_at']
+    LOOP
+        IF NOT has_column_privilege(
+            'sheinfm_supply_login',
+            'raw.product_identity_observation_set',
+            required_name,
+            'UPDATE'
+        ) THEN
+            RAISE EXCEPTION
+                'supply identity observation-set seal column % is not updatable',
+                required_name;
+        END IF;
+    END LOOP;
+    SELECT column_name
+      INTO required_name
+      FROM information_schema.columns
+     WHERE table_schema = 'raw'
+       AND table_name = 'product_identity_observation_set'
+       AND column_name <> ALL (ARRAY['status', 'member_count', 'sealed_at'])
+       AND has_column_privilege(
+           'sheinfm_supply_login',
+           'raw.product_identity_observation_set',
+           column_name,
+           'UPDATE'
+       )
+     LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION
+            'supply identity observation-set immutable column % is updatable',
+            required_name;
+    END IF;
+    IF NOT has_table_privilege(
+        'sheinfm_supply_login',
+        'raw.identifier_observation',
+        'SELECT'
+    ) OR NOT has_table_privilege(
+        'sheinfm_supply_login',
+        'raw.identifier_observation',
+        'INSERT'
+    ) OR has_table_privilege(
+        'sheinfm_supply_login',
+        'raw.identifier_observation',
+        'UPDATE'
+    ) OR has_table_privilege(
+        'sheinfm_supply_login',
+        'raw.identifier_observation',
+        'DELETE'
+    ) OR has_table_privilege(
+        'sheinfm_supply_login',
+        'raw.identifier_observation',
+        'TRUNCATE'
+    ) THEN
+        RAISE EXCEPTION 'supply identifier-observation boundary is invalid';
+    END IF;
 
     -- Ingress sees only routing/idempotency columns, can append heartbeat
     -- evidence, and cannot lease a job or read encrypted receipt content.
@@ -562,6 +643,8 @@ BEGIN
             ('sheinfm_supply_login', 'dim.store', 'store_id'),
             ('sheinfm_supply_login', 'raw.openapi_fetch_batch', 'fetch_batch_id'),
             ('sheinfm_supply_login', 'raw.openapi_fetch_page', 'openapi_fetch_page_id'),
+            ('sheinfm_supply_login', 'raw.product_identity_observation_set', 'identity_observation_set_id'),
+            ('sheinfm_supply_login', 'raw.identifier_observation', 'identifier_observation_id'),
             ('sheinfm_supply_login', 'ops.supply_sync_attempt', 'supply_sync_attempt_event_id'),
             ('sheinfm_supply_login', 'fact.supply_projection_batch', 'supply_projection_batch_id'),
             ('sheinfm_supply_login', 'fact.supply_projection_member', 'supply_projection_member_id'),
@@ -621,6 +704,9 @@ BEGIN
         'ops.touch_updated_at()',
         'ops.distinct_identity_evidence_count(text[])',
         'ops.reject_append_only_identity_mutation()',
+        'ops.guard_product_identity_observation_set_mutation()',
+        'ops.require_building_product_identity_observation_set()',
+        'ops.verify_product_identity_observation_set_sealed()',
         'ops.guard_webhook_receipt_immutable()',
         'ops.reject_webhook_runtime_heartbeat_mutation()',
         'ops.guard_webhook_store_gate_recovery()',

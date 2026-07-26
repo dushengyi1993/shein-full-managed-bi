@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   loadFullManagedSupplySnapshot,
+  productImageUrlHash,
   readFullManagedSupplySyncHealth,
   readFullManagedSupplyDashboard,
   recordFullManagedSupplySyncAttempt,
@@ -339,6 +340,18 @@ test('supply catalog/detail only enrich sales-owned SKU rows under the shared lo
         supplierSku: 'SELLER-1',
         supplierCode: 'MODEL-1',
         productName: 'Product',
+        categoryId: 'CAT-1',
+        categoryName: 'Appliances',
+        productTypeId: 'TYPE-1',
+        brandCode: 'BRAND-1',
+        mainImageUrl: 'https://CDN.EXAMPLE.com:443/images/main.jpg?width=800#preview',
+        dimensions: {
+          length: '10',
+          width: '20',
+          height: '30',
+          weight: '1.5',
+        },
+        stopPurchaseCode: '0',
       }],
       batches: [{
         batchIndex: 0,
@@ -352,6 +365,20 @@ test('supply catalog/detail only enrich sales-owned SKU rows under the shared lo
 
   assert.equal(result.catalogEnrichedSkuCount, 1);
   assert.equal(result.productDetailEnrichedCount, 1);
+  const detailWrite = client.calls.find(({ sql }) => (
+    sql.includes('UPDATE dim.full_sku')
+    && sql.includes('main_image_url_hash')
+  ));
+  assert.ok(detailWrite);
+  assert.equal(detailWrite.values[7], 'CAT-1');
+  assert.equal(detailWrite.values[10], 'BRAND-1');
+  assert.equal(
+    detailWrite.values[11],
+    productImageUrlHash('https://cdn.example.com/images/main.jpg'),
+  );
+  assert.equal(detailWrite.values[12], '10');
+  assert.equal(detailWrite.values[16], '0');
+  assert.equal(detailWrite.values.includes('https://CDN.EXAMPLE.com:443/images/main.jpg?width=800#preview'), false);
   assert.equal(client.calls.some(({ sql }) => (
     sql.includes("hashtext('full-managed-sales-loader')")
   )), true);
@@ -368,6 +395,17 @@ test('supply catalog/detail only enrich sales-owned SKU rows under the shared lo
     skuWrites.join('\n'),
     /\bis_active\s*=|\bcatalog_run_key\s*=|\bretired_at\s*=|\blast_seen_at\s*=/,
   );
+});
+
+test('product image URL hash strips query/fragment and rejects unsafe URLs', () => {
+  const expected = productImageUrlHash('https://cdn.example.com/image/a.jpg');
+  assert.equal(
+    productImageUrlHash('https://CDN.EXAMPLE.com:443/image/a.jpg?size=800#hero'),
+    expected,
+  );
+  assert.equal(productImageUrlHash('javascript:alert(1)'), null);
+  assert.equal(productImageUrlHash('https://user:secret@example.com/image.jpg'), null);
+  assert.equal(productImageUrlHash('not a URL'), null);
 });
 
 test('unstable product catalog is rejected before any warehouse transaction', async () => {

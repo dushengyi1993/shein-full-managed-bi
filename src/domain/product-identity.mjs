@@ -1,6 +1,7 @@
 const MATCH_WEIGHTS = Object.freeze({
   barcode: 0.6,
   model: 0.35,
+  supplierCode: 0.25,
   brand: 0.1,
   category: 0.1,
   coreAttributes: 0.2,
@@ -28,6 +29,7 @@ const FIELD_ALIASES = Object.freeze({
   dimensions: ['dimensions', 'dimension', 'size'],
   model: ['model', 'modelNumber', 'modelNo'],
   plug: ['plug', 'plugType'],
+  supplierCode: ['supplierCode', 'supplier_code', 'productNumber'],
   voltage: ['voltage', 'ratedVoltage'],
 });
 
@@ -84,8 +86,34 @@ function normalizeVoltage(value) {
 function normalizeCapacity(value) {
   return normalizeText(value)
     ?.replace(/\s+/g, '')
-    .replace(/升/g, 'L')
-    .replace(/毫升/g, 'ML') || null;
+    // Replace the longer Chinese unit first; otherwise `毫升` becomes `毫L`.
+    .replace(/毫升/g, 'ML')
+    .replace(/升/g, 'L') || null;
+}
+
+/**
+ * Validate a GTIN-8, UPC-A/GTIN-12, GTIN-13 or GTIN-14 check digit.
+ *
+ * Formatting characters are intentionally rejected here. Callers that accept
+ * formatted source values must normalize them before validation while keeping
+ * the original source evidence separately.
+ */
+export function isValidGtin(value) {
+  if (value === undefined || value === null) return false;
+  const candidate = String(value).normalize('NFKC').trim();
+  if (![8, 12, 13, 14].includes(candidate.length) || !/^\d+$/.test(candidate)) {
+    return false;
+  }
+
+  const digits = [...candidate].map(Number);
+  const checkDigit = digits.pop();
+  const payloadTotal = digits
+    .reverse()
+    .reduce(
+      (total, digit, index) => total + digit * (index % 2 === 0 ? 3 : 1),
+      0,
+    );
+  return (payloadTotal + checkDigit) % 10 === 0;
 }
 
 /**
@@ -107,7 +135,13 @@ function normalizeField(field, value) {
   if (field === 'voltage') return normalizeVoltage(value);
   if (field === 'capacity') return normalizeCapacity(value);
   if (field === 'dimensions') return normalizeDimension(value);
-  if (field === 'model' || field === 'barcode') return normalizeCompact(value);
+  if (
+    field === 'model'
+    || field === 'barcode'
+    || field === 'supplierCode'
+  ) {
+    return normalizeCompact(value);
+  }
   return normalizeText(value);
 }
 
@@ -133,6 +167,10 @@ export function normalizeProductIdentityProfile(profile = {}) {
   return Object.freeze({
     barcode: normalizeField('barcode', valueFromProfile(profile, 'barcode')),
     model: normalizeField('model', valueFromProfile(profile, 'model')),
+    supplierCode: normalizeField(
+      'supplierCode',
+      valueFromProfile(profile, 'supplierCode'),
+    ),
     brand: normalizeField('brand', valueFromProfile(profile, 'brand')),
     category: normalizeField('category', valueFromProfile(profile, 'category')),
     voltage: normalizeField('voltage', valueFromProfile(profile, 'voltage')),
@@ -187,7 +225,11 @@ export function evaluateProductIdentityMatch(sourceProfile, targetProfile) {
   const strongEvidenceTypes = [];
   let score = 0;
 
-  if (exactMatch(source, target, 'barcode')) {
+  if (
+    exactMatch(source, target, 'barcode')
+    && isValidGtin(source.barcode)
+    && isValidGtin(target.barcode)
+  ) {
     score += MATCH_WEIGHTS.barcode;
     matchedEvidence.push({ type: 'BARCODE', weight: MATCH_WEIGHTS.barcode });
     strongEvidenceTypes.push('BARCODE');
@@ -196,6 +238,13 @@ export function evaluateProductIdentityMatch(sourceProfile, targetProfile) {
     score += MATCH_WEIGHTS.model;
     matchedEvidence.push({ type: 'MODEL', weight: MATCH_WEIGHTS.model });
     strongEvidenceTypes.push('MODEL');
+  }
+  if (exactMatch(source, target, 'supplierCode')) {
+    score += MATCH_WEIGHTS.supplierCode;
+    matchedEvidence.push({
+      type: 'SUPPLIER_CODE',
+      weight: MATCH_WEIGHTS.supplierCode,
+    });
   }
 
   const brandMatch = exactMatch(source, target, 'brand');
@@ -220,12 +269,6 @@ export function evaluateProductIdentityMatch(sourceProfile, targetProfile) {
       matchedKeys: core.matchedKeys,
       conflictingKeys: core.conflictingKeys,
     });
-    if (
-      core.matchedKeys.length >= 2 &&
-      core.conflictingKeys.length === 0
-    ) {
-      strongEvidenceTypes.push('CORE_ATTRIBUTES');
-    }
   }
 
   score = Math.min(1, Number(score.toFixed(6)));
@@ -262,4 +305,3 @@ export function evaluateProductIdentityMatch(sourceProfile, targetProfile) {
     reason,
   });
 }
-

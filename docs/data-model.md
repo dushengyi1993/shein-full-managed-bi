@@ -102,13 +102,14 @@
 
 ### 标准商品与员工分配
 
-- `dim.canonical_product / dim.canonical_variant`：跨店标准商品与变体；
-- `raw.identifier_observation`：店铺内型号、供应商货号等脱敏标识观察；
+- `raw.product_identity_observation_set`：一次官方 `goods/spu-info` 回读中、一个店铺 SKU 的冻结观察集；先写 `BUILDING` 成员，校验数量与指纹后一次封存为 `SEALED`；
+- `raw.identifier_observation`：观察集内按 `PRODUCT / VARIANT` 分层的原始标识成员；EAN/UPC 一码一行并固定在变体层，原值永不被归一化值覆盖；
+- `dim.canonical_product / dim.canonical_variant`：带冻结来源的标准商品与变体；店内 singleton 与跨店 global 身份必须显式区分，不能把前者伪装成已完成跨店归并；
 - `ops.product_match_candidate / ops.product_identity_decision`：候选、冲突和人工决定；
 - `dim.full_sku_canonical_assignment`：店内 SKU 到标准变体的当前映射；
 - `ops.employee_principal / ops.employee_store_assignment`：员工身份与 `PRIMARY / SUPPORT / VIEW_ONLY` 店铺分配。
 
-裸 SKU 相同或标题相似不能直接跨店归并。登录员工读取全店数据；这些分配只作为负责人筛选和未来写权限依据。
+裸 SKU、平台 SPU/SKC、标题、图片 URL、供应商货号或商家 SKU 相同都不能单独跨店归并。官方型号必须来自属性 ID `1000546`；条码必须通过 GTIN-8/12/13/14 校验位；通用属性只有进入类别白名单后才能参加自动门禁。登录员工读取全店数据；店铺分配只作为负责人筛选和未来写权限依据。
 
 ### 供应链事实
 

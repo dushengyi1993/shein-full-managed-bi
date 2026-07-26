@@ -38,6 +38,7 @@ Webhook Worker 当前只做验签后密文入仓、异步解密、标准化事�
 - [系统架构](docs/architecture.md)
 - [门户信息架构与页面规划](docs/portal-information-architecture.md)
 - [数据模型](docs/data-model.md)
+- [商品身份与货号归并运行手册](docs/product-identity-runbook.md)
 - [能力边界](docs/capability-boundary.md)
 - [数据库迁移](db/README.md)
 - [权限申请状态](docs/permission-application-status.md)

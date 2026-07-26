@@ -22,6 +22,7 @@
     "probe:openapi": "node scripts/probe_full_managed_openapi.mjs",
     "sync:sales": "node scripts/sync_full_managed_sales.mjs",
     "sync:supply": "node scripts/sync_full_managed_supply.mjs",
+    "sync:product-identity-evidence": "node scripts/sync_full_managed_product_identity_evidence.mjs",
     "start:webhook": "node scripts/serve_full_managed_webhook.mjs",
     "worker:webhook": "node scripts/run_full_managed_webhook_worker.mjs",
     "materialize:dashboard": "node scripts/materialize_full_managed_dashboard.mjs",

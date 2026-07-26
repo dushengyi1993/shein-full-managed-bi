@@ -31,6 +31,7 @@ BEGIN
         'ops.sales_business_watermark',
         'dim.canonical_product',
         'dim.canonical_variant',
+        'raw.product_identity_observation_set',
         'raw.identifier_observation',
         'ops.product_match_candidate',
         'ops.product_identity_decision',
@@ -70,6 +71,9 @@ BEGIN
         'ops.touch_updated_at()',
         'ops.distinct_identity_evidence_count(text[])',
         'ops.reject_append_only_identity_mutation()',
+        'ops.guard_product_identity_observation_set_mutation()',
+        'ops.require_building_product_identity_observation_set()',
+        'ops.verify_product_identity_observation_set_sealed()',
         'ops.guard_webhook_receipt_immutable()',
         'ops.reject_webhook_runtime_heartbeat_mutation()',
         'ops.guard_webhook_store_gate_recovery()',
@@ -392,13 +396,19 @@ GRANT SELECT, INSERT, UPDATE ON ops.sales_business_watermark
 TO sheinfm_sales_loader;
 
 -- Supply loader: supply-only raw evidence, dimensions and facts. The attempt
--- and projection ledgers are append-only by both grants and triggers.
+-- and projection ledgers are append-only by both grants and triggers. Product
+-- identity observation envelopes can only make their one guarded seal update.
 GRANT SELECT, INSERT ON
     raw.openapi_fetch_batch,
     raw.openapi_fetch_page,
+    raw.product_identity_observation_set,
+    raw.identifier_observation,
     ops.supply_sync_attempt,
     fact.supply_projection_batch,
     fact.supply_projection_member
+TO sheinfm_supply_loader;
+GRANT UPDATE (status, member_count, sealed_at)
+ON raw.product_identity_observation_set
 TO sheinfm_supply_loader;
 GRANT SELECT ON ops.sales_sync_run
 TO sheinfm_supply_loader;
@@ -479,6 +489,8 @@ BEGIN
             ('sheinfm_supply_loader', 'dim.store', 'store_id'),
             ('sheinfm_supply_loader', 'raw.openapi_fetch_batch', 'fetch_batch_id'),
             ('sheinfm_supply_loader', 'raw.openapi_fetch_page', 'openapi_fetch_page_id'),
+            ('sheinfm_supply_loader', 'raw.product_identity_observation_set', 'identity_observation_set_id'),
+            ('sheinfm_supply_loader', 'raw.identifier_observation', 'identifier_observation_id'),
             ('sheinfm_supply_loader', 'ops.supply_sync_attempt', 'supply_sync_attempt_event_id'),
             ('sheinfm_supply_loader', 'fact.supply_projection_batch', 'supply_projection_batch_id'),
             ('sheinfm_supply_loader', 'fact.supply_projection_member', 'supply_projection_member_id'),
