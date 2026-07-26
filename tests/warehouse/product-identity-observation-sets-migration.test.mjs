@@ -15,6 +15,19 @@ test('identity observation-set migration enforces sealed append-only envelopes',
   const sql = await readFile(migrationUrl, 'utf8');
 
   assert.match(sql, /CREATE TABLE IF NOT EXISTS raw\.product_identity_observation_set/);
+  assert.match(sql, /observation_run_id text NOT NULL/);
+  assert.match(
+    sql,
+    /CHECK \(observation_run_id ~ '\^\[A-Za-z0-9\._:-\]\{8,120\}\$'\)/,
+  );
+  assert.match(
+    sql,
+    /UNIQUE \(store_id, observation_run_id, full_sku_id\)/,
+  );
+  assert.match(
+    sql,
+    /ix_raw_product_identity_set_run[\s\S]*observation_run_id,[\s\S]*WHERE status = 'SEALED'/,
+  );
   assert.match(sql, /document_version integer NOT NULL DEFAULT 27/);
   assert.match(sql, /CHECK \(document_version = 27\)/);
   assert.match(sql, /status IN \('BUILDING', 'SEALED'\)/);
@@ -46,6 +59,10 @@ test('identity observation-set migration enforces sealed append-only envelopes',
     /GRANT UPDATE \(status, member_count, sealed_at\)[\s\S]*TO sheinfm_supply_loader/,
   );
   assert.doesNotMatch(sql, /\bTRUNCATE\s+(?:TABLE\s+)?raw\.|\bDROP TABLE\b/);
+  assert.doesNotMatch(
+    sql,
+    /\bsplit_part\s*\(|\bsubstring\s*\(\s*idempotency_key/i,
+  );
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\s*$/);
 });
 
@@ -78,6 +95,17 @@ test('identity observation-set verification checks triggers and rejects URL iden
 
   assert.match(sql, /fk_raw_identifier_observation_set_composite/);
   assert.match(sql, /ck_raw_identifier_observation_barcode_scope/);
+  assert.match(sql, /ck_raw_product_identity_observation_set_run/);
+  assert.match(sql, /uq_raw_product_identity_observation_set_run_sku/);
+  assert.match(sql, /ix_raw_product_identity_set_run/);
+  assert.match(
+    sql,
+    /non-null text observation_run_id/,
+  );
+  assert.match(
+    sql,
+    /observation_run_id safe-format constraint is missing/,
+  );
   assert.match(sql, /tgdeferrable/);
   assert.match(sql, /tginitdeferred/);
   assert.match(sql, /member_count > 0/);

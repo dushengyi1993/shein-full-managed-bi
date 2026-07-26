@@ -883,6 +883,7 @@ async function insertOrReadObservationSet(client, {
   storeId,
   fullSku,
   fetchBatchId,
+  runId,
   sourceFetchedAt,
   documentVersion,
   mapperVersion,
@@ -896,6 +897,7 @@ async function insertOrReadObservationSet(client, {
     storeId,
     fullSku.full_sku_id,
     fetchBatchId,
+    runId,
     expected.setKey,
     spuInfo.spuName,
     skc.skcName,
@@ -911,6 +913,7 @@ async function insertOrReadObservationSet(client, {
          store_id,
          full_sku_id,
          source_fetch_batch_id,
+         observation_run_id,
          observation_set_key,
          platform_spu_id,
          platform_skc_id,
@@ -923,10 +926,10 @@ async function insertOrReadObservationSet(client, {
          set_payload_fingerprint,
          source_fetched_at
      ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9,
-         'BUILDING', 0, $10, $11, $12
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+         'BUILDING', 0, $11, $12, $13
      )
-     ON CONFLICT (store_id, observation_set_key) DO NOTHING
+     ON CONFLICT (store_id, observation_run_id, full_sku_id) DO NOTHING
      RETURNING identity_observation_set_id`,
     values,
   );
@@ -962,6 +965,8 @@ async function insertOrReadObservationSet(client, {
            identity_observation_set_id,
            full_sku_id,
            source_fetch_batch_id,
+           observation_run_id,
+           observation_set_key,
            platform_spu_id,
            platform_skc_id,
            platform_sku_id,
@@ -973,9 +978,10 @@ async function insertOrReadObservationSet(client, {
            set_payload_fingerprint,
            source_fetched_at
          FROM raw.product_identity_observation_set
-        WHERE store_id = $1
-          AND observation_set_key = $2`,
-      [storeId, expected.setKey],
+         WHERE store_id = $1
+           AND observation_run_id = $2
+           AND full_sku_id = $3`,
+      [storeId, runId, fullSku.full_sku_id],
     );
     if (rowCount(existing) !== 1) {
       throw new Error('Product identity observation set conflict could not be read back');
@@ -984,6 +990,8 @@ async function insertOrReadObservationSet(client, {
     const exactReplay = (
       String(row.full_sku_id) === String(fullSku.full_sku_id)
       && String(row.source_fetch_batch_id) === String(fetchBatchId)
+      && row.observation_run_id === runId
+      && row.observation_set_key === expected.setKey
       && row.platform_spu_id === spuInfo.spuName
       && row.platform_skc_id === skc.skcName
       && row.platform_sku_id === sku.skuCode
@@ -1073,6 +1081,7 @@ export async function recordProductIdentitySpuObservation(pool, {
         storeId,
         fullSku,
         fetchBatchId: batch.fetchBatchId,
+        runId: safeRunId,
         sourceFetchedAt: observedAt,
         documentVersion: docVersion,
         mapperVersion: safeMapperVersion,

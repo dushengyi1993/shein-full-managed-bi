@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS raw.product_identity_observation_set (
     store_id bigint NOT NULL,
     full_sku_id bigint NOT NULL,
     source_fetch_batch_id bigint NOT NULL,
+    observation_run_id text NOT NULL,
     observation_set_key character(64) NOT NULL,
     platform_spu_id text NOT NULL,
     platform_skc_id text NOT NULL,
@@ -56,6 +57,8 @@ CREATE TABLE IF NOT EXISTS raw.product_identity_observation_set (
         UNIQUE (store_id, observation_set_key),
     CONSTRAINT uq_raw_product_identity_observation_set_batch_sku
         UNIQUE (store_id, source_fetch_batch_id, full_sku_id),
+    CONSTRAINT uq_raw_product_identity_observation_set_run_sku
+        UNIQUE (store_id, observation_run_id, full_sku_id),
     CONSTRAINT uq_raw_product_identity_observation_set_composite
         UNIQUE (
             identity_observation_set_id,
@@ -65,6 +68,8 @@ CREATE TABLE IF NOT EXISTS raw.product_identity_observation_set (
         ),
     CONSTRAINT ck_raw_product_identity_observation_set_key
         CHECK (observation_set_key ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_raw_product_identity_observation_set_run
+        CHECK (observation_run_id ~ '^[A-Za-z0-9._:-]{8,120}$'),
     CONSTRAINT ck_raw_product_identity_observation_set_platform_ids
         CHECK (
             platform_spu_id <> ''
@@ -117,8 +122,19 @@ CREATE INDEX IF NOT EXISTS ix_raw_product_identity_observation_set_batch
         source_fetch_batch_id, identity_observation_set_id
     );
 
+CREATE INDEX IF NOT EXISTS ix_raw_product_identity_set_run
+    ON raw.product_identity_observation_set (
+        observation_run_id,
+        store_id,
+        source_fetch_batch_id,
+        full_sku_id
+    )
+    WHERE status = 'SEALED';
+
 COMMENT ON TABLE raw.product_identity_observation_set IS
     'Append-only sealed evidence envelope for one real store SKU returned by one official goods/spu-info fetch batch.';
+COMMENT ON COLUMN raw.product_identity_observation_set.observation_run_id IS
+    'Explicit caller-owned evidence run id. Consumers must select this field directly and must never parse a fetch-batch idempotency key.';
 COMMENT ON COLUMN raw.product_identity_observation_set.observation_set_key IS
     'Stable logical replay key derived from store, run, SPU and SKU; payload drift is checked separately by set_payload_fingerprint.';
 COMMENT ON COLUMN raw.product_identity_observation_set.document_version IS

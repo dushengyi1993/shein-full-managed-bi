@@ -4,6 +4,7 @@ DO $$
 DECLARE
     identifier_type_constraint text;
     observation_set_lifecycle_constraint text;
+    observation_set_run_constraint text;
 BEGIN
     IF to_regclass('raw.product_identity_observation_set') IS NULL THEN
         RAISE EXCEPTION 'raw.product_identity_observation_set is missing';
@@ -22,6 +23,50 @@ BEGIN
            )
     ) <> 4 THEN
         RAISE EXCEPTION 'identifier observation set-binding columns are missing';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_schema = 'raw'
+           AND table_name = 'product_identity_observation_set'
+           AND column_name = 'observation_run_id'
+           AND data_type = 'text'
+           AND is_nullable = 'NO'
+    ) THEN
+        RAISE EXCEPTION
+            'product identity observation sets require a non-null text observation_run_id';
+    END IF;
+
+    SELECT pg_get_constraintdef(oid)
+      INTO observation_set_run_constraint
+      FROM pg_constraint
+     WHERE conname = 'ck_raw_product_identity_observation_set_run'
+       AND conrelid = 'raw.product_identity_observation_set'::regclass;
+
+    IF observation_set_run_constraint IS NULL
+       OR strpos(
+            observation_set_run_constraint,
+            '^[A-Za-z0-9._:-]{8,120}$'
+       ) = 0 THEN
+        RAISE EXCEPTION
+            'product identity observation_run_id safe-format constraint is missing';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+         FROM pg_constraint
+         WHERE conname = 'uq_raw_product_identity_observation_set_run_sku'
+           AND conrelid = 'raw.product_identity_observation_set'::regclass
+           AND pg_get_constraintdef(oid) =
+                'UNIQUE (store_id, observation_run_id, full_sku_id)'
+    ) THEN
+        RAISE EXCEPTION
+            'product identity observation run/store/SKU uniqueness is missing';
+    END IF;
+
+    IF to_regclass('raw.ix_raw_product_identity_set_run') IS NULL THEN
+        RAISE EXCEPTION 'product identity observation-run index is missing';
     END IF;
 
     IF NOT EXISTS (

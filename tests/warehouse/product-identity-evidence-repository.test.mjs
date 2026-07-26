@@ -168,22 +168,24 @@ class FakeIdentityDatabase {
       return this.result([this.batches.get(`${values[0]}:${values[1]}`)]);
     }
     if (sql.includes('INSERT INTO raw.product_identity_observation_set')) {
-      const key = `${values[0]}:${values[3]}`;
+      const key = `${values[0]}:${values[3]}:${values[1]}`;
       if (this.sets.has(key)) return this.result();
       const row = {
         identity_observation_set_id: this.nextSetId++,
         full_sku_id: values[1],
         source_fetch_batch_id: values[2],
-        platform_spu_id: values[4],
-        platform_skc_id: values[5],
-        platform_sku_id: values[6],
-        document_version: values[7],
-        mapper_version: values[8],
+        observation_run_id: values[3],
+        observation_set_key: values[4],
+        platform_spu_id: values[5],
+        platform_skc_id: values[6],
+        platform_sku_id: values[7],
+        document_version: values[8],
+        mapper_version: values[9],
         status: 'BUILDING',
         member_count: 0,
-        source_response_fingerprint: values[9],
-        set_payload_fingerprint: values[10],
-        source_fetched_at: values[11],
+        source_response_fingerprint: values[10],
+        set_payload_fingerprint: values[11],
+        source_fetched_at: values[12],
       };
       this.sets.set(key, row);
       this.members.set(row.identity_observation_set_id, []);
@@ -216,7 +218,9 @@ class FakeIdentityDatabase {
       sql.includes('FROM raw.product_identity_observation_set')
       && sql.includes('observation_set_key')
     ) {
-      return this.result([this.sets.get(`${values[0]}:${values[1]}`)]);
+      return this.result([
+        this.sets.get(`${values[0]}:${values[1]}:${values[2]}`),
+      ]);
     }
     if (sql.includes('FROM raw.identifier_observation')) {
       const members = this.members.get(values[0]) ?? [];
@@ -286,6 +290,16 @@ test('records one sealed observation set with layered attributes, barcodes and U
     false,
   );
   assert.equal(normalizedQueries(database).at(-1), 'COMMIT');
+
+  const setInsert = database.calls.find(
+    ({ sql }) => sql.includes('INSERT INTO raw.product_identity_observation_set'),
+  );
+  assert.match(setInsert.sql, /observation_run_id/);
+  assert.match(
+    setInsert.sql,
+    /ON CONFLICT \(store_id, observation_run_id, full_sku_id\) DO NOTHING/,
+  );
+  assert.equal(setInsert.values[3], options().runId);
 
   const memberCalls = database.calls.filter(
     ({ sql }) => sql.includes('INSERT INTO raw.identifier_observation'),
@@ -382,6 +396,27 @@ test('exact replay reads back batch, sealed set and every member fingerprint', a
       ),
     ).length,
     2,
+  );
+});
+
+test('exact replay rejects an observation_run_id readback mismatch', async () => {
+  const database = new FakeIdentityDatabase();
+  await recordProductIdentitySpuObservation(pool(database), options());
+  const [persistedSet] = database.sets.values();
+  persistedSet.observation_run_id = 'identity-20260727:DL:SPU-OTHER';
+
+  await assert.rejects(
+    () => recordProductIdentitySpuObservation(pool(database), options()),
+    /observation set key was reused with drifted evidence/,
+  );
+  assert.equal(normalizedQueries(database).at(-1), 'ROLLBACK');
+  const readback = database.calls.findLast(
+    ({ sql }) => sql.includes('FROM raw.product_identity_observation_set'),
+  );
+  assert.match(readback.sql, /observation_run_id/);
+  assert.match(
+    readback.sql,
+    /WHERE store_id = \$1[\s\S]*observation_run_id = \$2[\s\S]*full_sku_id = \$3/,
   );
 });
 
