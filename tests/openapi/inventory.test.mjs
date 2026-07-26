@@ -73,7 +73,44 @@ test('stock-query reconciles aggregate totals with warehouse details', async () 
   assert.equal(result.items[0].reconciliation.status, 'RECONCILED');
   assert.equal(result.shortages[0].shortageQuantity, 2);
   assert.equal(result.coverage.status, 'COMPLETE');
-  assert.deepEqual(calls[0].options.body, { skuCodeList: ['SKU-1'], invType: 'PI' });
+  assert.deepEqual(calls[0].options.body, {
+    skuCodeList: ['SKU-1'],
+    warehouseType: '1',
+    invType: 'PI',
+  });
+});
+
+test('stock-query sends the official transition warehouse selector with invType', async () => {
+  const calls = [];
+  const client = {
+    async request(_path, options) {
+      calls.push(options.body);
+      return {
+        data: stockResponse({
+          warehouseInventoryList: [],
+        }),
+      };
+    },
+  };
+
+  await fetchFullManagedInventory(client, {
+    skuCodeList: ['SKU-1'],
+    invType: 'JI',
+  });
+  assert.deepEqual(calls[0], {
+    skuCodeList: ['SKU-1'],
+    warehouseType: '3',
+    invType: 'JI',
+  });
+
+  await assert.rejects(
+    () => fetchFullManagedInventory(client, {
+      skuCodeList: ['SKU-1'],
+      invType: 'PI',
+      warehouseType: 3,
+    }),
+    /warehouseType must be 1 when invType is PI/,
+  );
 });
 
 test('missing identifiers remain partial and are never materialized as zero', async () => {

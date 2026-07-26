@@ -50,15 +50,35 @@ function normalizeInventorySelectors({ invType, warehouseType } = {}) {
   if (normalizedInvType === null && normalizedWarehouseType === null) {
     throw new TypeError('invType is required (warehouseType is accepted during the official transition)');
   }
+  const officialTransitionWarehouseType = normalizedInvType === null
+    ? null
+    : normalizedInvType === 'PI'
+      ? '1'
+      : '3';
+  if (
+    normalizedWarehouseType !== null
+    && officialTransitionWarehouseType !== null
+    && normalizedWarehouseType !== officialTransitionWarehouseType
+  ) {
+    throw new TypeError(
+      `warehouseType must be ${officialTransitionWarehouseType} when invType is ${normalizedInvType}`,
+    );
+  }
   return {
-    ...(normalizedWarehouseType === null ? {} : { warehouseType: normalizedWarehouseType }),
+    ...(
+      normalizedWarehouseType === null && officialTransitionWarehouseType === null
+        ? {}
+        : { warehouseType: normalizedWarehouseType ?? officialTransitionWarehouseType }
+    ),
     ...(normalizedInvType === null ? {} : { invType: normalizedInvType }),
   };
 }
 
 /**
  * Fetch one official stock-query batch. The API requires exactly one lookup
- * dimension and permits at most 100 identifiers.
+ * dimension and permits at most 100 identifiers. During the official
+ * warehouseType -> invType transition, invType requests also carry the
+ * compatible legacy selector: PI=1 and VI/JI=3.
  */
 export async function fetchFullManagedInventory(client, {
   skuCodeList,

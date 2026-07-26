@@ -1117,10 +1117,10 @@ async function syncStore({
       catalogSkuCodeList = catalogSkuCodes(catalog);
       const activeSkuSet = new Set(activeSkuUniverse?.skuCodes ?? []);
       const catalogSkuSet = new Set(catalogSkuCodeList);
-      const catalogMissingActiveSkuCount = activeSkuUniverse?.status === 'AVAILABLE'
+      const catalogMissingSalesMembershipSkuCount = activeSkuUniverse?.status === 'AVAILABLE'
         ? activeSkuUniverse.skuCodes.filter((skuCode) => !catalogSkuSet.has(skuCode)).length
         : null;
-      const catalogExtraSkuCount = activeSkuUniverse?.status === 'AVAILABLE'
+      const catalogOutsideSalesMembershipSkuCount = activeSkuUniverse?.status === 'AVAILABLE'
         ? catalogSkuCodeList.filter((skuCode) => !activeSkuSet.has(skuCode)).length
         : null;
       primarySnapshot.productCatalog = catalog;
@@ -1131,16 +1131,19 @@ async function syncStore({
         terminalReason: catalog.terminalReason,
         requested: selected.has('product-catalog'),
         dependency: !selected.has('product-catalog'),
-        catalogMissingActiveSkuCount,
-        catalogExtraSkuCount,
+        catalogMissingSalesMembershipSkuCount,
+        catalogOutsideSalesMembershipSkuCount,
         // product/query is complete only after two identical, terminal-page
         // sweeps. A difference from number-list is a cross-source scope
         // reconciliation result, not evidence that either source was truncated.
         coverageStatus: 'COMPLETE',
         membershipReconciliationStatus: (
-          Number.isSafeInteger(catalogMissingActiveSkuCount)
-          && Number.isSafeInteger(catalogExtraSkuCount)
-          && (catalogMissingActiveSkuCount > 0 || catalogExtraSkuCount > 0)
+          Number.isSafeInteger(catalogMissingSalesMembershipSkuCount)
+          && Number.isSafeInteger(catalogOutsideSalesMembershipSkuCount)
+          && (
+            catalogMissingSalesMembershipSkuCount > 0
+            || catalogOutsideSalesMembershipSkuCount > 0
+          )
         )
           ? 'SOURCE_SCOPE_DIFFERENCE'
           : 'MATCHED',

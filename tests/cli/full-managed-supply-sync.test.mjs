@@ -272,6 +272,9 @@ test('orchestrator uses only read-only endpoints, bounded batches and explicit i
     [...new Set(inventory.map(({ options }) => options.body.invType))].sort(),
     ['JI', 'PI'],
   );
+  assert.ok(inventory.every(({ options }) => (
+    options.body.warehouseType === (options.body.invType === 'PI' ? '1' : '3')
+  )));
 
   const stockAdvice = calls.find(({ path: apiPath }) => apiPath === STOCK_GOODS_LIST_PATH);
   assert.equal(stockAdvice.options.body.pageSize, 20);
@@ -383,7 +386,8 @@ test('inventory follows sales number-list membership even when product enrichmen
   const catalog = summary.results[0].domains.find(({ domain }) => (
     domain === 'product-catalog'
   ));
-  assert.equal(catalog.catalogMissingActiveSkuCount, 1);
+  assert.equal(catalog.catalogMissingSalesMembershipSkuCount, 1);
+  assert.equal(catalog.catalogOutsideSalesMembershipSkuCount, 1);
   assert.equal(catalog.coverageStatus, 'COMPLETE');
   assert.equal(catalog.membershipReconciliationStatus, 'SOURCE_SCOPE_DIFFERENCE');
   const terminal = attempts.filter(({ status }) => status !== 'STARTED');
