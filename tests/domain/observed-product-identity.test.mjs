@@ -44,6 +44,14 @@ function curated(attributeId, value) {
   return member(value, `PRODUCT:ATTRIBUTE:${attributeId}`);
 }
 
+function productionAttribute(attributeId, value, hashSuffix) {
+  return member(
+    value,
+    `product.attribute:${attributeId}:${hashSuffix}`,
+    { attributeId, type: 'CORE_ATTRIBUTE' },
+  );
+}
+
 test.beforeEach(() => {
   nextObservationId = 1;
 });
@@ -135,6 +143,46 @@ test('confirms official model plus brand/category, supporting supplier, and two 
     ({ type }) => type === 'SUPPLIER_CODE',
   );
   assert.equal(supplierEvidence.isStrong, false);
+});
+
+test('production-shaped explicit curated ids override different numeric hash suffixes', () => {
+  const result = evaluateObservedProductIdentityMatch(
+    observedSet({
+      setId: 'source',
+      model: officialModel(),
+      brand: member('DL'),
+      category: member('AIR_FRYER'),
+      supplierCode: member('DLPA4'),
+      coreAttributes: [
+        productionAttribute('147', '220V', 'a1b2c3d4e5f60718293a4b5c'),
+        productionAttribute('1000463', 'EU', '111aaa222bbb333ccc444ddd'),
+      ],
+    }),
+    observedSet({
+      setId: 'target',
+      model: officialModel(),
+      brand: member('DL'),
+      category: member('AIR_FRYER'),
+      supplierCode: member('DLPA4'),
+      coreAttributes: [
+        productionAttribute('147', '220V', 'f6e5d4c3b2a1092837465abc'),
+        productionAttribute('1000463', 'EU', 'ddd444ccc333bbb222aaa111'),
+      ],
+    }),
+  );
+
+  assert.equal(result.recommendation, 'CONFIRMED');
+  assert.equal(result.score, 1);
+  assert.deepEqual(
+    result.strongEvidenceTypes,
+    ['MODEL', 'BRAND_CATEGORY', 'CURATED_ATTRIBUTES'],
+  );
+  assert.deepEqual(
+    result.matchedEvidence
+      .filter(({ type }) => type === 'CURATED_ATTRIBUTES')
+      .map(({ component }) => component),
+    ['ATTRIBUTE:147', 'ATTRIBUTE:1000463'],
+  );
 });
 
 test('rejects an equal barcode with an invalid GTIN check digit as evidence', () => {
@@ -275,6 +323,106 @@ test('one curated attribute does not pass the collective strong-evidence gate', 
     ({ type }) => type === 'CURATED_ATTRIBUTES',
   );
   assert.equal(curatedEvidence.isStrong, false);
+});
+
+test('non-curated explicit ids cannot be upgraded by curated digits in hash suffixes', () => {
+  const hashEnding147 = '147'.padStart(24, 'a');
+  const hashEnding160 = '160'.padStart(24, 'b');
+  const attributes = () => [
+    productionAttribute('9998', 'VALUE-A', hashEnding147),
+    productionAttribute('9999', 'VALUE-B', hashEnding160),
+  ];
+  const result = evaluateObservedProductIdentityMatch(
+    observedSet({
+      setId: 'source',
+      brand: member('DL'),
+      category: member('AIR_FRYER'),
+      barcodes: [member('6901234567892', 'SKU:BARCODE:EAN', 'EAN')],
+      coreAttributes: attributes(),
+    }),
+    observedSet({
+      setId: 'target',
+      brand: member('DL'),
+      category: member('AIR_FRYER'),
+      barcodes: [member('6901234567892', 'SKU:BARCODE:EAN', 'EAN')],
+      coreAttributes: attributes(),
+    }),
+  );
+
+  assert.equal(result.recommendation, 'PROPOSED');
+  assert.equal(result.score, 0.8);
+  assert.deepEqual(
+    result.strongEvidenceTypes,
+    ['BARCODE', 'BRAND_CATEGORY'],
+  );
+  assert.equal(
+    result.matchedEvidence.some(({ type }) => type === 'CURATED_ATTRIBUTES'),
+    false,
+  );
+  assert.deepEqual(
+    result.matchedEvidence
+      .filter(({ type }) => type === 'CORE_ATTRIBUTES')
+      .map(({ component }) => component),
+    ['ATTRIBUTE:9998', 'ATTRIBUTE:9999'],
+  );
+});
+
+test('legacy fallback is anchored and ignores arbitrary standard-text digits', () => {
+  const attributes = () => [
+    member(
+      'VALUE-A',
+      `product.attribute:9998:${'147'.padStart(24, 'a')}`,
+      'ATTRIBUTE:147',
+    ),
+    member(
+      'VALUE-B',
+      `auxiliary.hash:${'160'.padStart(24, 'b')}`,
+      'ATTRIBUTE:160',
+    ),
+  ];
+  const result = evaluateObservedProductIdentityMatch(
+    observedSet({
+      setId: 'source',
+      brand: member('DL'),
+      category: member('AIR_FRYER'),
+      barcodes: [member('6901234567892', 'SKU:BARCODE:EAN', 'EAN')],
+      coreAttributes: attributes(),
+    }),
+    observedSet({
+      setId: 'target',
+      brand: member('DL'),
+      category: member('AIR_FRYER'),
+      barcodes: [member('6901234567892', 'SKU:BARCODE:EAN', 'EAN')],
+      coreAttributes: attributes(),
+    }),
+  );
+
+  assert.equal(result.recommendation, 'PROPOSED');
+  assert.equal(result.score, 0.8);
+  assert.equal(
+    result.matchedEvidence.some(({ type }) => type === 'CURATED_ATTRIBUTES'),
+    false,
+  );
+});
+
+test('invalid explicit attribute ids fail closed', () => {
+  assert.throws(
+    () => evaluateObservedProductIdentityMatch(
+      observedSet({
+        setId: 'source',
+        coreAttributes: [
+          productionAttribute('147:9999', '220V', 'a'.repeat(24)),
+        ],
+      }),
+      observedSet({
+        setId: 'target',
+        coreAttributes: [
+          productionAttribute('147:9999', '220V', 'b'.repeat(24)),
+        ],
+      }),
+    ),
+    /standard\.attributeId must be a 1-32 digit identifier/,
+  );
 });
 
 test('counts curated evidence by distinct attributeId rather than duplicate localized rows', () => {

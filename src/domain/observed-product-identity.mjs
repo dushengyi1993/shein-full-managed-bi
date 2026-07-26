@@ -12,6 +12,9 @@ const MATCH_WEIGHTS = Object.freeze({
 });
 
 const OFFICIAL_MODEL_ATTRIBUTE_ID = '1000546';
+const ATTRIBUTE_ID_PATTERN = /^[0-9]{1,32}$/;
+const LEGACY_ATTRIBUTE_SOURCE_KEY_PATTERN =
+  /^product[.:]attribute[.:]([0-9]{1,32})(?=$|[.:])/i;
 
 export const CURATED_PRODUCT_ATTRIBUTE_IDS = Object.freeze([
   '147',
@@ -85,9 +88,20 @@ function normalizedStandard(value) {
     type: null,
   });
   if (typeof value === 'object' && !Array.isArray(value)) {
+    const rawAttributeId = value.attributeId;
+    const attributeId = rawAttributeId === undefined || rawAttributeId === null
+      ? null
+      : optionalText(rawAttributeId);
+    if (
+      rawAttributeId !== undefined
+      && rawAttributeId !== null
+      && (!attributeId || !ATTRIBUTE_ID_PATTERN.test(attributeId))
+    ) {
+      throw new TypeError('standard.attributeId must be a 1-32 digit identifier.');
+    }
     return Object.freeze({
       text: optionalText(value.name ?? value.standard)?.toUpperCase() ?? null,
-      attributeId: optionalText(value.attributeId),
+      attributeId,
       type: optionalText(value.type ?? value.field)?.toUpperCase() ?? null,
     });
   }
@@ -162,26 +176,6 @@ function exactPair(source, target) {
   return Object.freeze({ source, target });
 }
 
-function digitTokens(value) {
-  if (!value) return [];
-  return [...value.matchAll(/(?:^|[^0-9])([0-9]+)(?=$|[^0-9])/g)]
-    .map((match) => String(Number(match[1])))
-    .filter((token) => token !== 'NaN');
-}
-
-function attributeIds(member) {
-  if (!member) return [];
-  const values = [
-    ...digitTokens(member.sourceValueKey),
-    ...digitTokens(member.standard.text),
-  ];
-  if (member.standard.attributeId) {
-    const normalized = String(Number(member.standard.attributeId));
-    if (normalized !== 'NaN') values.push(normalized);
-  }
-  return [...new Set(values)];
-}
-
 function isOfficialModel(member) {
   return member?.standard.attributeId === OFFICIAL_MODEL_ATTRIBUTE_ID;
 }
@@ -233,7 +227,11 @@ function safeEvidence({
 }
 
 function memberAttributeId(member) {
-  return attributeIds(member).at(-1) ?? null;
+  if (member?.standard.attributeId) return member.standard.attributeId;
+  const match = member?.sourceValueKey?.match(
+    LEGACY_ATTRIBUTE_SOURCE_KEY_PATTERN,
+  );
+  return match?.[1] ?? null;
 }
 
 function pairAttributes(sourceMembers, targetMembers) {
