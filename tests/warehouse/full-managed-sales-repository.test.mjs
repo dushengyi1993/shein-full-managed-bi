@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   loadFullManagedSalesSync,
+  persistPermissionProbe,
   salesWindows,
   sha256,
   stableJson,
@@ -135,4 +136,42 @@ test('refuses partial sales coverage before beginning a database transaction', a
   const client = new FakeClient();
   await assert.rejects(() => loadFullManagedSalesSync(pool(client), input), /Every inventory SKU/);
   assert.equal(client.calls.length, 0);
+});
+
+test('persists sanitized permission and data-quality evidence without credentials', async () => {
+  const client = new FakeClient();
+  const result = await persistPermissionProbe(pool(client), {
+    store: { storeCode: 'DL', storeName: 'DL' },
+    runId: 'probe-20260726:DL',
+    permissionPackageCode: 'SALES',
+    probe: {
+      outcome: 'GRANTED',
+      probedAt: '2026-07-26T11:00:00.000Z',
+      httpStatus: 200,
+      platformErrorCode: null,
+      platformMessage: 'query-sku-sales returned code 0, but dt was empty.',
+      evidence: {
+        endpointReached: '/open-api/goods/query-sku-sales',
+        salesEndpointExercised: true,
+        statisticsDateAvailable: false,
+        dataLoadable: false,
+        dataQualityStatus: 'DEGRADED',
+        dataQualityReason: 'MISSING_STATISTICS_DATE',
+        secretKey: 'must-not-persist',
+      },
+    },
+  });
+
+  assert.deepEqual(result, { storeCode: 'DL', outcome: 'GRANTED' });
+  const insert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.permission_probe'));
+  assert.ok(insert);
+  assert.deepEqual(JSON.parse(insert.values[9]), {
+    endpointReached: '/open-api/goods/query-sku-sales',
+    salesEndpointExercised: true,
+    statisticsDateAvailable: false,
+    dataLoadable: false,
+    dataQualityStatus: 'DEGRADED',
+    dataQualityReason: 'MISSING_STATISTICS_DATE',
+  });
+  assert.doesNotMatch(JSON.stringify(insert.values), /must-not-persist/);
 });

@@ -75,6 +75,13 @@ function requireNonNegativeInteger(record, field, path, skuCode) {
 }
 
 function normalizeStatisticsDate(value, path, skuCode) {
+  if (typeof value === 'string' && value.trim() === '') {
+    fail(
+      'STATISTICS_DATE_UNAVAILABLE',
+      `${path} is empty; permission may be granted but this response cannot be loaded as dated sales facts`,
+      { path, skuCode },
+    );
+  }
   const compactDate = requireNonEmptyString(value, path);
   const match = /^(\d{4})(\d{2})(\d{2})$/.exec(compactDate);
 
@@ -104,6 +111,22 @@ function normalizeStatisticsDate(value, path, skuCode) {
   }
 
   return normalized;
+}
+
+function normalizeStatisticsDateForMode(
+  value,
+  path,
+  skuCode,
+  { allowEmptyStatisticsDate = false } = {},
+) {
+  if (
+    allowEmptyStatisticsDate
+    && typeof value === 'string'
+    && value.trim() === ''
+  ) {
+    return null;
+  }
+  return normalizeStatisticsDate(value, path, skuCode);
 }
 
 function normalizeFetchedAt(value) {
@@ -184,29 +207,11 @@ export function createSkuSalesQueryBatches(skuCodes) {
   return batches;
 }
 
-/**
- * Convert one successful official response into complete sales snapshots.
- *
- * `requestedSkuCodes` is mandatory so an omitted response item is observable;
- * a missing SKU is an error and is never materialized as zero sales.
- *
- * @param {object} input
- * @param {string} input.storeCode
- * @param {unknown} input.requestedSkuCodes
- * @param {Date|string} input.fetchedAt
- * @param {unknown} input.response
- * @returns {{storeCode: string, skuCode: string, salesToday: number,
- *   salesYesterday: number, sales7Days: number, sales30Days: number,
- *   statisticsDate: string, fetchedAt: string}[]}
- */
-export function mapSkuSalesResponseToSnapshots({
-  storeCode,
+function normalizeSkuSalesResponseRows({
   requestedSkuCodes,
-  fetchedAt,
   response,
+  allowEmptyStatisticsDate = false,
 } = {}) {
-  const normalizedStoreCode = requireNonEmptyString(storeCode, 'storeCode');
-  const normalizedFetchedAt = normalizeFetchedAt(fetchedAt);
   const requested = deduplicateSkuCodes(requestedSkuCodes);
 
   if (requested.length === 0) {
@@ -241,12 +246,15 @@ export function mapSkuSalesResponseToSnapshots({
   }
 
   const requestedSet = new Set(requested);
-  const snapshotsBySku = new Map();
+  const rowsBySku = new Map();
 
   dataList.forEach((rawItem, index) => {
     const itemPath = `response.info.dataList[${index}]`;
     const item = requireRecord(rawItem, itemPath);
-    const skuCode = requireNonEmptyString(requireField(item, 'skuCode', itemPath), `${itemPath}.skuCode`);
+    const skuCode = requireNonEmptyString(
+      requireField(item, 'skuCode', itemPath),
+      `${itemPath}.skuCode`,
+    );
 
     if (!requestedSet.has(skuCode)) {
       fail('UNEXPECTED_RESPONSE_SKU', `response contains unrequested SKU ${skuCode}`, {
@@ -255,30 +263,29 @@ export function mapSkuSalesResponseToSnapshots({
       });
     }
 
-    if (snapshotsBySku.has(skuCode)) {
+    if (rowsBySku.has(skuCode)) {
       fail('DUPLICATE_RESPONSE_SKU', `response contains duplicate SKU ${skuCode}`, {
         skuCode,
         path: `${itemPath}.skuCode`,
       });
     }
 
-    snapshotsBySku.set(skuCode, {
-      storeCode: normalizedStoreCode,
+    rowsBySku.set(skuCode, {
       skuCode,
       salesToday: requireNonNegativeInteger(item, 'realTimeSaleCnt', itemPath, skuCode),
       salesYesterday: requireNonNegativeInteger(item, 'cydSaleCnt', itemPath, skuCode),
       sales7Days: requireNonNegativeInteger(item, 'c7dSaleCnt', itemPath, skuCode),
       sales30Days: requireNonNegativeInteger(item, 'c30dSaleCnt', itemPath, skuCode),
-      statisticsDate: normalizeStatisticsDate(
+      statisticsDate: normalizeStatisticsDateForMode(
         requireField(item, 'dt', itemPath),
         `${itemPath}.dt`,
         skuCode,
+        { allowEmptyStatisticsDate },
       ),
-      fetchedAt: normalizedFetchedAt,
     });
   });
 
-  const missingSkuCodes = requested.filter((skuCode) => !snapshotsBySku.has(skuCode));
+  const missingSkuCodes = requested.filter((skuCode) => !rowsBySku.has(skuCode));
   if (missingSkuCodes.length > 0) {
     fail(
       'MISSING_REQUESTED_SKU',
@@ -287,5 +294,61 @@ export function mapSkuSalesResponseToSnapshots({
     );
   }
 
-  return requested.map((skuCode) => snapshotsBySku.get(skuCode));
+  return requested.map((skuCode) => rowsBySku.get(skuCode));
+}
+
+/**
+ * Validate that a successful response proves the sales endpoint can be used.
+ *
+ * SHEIN's current official example and live response can return an explicit
+ * empty `dt`. Permission probing accepts only that exact degraded shape while
+ * preserving the strict mapper for any warehouse-bound sales snapshot.
+ */
+export function inspectSkuSalesResponseForPermissionProbe({
+  requestedSkuCodes,
+  response,
+} = {}) {
+  const rows = normalizeSkuSalesResponseRows({
+    requestedSkuCodes,
+    response,
+    allowEmptyStatisticsDate: true,
+  });
+  const missingStatisticsDateCount = rows.filter(
+    ({ statisticsDate }) => statisticsDate === null,
+  ).length;
+  return {
+    recordCount: rows.length,
+    statisticsDateAvailable: missingStatisticsDateCount === 0,
+    missingStatisticsDateCount,
+  };
+}
+
+/**
+ * Convert one successful official response into complete sales snapshots.
+ *
+ * `requestedSkuCodes` is mandatory so an omitted response item is observable;
+ * a missing SKU is an error and is never materialized as zero sales.
+ *
+ * @param {object} input
+ * @param {string} input.storeCode
+ * @param {unknown} input.requestedSkuCodes
+ * @param {Date|string} input.fetchedAt
+ * @param {unknown} input.response
+ * @returns {{storeCode: string, skuCode: string, salesToday: number,
+ *   salesYesterday: number, sales7Days: number, sales30Days: number,
+ *   statisticsDate: string, fetchedAt: string}[]}
+ */
+export function mapSkuSalesResponseToSnapshots({
+  storeCode,
+  requestedSkuCodes,
+  fetchedAt,
+  response,
+} = {}) {
+  const normalizedStoreCode = requireNonEmptyString(storeCode, 'storeCode');
+  const normalizedFetchedAt = normalizeFetchedAt(fetchedAt);
+  return normalizeSkuSalesResponseRows({ requestedSkuCodes, response }).map((row) => ({
+    storeCode: normalizedStoreCode,
+    ...row,
+    fetchedAt: normalizedFetchedAt,
+  }));
 }

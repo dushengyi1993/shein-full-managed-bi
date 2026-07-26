@@ -102,6 +102,37 @@ test('probe treats successful zero sales as granted and no inventory as pending'
   assert.equal((await probeFullManagedSalesPermission(emptyClient, { storeCode: 'DL' })).outcome, 'PENDING');
 });
 
+test('probe grants permission but blocks fact loading when SHEIN returns an explicit empty dt', async () => {
+  const client = {
+    async request(path) {
+      if (path.endsWith('number-list')) {
+        return { data: { code: 0, info: { page: 1, per_page: 1, count: 1, list: [numberItem(1)] } } };
+      }
+      return { data: { code: '0', info: { dataList: [{
+        skuCode: 'SKU-001',
+        realTimeSaleCnt: 0,
+        cydSaleCnt: 0,
+        c7dSaleCnt: 0,
+        c30dSaleCnt: 0,
+        dt: '',
+      }] } } };
+    },
+  };
+
+  const probe = await probeFullManagedSalesPermission(client, { storeCode: 'DL' });
+  assert.equal(probe.outcome, 'GRANTED');
+  assert.match(probe.platformMessage, /dt was empty/);
+  assert.deepEqual(probe.evidence, {
+    storeCode: 'DL',
+    endpointReached: '/open-api/goods/query-sku-sales',
+    salesEndpointExercised: true,
+    statisticsDateAvailable: false,
+    dataLoadable: false,
+    dataQualityStatus: 'DEGRADED',
+    dataQualityReason: 'MISSING_STATISTICS_DATE',
+  });
+});
+
 test('permission review failures map to pending rather than a zero dataset', () => {
   const pending = new SheinOpenApiError('PLATFORM_ERROR', 'platform error', {
     platformCode: '4001', platformMessage: 'permission package is pending',

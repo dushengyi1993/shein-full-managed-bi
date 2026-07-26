@@ -322,6 +322,18 @@ async function insertProbe(client, {
   const safeEvidence = {
     endpointReached: probe.evidence?.endpointReached ?? null,
     salesEndpointExercised: probe.evidence?.salesEndpointExercised === true,
+    statisticsDateAvailable: typeof probe.evidence?.statisticsDateAvailable === 'boolean'
+      ? probe.evidence.statisticsDateAvailable
+      : null,
+    dataLoadable: typeof probe.evidence?.dataLoadable === 'boolean'
+      ? probe.evidence.dataLoadable
+      : null,
+    dataQualityStatus: ['VALID', 'DEGRADED'].includes(probe.evidence?.dataQualityStatus)
+      ? probe.evidence.dataQualityStatus
+      : null,
+    dataQualityReason: probe.evidence?.dataQualityReason === 'MISSING_STATISTICS_DATE'
+      ? probe.evidence.dataQualityReason
+      : null,
   };
   await client.query(
     `INSERT INTO ops.permission_probe (

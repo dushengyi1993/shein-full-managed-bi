@@ -7,6 +7,7 @@ import {
   SkuSalesDomainError,
   createSkuSalesQueryBatches,
   deduplicateSkuCodes,
+  inspectSkuSalesResponseForPermissionProbe,
   mapSkuSalesResponseToSnapshots,
 } from '../../src/domain/sku-sales-snapshot.mjs';
 
@@ -159,6 +160,48 @@ test('rejects an invalid statistics date', () => {
   response.info.dataList[0].dt = '20260230';
 
   assertDomainError(() => mapFixture({ response }), 'INVALID_STATISTICS_DATE');
+});
+
+test('permission inspection accepts only an explicit empty statistics date without inventing one', () => {
+  const response = clone(successFixture);
+  response.info.dataList[0].dt = '';
+
+  assert.deepEqual(
+    inspectSkuSalesResponseForPermissionProbe({
+      requestedSkuCodes: ['SKU-001', 'SKU-002'],
+      response,
+    }),
+    {
+      recordCount: 2,
+      statisticsDateAvailable: false,
+      missingStatisticsDateCount: 1,
+    },
+  );
+  assertDomainError(() => mapFixture({ response }), 'STATISTICS_DATE_UNAVAILABLE');
+});
+
+test('permission inspection still rejects missing, null and invalid non-empty statistics dates', () => {
+  for (const value of [null, '20260230']) {
+    const response = clone(successFixture);
+    response.info.dataList[0].dt = value;
+    assertDomainError(
+      () => inspectSkuSalesResponseForPermissionProbe({
+        requestedSkuCodes: ['SKU-001', 'SKU-002'],
+        response,
+      }),
+      value === null ? 'MISSING_FIELD' : 'INVALID_STATISTICS_DATE',
+    );
+  }
+
+  const missing = clone(successFixture);
+  delete missing.info.dataList[0].dt;
+  assertDomainError(
+    () => inspectSkuSalesResponseForPermissionProbe({
+      requestedSkuCodes: ['SKU-001', 'SKU-002'],
+      response: missing,
+    }),
+    'MISSING_FIELD',
+  );
 });
 
 test('rejects unsuccessful OpenAPI responses before reading data', () => {

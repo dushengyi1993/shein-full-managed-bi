@@ -1,5 +1,6 @@
 import {
   createSkuSalesQueryBatches,
+  inspectSkuSalesResponseForPermissionProbe,
   mapSkuSalesResponseToSnapshots,
 } from '../domain/sku-sales-snapshot.mjs';
 import { SheinOpenApiError } from './shein-client.mjs';
@@ -204,18 +205,32 @@ export async function probeFullManagedSalesPermission(client, { storeCode } = {}
         evidence: { storeCode, endpointReached: NUMBER_LIST_PATH, salesEndpointExercised: false },
       };
     }
-    await fetchFullManagedSkuSales(client, {
-      storeCode,
-      skuCodes: [inventoryPage.items[0].skuCode],
-      fetchedAt: probedAt,
+    const skuCode = inventoryPage.items[0].skuCode;
+    const response = await client.request(QUERY_SKU_SALES_PATH, {
+      method: 'POST',
+      body: { skuCodeList: [skuCode] },
+    });
+    const validation = inspectSkuSalesResponseForPermissionProbe({
+      requestedSkuCodes: [skuCode],
+      response: response.data,
     });
     return {
       outcome: 'GRANTED',
       probedAt,
       httpStatus: 200,
       platformErrorCode: null,
-      platformMessage: 'query-sku-sales returned code 0.',
-      evidence: { storeCode, endpointReached: QUERY_SKU_SALES_PATH, salesEndpointExercised: true },
+      platformMessage: validation.statisticsDateAvailable
+        ? 'query-sku-sales returned code 0.'
+        : 'query-sku-sales returned code 0, but dt was empty; permission is granted and fact loading remains blocked.',
+      evidence: {
+        storeCode,
+        endpointReached: QUERY_SKU_SALES_PATH,
+        salesEndpointExercised: true,
+        statisticsDateAvailable: validation.statisticsDateAvailable,
+        dataLoadable: validation.statisticsDateAvailable,
+        dataQualityStatus: validation.statisticsDateAvailable ? 'VALID' : 'DEGRADED',
+        dataQualityReason: validation.statisticsDateAvailable ? null : 'MISSING_STATISTICS_DATE',
+      },
     };
   } catch (error) {
     return {
