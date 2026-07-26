@@ -174,6 +174,18 @@ test('dry-run executes the complete migration under an advisory transaction and 
   assert.match(queries[6], /warehouse-store-inventory:baseline/);
   assert.match(queries[6], /array_agg\(store_code ORDER BY store_code\)/);
   assert.match(queries[7], /INSERT INTO dim\.store/);
+  assert.match(
+    queries[7],
+    /is_active, first_seen_at, last_seen_at\s*\)/,
+  );
+  assert.equal(
+    (queries[7].match(/statement_timestamp\(\)/g) || []).length,
+    2,
+  );
+  assert.doesNotMatch(
+    queries[7].slice(queries[7].indexOf('ON CONFLICT')),
+    /first_seen_at/,
+  );
   assert.match(queries[8], /UPDATE dim\.store/);
   assert.match(queries[9], /warehouse-store-inventory:postcondition/);
   assert.equal(queries[10], 'ROLLBACK');

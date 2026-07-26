@@ -283,6 +283,7 @@ async function upsertExpectedStores(client, storeCodes) {
        store_name,
        cooperation_mode,
        is_active,
+       first_seen_at,
        last_seen_at
      )
      SELECT
@@ -290,7 +291,8 @@ async function upsertExpectedStores(client, storeCodes) {
        expected.store_code,
        'FULL_MANAGED',
        true,
-       clock_timestamp()
+       statement_timestamp(),
+       statement_timestamp()
      FROM unnest($1::text[]) WITH ORDINALITY AS expected(store_code, position)
      ORDER BY expected.position
      ON CONFLICT (store_code) DO UPDATE SET
