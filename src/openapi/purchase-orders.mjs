@@ -163,6 +163,13 @@ export async function fetchFullManagedPurchaseOrders(client, {
           { requestedPage: page, responsePage: mapped.page },
         );
       }
+      // The production endpoint resets info.count to 0 on the explicit empty
+      // sentinel after an exact-multiple final page. Ignore only that empty
+      // page count; fetchPageSequence retains the prior advertised total and
+      // still rejects an early sentinel when accumulated rows are incomplete.
+      if (mapped.orders.length === 0 && mapped.count === 0) {
+        return Object.freeze({ ...mapped, count: null });
+      }
       return mapped;
     },
     getItems: ({ orders }) => orders,

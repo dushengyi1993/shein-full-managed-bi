@@ -96,6 +96,64 @@ test('purchase orders do not retain supervisor or platform operator identity', a
   assert.doesNotMatch(serialized, /Sensitive operator|sensitive-login/);
 });
 
+test('purchase orders accept a zero-count empty sentinel after an exact multiple', async () => {
+  const calls = [];
+  const client = {
+    async request(_path, { query }) {
+      calls.push(query.pageNumber);
+      const rows = query.pageNumber <= 2 ? [order(query.pageNumber)] : [];
+      return {
+        data: {
+          code: '0',
+          info: {
+            count: query.pageNumber <= 2 ? 2 : 0,
+            pageNo: query.pageNumber,
+            pageSize: query.pageSize,
+            list: rows,
+          },
+        },
+      };
+    },
+  };
+
+  const result = await fetchFullManagedPurchaseOrders(client, {
+    updateTimeStart: '2026-07-20 00:00:00',
+    updateTimeEnd: '2026-07-26 00:00:00',
+    pageSize: 1,
+  });
+  assert.deepEqual(calls, [1, 2, 3]);
+  assert.equal(result.orders.length, 2);
+  assert.equal(result.terminalReason, 'EMPTY_PAGE');
+});
+
+test('purchase orders still reject a zero-count sentinel before prior coverage is complete', async () => {
+  const client = {
+    async request(_path, { query }) {
+      const rows = query.pageNumber === 1 ? [order(1)] : [];
+      return {
+        data: {
+          code: '0',
+          info: {
+            count: query.pageNumber === 1 ? 2 : 0,
+            pageNo: query.pageNumber,
+            pageSize: query.pageSize,
+            list: rows,
+          },
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => fetchFullManagedPurchaseOrders(client, {
+      updateTimeStart: '2026-07-20 00:00:00',
+      updateTimeEnd: '2026-07-26 00:00:00',
+      pageSize: 1,
+    }),
+    (error) => error.code === 'PAGINATION_COUNT_MISMATCH',
+  );
+});
+
 test('purchase order rejects impossible Shanghai query and response dates', async () => {
   const never = { async request() { throw new Error('should not call'); } };
   await assert.rejects(
