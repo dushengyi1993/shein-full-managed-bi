@@ -519,3 +519,53 @@ test('product identity coverage uses the complete ranking and rejects malformed 
   assert.deepEqual(dashboard.productRanking, []);
   assert.equal(dashboard.rankingMeta.storeSku.truncated, false);
 });
+
+test('active-catalog identity coverage is independent from dated sales ranking rows', () => {
+  const dashboard = normalizeDashboardData({
+    datasetStatus: 'live',
+    updatedAt: '2026-07-27T08:30:00.000Z',
+    storeSkuRanking: [{
+      storeCode: 'DL',
+      sku: 'SKU-WITH-SALES',
+      mappingStatus: 'CONFIRMED',
+      unitsSold: { today: 1, yesterday: 0, last7Days: 1, last30Days: 1 },
+    }],
+    productIdentityCoverage: {
+      basis: 'active_catalog',
+      confirmedSkus: 262,
+      totalSkus: 10_050,
+      missingSpuSkus: 38,
+      coverageRate: 1,
+      note: 'untrusted source note',
+    },
+  });
+
+  assert.deepEqual(dashboard.productIdentityCoverage, {
+    basis: 'active_catalog',
+    confirmedSkus: 262,
+    totalSkus: 10_050,
+    unconfirmedSkus: 9_788,
+    missingSpuSkus: 38,
+    coverageRate: 0.0261,
+    status: 'partial',
+    note: '全量活跃商品目录 262/10050 个SKU已确认；38 个缺少平台SPU；覆盖口径不依赖销量业务日',
+  });
+  assert.equal(dashboard.storeSkuRanking.length, 1);
+
+  const malformed = normalizeDashboardData({
+    storeSkuRanking: [{
+      storeCode: 'DL',
+      sku: 'SKU-WITH-SALES',
+      mappingStatus: 'CONFIRMED',
+      unitsSold: { today: 1, yesterday: 0, last7Days: 1, last30Days: 1 },
+    }],
+    productIdentityCoverage: {
+      basis: 'active_catalog',
+      confirmedSkus: 2,
+      totalSkus: 3,
+      missingSpuSkus: 2,
+    },
+  });
+  assert.equal(malformed.productIdentityCoverage.basis, 'sales_ranking');
+  assert.equal(malformed.productIdentityCoverage.totalSkus, 1);
+});

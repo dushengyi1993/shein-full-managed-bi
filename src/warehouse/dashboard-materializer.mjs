@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 import { projectDashboardData } from '../domain/dashboard-projection.mjs';
+import { normalizeIdentifierValue } from '../domain/product-identity.mjs';
 import { readOperationsDashboard } from './operations-dashboard.mjs';
 
 function pgInteger(value, location) {
@@ -29,6 +30,13 @@ function stageStatus(completed, total, { pending = false, blocked = false } = {}
 
 function storeSkuKey(storeCode, skuCode) {
   return `${storeCode}\u001f${skuCode}`;
+}
+
+function platformSpuId(value) {
+  if (value === null || value === undefined) return null;
+  return normalizeIdentifierValue('PLATFORM_SPU', value) === null
+    ? null
+    : String(value).normalize('NFKC').trim();
 }
 
 export async function readDashboardProjectionInput(pool) {
@@ -129,7 +137,7 @@ export async function readDashboardProjectionInput(pool) {
                  sku.sku_name, sku.product_name, w.business_date
         HAVING count(DISTINCT split_part(latest.source_row_key, ':', 1)) = 4`),
       client.query(`
-        SELECT s.store_code, sku.platform_sku_id,
+        SELECT s.store_code, sku.platform_sku_id, sku.platform_spu_id,
                COALESCE(NULLIF(sku.sku_name, ''), NULLIF(sku.product_name, ''), sku.platform_sku_id) AS display_name
         FROM dim.full_sku sku
         JOIN dim.store s ON s.store_id = sku.store_id
@@ -297,6 +305,14 @@ export async function readDashboardProjectionInput(pool) {
         storeSkuKey(row.store_code, row.platform_sku_id),
         row.display_name,
       ])),
+      productIdentityCatalog: skuNamesResult.rows.map((row) => ({
+        storeCode: row.store_code,
+        skuCode: row.platform_sku_id,
+        platformSpuId: platformSpuId(row.platform_spu_id),
+        canonicalAssignment: canonicalAssignments.get(
+          storeSkuKey(row.store_code, row.platform_sku_id),
+        ) ?? null,
+      })),
       salesTrend: trendResult.rows
         .map((row) => ({
           storeCode: row.store_code,
@@ -588,6 +604,40 @@ function buildProductRanking(snapshots) {
   }).sort(compareUnits);
 }
 
+function buildProductIdentityCoverage(catalogRows) {
+  if (!Array.isArray(catalogRows)) return null;
+  const rows = catalogRows;
+  const totalSkus = rows.length;
+  const confirmedSkus = rows.filter(
+    (row) => row.canonicalAssignment !== null
+      && row.canonicalAssignment !== undefined
+      && platformSpuId(row.platformSpuId) !== null,
+  ).length;
+  const missingSpuSkus = rows.filter(
+    (row) => platformSpuId(row.platformSpuId) === null,
+  ).length;
+  return {
+    basis: 'active_catalog',
+    confirmedSkus,
+    totalSkus,
+    unconfirmedSkus: totalSkus - confirmedSkus,
+    missingSpuSkus,
+    coverageRate: totalSkus === 0
+      ? null
+      : Number((confirmedSkus / totalSkus).toFixed(4)),
+    status: totalSkus === 0
+      ? 'not_started'
+      : confirmedSkus === totalSkus
+        ? 'complete'
+        : confirmedSkus > 0
+          ? 'partial'
+          : 'not_started',
+    note: totalSkus === 0
+      ? '全量活跃商品目录中尚无SKU'
+      : `全量活跃商品目录 ${confirmedSkus}/${totalSkus} 个SKU已确认；${missingSpuSkus} 个缺少平台SPU；覆盖口径不依赖销量业务日`,
+  };
+}
+
 function salesCoverage({
   businessDate,
   selectedSnapshots,
@@ -706,6 +756,9 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
       skuRanking: [],
       storeSkuRanking: [],
       productRanking: [],
+      productIdentityCoverage: buildProductIdentityCoverage(
+        input.productIdentityCatalog,
+      ),
     };
   }
   const storeHealth = Array.isArray(input.storeHealth) ? input.storeHealth : [];
@@ -854,6 +907,9 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
   dashboard.storeSkuRanking = storeSkuRanking;
   dashboard.skuRanking = storeSkuRanking;
   dashboard.productRanking = buildProductRanking(selectedSnapshots);
+  dashboard.productIdentityCoverage = buildProductIdentityCoverage(
+    input.productIdentityCatalog,
+  );
   return dashboard;
 }
 

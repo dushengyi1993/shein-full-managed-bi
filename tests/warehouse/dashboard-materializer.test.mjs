@@ -63,6 +63,84 @@ test('builds a live dashboard with real readiness and preserves pending stores a
   assert.equal(dashboard.readiness.find(({ key }) => key === 'fact_load').completed, 1);
 });
 
+test('product identity coverage uses the full active catalog instead of dated sales rows', () => {
+  const input = projectionInput();
+  input.productIdentityCatalog = [
+    {
+      storeCode: 'DL',
+      skuCode: 'SKU-1',
+      platformSpuId: 'SPU-1',
+      canonicalAssignment: {
+        canonicalProductId: '42',
+        standardProductCode: 'GLOBAL-42',
+      },
+    },
+    {
+      storeCode: 'DL',
+      skuCode: 'SKU-WITHOUT-SALES',
+      platformSpuId: null,
+      canonicalAssignment: null,
+    },
+    {
+      storeCode: 'DX',
+      skuCode: 'SKU-PENDING-STORE',
+      platformSpuId: 'SPU-3',
+      canonicalAssignment: null,
+    },
+  ];
+
+  const dashboard = buildDashboardFromProjectionInput(input);
+
+  assert.equal(dashboard.storeSkuRanking.length, 1);
+  assert.equal(dashboard.productRanking.length, 1);
+  assert.deepEqual(dashboard.productIdentityCoverage, {
+    basis: 'active_catalog',
+    confirmedSkus: 1,
+    totalSkus: 3,
+    unconfirmedSkus: 2,
+    missingSpuSkus: 1,
+    coverageRate: 0.3333,
+    status: 'partial',
+    note: '全量活跃商品目录 1/3 个SKU已确认；1 个缺少平台SPU；覆盖口径不依赖销量业务日',
+  });
+});
+
+test('product identity coverage counts 38 null, blank and placeholder SPU identifiers', () => {
+  const input = projectionInput();
+  const missingValues = Array.from({ length: 38 }, (_, index) => {
+    if (index === 0) return null;
+    if (index === 1) return '';
+    if (index === 2) return '   ';
+    if (index === 3) return '---';
+    return null;
+  });
+  input.productIdentityCatalog = [
+    {
+      storeCode: 'DL',
+      skuCode: 'SKU-CONFIRMED',
+      platformSpuId: 'DL-SPU-1',
+      canonicalAssignment: { canonicalProductId: '42' },
+    },
+    ...missingValues.map((platformSpuId, index) => ({
+      storeCode: 'DL',
+      skuCode: `SKU-MISSING-${index}`,
+      platformSpuId,
+      canonicalAssignment: index === 0
+        ? { canonicalProductId: 'legacy-assignment-without-spu' }
+        : null,
+    })),
+  ];
+
+  const coverage = buildDashboardFromProjectionInput(input)
+    .productIdentityCoverage;
+
+  assert.equal(coverage.totalSkus, 39);
+  assert.equal(coverage.confirmedSkus, 1);
+  assert.equal(coverage.unconfirmedSkus, 38);
+  assert.equal(coverage.missingSpuSkus, 38);
+  assert.match(coverage.note, /38 个缺少平台SPU/);
+});
+
 test('never merges the same bare SKU across stores and only totals one unified business date', () => {
   const input = {
     storePermissions: [
@@ -530,11 +608,26 @@ test('database materialization admits only active GLOBAL canonical assignments',
         }] };
       }
       if (sql.includes('FROM dim.full_sku sku')) {
-        return { rows: [{
-          store_code: 'DL',
-          platform_sku_id: 'SKU-1',
-          display_name: 'Kettle',
-        }] };
+        return { rows: [
+          {
+            store_code: 'DL',
+            platform_sku_id: 'SKU-1',
+            platform_spu_id: 'SPU-1',
+            display_name: 'Kettle',
+          },
+          {
+            store_code: 'DL',
+            platform_sku_id: 'SKU-WITHOUT-SALES',
+            platform_spu_id: null,
+            display_name: 'No sales yet',
+          },
+          {
+            store_code: 'DL',
+            platform_sku_id: 'SKU-PLACEHOLDER-SPU',
+            platform_spu_id: '---',
+            display_name: 'Placeholder SPU',
+          },
+        ] };
       }
       if (sql.includes('daily_candidates')) return { rows: [] };
       throw new Error(`Unexpected query: ${sql.slice(0, 80)}`);
@@ -549,6 +642,34 @@ test('database materialization admits only active GLOBAL canonical assignments',
   assert.equal(
     input.snapshots[0].canonicalAssignment.standardProductCode,
     'GLOBAL-42',
+  );
+  assert.deepEqual(input.productIdentityCatalog, [
+    {
+      storeCode: 'DL',
+      skuCode: 'SKU-1',
+      platformSpuId: 'SPU-1',
+      canonicalAssignment: {
+        canonicalProductId: '42',
+        standardProductCode: 'GLOBAL-42',
+        standardProductName: 'Global kettle',
+      },
+    },
+    {
+      storeCode: 'DL',
+      skuCode: 'SKU-WITHOUT-SALES',
+      platformSpuId: null,
+      canonicalAssignment: null,
+    },
+    {
+      storeCode: 'DL',
+      skuCode: 'SKU-PLACEHOLDER-SPU',
+      platformSpuId: null,
+      canonicalAssignment: null,
+    },
+  ]);
+  assert.equal(
+    buildDashboardFromProjectionInput(input).productIdentityCoverage.missingSpuSkus,
+    2,
   );
   assert.match(canonicalSql, /assignment\.identity_scope = 'GLOBAL'/);
   assert.match(canonicalSql, /cp\.identity_scope = 'GLOBAL'/);

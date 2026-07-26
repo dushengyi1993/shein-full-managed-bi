@@ -1366,9 +1366,22 @@ function renderProducts() {
   const rows = productRows();
   const source = scopedProductRanking();
   const pendingRows = unmappedStoreSkuRows();
-  const missingSpuSkus = Number.isSafeInteger(state.data?.productIdentityCoverage?.missingSpuSkus)
-    ? state.data.productIdentityCoverage.missingSpuSkus
+  const identityCoverage = state.data?.productIdentityCoverage;
+  const missingSpuSkus = Number.isSafeInteger(identityCoverage?.missingSpuSkus)
+    ? identityCoverage.missingSpuSkus
     : null;
+  const totalCatalogSkus = identityCoverage?.basis === 'active_catalog'
+    && Number.isSafeInteger(identityCoverage?.totalSkus)
+    ? identityCoverage.totalSkus
+    : null;
+  const confirmedCatalogSkus = totalCatalogSkus !== null
+    && Number.isSafeInteger(identityCoverage?.confirmedSkus)
+    ? identityCoverage.confirmedSkus
+    : null;
+  const catalogCoverageLabel = totalCatalogSkus === null
+    || confirmedCatalogSkus === null
+    ? ''
+    : ` · 全量活跃目录 ${numberFormatter.format(confirmedCatalogSkus)}/${numberFormatter.format(totalCatalogSkus)} 个 SKU 已确认`;
   const identityStatus = source.canonical ? '标准商品身份已接入' : '店内商品身份待归并';
   return `
     ${sampleNotice()}
@@ -1376,7 +1389,7 @@ function renderProducts() {
       'PRODUCT IDENTITY',
       '商品与货号',
       '原始店铺货号、SKC、SKU 与标准商品分层保存；只有通过身份归并的商品才能跨店聚合。',
-      `<span>当前身份范围</span><strong>${escapeHtml(identityStatus)}</strong><small>${escapeHtml(source.canonical ? 'CANONICAL_CONFIRMED' : 'STORE_LOCAL_UNVERIFIED')}${missingSpuSkus === null ? '' : ` · 缺少平台 SPU ${numberFormatter.format(missingSpuSkus)} 个`}</small>`,
+      `<span>当前身份范围</span><strong>${escapeHtml(identityStatus)}</strong><small>${escapeHtml(source.canonical ? 'CANONICAL_CONFIRMED' : 'STORE_LOCAL_UNVERIFIED')}${catalogCoverageLabel}${missingSpuSkus === null ? '' : ` · 缺少平台 SPU ${numberFormatter.format(missingSpuSkus)} 个`}</small>`,
     )}
     <section class="process-panel">
       ${panelHeading('IDENTITY RESOLUTION', '货号科学归并', '原始值永不覆盖，合并与拆分均保留版本和审核记录')}
@@ -1413,7 +1426,7 @@ function renderProducts() {
         )}
     </section>
     <section class="table-section">
-      ${panelHeading('UNMAPPED IDENTITY QUEUE', '待归并货号明细', `${pendingRows.length ? `${numberFormatter.format(pendingRows.length)} 条未确认店内身份` : '当前筛选无未确认店内身份'} · 只读观察`)}
+      ${panelHeading('UNMAPPED IDENTITY QUEUE', '待归并货号明细', `${pendingRows.length ? `${numberFormatter.format(pendingRows.length)} 条未确认店内身份` : '当前筛选无未确认店内身份'} · 当前销量明细 · 全量覆盖见页首`)}
       ${pendingProductMappingTable(pendingRows)}
     </section>`;
 }

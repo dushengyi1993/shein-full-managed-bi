@@ -707,17 +707,39 @@ function normalizeSystem(value) {
   };
 }
 
-function productIdentityCoverage(storeSkuRanking) {
-  const totalSkus = storeSkuRanking.length;
-  const confirmedSkus = storeSkuRanking.filter(
-    ({ mappingStatus }) => mappingStatus === 'CONFIRMED',
-  ).length;
-  const missingSpuSkus = storeSkuRanking.filter(
-    ({ mappingStatus }) => mappingStatus === 'MISSING_SPU_ID',
-  ).length;
+function productIdentityCoverage(value, storeSkuRanking) {
+  const source = record(value);
+  const sourceTotalSkus = optionalNonNegativeInteger(source.totalSkus);
+  const sourceConfirmedSkus = optionalNonNegativeInteger(source.confirmedSkus);
+  const sourceMissingSpuSkus = optionalNonNegativeInteger(source.missingSpuSkus);
+  const hasActiveCatalogCoverage = (
+    source.basis === 'active_catalog'
+    && sourceTotalSkus !== null
+    && sourceConfirmedSkus !== null
+    && sourceMissingSpuSkus !== null
+    && sourceConfirmedSkus <= sourceTotalSkus
+    && sourceMissingSpuSkus <= sourceTotalSkus
+    && sourceConfirmedSkus + sourceMissingSpuSkus <= sourceTotalSkus
+  );
+  const totalSkus = hasActiveCatalogCoverage
+    ? sourceTotalSkus
+    : storeSkuRanking.length;
+  const confirmedSkus = hasActiveCatalogCoverage
+    ? sourceConfirmedSkus
+    : storeSkuRanking.filter(
+      ({ mappingStatus }) => mappingStatus === 'CONFIRMED',
+    ).length;
+  const missingSpuSkus = hasActiveCatalogCoverage
+    ? sourceMissingSpuSkus
+    : storeSkuRanking.filter(
+      ({ mappingStatus }) => mappingStatus === 'MISSING_SPU_ID',
+    ).length;
+  const basis = hasActiveCatalogCoverage ? 'active_catalog' : 'sales_ranking';
   return {
+    basis,
     confirmedSkus,
     totalSkus,
+    unconfirmedSkus: totalSkus - confirmedSkus,
     missingSpuSkus,
     coverageRate: totalSkus === 0
       ? null
@@ -730,8 +752,12 @@ function productIdentityCoverage(storeSkuRanking) {
           ? 'partial'
           : 'not_started',
     note: totalSkus === 0
-      ? '尚无可归并SKU'
-      : `已确认 ${confirmedSkus}/${totalSkus} 个店铺SKU；${missingSpuSkus} 个缺少平台SPU；未确认商品保持店内隔离`,
+      ? basis === 'active_catalog'
+        ? '全量活跃商品目录中尚无SKU'
+        : '当前销量排行尚无可归并SKU'
+      : basis === 'active_catalog'
+        ? `全量活跃商品目录 ${confirmedSkus}/${totalSkus} 个SKU已确认；${missingSpuSkus} 个缺少平台SPU；覆盖口径不依赖销量业务日`
+        : `当前销量排行已确认 ${confirmedSkus}/${totalSkus} 个店铺SKU；${missingSpuSkus} 个缺少平台SPU；未确认商品保持店内隔离`,
   };
 }
 
@@ -818,7 +844,10 @@ export function normalizeDashboardData(input) {
     storeSkuRanking,
     skuRanking: storeSkuRanking,
     productRanking,
-    productIdentityCoverage: productIdentityCoverage(storeSkuRanking),
+    productIdentityCoverage: productIdentityCoverage(
+      source.productIdentityCoverage,
+      storeSkuRanking,
+    ),
     rankingMeta: {
       store: {
         returnedCount: storeRanking.length,
