@@ -162,7 +162,25 @@ test('loads store, raw batches, SKU identities and four facts per SKU then refre
   assert.equal(client.calls.some(({ sql }) => sql.includes('DELETE FROM mart.full_store_sales_latest')), true);
   assert.equal(client.calls.some(({ sql }) => sql.includes('DELETE FROM mart.full_product_sales_latest')), true);
   const factReadback = client.calls.find(({ sql }) => sql.includes('SELECT sales_snapshot_id, payload_fingerprint'));
+  assert.deepEqual(factReadback.values, [
+    1,
+    100,
+    11,
+    'today:SKU-1',
+    sha256(stableJson({
+      skuCode: 'SKU-1',
+      statisticsDate: '2026-07-20',
+      windowCode: 'today',
+      quantity: 1,
+    })),
+    '2026-07-19T16:00:00.000Z',
+    '2026-07-20T16:00:00.000Z',
+    '2026-07-20T04:00:00.000Z',
+  ]);
+  assert.match(factReadback.values[4], /^[a-f0-9]{64}$/);
   assert.match(factReadback.sql, /\$5::text AS requested_payload_fingerprint/);
+  assert.match(factReadback.sql, /metric_window_start = \$6::timestamptz/);
+  assert.match(factReadback.sql, /snapshot_at = \$8::timestamptz/);
   const probeInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.permission_probe'));
   assert.deepEqual(JSON.parse(probeInsert.values[9]), {
     endpointReached: 'goods.query-sku-sales',

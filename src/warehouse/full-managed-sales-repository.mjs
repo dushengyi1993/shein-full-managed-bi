@@ -385,6 +385,16 @@ async function insertSnapshotFacts(client, {
       snapshot.fetchedAt,
       quantities[windowCode],
     ];
+    const existingValues = [
+      storeId,
+      fullSkuId,
+      fetchBatchId,
+      sourceRowKey,
+      payloadFingerprint,
+      windowStart.toISOString(),
+      windowEnd.toISOString(),
+      snapshot.fetchedAt,
+    ];
     const existing = await client.query(
       `SELECT sales_snapshot_id, payload_fingerprint,
               $5::text AS requested_payload_fingerprint
@@ -396,7 +406,7 @@ async function insertSnapshotFacts(client, {
             AND metric_window_end = $7::timestamptz
             AND snapshot_at = $8::timestamptz
           )`,
-      values,
+      existingValues,
     );
     if (existing.rows.length > 0) {
       if (existing.rows.some((row) => row.payload_fingerprint !== payloadFingerprint)) {
