@@ -9,9 +9,9 @@ import {
 } from '../../src/openapi/full-managed-sales.mjs';
 import { SheinOpenApiError } from '../../src/openapi/shein-client.mjs';
 
-function numberItem(index) {
+function numberItem(index, skc = `SKC-${Math.floor(index / 2)}`) {
   return {
-    skc: `SKC-${Math.floor(index / 2)}`,
+    skc,
     sku_code: `SKU-${String(index).padStart(3, '0')}`,
     supplier_sku: `SUP-${index}`,
     design_code: '',
@@ -19,40 +19,126 @@ function numberItem(index) {
   };
 }
 
-test('paginates number-list GET up to 100 per page and validates advertised count', async () => {
-  const rows = Array.from({ length: 205 }, (_, index) => numberItem(index + 1));
+test('paginates type=1 by advertised SKC count while retaining every expanded SKU row', async () => {
+  const pageRows = new Map([
+    [1, [numberItem(1, 'SKC-A'), numberItem(2, 'SKC-A'), numberItem(3, 'SKC-A')]],
+    [2, [numberItem(4, 'SKC-B'), numberItem(5, 'SKC-B')]],
+    [3, []],
+  ]);
   const calls = [];
   const client = {
     async request(path, options) {
       calls.push({ path, options });
       const page = options.query.page;
-      const pageRows = rows.slice((page - 1) * 100, page * 100);
       return {
         data: {
           code: 0,
-          info: { page, per_page: 100, count: rows.length, list: pageRows },
+          info: { page, per_page: 1, count: 2, list: pageRows.get(page) ?? [] },
           traceId: `trace-${page}`,
         },
       };
     },
   };
-  const result = await fetchFullManagedSkuInventory(client);
-  assert.equal(result.items.length, 205);
-  assert.equal(result.pages.length, 3);
-  assert.deepEqual(calls.map(({ options }) => options.query.page), [1, 2, 3]);
-  assert.ok(calls.every(({ options }) => options.method === 'GET' && options.query.per_page === 100));
+  const result = await fetchFullManagedSkuInventory(client, { pageSize: 1 });
+  assert.equal(result.items.length, 5);
+  assert.equal(result.pages.length, 4);
+  assert.equal(result.advertisedCount, 2);
+  assert.equal(result.sweepCount, 2);
+  assert.deepEqual(calls.map(({ options }) => options.query.page), [1, 2, 3, 4, 1, 2, 3, 4]);
+  assert.ok(calls.every(({ options }) => options.method === 'GET' && options.query.per_page === 1));
 });
 
-test('detects truncated or drifting pagination instead of accepting a partial inventory', async () => {
+test('rejects an empty sentinel before every advertised SKC was observed', async () => {
   const client = {
-    async request() {
-      return { data: { code: 0, info: { page: 1, per_page: 100, count: 200, list: [numberItem(1)] } } };
+    async request(_path, { query }) {
+      return {
+        data: {
+          code: 0,
+          info: {
+            page: query.page,
+            per_page: 1,
+            count: 2,
+            list: query.page === 1 ? [numberItem(1, 'SKC-A')] : [],
+          },
+        },
+      };
     },
   };
   await assert.rejects(
-    () => fetchFullManagedSkuInventory(client),
-    (error) => error.code === 'PAGINATION_TRUNCATED',
+    () => fetchFullManagedSkuInventory(client, { pageSize: 1 }),
+    (error) => error.code === 'PAGINATION_COUNT_MISMATCH',
   );
+});
+
+test('rejects one SKC repeated across number-list pages', async () => {
+  const client = {
+    async request(_path, { query }) {
+      const rows = query.page === 1
+        ? [numberItem(1, 'SKC-A')]
+        : query.page === 2
+          ? [numberItem(2, 'SKC-A')]
+          : [];
+      return {
+        data: {
+          code: 0,
+          info: { page: query.page, per_page: 1, count: 1, list: rows },
+        },
+      };
+    },
+  };
+  await assert.rejects(
+    () => fetchFullManagedSkuInventory(client, { pageSize: 1 }),
+    (error) => error.code === 'PAGINATION_SKC_OVERLAP',
+  );
+});
+
+test('rejects data that resumes after an empty number-list page', async () => {
+  const client = {
+    async request(_path, { query }) {
+      const rows = query.page === 1
+        ? [numberItem(1, 'SKC-A')]
+        : query.page === 3
+          ? [numberItem(2, 'SKC-B')]
+          : [];
+      return {
+        data: {
+          code: 0,
+          info: { page: query.page, per_page: 1, count: 2, list: rows },
+        },
+      };
+    },
+  };
+  await assert.rejects(
+    () => fetchFullManagedSkuInventory(client, { pageSize: 1 }),
+    (error) => error.code === 'PAGINATION_EMPTY_GAP',
+  );
+});
+
+test('requires two consecutive stable complete inventory sweeps', async () => {
+  let sweep = 0;
+  const client = {
+    async request(_path, { query }) {
+      if (query.page === 1) sweep += 1;
+      const skuIndex = sweep === 1 ? 1 : 2;
+      return {
+        data: {
+          code: 0,
+          info: {
+            page: query.page,
+            per_page: 1,
+            count: 1,
+            list: query.page === 1 ? [numberItem(skuIndex, 'SKC-A')] : [],
+          },
+        },
+      };
+    },
+  };
+  const result = await fetchFullManagedSkuInventory(client, {
+    pageSize: 1,
+    maxSweeps: 3,
+  });
+  assert.equal(result.sweepCount, 3);
+  assert.deepEqual(result.items.map(({ skuCode }) => skuCode), ['SKU-002']);
 });
 
 test('query-sku-sales never sends more than 100 SKUs and maps complete results', async () => {

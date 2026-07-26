@@ -103,6 +103,15 @@ test('loads store, raw batches, SKU identities and four facts per SKU then refre
   assert.equal(client.calls.filter(({ sql }) => sql.includes('INSERT INTO fact.full_sku_sales_snapshot')).length, 8);
   assert.equal(client.calls.some(({ sql }) => sql.includes('DELETE FROM mart.full_store_sales_latest')), true);
   assert.equal(client.calls.some(({ sql }) => sql.includes('DELETE FROM mart.full_product_sales_latest')), true);
+  const probeInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.permission_probe'));
+  assert.deepEqual(JSON.parse(probeInsert.values[9]), {
+    endpointReached: 'goods.query-sku-sales',
+    salesEndpointExercised: true,
+    statisticsDateAvailable: true,
+    dataLoadable: true,
+    dataQualityStatus: 'VALID',
+    dataQualityReason: null,
+  });
 
   const serializedValues = JSON.stringify(client.calls.flatMap(({ values }) => values));
   assert.doesNotMatch(serializedValues, /secret|openKey|signature|cookie/i);
@@ -136,6 +145,64 @@ test('refuses partial sales coverage before beginning a database transaction', a
   const client = new FakeClient();
   await assert.rejects(() => loadFullManagedSalesSync(pool(client), input), /Every inventory SKU/);
   assert.equal(client.calls.length, 0);
+});
+
+test('fails closed on duplicate, mismatched, or incomplete sales load coverage', async (t) => {
+  const cases = [
+    {
+      name: 'duplicate inventory SKU',
+      mutate(input) { input.inventory.items[1].skuCode = 'SKU-1'; },
+      message: /Inventory contains a duplicate SKU/,
+    },
+    {
+      name: 'duplicate sales SKU',
+      mutate(input) { input.sales.snapshots[1].skuCode = 'SKU-1'; },
+      message: /Sales snapshots contain a duplicate SKU/,
+    },
+    {
+      name: 'equal-size but different SKU sets',
+      mutate(input) { input.sales.snapshots[1].skuCode = 'SKU-3'; },
+      message: /SKU sets must match exactly/,
+    },
+    {
+      name: 'wrong snapshot store',
+      mutate(input) { input.sales.snapshots[1].storeCode = 'OTHER'; },
+      message: /store code does not match/,
+    },
+    {
+      name: 'mixed statistics dates',
+      mutate(input) { input.sales.snapshots[1].statisticsDate = '2026-07-21'; },
+      message: /one statistics date/,
+    },
+    {
+      name: 'non-contiguous batch index',
+      mutate(input) { input.sales.batches[0].batchIndex = 1; },
+      message: /indexes must be contiguous/,
+    },
+    {
+      name: 'response count mismatch',
+      mutate(input) { input.sales.batches[0].responseRecordCount = 1; },
+      message: /response count must match/,
+    },
+    {
+      name: 'batch evidence omits one snapshot',
+      mutate(input) {
+        input.sales.batches[0].skuCount = 1;
+        input.sales.batches[0].responseRecordCount = 1;
+      },
+      message: /evidence must cover every snapshot/,
+    },
+  ];
+
+  for (const entry of cases) {
+    await t.test(entry.name, async () => {
+      const input = structuredClone(syncInput());
+      entry.mutate(input);
+      const client = new FakeClient();
+      await assert.rejects(() => loadFullManagedSalesSync(pool(client), input), entry.message);
+      assert.equal(client.calls.length, 0);
+    });
+  }
 });
 
 test('persists sanitized permission and data-quality evidence without credentials', async () => {

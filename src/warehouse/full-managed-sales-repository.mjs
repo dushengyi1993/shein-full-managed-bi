@@ -29,6 +29,79 @@ function requireSafeRunId(value) {
   return value;
 }
 
+function requireNonEmptyCode(value, location) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new TypeError(`${location} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function validateSalesLoadCoverage(store, inventory, sales) {
+  const storeCode = requireNonEmptyCode(store?.storeCode, 'store.storeCode');
+  const inventoryCodes = new Set();
+  for (let index = 0; index < inventory.items.length; index += 1) {
+    const skuCode = requireNonEmptyCode(
+      inventory.items[index]?.skuCode,
+      `inventory.items[${index}].skuCode`,
+    );
+    if (inventoryCodes.has(skuCode)) {
+      throw new Error('Inventory contains a duplicate SKU.');
+    }
+    inventoryCodes.add(skuCode);
+  }
+
+  const snapshotCodes = new Set();
+  const statisticsDates = new Set();
+  for (let index = 0; index < sales.snapshots.length; index += 1) {
+    const snapshot = sales.snapshots[index];
+    const skuCode = requireNonEmptyCode(
+      snapshot?.skuCode,
+      `sales.snapshots[${index}].skuCode`,
+    );
+    if (snapshotCodes.has(skuCode)) {
+      throw new Error('Sales snapshots contain a duplicate SKU.');
+    }
+    if (snapshot?.storeCode !== storeCode) {
+      throw new Error('Sales snapshot store code does not match the selected store.');
+    }
+    snapshotCodes.add(skuCode);
+    statisticsDates.add(snapshot.statisticsDate);
+  }
+
+  if (
+    inventoryCodes.size !== snapshotCodes.size
+    || [...inventoryCodes].some((skuCode) => !snapshotCodes.has(skuCode))
+  ) {
+    throw new Error('Inventory and sales snapshot SKU sets must match exactly before loading.');
+  }
+  if (statisticsDates.size !== 1) {
+    throw new Error('All sales batches for one store must use one statistics date.');
+  }
+  salesWindows([...statisticsDates][0]);
+
+  let evidencedSnapshotCount = 0;
+  for (let index = 0; index < sales.batches.length; index += 1) {
+    const evidence = sales.batches[index];
+    if (evidence?.batchIndex !== index) {
+      throw new Error('Sales batch indexes must be contiguous and zero-based.');
+    }
+    if (
+      !Number.isSafeInteger(evidence.skuCount)
+      || evidence.skuCount < 1
+      || evidence.skuCount > 100
+    ) {
+      throw new Error('Sales batch SKU count must be an integer from 1 to 100.');
+    }
+    if (evidence.responseRecordCount !== evidence.skuCount) {
+      throw new Error('Sales batch response count must match its requested SKU count.');
+    }
+    evidencedSnapshotCount += evidence.skuCount;
+  }
+  if (evidencedSnapshotCount !== sales.snapshots.length) {
+    throw new Error('Sales batch evidence must cover every snapshot exactly once.');
+  }
+}
+
 function midnightShanghai(date) {
   return new Date(`${date}T00:00:00.000+08:00`);
 }
@@ -405,6 +478,7 @@ export async function loadFullManagedSalesSync(pool, {
   if (sales.snapshots.length !== inventory.items.length) {
     throw new Error('Every inventory SKU must have exactly one complete sales snapshot before loading.');
   }
+  validateSalesLoadCoverage(store, inventory, sales);
 
   return transaction(pool, async (client) => {
     const storeId = await upsertStore(client, store);
@@ -421,7 +495,16 @@ export async function loadFullManagedSalesSync(pool, {
       responsePayload: {
         code: '0',
         recordCount: inventory.items.length,
-        pages: inventory.pages.map(({ page, recordCount, traceId }) => ({ page, recordCount, traceId })),
+        advertisedSkcCount: inventory.advertisedCount ?? null,
+        stableSweepCount: inventory.sweepCount ?? null,
+        pages: inventory.pages.map(
+          ({ page, recordCount, skcCount, traceId }) => ({
+            page,
+            recordCount,
+            skcCount: skcCount ?? null,
+            traceId,
+          }),
+        ),
       },
       recordCount: inventory.items.length,
     });
@@ -481,7 +564,13 @@ export async function loadFullManagedSalesSync(pool, {
         httpStatus: 200,
         platformErrorCode: null,
         platformMessage: 'Complete inventory and sales snapshot loaded.',
-        evidence: { endpointReached: SKU_SALES_ENDPOINT, salesEndpointExercised: true },
+        evidence: {
+          endpointReached: SKU_SALES_ENDPOINT,
+          salesEndpointExercised: true,
+          statisticsDateAvailable: true,
+          dataLoadable: true,
+          dataQualityStatus: 'VALID',
+        },
         probedAt: sales.snapshots[0]?.fetchedAt ?? new Date().toISOString(),
       },
     });
