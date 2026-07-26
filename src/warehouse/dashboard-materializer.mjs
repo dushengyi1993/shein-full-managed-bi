@@ -557,6 +557,13 @@ function salesCoverage({
   const blockedStores = storeHealth.filter(
     ({ runStatus }) => runStatus === 'QUALITY_BLOCKED',
   ).length;
+  const partialStores = storeHealth.filter(
+    ({ dateAnchorStatus }) => dateAnchorStatus === 'PARTIAL',
+  ).length;
+  const quarantinedRows = storeHealth.reduce(
+    (sum, row) => sum + (row.quarantinedSkuCount ?? 0),
+    0,
+  );
   const acceptedStores = acceptedStoreCodes.size;
   const totalRows = storeHealth.reduce(
     (sum, row) => sum + (row.responseSkuCount ?? 0),
@@ -573,14 +580,21 @@ function salesCoverage({
     status = acceptedStores === totalStores ? 'legal_zero' : 'partial';
     label = status === 'legal_zero' ? '合法零销量' : '部分店铺为合法零销量';
     reason = '接口完整返回零值，但统计日期未锚定';
-  } else if (acceptedStores === totalStores && totalStores > 0 && legalZeroStores === 0) {
+  } else if (
+    acceptedStores === totalStores
+    && totalStores > 0
+    && legalZeroStores === 0
+    && partialStores === 0
+  ) {
     status = 'complete';
     label = '同日覆盖完整';
     reason = '所有店铺均使用同一业务日，或有明确合法零值观测';
   } else if (acceptedStores > 0) {
     status = 'partial';
     label = '同日覆盖不完整';
-    reason = `${acceptedStores}/${totalStores} 家店可用于当前口径，未混合其他统计日`;
+    reason = quarantinedRows > 0
+      ? `${acceptedStores}/${totalStores} 家店可用于当前口径，${quarantinedRows} 个非零SKU因缺少统计日期已隔离`
+      : `${acceptedStores}/${totalStores} 家店可用于当前口径，未混合其他统计日`;
   }
   return {
     businessDate,
@@ -702,7 +716,9 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
     } else if (rows.length > 0) {
       qualityStatus = health?.dateAnchorStatus === 'PARTIAL' ? 'partial' : 'healthy';
       qualityReason = health?.dateAnchorStatus === 'PARTIAL'
-        ? '部分零销量SKU缺少统计日期'
+        ? (health?.quarantinedSkuCount ?? 0) > 0
+          ? `${health.quarantinedSkuCount} 个非零SKU缺少统计日期，已隔离`
+          : '部分零销量SKU缺少统计日期'
         : '销量已按统一业务日入仓';
     } else if (health?.watermarkDate && health.watermarkDate !== businessDate) {
       qualityStatus = 'stale';

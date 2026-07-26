@@ -210,6 +210,52 @@ test('a latest quality-blocked run cannot leak an older accepted watermark into 
   }]);
 });
 
+test('dated rows remain visible as partial coverage when a small unanchored non-zero subset is quarantined', () => {
+  const dashboard = buildDashboardFromProjectionInput({
+    storePermissions: [{ storeCode: 'DL', storeName: 'DL', permissionStatus: 'granted' }],
+    snapshots: [{
+      storeCode: 'DL',
+      skuCode: 'SKU-DATED',
+      salesToday: 3,
+      salesYesterday: 4,
+      sales7Days: 14,
+      sales30Days: 60,
+      statisticsDate: '2026-07-20',
+      fetchedAt: '2026-07-20T04:00:00.000Z',
+    }],
+    skuNames: new Map([['DL\u001fSKU-DATED', 'Accepted dated row']]),
+    salesTrend: [{ storeCode: 'DL', date: '2026-07-20', unitsSold: 3 }],
+    storeHealth: [{
+      storeCode: 'DL',
+      permissionStatus: 'granted',
+      hasFacts: true,
+      runStatus: 'SUCCEEDED',
+      qualityStatus: 'PARTIAL',
+      dateAnchorStatus: 'PARTIAL',
+      businessDate: '2026-07-20',
+      watermarkDate: '2026-07-20',
+      requestedSkuCount: 2,
+      responseSkuCount: 2,
+      datedSkuCount: 1,
+      unanchoredZeroSkuCount: 0,
+      quarantinedSkuCount: 1,
+      fetchedAt: '2026-07-20T04:00:00.000Z',
+    }],
+  });
+
+  assert.equal(dashboard.datasetStatus, 'live');
+  assert.equal(dashboard.businessDate, '2026-07-20');
+  assert.equal(dashboard.salesCoverage.status, 'partial');
+  assert.deepEqual(dashboard.unitsSold, {
+    today: 3, yesterday: 4, last7Days: 14, last30Days: 60,
+  });
+  assert.equal(dashboard.storeRanking[0].qualityStatus, 'partial');
+  assert.equal(
+    dashboard.storeRanking[0].qualityReason,
+    '1 个非零SKU缺少统计日期，已隔离',
+  );
+});
+
 test('legal zero never turns blocked or missing stores into a global zero', () => {
   const legalZeroHealth = {
     storeCode: 'AA',

@@ -101,12 +101,14 @@ function validateSalesLoadCoverage(store, inventory, sales) {
     } else {
       quarantinedSkuCount += 1;
     }
-    for (const field of Object.keys(totals)) {
-      totals[field] = addSalesCount(
-        totals[field],
-        snapshot[field],
-        `sales.snapshots[${index}].${field}`,
-      );
+    if (dateQuality === 'DATED') {
+      for (const field of Object.keys(totals)) {
+        totals[field] = addSalesCount(
+          totals[field],
+          snapshot[field],
+          `sales.snapshots[${index}].${field}`,
+        );
+      }
     }
   }
 
@@ -152,11 +154,14 @@ function validateSalesLoadCoverage(store, inventory, sales) {
   let dateAnchorStatus = 'ANCHORED';
   let qualityStatus = 'VALID';
   let status = 'SUCCEEDED';
-  if (quarantinedSkuCount > 0) {
+  if (quarantinedSkuCount > 0 && datedSkuCount === 0) {
     dateAnchorStatus = 'BLOCKED';
     qualityStatus = 'UNANCHORED_NONZERO';
     status = 'QUALITY_BLOCKED';
-  } else if (datedSkuCount > 0 && unanchoredZeroSkuCount > 0) {
+  } else if (
+    datedSkuCount > 0
+    && (unanchoredZeroSkuCount > 0 || quarantinedSkuCount > 0)
+  ) {
     dateAnchorStatus = 'PARTIAL';
     qualityStatus = 'PARTIAL';
   } else if (datedSkuCount === 0) {
@@ -525,13 +530,16 @@ async function upsertSalesQualityEvents(client, {
     });
   }
   if (coverage.quarantinedSkuCount > 0) {
+    const blocked = coverage.status === 'QUALITY_BLOCKED';
     events.push({
       code: 'SALES_DATE_UNANCHORED_NONZERO',
-      severity: 'ERROR',
+      severity: blocked ? 'ERROR' : 'WARNING',
       count: coverage.quarantinedSkuCount,
       details: {
         loadDecision: 'QUARANTINE',
-        impact: 'Non-zero quantities were excluded because SHEIN supplied no statistics date.',
+        impact: blocked
+          ? 'No dated rows were available, so the store was excluded from BI.'
+          : 'Unanchored non-zero rows were excluded; dated rows remain visible as partial coverage.',
       },
     });
   }
@@ -926,6 +934,7 @@ export async function loadFullManagedSalesSync(pool, {
     const isBlocked = coverage.status === 'QUALITY_BLOCKED';
     const isAnchored = coverage.dateAnchorStatus === 'ANCHORED';
     const isLegalZero = coverage.dateAnchorStatus === 'UNANCHORED_ZERO';
+    const hasQuarantinedRows = coverage.quarantinedSkuCount > 0;
     await insertProbe(client, {
       storeId,
       runId,
@@ -936,9 +945,13 @@ export async function loadFullManagedSalesSync(pool, {
         platformErrorCode: null,
         platformMessage: isBlocked
           ? 'Sales access granted; non-zero rows without dt were quarantined.'
+          : hasQuarantinedRows
+            ? 'Sales access granted; dated rows loaded with partial coverage and unanchored non-zero rows quarantined.'
           : isLegalZero
             ? 'Sales access granted; complete zero-sales response had no dt.'
-            : 'Complete inventory and sales snapshot loaded.',
+            : coverage.dateAnchorStatus === 'PARTIAL'
+              ? 'Sales access granted; dated rows loaded and unanchored zero rows recorded as partial coverage.'
+              : 'Complete inventory and sales snapshot loaded.',
         evidence: {
           endpointReached: SKU_SALES_ENDPOINT,
           salesEndpointExercised: true,
@@ -947,6 +960,8 @@ export async function loadFullManagedSalesSync(pool, {
           dataQualityStatus: isBlocked ? 'BLOCKED' : isAnchored ? 'VALID' : 'DEGRADED',
           dataQualityReason: isBlocked
             ? 'UNANCHORED_NONZERO'
+            : hasQuarantinedRows
+              ? 'UNANCHORED_NONZERO'
             : isLegalZero
               ? 'LEGAL_ZERO_UNANCHORED'
               : coverage.dateAnchorStatus === 'PARTIAL'

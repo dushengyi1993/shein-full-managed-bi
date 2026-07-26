@@ -247,16 +247,49 @@ test('accepts a complete unanchored zero response, records legal zero and does n
   });
 });
 
-test('quarantines non-zero rows without dt while preserving granted permission', async () => {
+test('quarantines unanchored non-zero rows while publishing dated rows as partial coverage', async () => {
   const input = syncInput();
   input.sales.snapshots[0].statisticsDate = null;
   const client = new FakeClient();
 
   const result = await loadFullManagedSalesSync(pool(client), input);
 
-  assert.equal(result.qualityStatus, 'UNANCHORED_NONZERO');
+  assert.equal(result.qualityStatus, 'PARTIAL');
   assert.equal(result.quarantinedSkuCount, 1);
   assert.equal(result.factCount, 4);
+  const runInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.sales_sync_run'));
+  assert.equal(runInsert.values[2], 'SUCCEEDED');
+  assert.equal(runInsert.values[4], 'PARTIAL');
+  assert.deepEqual(runInsert.values.slice(11, 15), [3, 4, 14, 60]);
+  assert.equal(
+    client.calls.some(({ sql }) => sql.includes('INSERT INTO ops.sales_business_watermark')),
+    true,
+  );
+  const eventInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.sales_quality_event'));
+  assert.equal(eventInsert.values[2], 'SALES_DATE_UNANCHORED_NONZERO');
+  assert.equal(eventInsert.values[3], 'WARNING');
+  const probeInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.permission_probe'));
+  assert.equal(probeInsert.values[5], 'GRANTED');
+  assert.deepEqual(JSON.parse(probeInsert.values[9]), {
+    endpointReached: 'goods.query-sku-sales',
+    salesEndpointExercised: true,
+    statisticsDateAvailable: false,
+    dataLoadable: true,
+    dataQualityStatus: 'DEGRADED',
+    dataQualityReason: 'UNANCHORED_NONZERO',
+  });
+});
+
+test('blocks a store when every non-zero row lacks a statistics date', async () => {
+  const input = syncInput();
+  for (const snapshot of input.sales.snapshots) snapshot.statisticsDate = null;
+  const client = new FakeClient();
+
+  const result = await loadFullManagedSalesSync(pool(client), input);
+
+  assert.equal(result.qualityStatus, 'UNANCHORED_NONZERO');
+  assert.equal(result.quarantinedSkuCount, 2);
+  assert.equal(result.factCount, 0);
   const runInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.sales_sync_run'));
   assert.equal(runInsert.values[2], 'QUALITY_BLOCKED');
   assert.equal(runInsert.values[4], 'BLOCKED');
@@ -266,11 +299,7 @@ test('quarantines non-zero rows without dt while preserving granted permission',
     false,
   );
   const eventInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.sales_quality_event'));
-  assert.equal(eventInsert.values[2], 'SALES_DATE_UNANCHORED_NONZERO');
   assert.equal(eventInsert.values[3], 'ERROR');
-  const probeInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.permission_probe'));
-  assert.equal(probeInsert.values[5], 'GRANTED');
-  assert.equal(JSON.parse(probeInsert.values[9]).dataQualityStatus, 'BLOCKED');
 });
 
 test('rolls back the entire store load when a fact fails', async () => {
