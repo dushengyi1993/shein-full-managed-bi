@@ -8,8 +8,10 @@ import {
 } from '../../src/domain/dashboard-projection.mjs';
 
 const STORE_CODES = [
-  'DL', 'DX', 'FY', 'LQ', 'NM', 'JY', 'ZL', 'TS', 'MZ',
-  'CX', 'YJ', 'XL', 'QY', 'QH', 'TZ', 'JSH', 'TZZ', 'XC',
+  'CX4412', 'XL2801', 'QY8886', 'DX0571', 'NM7397', 'LQ7173',
+  'TS8263', 'DL5477', 'FY4021', 'GJ8989', 'QH8028', 'JY8060',
+  'ZL3133', 'MZ2406', 'YJ8177', 'RH0099', 'WY9025', 'RH2848',
+  'CX2816', 'YJ4042', 'NM4977', 'NM8787', 'NM8831', 'DX2420',
 ];
 
 function permissions(overrides = {}) {
@@ -21,7 +23,7 @@ function permissions(overrides = {}) {
 }
 
 function snapshot({
-  storeCode = 'DL',
+  storeCode = 'DL5477',
   skuCode = 'SKU-A',
   salesToday = 1,
   salesYesterday = 2,
@@ -56,25 +58,25 @@ test('selects the newest statistics date, then newest fetch, for each store and 
       snapshot({ salesToday: 100, statisticsDate: '2026-07-19', fetchedAt: '2026-07-20T10:00:00Z' }),
       snapshot({ salesToday: 10, fetchedAt: '2026-07-20T02:00:00Z' }),
       snapshot({ salesToday: 11, fetchedAt: '2026-07-20T03:00:00Z' }),
-      snapshot({ storeCode: 'DX', salesToday: 5 }),
+      snapshot({ storeCode: 'DX0571', salesToday: 5 }),
     ],
     permissions(),
   );
 
   assert.equal(selected.length, 2);
-  assert.equal(selected.find(({ storeCode }) => storeCode === 'DL').salesToday, 11);
-  assert.equal(selected.find(({ storeCode }) => storeCode === 'DX').salesToday, 5);
+  assert.equal(selected.find(({ storeCode }) => storeCode === 'DL5477').salesToday, 11);
+  assert.equal(selected.find(({ storeCode }) => storeCode === 'DX0571').salesToday, 5);
 });
 
 test('projects latest snapshots into live dashboard totals and rankings without double counting history', () => {
   const projected = projectDashboardData({
-    storePermissions: permissions({ DL: 'granted', DX: 'granted' }),
+    storePermissions: permissions({ DL5477: 'granted', DX0571: 'granted' }),
     snapshots: [
       snapshot({ salesToday: 100, salesYesterday: 100, sales7Days: 700, sales30Days: 3000, statisticsDate: '2026-07-19' }),
       snapshot({ salesToday: 10, salesYesterday: 9, sales7Days: 70, sales30Days: 300, fetchedAt: '2026-07-20T02:00:00Z' }),
       snapshot({ salesToday: 11, salesYesterday: 10, sales7Days: 71, sales30Days: 301, fetchedAt: '2026-07-20T03:00:00Z' }),
       snapshot({ skuCode: 'SKU-B', salesToday: 3, salesYesterday: 4, sales7Days: 20, sales30Days: 80, fetchedAt: '2026-07-20T04:00:00Z' }),
-      snapshot({ storeCode: 'DX', salesToday: 5, salesYesterday: 6, sales7Days: 25, sales30Days: 90, fetchedAt: '2026-07-20T05:00:00Z' }),
+      snapshot({ storeCode: 'DX0571', salesToday: 5, salesYesterday: 6, sales7Days: 25, sales30Days: 90, fetchedAt: '2026-07-20T05:00:00Z' }),
     ],
   });
 
@@ -83,7 +85,7 @@ test('projects latest snapshots into live dashboard totals and rankings without 
   assert.deepEqual(projected.permission, {
     status: 'partial',
     authorizedStores: 2,
-    totalStores: 18,
+    totalStores: 24,
   });
   assert.deepEqual(projected.unitsSold, {
     today: 19,
@@ -94,14 +96,14 @@ test('projects latest snapshots into live dashboard totals and rankings without 
 
   assert.deepEqual(projected.storeRanking.slice(0, 2), [
     {
-      code: 'DL',
-      name: 'DL 全托店',
+      code: 'DL5477',
+      name: 'DL5477 全托店',
       permissionStatus: 'granted',
       unitsSold: { today: 14, last7Days: 91, last30Days: 381 },
     },
     {
-      code: 'DX',
-      name: 'DX 全托店',
+      code: 'DX0571',
+      name: 'DX0571 全托店',
       permissionStatus: 'granted',
       unitsSold: { today: 5, last7Days: 25, last30Days: 90 },
     },
@@ -126,10 +128,10 @@ test('projects latest snapshots into live dashboard totals and rankings without 
 test('stores without observations stay visible with null sales instead of fabricated zeros', () => {
   const projected = projectDashboardData({
     snapshots: [snapshot()],
-    storePermissions: permissions({ DL: 'granted', FY: 'granted' }),
+    storePermissions: permissions({ DL5477: 'granted', FY4021: 'granted' }),
   });
 
-  const missingStore = projected.storeRanking.find(({ code }) => code === 'FY');
+  const missingStore = projected.storeRanking.find(({ code }) => code === 'FY4021');
   assert.deepEqual(missingStore.unitsSold, {
     today: null,
     last7Days: null,
@@ -151,7 +153,7 @@ test('an entirely missing sales dataset remains null and has no invented update 
     last7Days: null,
     last30Days: null,
   });
-  assert.equal(projected.storeRanking.length, 18);
+  assert.equal(projected.storeRanking.length, 24);
   assert.ok(projected.storeRanking.every(({ unitsSold }) => Object.values(unitsSold).every((value) => value === null)));
   assert.deepEqual(projected.skuRanking, []);
 });

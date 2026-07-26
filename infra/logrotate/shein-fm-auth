@@ -1,0 +1,16 @@
+/var/log/nginx/shein-fm-auth-security.log {
+    daily
+    rotate 14
+    size 20M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0640 www-data adm
+    sharedscripts
+    postrotate
+        if [ -s /run/nginx.pid ]; then
+            kill -USR1 "$(cat /run/nginx.pid)"
+        fi
+    endscript
+}

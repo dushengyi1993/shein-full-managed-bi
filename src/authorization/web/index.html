@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>全托店铺授权台</title>
+  <link rel="stylesheet" href="/authorize/styles.css">
+  <script src="/authorize/app.js" defer></script>
+</head>
+<body data-page="batch">
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/authorize" aria-label="DL 全托店铺授权台">
+        <span class="brand-mark" aria-hidden="true">DL</span>
+        <span>
+          <strong>全托店铺授权台</strong>
+          <small>fm.dushengyi.cc</small>
+        </span>
+      </a>
+      <div class="trust">
+        <span class="trust-dot" aria-hidden="true"></span>
+        密钥由服务器接收
+      </div>
+    </header>
+
+    <section id="access-panel" class="access-panel" hidden>
+      <p class="eyebrow">内部协作入口</p>
+      <h1>输入管理员发送的授权口令</h1>
+      <p class="lede">如果你打开的是完整交接链接，页面会自动验证，不需要手动输入。</p>
+      <form id="token-form" class="token-form">
+        <label for="token-input">授权口令</label>
+        <div class="token-row">
+          <input id="token-input" name="token" type="password" autocomplete="off" spellcheck="false" required>
+          <button type="submit">进入授权清单</button>
+        </div>
+      </form>
+      <p id="access-error" class="form-error" role="alert"></p>
+    </section>
+
+    <section id="workspace" hidden>
+      <div class="hero">
+        <div>
+          <p class="eyebrow">DL 应用 · 多店铺授权</p>
+          <h1>逐店登录，逐店确认</h1>
+          <p class="lede">这里不收集 SHEIN 账号或密码。点击店铺后，只在 SHEIN 官方页面登录并确认授权。</p>
+        </div>
+        <div class="progress-card" aria-live="polite">
+          <span id="progress-value">0 / 0</span>
+          <small>已收到授权</small>
+          <div class="progress-track"><span id="progress-bar"></span></div>
+        </div>
+      </div>
+
+      <div class="notice">
+        <strong>操作前请确认</strong>
+        <ol>
+          <li>每次只处理一个店铺，先核对左侧店铺代码。</li>
+          <li>登录和密码只填写在 SHEIN 官方域名，不要填写在本页。</li>
+          <li>切换店铺前退出上一个账号，或使用明确隔离的浏览器 Profile。</li>
+        </ol>
+      </div>
+
+      <section class="batch-card" aria-labelledby="batch-heading">
+        <div class="batch-heading">
+          <div>
+            <p class="eyebrow">本次清单</p>
+            <h2 id="batch-heading">全托店铺授权</h2>
+            <p id="batch-expiry" class="muted"></p>
+          </div>
+          <button id="refresh-button" class="secondary" type="button">刷新状态</button>
+        </div>
+        <div id="store-list" class="store-list" aria-live="polite"></div>
+        <p id="workspace-error" class="form-error" role="alert"></p>
+      </section>
+
+      <footer>
+        <span>授权收到后仍需管理员核验店铺身份与只读权限，页面显示“已收到”不等于正式接入。</span>
+        <button id="leave-button" class="text-button" type="button">退出本次清单</button>
+      </footer>
+    </section>
+  </main>
+</body>
+</html>

@@ -125,7 +125,7 @@ test('uses FULL_BI_DATA_FILE when no function argument is supplied', async () =>
       JSON.stringify({
         datasetStatus: 'live',
         updatedAt: '2026-07-20T09:00:00.000Z',
-        permission: { status: 'partial', authorizedStores: 9, totalStores: 18 },
+        permission: { status: 'partial', authorizedStores: 9, totalStores: 24 },
         unitsSold: { today: 21, yesterday: 18, last7Days: 120, last30Days: 510 },
         storeRanking: [],
         skuRanking: [],
@@ -163,7 +163,7 @@ test('accepts an explicit empty dataset without inventing an update time', () =>
   const dashboard = normalizeDashboardData({
     datasetStatus: 'empty',
     updatedAt: null,
-    permission: { status: 'pending', authorizedStores: 0, totalStores: 18 },
+    permission: { status: 'pending', authorizedStores: 0, totalStores: 24 },
     unitsSold: {},
     storeRanking: [],
     skuRanking: [],
@@ -180,7 +180,7 @@ test('keeps unknown readiness counts and trend values missing instead of inventi
   const dashboard = normalizeDashboardData({
     datasetStatus: 'live',
     updatedAt: '2026-07-20T08:30:00.000Z',
-    permission: { status: 'unknown', authorizedStores: 0, totalStores: 18 },
+    permission: { status: 'unknown', authorizedStores: 0, totalStores: 24 },
     readiness: [
       { key: 'probe', label: '接口探针', status: 'unexpected', note: '待核验' },
     ],

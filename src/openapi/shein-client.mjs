@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 
 export const FULL_MANAGED_OPENAPI_BASE_URL = 'https://openapi.sheincorp.com';
+export const FULL_MANAGED_AUTHORIZATION_HOST = 'openapi-sem.sheincorp.com';
 export const CONTENT_TYPE = 'application/json;charset=UTF-8';
+export const DEFAULT_AES_IV_SEED = 'space-station-default-iv';
 
 const REAL_HOST_SUFFIXES = Object.freeze([
   '.sheincorp.com',
@@ -115,6 +117,104 @@ export function generateSheinSignature({ openKeyId, secretKey, path, timestamp, 
     timestamp: normalizedTimestamp,
     signature: `${normalizedRandomKey}${Buffer.from(hmacHex, 'utf8').toString('base64')}`,
   };
+}
+
+export function buildAuthorizationUrl({
+  appId,
+  redirectUrl,
+  state,
+  authorizationHost = FULL_MANAGED_AUTHORIZATION_HOST,
+} = {}) {
+  if (typeof appId !== 'string' || appId.trim() === '') {
+    fail('MISSING_CREDENTIAL', 'appId is required');
+  }
+  let redirect;
+  try {
+    redirect = new URL(String(redirectUrl));
+  } catch {
+    fail('INVALID_REDIRECT_URL', 'redirectUrl must be an absolute URL');
+  }
+  if (redirect.protocol !== 'https:' || redirect.username || redirect.password || redirect.hash) {
+    fail('INVALID_REDIRECT_URL', 'redirectUrl must be a credential-free HTTPS URL');
+  }
+  if (typeof state !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(state)) {
+    fail('INVALID_AUTHORIZATION_STATE', 'state must be a 32-byte base64url value');
+  }
+  const host = String(authorizationHost || '').trim().toLowerCase();
+  if (
+    !host ||
+    host.includes('/') ||
+    !REAL_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))
+  ) {
+    fail('INVALID_AUTHORIZATION_HOST', 'authorizationHost must be a trusted SHEIN host');
+  }
+  const query = new URLSearchParams({
+    appid: appId.trim(),
+    redirectUrl: Buffer.from(redirect.toString(), 'utf8').toString('base64'),
+    state,
+  });
+  return `https://${host}/#/empower?${query.toString()}`;
+}
+
+function aesKeyFromAppSecret(appSecretKey) {
+  const key = Buffer.alloc(16);
+  Buffer.from(String(appSecretKey), 'utf8').copy(key, 0, 0, 16);
+  return key;
+}
+
+function aesIvFromSeed(ivSeed = DEFAULT_AES_IV_SEED) {
+  const bytes = Buffer.from(String(ivSeed), 'utf8');
+  if (bytes.byteLength < 16) fail('INVALID_AES_IV', 'ivSeed must be at least 16 bytes');
+  return bytes.subarray(0, 16);
+}
+
+export function decryptSheinSecretKey(
+  encryptedSecretKey,
+  appSecretKey,
+  { ivSeed = DEFAULT_AES_IV_SEED } = {},
+) {
+  if (typeof encryptedSecretKey !== 'string' || encryptedSecretKey === '') {
+    fail('INVALID_ENCRYPTED_SECRET', 'encryptedSecretKey is required');
+  }
+  if (typeof appSecretKey !== 'string' || appSecretKey === '') {
+    fail('MISSING_CREDENTIAL', 'appSecretKey is required');
+  }
+  try {
+    const decipher = crypto.createDecipheriv(
+      'aes-128-cbc',
+      aesKeyFromAppSecret(appSecretKey),
+      aesIvFromSeed(ivSeed),
+    );
+    decipher.setAutoPadding(true);
+    return Buffer.concat([
+      decipher.update(Buffer.from(encryptedSecretKey, 'base64')),
+      decipher.final(),
+    ]).toString('utf8');
+  } catch (error) {
+    fail(
+      'SECRET_DECRYPTION_FAILED',
+      'SHEIN store secret could not be decrypted',
+      {},
+      { cause: error },
+    );
+  }
+}
+
+export function encryptSheinSecretKeyForTest(
+  plainSecretKey,
+  appSecretKey,
+  { ivSeed = DEFAULT_AES_IV_SEED } = {},
+) {
+  const cipher = crypto.createCipheriv(
+    'aes-128-cbc',
+    aesKeyFromAppSecret(appSecretKey),
+    aesIvFromSeed(ivSeed),
+  );
+  cipher.setAutoPadding(true);
+  return Buffer.concat([
+    cipher.update(String(plainSecretKey), 'utf8'),
+    cipher.final(),
+  ]).toString('base64');
 }
 
 function appendQuery(baseUrl, path, query) {
@@ -239,5 +339,107 @@ export class SheinOpenApiClient {
     };
     assertSuccessfulOpenApiResponse(result, signed.path);
     return result;
+  }
+
+  async getByToken({
+    appId,
+    appSecretKey,
+    tempToken,
+    timestamp,
+    randomKey,
+  } = {}) {
+    assertOpenApiRuntimeAllowed(this.baseUrl, {
+      platform: this.platform,
+      allowFakeBaseUrl: this.allowFakeBaseUrl,
+      cloudExecution: this.cloudExecution,
+    });
+    if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) {
+      fail('INVALID_TIMEOUT', 'timeoutMs must be a positive number');
+    }
+    if (typeof appId !== 'string' || appId === '') fail('MISSING_CREDENTIAL', 'appId is required');
+    if (typeof appSecretKey !== 'string' || appSecretKey === '') {
+      fail('MISSING_CREDENTIAL', 'appSecretKey is required');
+    }
+    if (typeof tempToken !== 'string' || !/^[A-Za-z0-9._~-]{8,1024}$/.test(tempToken)) {
+      fail('INVALID_TEMP_TOKEN', 'tempToken has an invalid format');
+    }
+    const path = '/open-api/auth/get-by-token';
+    const signed = generateSheinSignature({
+      openKeyId: appId,
+      secretKey: appSecretKey,
+      path,
+      timestamp,
+      randomKey,
+    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    let response;
+    let text;
+    try {
+      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': CONTENT_TYPE,
+          'x-lt-appid': appId,
+          'x-lt-timestamp': signed.timestamp,
+          'x-lt-signature': signed.signature,
+        },
+        body: JSON.stringify({ tempToken }),
+      });
+      text = await response.text();
+    } catch (error) {
+      if (controller.signal.aborted) {
+        fail(
+          'REQUEST_TIMEOUT',
+          `SHEIN OpenAPI request timed out after ${this.timeoutMs}ms: ${path}`,
+          { path, timeoutMs: this.timeoutMs },
+          { cause: error },
+        );
+      }
+      fail('NETWORK_ERROR', `SHEIN OpenAPI network request failed: ${path}`, {
+        path,
+      }, { cause: error });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const result = {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      data: parseBody(text, path),
+    };
+    const data = assertSuccessfulOpenApiResponse(result, path);
+    const info = data.info;
+    if (!info || typeof info !== 'object' || Array.isArray(info)) {
+      fail('INVALID_AUTHORIZATION_RESPONSE', 'get-by-token returned invalid info');
+    }
+    const openKeyId = String(info.openKeyId || '').trim();
+    const encryptedSecretKey = String(info.secretKey || '').trim();
+    const returnedAppId = String(info.appid || info.appId || '').trim();
+    const returnedState = String(info.state || '').trim();
+    const supplierId = String(info.supplierId ?? '').trim();
+    if (!openKeyId || !encryptedSecretKey || !returnedAppId || !returnedState || !supplierId) {
+      fail(
+        'INVALID_AUTHORIZATION_RESPONSE',
+        'get-by-token response is missing required authorization fields',
+      );
+    }
+    const secretKey = decryptSheinSecretKey(encryptedSecretKey, appSecretKey);
+    if (!secretKey) {
+      fail('INVALID_AUTHORIZATION_RESPONSE', 'decrypted store secret is empty');
+    }
+    return Object.freeze({
+      appId: returnedAppId,
+      state: returnedState,
+      supplierId,
+      supplierSource: info.supplierSource ?? null,
+      supplierBusinessMode: String(info.supplierBusinessMode || '').trim() || null,
+      openKeyId,
+      encryptedSecretKey,
+      secretKey,
+      traceId: typeof data.traceId === 'string' ? data.traceId.slice(0, 128) : null,
+    });
   }
 }

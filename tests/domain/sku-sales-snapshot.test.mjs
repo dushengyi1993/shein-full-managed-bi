@@ -31,7 +31,7 @@ function assertDomainError(fn, expectedCode) {
 
 function mapFixture(overrides = {}) {
   return mapSkuSalesResponseToSnapshots({
-    storeCode: 'DL',
+    storeCode: 'DL5477',
     requestedSkuCodes: ['SKU-001', 'SKU-002'],
     fetchedAt: '2026-07-20T03:04:05.000Z',
     response: clone(successFixture),
@@ -71,7 +71,7 @@ test('SKU inputs reject blank or non-string values instead of silently dropping 
 test('maps the official response to complete quantity-only snapshots in requested order', () => {
   assert.deepEqual(mapFixture(), [
     {
-      storeCode: 'DL',
+      storeCode: 'DL5477',
       skuCode: 'SKU-001',
       salesToday: 3,
       salesYesterday: 2,
@@ -81,7 +81,7 @@ test('maps the official response to complete quantity-only snapshots in requeste
       fetchedAt: '2026-07-20T03:04:05.000Z',
     },
     {
-      storeCode: 'DL',
+      storeCode: 'DL5477',
       skuCode: 'SKU-002',
       salesToday: 0,
       salesYesterday: 1,
@@ -95,7 +95,7 @@ test('maps the official response to complete quantity-only snapshots in requeste
 
 test('accepts a Date fetchedAt and normalizes it to an ISO instant', () => {
   const [snapshot] = mapSkuSalesResponseToSnapshots({
-    storeCode: 'DL',
+    storeCode: 'DL5477',
     requestedSkuCodes: ['SKU-001'],
     fetchedAt: new Date('2026-07-20T11:04:05+08:00'),
     response: {

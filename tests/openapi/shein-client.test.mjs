@@ -5,6 +5,9 @@ import {
   SheinOpenApiClient,
   SheinOpenApiError,
   assertOpenApiRuntimeAllowed,
+  buildAuthorizationUrl,
+  decryptSheinSecretKey,
+  encryptSheinSecretKeyForTest,
   generateSheinSignature,
 } from '../../src/openapi/shein-client.mjs';
 
@@ -116,5 +119,83 @@ test('timeout remains active while response body is consumed', async () => {
   await assert.rejects(
     () => client.request('/open-api/test'),
     (error) => error.code === 'REQUEST_TIMEOUT',
+  );
+});
+
+test('builds a trusted SHEIN authorization URL with an encoded HTTPS callback and state', () => {
+  const state = 's'.repeat(43);
+  const redirectUrl = 'https://fm.dushengyi.cc/openapi/authorize/callback';
+  const value = buildAuthorizationUrl({
+    appId: 'full-managed-app',
+    redirectUrl,
+    state,
+  });
+  const url = new URL(value);
+
+  assert.equal(url.origin, 'https://openapi-sem.sheincorp.com');
+  assert.equal(url.pathname, '/');
+  assert.equal(url.search, '');
+  assert.match(url.hash, /^#\/empower\?/);
+
+  const parameters = new URLSearchParams(url.hash.split('?', 2)[1]);
+  assert.equal(parameters.get('appid'), 'full-managed-app');
+  assert.equal(
+    Buffer.from(parameters.get('redirectUrl'), 'base64').toString('utf8'),
+    redirectUrl,
+  );
+  assert.equal(parameters.get('state'), state);
+  assert.deepEqual([...parameters.keys()].sort(), ['appid', 'redirectUrl', 'state']);
+});
+
+test('get-by-token uses x-lt-appid and decrypts the returned AES store secret', async () => {
+  const appId = 'full-managed-app';
+  const appSecretKey = '0123456789abcdef-app-secret-suffix';
+  const state = 'z'.repeat(43);
+  const plainSecretKey = 'store-secret-from-platform';
+  const encryptedSecretKey = encryptSheinSecretKeyForTest(plainSecretKey, appSecretKey);
+  let captured;
+  const client = new SheinOpenApiClient({
+    baseUrl: 'https://fake.test',
+    allowFakeBaseUrl: true,
+    platform: 'win32',
+    fetchImpl: async (url, init) => {
+      captured = { url, init };
+      return new Response(JSON.stringify({
+        code: 0,
+        msg: 'OK',
+        traceId: 'trace-auth-test',
+        info: {
+          appid: appId,
+          state,
+          supplierId: 'supplier-100',
+          supplierBusinessMode: 'FULL_MANAGED',
+          openKeyId: 'store-open-key',
+          secretKey: encryptedSecretKey,
+        },
+      }), { status: 200 });
+    },
+  });
+
+  const result = await client.getByToken({
+    appId,
+    appSecretKey,
+    tempToken: 'temporary-token-123',
+    timestamp: '1752570849017',
+    randomKey: 'Ab123',
+  });
+
+  assert.equal(captured.url, 'https://fake.test/open-api/auth/get-by-token');
+  assert.equal(captured.init.method, 'POST');
+  assert.equal(captured.init.headers['x-lt-appid'], appId);
+  assert.equal(captured.init.headers['x-lt-openKeyId'], undefined);
+  assert.ok(captured.init.headers['x-lt-signature'].startsWith('Ab123'));
+  assert.deepEqual(JSON.parse(captured.init.body), { tempToken: 'temporary-token-123' });
+  assert.equal(result.secretKey, plainSecretKey);
+  assert.equal(result.encryptedSecretKey, encryptedSecretKey);
+  assert.equal(result.openKeyId, 'store-open-key');
+  assert.equal(result.supplierId, 'supplier-100');
+  assert.equal(
+    decryptSheinSecretKey(encryptedSecretKey, appSecretKey),
+    plainSecretKey,
   );
 });

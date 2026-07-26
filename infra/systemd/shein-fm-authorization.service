@@ -1,0 +1,53 @@
+[Unit]
+Description=SHEIN full-managed remote authorization broker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=sheinfm-auth
+Group=sheinfm-auth
+UMask=0077
+WorkingDirectory=/opt/shein-fm-auth/current
+Environment=NODE_ENV=production
+Environment=SHEIN_FM_CLOUD_EXECUTION=1
+Environment=FULL_AUTH_HOST=127.0.0.1
+Environment=FULL_AUTH_PORT=8789
+Environment=FULL_AUTH_PUBLIC_ORIGIN=https://fm.dushengyi.cc
+Environment=FULL_AUTH_COOKIE_SECURE=true
+Environment=FULL_AUTH_APPLICATION_STORE=DL
+Environment=FULL_AUTH_APPLICATION_FILE=/srv/shein-fm-auth/secrets/application.secret.json
+Environment=FULL_AUTH_STATE_FILE=/srv/shein-fm-auth/runtime/authorization-state.json
+Environment=FULL_AUTH_RECEIPT_DIRECTORY=/srv/shein-fm-auth/secrets/receipts
+Environment=FULL_AUTH_STATE_TTL_SECONDS=600
+Environment=FULL_AUTH_MAX_STORE_ATTEMPTS=6
+Environment=FULL_AUTH_REQUEST_TIMEOUT_MS=30000
+Environment=FULL_AUTH_HEADERS_TIMEOUT_MS=10000
+ExecStart=/usr/bin/node src/authorization/index.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/srv/shein-fm-auth/secrets/application.secret.json
+ReadWritePaths=/srv/shein-fm-auth/runtime /srv/shein-fm-auth/secrets/receipts
+MemoryHigh=256M
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

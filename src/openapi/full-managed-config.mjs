@@ -120,6 +120,7 @@ export function validateFullManagedConfig(input) {
       storeName: string(store.storeName, `${location}.storeName`, { maximum: 80 }) ?? storeCode,
       legalEntityName: string(store.legalEntityName, `${location}.legalEntityName`, { maximum: 160 }),
       platformShopId: string(store.platformShopId, `${location}.platformShopId`),
+      platformSupplierId: string(store.platformSupplierId, `${location}.platformSupplierId`),
       enabled: store.enabled,
       appId,
       openKeyId,

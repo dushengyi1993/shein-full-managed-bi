@@ -4,12 +4,13 @@
 
 ## 当前进度
 
-- 18 家非 HL 全托应用均已审核通过。
-- 18 家应用的“销量查询”权限包已于 2026-07-20 提交，平台回读均为“审核中”。
+- 历史上 18 家非 HL 主体分别创建的全托应用均已审核通过，“销量查询”权限包已于 2026-07-20 提交。
+- 当前接入策略已改为 DL 单应用授权 24 家全托店铺；内部店铺代码统一使用“公司简称 + 店铺账号后四位”，例如 `CX4412`。
 - 已建立 `/open-api/goods/query-sku-sales` 的领域模型：SKU 去重、每批最多 100 条、严格响应校验、缺失 SKU 禁止补零。
 - 已建立 PostgreSQL `raw / dim / fact / mart / ops` 五层首版 Schema。
 - 已提供云端只读 BI 门户、九个一级业务视图、应用内登录、健康检查和 Dashboard API。
 - 已建立独立 PostgreSQL、OpenAPI 探针、销量同步、Dashboard 物化、systemd 定时任务和每日备份链路。
+- 已建立独立远程授权 Broker：一条 24 小时交接链接可承载 24 店逐店授权，回调换证后先进入 `REVIEW_REQUIRED`，不会自动启用。
 
 应用审核通过或权限包提交成功，不等于店铺授权、OpenAPI 探针成功或生产数据可用。权限获批后仍要完成店铺级授权、凭证交换、首店只读探针和字段对账。
 
@@ -36,6 +37,7 @@
 - [能力边界](docs/capability-boundary.md)
 - [数据库迁移](db/README.md)
 - [权限申请状态](docs/permission-application-status.md)
+- [远程店铺授权流程](docs/remote-authorization.md)
 
 ## 本地运行
 

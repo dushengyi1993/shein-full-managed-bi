@@ -1,6 +1,6 @@
 [
   {
-    "storeCode": "DL",
+    "storeCode": "DL5477",
     "skuCode": "SAMPLE-SKU-A",
     "salesToday": 3,
     "salesYesterday": 4,
@@ -10,7 +10,7 @@
     "fetchedAt": "2026-07-20T08:30:00.000Z"
   },
   {
-    "storeCode": "DX",
+    "storeCode": "DX0571",
     "skuCode": "SAMPLE-SKU-A",
     "salesToday": 2,
     "salesYesterday": 3,
@@ -20,7 +20,7 @@
     "fetchedAt": "2026-07-20T08:31:00.000Z"
   },
   {
-    "storeCode": "DL",
+    "storeCode": "DL5477",
     "skuCode": "SAMPLE-SKU-B",
     "salesToday": 1,
     "salesYesterday": 1,
