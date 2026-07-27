@@ -892,12 +892,17 @@ export function loginPage({ error = '', nonce = randomBytes(18).toString('base64
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>登录 · SHEIN 全托运营驾驶舱</title>
   <style nonce="${nonce}">
-    :root{color-scheme:light;--ink:#1d1e1b;--muted:#686a64;--line:#d9dad3;--paper:#fdfdfb;--accent:#b64b32;--side:#171814}
-    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f2f2ef;color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-    main{width:min(92vw,420px);background:var(--paper);border:1px solid var(--line);box-shadow:0 24px 70px #17181418;padding:36px} .mark{display:inline-grid;place-items:center;width:48px;height:48px;background:var(--side);color:white;font-weight:800;letter-spacing:.06em}
-    h1{font-size:1.55rem;margin:22px 0 6px}.subtitle,.hint{color:var(--muted)}.subtitle{margin:0 0 28px}.hint,.error{font-size:.9rem;margin:0 0 18px}.error{color:#9c2f1d}
-    label{display:block;font-size:.84rem;font-weight:700;margin:14px 0 6px}input{width:100%;border:1px solid #c8c9c2;background:white;color:var(--ink);font:inherit;padding:11px 12px;outline:none}input:focus{border-color:#275eea;box-shadow:0 0 0 3px #275eea1f}
-    button{width:100%;border:0;background:var(--accent);color:white;font:700 .95rem/1 system-ui;padding:14px 16px;margin-top:24px;cursor:pointer}button:hover{background:#963b29}footer{margin-top:22px;color:var(--muted);font-size:.78rem}
+    :root{color-scheme:light;--ink:#1a1a1a;--muted:#787774;--line:#eaeaea;--paper:#ffffff;--bg:#fbfbfa;--side:#1a1a1a}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);font:15px/1.6 'SF Pro Display','Geist Sans','Helvetica Neue','Switzer','Segoe UI',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+    main{width:min(92vw,400px);background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:40px}
+    .mark{display:inline-grid;place-items:center;width:36px;height:36px;border-radius:8px;background:var(--side);color:#e5e5e3;font-weight:700;font-size:13px;letter-spacing:0}
+    h1{font-size:1.4rem;font-weight:600;letter-spacing:-0.02em;margin:20px 0 4px}
+    .subtitle,.hint{color:var(--muted)}.subtitle{margin:0 0 28px;font-size:.9rem}.hint,.error{font-size:.85rem;margin:0 0 18px}.error{color:#9f2f2d}
+    label{display:block;font-size:.8rem;font-weight:500;color:var(--muted);margin:16px 0 6px;text-transform:uppercase;letter-spacing:0.02em}
+    input{width:100%;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);font:inherit;padding:10px 12px;outline:none;transition:border-color .15s}
+    input:focus{border-color:var(--ink);box-shadow:none}
+    button{width:100%;border:0;border-radius:8px;background:var(--ink);color:#fff;font:600 .9rem/1 inherit;padding:13px 16px;margin-top:24px;cursor:pointer;transition:background .15s}
+    button:hover{background:#333}footer{margin-top:24px;color:var(--muted);font-size:.75rem}
   </style>
 </head>
 <body>
