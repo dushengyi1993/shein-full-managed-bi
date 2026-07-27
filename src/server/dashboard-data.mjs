@@ -53,6 +53,13 @@ function optionalNonNegativeInteger(value) {
   return parsed;
 }
 
+function optionalNonNegativeDecimal(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
 function isoInstant(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = value instanceof Date ? new Date(value.getTime()) : new Date(value);
@@ -464,6 +471,134 @@ function normalizeStockAdviceSummary(item) {
   };
 }
 
+function operationalSeverity(value) {
+  return ['low', 'medium', 'high', 'critical'].includes(value) ? value : 'medium';
+}
+
+function normalizePurchaseOrderAttention(item) {
+  const normalized = normalizeOperationCommon(item);
+  if (!normalized) return null;
+  const { source, common } = normalized;
+  const orderNo = text(source.orderNo, '', 160);
+  const attentionCode = text(source.attentionCode, '', 80);
+  if (!orderNo || !attentionCode) return null;
+  return {
+    ...common,
+    orderNo,
+    statusCode: text(source.statusCode, '', 80) || null,
+    statusName: text(source.statusName, '', 120) || null,
+    orderTypeName: text(source.orderTypeName, '', 120) || null,
+    warehouseName: text(source.warehouseName, '', 160) || null,
+    requestedDeliveryAt: isoInstant(source.requestedDeliveryAt),
+    requestedReceiptAt: isoInstant(source.requestedReceiptAt),
+    deliveredAt: isoInstant(source.deliveredAt),
+    receivedAt: isoInstant(source.receivedAt),
+    storedAt: isoInstant(source.storedAt),
+    lineCount: optionalNonNegativeInteger(source.lineCount),
+    orderQuantity: optionalNonNegativeInteger(source.orderQuantity),
+    deliveryQuantity: optionalNonNegativeInteger(source.deliveryQuantity),
+    receiptQuantity: optionalNonNegativeInteger(source.receiptQuantity),
+    storageQuantity: optionalNonNegativeInteger(source.storageQuantity),
+    defectiveQuantity: optionalNonNegativeInteger(source.defectiveQuantity),
+    attentionCode,
+    attentionLabel: text(source.attentionLabel, '采购单待复核', 160),
+    severity: operationalSeverity(source.severity),
+  };
+}
+
+function normalizeDeliveryAttention(item) {
+  const normalized = normalizeOperationCommon(item);
+  if (!normalized) return null;
+  const { source, common } = normalized;
+  const deliveryCode = text(source.deliveryCode, '', 160);
+  const milestoneCode = text(source.milestoneCode, '', 80);
+  const attentionCode = text(source.attentionCode, '', 80);
+  if (!deliveryCode || !milestoneCode || !attentionCode) return null;
+  return {
+    ...common,
+    deliveryCode,
+    milestoneCode,
+    warehouseName: text(source.warehouseName, '', 160) || null,
+    expressCode: text(source.expressCode, '', 120) || null,
+    expressCompanyName: text(source.expressCompanyName, '', 160) || null,
+    reservedParcelAt: isoInstant(source.reservedParcelAt),
+    takenAt: isoInstant(source.takenAt),
+    expectedReceiptAt: isoInstant(source.expectedReceiptAt),
+    receivedAt: isoInstant(source.receivedAt),
+    lineCount: optionalNonNegativeInteger(source.lineCount),
+    deliveryQuantity: optionalNonNegativeInteger(source.deliveryQuantity),
+    attentionCode,
+    attentionLabel: text(source.attentionLabel, '送货单待复核', 160),
+    severity: operationalSeverity(source.severity),
+  };
+}
+
+function normalizeInventoryRisk(item) {
+  const normalized = normalizeOperationCommon(item);
+  if (!normalized) return null;
+  const { source, common } = normalized;
+  const skuCode = text(source.skuCode ?? source.sku, '', 160);
+  const inventoryTypeCode = text(source.inventoryTypeCode, '', 80);
+  const reconciliationStatus = text(source.reconciliationStatus, '', 80);
+  if (!skuCode || !inventoryTypeCode || !reconciliationStatus) return null;
+  return {
+    ...common,
+    skuCode,
+    skcName: text(source.skcName ?? source.skc, '', 160) || null,
+    spuName: text(source.spuName ?? source.spu, '', 160) || null,
+    inventoryTypeCode,
+    totalInventory: optionalNonNegativeInteger(source.totalInventory),
+    usableInventory: optionalNonNegativeInteger(source.usableInventory),
+    transitQuantity: optionalNonNegativeInteger(source.transitQuantity),
+    shortageQuantity: optionalNonNegativeInteger(source.shortageQuantity),
+    reconciliationStatus,
+    severity: operationalSeverity(source.severity),
+  };
+}
+
+function normalizeStockAdviceRisk(item) {
+  const normalized = normalizeOperationCommon(item);
+  if (!normalized) return null;
+  const { source, common } = normalized;
+  const skuCode = text(source.skuCode ?? source.sku, '', 160);
+  if (!skuCode) return null;
+  return {
+    ...common,
+    skuCode,
+    skcName: text(source.skcName ?? source.skc, '', 160) || null,
+    spuName: text(source.spuName ?? source.spu, '', 160) || null,
+    supplierCode: text(source.supplierCode, '', 160) || null,
+    predictedDailySales: optionalNonNegativeDecimal(source.predictedDailySales),
+    pendingOrderQuantity: optionalNonNegativeInteger(source.pendingOrderQuantity),
+    pendingDeliveryQuantity: optionalNonNegativeInteger(source.pendingDeliveryQuantity),
+    pendingShelfQuantity: optionalNonNegativeInteger(source.pendingShelfQuantity),
+    transitQuantity: optionalNonNegativeInteger(source.transitQuantity),
+    stockQuantity: optionalNonNegativeInteger(source.stockQuantity),
+    advisedOrderQuantity: optionalNonNegativeInteger(source.advisedOrderQuantity),
+    placedOrderQuantity: optionalNonNegativeInteger(source.placedOrderQuantity),
+    plannedUrgentQuantity: optionalNonNegativeInteger(source.plannedUrgentQuantity),
+    supplyStatusCode: text(source.supplyStatusCode, '', 80) || null,
+    shelfStatusCode: text(source.shelfStatusCode, '', 80) || null,
+    stockWarningStatusCode: text(source.stockWarningStatusCode, '', 80) || null,
+    stockWarningIsWarning: optionalBoolean(
+      source.stockWarningIsWarning ?? source.warning,
+    ),
+    severity: operationalSeverity(source.severity),
+  };
+}
+
+function normalizeDetailMeta(value, rows, sourceLength, available = false) {
+  const source = record(value);
+  const sourceTotal = optionalNonNegativeInteger(source.total ?? source.totalCount);
+  const totalCount = Math.max(sourceTotal ?? 0, sourceLength, rows.length);
+  return {
+    available,
+    total: totalCount,
+    returned: rows.length,
+    truncated: source.truncated === true || totalCount > rows.length,
+  };
+}
+
 function normalizeDomainCoverage(item) {
   const source = record(item);
   const normalizeStoreCodes = (value) => (
@@ -517,6 +652,35 @@ function normalizeSupply(value) {
   ]) {
     domains[key] = normalizeDomainCoverage(domainsSource[key]);
   }
+  const purchaseOrderAttentionSource = Array.isArray(source.purchaseOrderAttention)
+    ? source.purchaseOrderAttention
+    : [];
+  const purchaseOrderAttention = purchaseOrderAttentionSource
+    .map(normalizePurchaseOrderAttention)
+    .filter(Boolean)
+    .slice(0, 200);
+  const deliveryAttentionSource = Array.isArray(source.deliveryAttention)
+    ? source.deliveryAttention
+    : [];
+  const deliveryAttention = deliveryAttentionSource
+    .map(normalizeDeliveryAttention)
+    .filter(Boolean)
+    .slice(0, 200);
+  const inventoryRisksSource = Array.isArray(source.inventoryRisks)
+    ? source.inventoryRisks
+    : [];
+  const inventoryRisks = inventoryRisksSource
+    .map(normalizeInventoryRisk)
+    .filter(Boolean)
+    .slice(0, 500);
+  const stockAdviceRisksSource = Array.isArray(source.stockAdviceRisks)
+    ? source.stockAdviceRisks
+    : [];
+  const stockAdviceRisks = stockAdviceRisksSource
+    .map(normalizeStockAdviceRisk)
+    .filter(Boolean)
+    .slice(0, 500);
+  const attentionMetaSource = record(source.attentionMeta);
   return {
     status: operationStatus(source.status),
     coverage: {
@@ -535,6 +699,52 @@ function normalizeSupply(value) {
     stockAdvice: Array.isArray(source.stockAdvice)
       ? source.stockAdvice.map(normalizeStockAdviceSummary).filter(Boolean)
       : [],
+    purchaseOrderAttention,
+    deliveryAttention,
+    inventoryRisks,
+    stockAdviceRisks,
+    attentionMeta: {
+      purchaseOrders: normalizeDetailMeta(
+        attentionMetaSource.purchaseOrders ?? source.purchaseOrderAttentionMeta,
+        purchaseOrderAttention,
+        purchaseOrderAttentionSource.length,
+        (
+          Object.hasOwn(source, 'purchaseOrderAttention')
+          || Object.hasOwn(attentionMetaSource, 'purchaseOrders')
+          || Object.hasOwn(source, 'purchaseOrderAttentionMeta')
+        ),
+      ),
+      deliveries: normalizeDetailMeta(
+        attentionMetaSource.deliveries ?? source.deliveryAttentionMeta,
+        deliveryAttention,
+        deliveryAttentionSource.length,
+        (
+          Object.hasOwn(source, 'deliveryAttention')
+          || Object.hasOwn(attentionMetaSource, 'deliveries')
+          || Object.hasOwn(source, 'deliveryAttentionMeta')
+        ),
+      ),
+      inventoryRisks: normalizeDetailMeta(
+        attentionMetaSource.inventoryRisks ?? source.inventoryRisksMeta,
+        inventoryRisks,
+        inventoryRisksSource.length,
+        (
+          Object.hasOwn(source, 'inventoryRisks')
+          || Object.hasOwn(attentionMetaSource, 'inventoryRisks')
+          || Object.hasOwn(source, 'inventoryRisksMeta')
+        ),
+      ),
+      stockAdviceRisks: normalizeDetailMeta(
+        attentionMetaSource.stockAdviceRisks ?? source.stockAdviceRisksMeta,
+        stockAdviceRisks,
+        stockAdviceRisksSource.length,
+        (
+          Object.hasOwn(source, 'stockAdviceRisks')
+          || Object.hasOwn(attentionMetaSource, 'stockAdviceRisks')
+          || Object.hasOwn(source, 'stockAdviceRisksMeta')
+        ),
+      ),
+    },
   };
 }
 
@@ -685,12 +895,51 @@ function normalizeActionCandidate(item) {
 
 function normalizeActionPool(value) {
   const source = record(value);
+  const normalizedCandidates = Array.isArray(source.candidates)
+    ? source.candidates.map(normalizeActionCandidate).filter(Boolean)
+    : [];
+  const candidates = normalizedCandidates.slice(0, 100);
+  const metaSource = record(source.meta);
+  const sourceTotal = optionalNonNegativeInteger(metaSource.total ?? metaSource.totalCount);
+  const total = Math.max(sourceTotal ?? 0, normalizedCandidates.length);
   return {
     mode: 'observe_only',
     writeEnabled: false,
-    candidates: Array.isArray(source.candidates)
-      ? source.candidates.map(normalizeActionCandidate).filter(Boolean).slice(0, 1_000)
-      : [],
+    candidates,
+    meta: {
+      total,
+      returned: candidates.length,
+      truncated: metaSource.truncated === true || total > candidates.length,
+    },
+  };
+}
+
+function normalizeRankingMeta(value, normalizedRows, sourceLength) {
+  const source = record(value);
+  const sourceReturned = optionalNonNegativeInteger(
+    source.returnedCount ?? source.returned,
+  );
+  const sourceTotal = optionalNonNegativeInteger(source.totalCount ?? source.total);
+  const returnedIsLegal = sourceReturned === null || sourceReturned === sourceLength;
+  const totalIsLegal = (
+    sourceTotal === null
+    || sourceTotal >= (sourceReturned ?? sourceLength)
+  );
+  if (!returnedIsLegal || !totalIsLegal) {
+    return {
+      returnedCount: normalizedRows.length,
+      totalCount: normalizedRows.length,
+      truncated: false,
+    };
+  }
+  const totalCount = Math.max(sourceTotal ?? 0, sourceLength, normalizedRows.length);
+  return {
+    returnedCount: normalizedRows.length,
+    totalCount,
+    truncated: (
+      source.truncated === true
+      || totalCount > normalizedRows.length
+    ),
   };
 }
 
@@ -794,17 +1043,26 @@ export function normalizeDashboardData(input) {
     throw new TypeError('Dashboard data must include a valid updatedAt timestamp.');
   }
 
-  const storeRanking = Array.isArray(source.storeRanking)
-    ? sortRanking(source.storeRanking.map(normalizeStore))
+  const storeRankingSource = Array.isArray(source.storeRanking)
+    ? source.storeRanking
     : [];
-  const storeSkuSource = Array.isArray(source.storeSkuRanking)
+  const storeRanking = storeRankingSource.length > 0
+    ? sortRanking(storeRankingSource.map(normalizeStore))
+    : [];
+  const storeSkuRankingSource = Array.isArray(source.storeSkuRanking)
     ? source.storeSkuRanking
     : source.skuRanking;
-  const storeSkuRanking = Array.isArray(storeSkuSource)
-    ? sortRanking(storeSkuSource.map(normalizeSku))
+  const normalizedStoreSkuSource = Array.isArray(storeSkuRankingSource)
+    ? storeSkuRankingSource
     : [];
-  const productRanking = Array.isArray(source.productRanking)
-    ? sortRanking(source.productRanking.map(normalizeProduct).filter(Boolean))
+  const storeSkuRanking = normalizedStoreSkuSource.length > 0
+    ? sortRanking(normalizedStoreSkuSource.map(normalizeSku))
+    : [];
+  const productRankingSource = Array.isArray(source.productRanking)
+    ? source.productRanking
+    : [];
+  const productRanking = productRankingSource.length > 0
+    ? sortRanking(productRankingSource.map(normalizeProduct).filter(Boolean))
     : [];
   const readiness = Array.isArray(source.readiness)
     ? source.readiness.slice(0, 12).map(normalizeReadinessStage)
@@ -850,21 +1108,21 @@ export function normalizeDashboardData(input) {
       storeSkuRanking,
     ),
     rankingMeta: {
-      store: {
-        returnedCount: storeRanking.length,
-        totalCount: storeRanking.length,
-        truncated: false,
-      },
-      storeSku: {
-        returnedCount: storeSkuRanking.length,
-        totalCount: storeSkuRanking.length,
-        truncated: false,
-      },
-      product: {
-        returnedCount: productRanking.length,
-        totalCount: productRanking.length,
-        truncated: false,
-      },
+      store: normalizeRankingMeta(
+        record(source.rankingMeta).store,
+        storeRanking,
+        storeRankingSource.length,
+      ),
+      storeSku: normalizeRankingMeta(
+        record(source.rankingMeta).storeSku ?? record(source.rankingMeta).sku,
+        storeSkuRanking,
+        normalizedStoreSkuSource.length,
+      ),
+      product: normalizeRankingMeta(
+        record(source.rankingMeta).product,
+        productRanking,
+        productRankingSource.length,
+      ),
     },
     supply: normalizeSupply(source.supply),
     platform: normalizePlatform(source.platform),

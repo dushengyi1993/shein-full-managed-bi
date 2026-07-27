@@ -22,10 +22,16 @@ test('supply pages consume real purchase, delivery, inventory and stock-advice c
   assert.match(app, /domainRows\(supply, 'deliveryMilestones'\)/);
   assert.match(app, /domainRows\(supply, 'inventory'\)/);
   assert.match(app, /domainRows\(supply, 'stockAdvice'\)/);
-  assert.match(app, /采购单状态分布/);
-  assert.match(app, /交付与入仓里程碑/);
-  assert.match(app, /库存与缺货快照/);
-  assert.match(app, /平台备货建议/);
+  assert.match(app, /attentionRows\('purchaseOrderAttention'\)/);
+  assert.match(app, /attentionRows\('deliveryAttention'\)/);
+  assert.match(app, /attentionRows\('inventoryRisks'\)/);
+  assert.match(app, /attentionRows\('stockAdviceRisks'\)/);
+  assert.match(app, /采购单关注清单/);
+  assert.match(app, /交付入仓关注清单/);
+  assert.match(app, /SKU 风险与备货筛查/);
+  assert.match(app, /店铺×采购单状态汇总/);
+  assert.match(app, /店铺×交付里程碑汇总/);
+  assert.match(app, /店铺×库存类型汇总/);
 });
 
 test('nullable operational quantities stay unknown and expose field coverage', async () => {
@@ -72,6 +78,14 @@ test('owner, store and text filters scope all store-keyed operational rows', asy
   ]) {
     assert.match(app, new RegExp(`domainRows\\([^\\n]+, '${collection}'\\)`));
   }
+  for (const collection of [
+    'purchaseOrderAttention',
+    'deliveryAttention',
+    'inventoryRisks',
+    'stockAdviceRisks',
+  ]) {
+    assert.match(app, new RegExp(`attentionRows\\('${collection}'\\)`));
+  }
   assert.doesNotMatch(app, /canSeeTechnicalGlobal|role === 'admin'/);
 });
 
@@ -88,17 +102,102 @@ test('platform page renders queue health, subscription readback and event timeli
   assert.match(app, /safeProjectionSummary/);
 });
 
-test('automation candidates remain observe-only and every action control is disabled', async () => {
+test('operations queue is prioritized, localized, drillable and has no write control', async () => {
   const app = await read('src/web/app.js');
   const ops = functionBody(app, 'renderOps');
   const candidateTable = functionBody(app, 'actionCandidateTable');
+  const coverage = functionBody(app, 'operationPriorityCoverage');
+  const worklist = functionBody(app, 'operationPriorityItems');
 
-  assert.match(ops, /只读运营候选池/);
+  assert.match(ops, /运营待办/);
+  assert.match(ops, /高优先事项/);
+  assert.match(ops, /筛查 → 下钻 → 人工复核/);
   assert.match(ops, /writeEnabled/);
-  assert.match(ops, /<button type="button" disabled>生成预演<\/button>/);
-  assert.match(ops, /<button type="button" disabled>确认并提交<\/button>/);
-  assert.match(candidateTable, /type="button" disabled>仅观察<\/button>/);
+  assert.match(app, /SHORTAGE_REVIEW:[\s\S]*label: '缺货复核'/);
+  assert.match(app, /URGENT_SUPPLY_REVIEW:[\s\S]*label: '急采复核'/);
+  assert.match(app, /SUPPLY_SYNC_FAILURE_REVIEW:[\s\S]*label: '同步失败'/);
+  assert.match(app, /PURCHASE_ORDER_OVERDUE:[\s\S]*href: '#procurement'/);
+  assert.match(app, /DELIVERY_OVERDUE:[\s\S]*href: '#fulfilment'/);
+  assert.match(app, /SKU_SHORTAGE_REVIEW:[\s\S]*href: '#inventory'/);
+  assert.match(app, /SKU_URGENT_SUPPLY_REVIEW:[\s\S]*href: '#inventory'/);
+  assert.match(worklist, /detailedPurchase/);
+  assert.match(worklist, /detailedDelivery/);
+  assert.match(worklist, /SKU_RESTOCK_ADVICE_REVIEW/);
+  assert.match(coverage, /meta\.total - meta\.returned/);
+  assert.match(coverage, /未命中不能解释为无风险/);
+  assert.match(app, /priorityWorklistTable/);
+  assert.match(app, /全量至少/);
+  assert.match(app, /查看事实 →/);
+  assert.doesNotMatch(candidateTable, /candidateKey/);
+  assert.doesNotMatch(ops, /<button/);
   assert.doesNotMatch(ops, /fetch\(|XMLHttpRequest|method:\s*['"]POST['"]/);
+});
+
+test('complete product ranking keeps canonical and store-local rows together without unsafe merging', async () => {
+  const app = await read('src/web/app.js');
+  const ranking = functionBody(app, 'rankingProducts');
+  const scoped = functionBody(app, 'scopedProductRanking');
+  const canonical = functionBody(app, 'isCanonicalProduct');
+
+  assert.match(ranking, /rows: products/);
+  assert.match(ranking, /confirmedRows/);
+  assert.match(ranking, /localRows/);
+  assert.doesNotMatch(ranking, /rows:\s*confirmedRows/);
+  assert.match(scoped, /rows,/);
+  assert.doesNotMatch(scoped, /aggregateCanonicalProducts\(rows\)/);
+  assert.match(canonical, /mappingStatus/);
+  assert.match(canonical, /canonicalProductId/);
+  assert.match(canonical, /standardProductCode/);
+  assert.match(canonical, /confirmedStoreSku/);
+  assert.match(app, /完整商品排行（标准与店内身份分开）/);
+  assert.match(app, /标准身份覆盖/);
+  assert.match(app, /slice\(0, 50\)/);
+  assert.match(app, /高销量待归并货号/);
+});
+
+test('sales analysis exposes comparable daily averages without comparing partial today to full yesterday', async () => {
+  const app = await read('src/web/app.js');
+  const signal = functionBody(app, 'comparableDailySignal');
+  const sales = functionBody(app, 'renderSales');
+
+  assert.match(signal, /last7Days \/ 7/);
+  assert.match(signal, /\(last30Days - last7Days\) \/ 23/);
+  assert.match(app, /近 7 日日均/);
+  assert.match(app, /此前 23 日日均/);
+  assert.match(sales, /今日是实时累计，不与完整昨日直接作因果比较/);
+  assert.match(sales, /完整商品口径/);
+  assert.match(sales, /标准商品排行/);
+});
+
+test('attention and risk workspaces support explicit quick filters and preserve unknown quantities', async () => {
+  const app = await read('src/web/app.js');
+  const filters = functionBody(app, 'matchesQuickFilter');
+  const procurement = functionBody(app, 'purchaseOrderAttentionTable');
+  const fulfilment = functionBody(app, 'deliveryAttentionTable');
+  const inventory = functionBody(app, 'inventoryRiskTable');
+  const advice = functionBody(app, 'stockAdviceRiskTable');
+  const radarMetric = functionBody(app, 'riskWindowMetric');
+  const metaLabel = functionBody(app, 'metaCountLabel');
+
+  assert.match(filters, /OVERDUE/);
+  assert.match(filters, /PENDING_DELIVERY/);
+  assert.match(filters, /SHORTAGE/);
+  assert.match(filters, /URGENT/);
+  assert.match(procurement, /orderNo/);
+  assert.match(procurement, /requestedDeliveryAt/);
+  assert.match(fulfilment, /deliveryCode/);
+  assert.match(fulfilment, /expectedReceiptAt/);
+  assert.match(inventory, /skuCode/);
+  assert.match(inventory, /shortageQuantity/);
+  assert.match(advice, /predictedDailySales/);
+  assert.match(advice, /plannedUrgentQuantity/);
+  assert.match(radarMetric, /至少/);
+  assert.match(radarMetric, /未命中不能推断为 0/);
+  assert.match(metaLabel, /当前筛选/);
+  assert.match(metaLabel, /全量返回/);
+  for (const body of [procurement, fulfilment, inventory, advice]) {
+    assert.doesNotMatch(body, /\|\| 0|\?\? 0/);
+  }
 });
 
 test('system capability cards follow real operational domain evidence', async () => {

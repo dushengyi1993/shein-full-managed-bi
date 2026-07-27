@@ -959,7 +959,7 @@ test('read-only supply dashboard exposes scoped operational quantities and miles
           latest_source_fetched_at: sourceTime,
         }] };
       }
-      return { rows: [{
+      if (sql === SUPPLY_DASHBOARD_SQL.stockAdvice) return { rows: [{
         store_id: '1',
         store_code: 'DL',
         store_name: 'DL',
@@ -978,11 +978,12 @@ test('read-only supply dashboard exposes scoped operational quantities and miles
         warning_sku_count: '1',
         latest_source_fetched_at: sourceTime,
       }] };
+      return { rows: [] };
     },
   };
 
   const result = await readFullManagedSupplyDashboard(client, { storeIds: [1, 1] });
-  assert.deepEqual(scopes, [[1], [1], [1], [1]]);
+  assert.deepEqual(scopes, [[1], [1], [1], [1], [1], [1], [1], [1]]);
   assert.equal(result.purchaseOrderStatus[0].orderCount, 2);
   assert.equal(result.deliveryMilestones[0].deliveryQuantity, 5);
   assert.equal(result.inventory[0].shortageQuantity, 4);
@@ -1075,7 +1076,7 @@ test('read-only summaries preserve all-unknown as null and known zero as zero', 
           reconciliation_mismatch_count: '0',
         }] };
       }
-      return { rows: [{
+      if (sql === SUPPLY_DASHBOARD_SQL.stockAdvice) return { rows: [{
         ...common(1, 'UNKNOWN'),
         coverage_status_code: 'PARTIAL',
         requested_count: '3',
@@ -1106,6 +1107,7 @@ test('read-only summaries preserve all-unknown as null and known zero as zero', 
         warning_known_sku_count: '2',
         warning_sku_count: '0',
       }] };
+      return { rows: [] };
     },
   };
 
@@ -1183,7 +1185,7 @@ test('complete empty batches clear current inventory/advice while partial batche
           latest_source_fetched_at: sourceTime,
         }] };
       }
-      return { rows: [{
+      if (sql === SUPPLY_DASHBOARD_SQL.stockAdvice) return { rows: [{
         store_id: '1',
         store_code: 'DL',
         store_name: 'DL',
@@ -1202,6 +1204,7 @@ test('complete empty batches clear current inventory/advice while partial batche
         warning_sku_count: '0',
         latest_source_fetched_at: sourceTime,
       }] };
+      return { rows: [] };
     },
   };
   const result = await readFullManagedSupplyDashboard(client);
@@ -1234,5 +1237,163 @@ test('safe dashboard counts reject null instead of silently converting unknown t
   await assert.rejects(
     () => readFullManagedSupplyDashboard(client),
     /order_count must be a non-negative safe integer/,
+  );
+});
+
+test('read-only attention details preserve unknown quantities, decimals and explicit truncation', async () => {
+  const sourceTime = '2026-07-26T12:00:00.000Z';
+  const common = {
+    store_id: '1',
+    store_code: 'DL5477',
+    store_name: 'DL5477',
+    latest_source_fetched_at: sourceTime,
+  };
+  const client = {
+    async query(sql, values) {
+      assert.deepEqual(values, [[1]]);
+      if (
+        sql === SUPPLY_DASHBOARD_SQL.purchaseOrderStatus
+        || sql === SUPPLY_DASHBOARD_SQL.deliveryMilestones
+        || sql === SUPPLY_DASHBOARD_SQL.inventory
+        || sql === SUPPLY_DASHBOARD_SQL.stockAdvice
+      ) return { rows: [] };
+      if (sql === SUPPLY_DASHBOARD_SQL.purchaseOrderAttention) {
+        return { rows: [{
+          ...common,
+          order_no: 'PO-OVERDUE-1',
+          status_code: '2',
+          status_name: '待交付',
+          order_type_name: '首单',
+          warehouse_name: '华南仓',
+          requested_delivery_at: '2026-07-25T00:00:00.000Z',
+          requested_receipt_at: null,
+          delivered_at: null,
+          received_at: null,
+          stored_at: null,
+          line_count: '2',
+          order_quantity: null,
+          delivery_quantity: '0',
+          receipt_quantity: null,
+          storage_quantity: null,
+          defective_quantity: null,
+          attention_code: 'DELIVERY_OVERDUE',
+          attention_label: '采购单已超过要求交付时间',
+          severity: 'critical',
+          total_count: '250',
+        }] };
+      }
+      if (sql === SUPPLY_DASHBOARD_SQL.deliveryAttention) {
+        return { rows: [{
+          ...common,
+          delivery_code: 'DELIVERY-1',
+          milestone_code: 'IN_TRANSIT',
+          warehouse_name: '华南仓',
+          express_code: 'EXP-1',
+          express_company_name: '承运商',
+          reserved_parcel_at: '2026-07-24T00:00:00.000Z',
+          taken_at: '2026-07-24T08:00:00.000Z',
+          expected_receipt_at: '2026-07-25T00:00:00.000Z',
+          received_at: null,
+          line_count: '1',
+          delivery_quantity: null,
+          attention_code: 'RECEIPT_OVERDUE',
+          attention_label: '送货单已超过预计收货时间',
+          severity: 'critical',
+          total_count: '1',
+        }] };
+      }
+      if (sql === SUPPLY_DASHBOARD_SQL.inventoryRisks) {
+        return { rows: [{
+          ...common,
+          sku_code: 'SKU-1',
+          skc_name: null,
+          spu_name: 'SPU-1',
+          inventory_type_code: 'PI',
+          total_inventory: '8',
+          usable_inventory: '3',
+          transit_quantity: null,
+          shortage_quantity: '5',
+          reconciliation_status: 'MISMATCH',
+          severity: 'critical',
+          total_count: '1',
+        }] };
+      }
+      if (sql === SUPPLY_DASHBOARD_SQL.stockAdviceRisks) {
+        return { rows: [{
+          ...common,
+          sku_code: 'SKU-1',
+          skc_name: 'SKC-1',
+          spu_name: 'SPU-1',
+          supplier_code: 'SUPPLIER-1',
+          predicted_daily_sales: '1.25',
+          pending_order_quantity: null,
+          pending_delivery_quantity: '0',
+          pending_shelf_quantity: '2',
+          transit_quantity: null,
+          stock_quantity: '3',
+          advised_order_quantity: '4',
+          placed_order_quantity: null,
+          planned_urgent_quantity: '2',
+          supply_status_code: null,
+          shelf_status_code: 'ON_SHELF',
+          stock_warning_status_code: 'WARN',
+          stock_warning_is_warning: true,
+          severity: 'critical',
+          total_count: '1',
+        }] };
+      }
+      throw new Error('unexpected query');
+    },
+  };
+
+  const result = await readFullManagedSupplyDashboard(client, { storeIds: [1] });
+  assert.equal(result.purchaseOrderAttention[0].orderQuantity, null);
+  assert.equal(result.purchaseOrderAttention[0].deliveryQuantity, 0);
+  assert.equal(result.deliveryAttention[0].deliveryQuantity, null);
+  assert.equal(result.inventoryRisks[0].skuCode, 'SKU-1');
+  assert.equal(result.inventoryRisks[0].skcName, null);
+  assert.equal(result.inventoryRisks[0].transitQuantity, null);
+  assert.equal(result.stockAdviceRisks[0].predictedDailySales, 1.25);
+  assert.equal(result.stockAdviceRisks[0].pendingOrderQuantity, null);
+  assert.equal(result.stockAdviceRisks[0].pendingDeliveryQuantity, 0);
+  assert.equal(result.stockAdviceRisks[0].supplierCode, 'SUPPLIER-1');
+  assert.equal(result.stockAdviceRisks[0].stockWarningIsWarning, true);
+  assert.deepEqual(result.attentionMeta.purchaseOrders, {
+    total: 250,
+    returned: 1,
+    truncated: true,
+  });
+
+  assert.match(SUPPLY_DASHBOARD_SQL.purchaseOrderAttention, /clock_timestamp\(\)/);
+  assert.match(SUPPLY_DASHBOARD_SQL.purchaseOrderAttention, /line\.is_current/);
+  assert.match(SUPPLY_DASHBOARD_SQL.purchaseOrderAttention, /NOT IN \('7', '8', '10'\)/);
+  assert.match(
+    SUPPLY_DASHBOARD_SQL.purchaseOrderAttention,
+    /WHERE[\s\S]*NOT IN \('7', '8', '10'\)[\s\S]*!~ '\(已完成\|已作废\|已退货\)'[\s\S]*AND \(\s*line_totals\.defective_quantity > 0\s*OR purchase_order\.stored_at IS NULL\s*\)/,
+  );
+  assert.equal(
+    (
+      SUPPLY_DASHBOARD_SQL.purchaseOrderAttention.match(
+        /WHEN purchase_order\.received_at IS NULL\s+AND purchase_order\.delivered_at IS NULL/g,
+      ) ?? []
+    ).length,
+    3,
+  );
+  assert.match(SUPPLY_DASHBOARD_SQL.deliveryAttention, /delivery\.received_at IS NULL/);
+  assert.match(
+    SUPPLY_DASHBOARD_SQL.deliveryAttention,
+    /WHEN delivery\.received_at IS NULL\s+AND delivery\.expected_receipt_at IS NOT NULL[\s\S]*THEN 'RECEIPT_OVERDUE'/,
+  );
+  assert.match(SUPPLY_DASHBOARD_SQL.deliveryAttention, /line\.is_current/);
+  assert.match(SUPPLY_DASHBOARD_SQL.inventoryRisks, /source_batch\.status = 'SUCCEEDED'/);
+  assert.match(SUPPLY_DASHBOARD_SQL.inventoryRisks, /sku\.is_active/);
+  assert.match(SUPPLY_DASHBOARD_SQL.stockAdviceRisks, /source_batch\.status = 'SUCCEEDED'/);
+  assert.match(SUPPLY_DASHBOARD_SQL.stockAdviceRisks, /sku\.is_active/);
+  assert.doesNotMatch(
+    JSON.stringify({
+      purchaseOrderAttention: SUPPLY_DASHBOARD_SQL.purchaseOrderAttention,
+      deliveryAttention: SUPPLY_DASHBOARD_SQL.deliveryAttention,
+    }),
+    /phone|address|contact|person/i,
   );
 });

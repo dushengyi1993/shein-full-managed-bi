@@ -306,6 +306,399 @@ export const SUPPLY_DASHBOARD_SQL = Object.freeze({
       store.store_code,
       store.store_name
     ORDER BY store.store_code`,
+  purchaseOrderAttention: `
+    WITH line_totals AS (
+      SELECT
+        line.store_id,
+        line.purchase_order_id,
+        count(*)::bigint AS line_count,
+        CASE WHEN count(line.order_quantity) = count(*)
+          THEN sum(line.order_quantity)::bigint ELSE NULL
+        END AS order_quantity,
+        CASE WHEN count(line.delivery_quantity) = count(*)
+          THEN sum(line.delivery_quantity)::bigint ELSE NULL
+        END AS delivery_quantity,
+        CASE WHEN count(line.receipt_quantity) = count(*)
+          THEN sum(line.receipt_quantity)::bigint ELSE NULL
+        END AS receipt_quantity,
+        CASE WHEN count(line.storage_quantity) = count(*)
+          THEN sum(line.storage_quantity)::bigint ELSE NULL
+        END AS storage_quantity,
+        CASE WHEN count(line.defective_quantity) = count(*)
+          THEN sum(line.defective_quantity)::bigint ELSE NULL
+        END AS defective_quantity,
+        max(line.source_fetched_at) AS latest_line_fetched_at
+      FROM fact.purchase_order_line AS line
+      WHERE line.is_current
+        AND ($1::bigint[] IS NULL OR line.store_id = ANY($1::bigint[]))
+      GROUP BY line.store_id, line.purchase_order_id
+    ),
+    risk_rows AS (
+      SELECT
+        purchase_order.store_id,
+        store.store_code,
+        store.store_name,
+        purchase_order.order_no,
+        purchase_order.status_code,
+        purchase_order.status_name,
+        purchase_order.order_type_name,
+        purchase_order.warehouse_name,
+        purchase_order.requested_delivery_at,
+        purchase_order.requested_receipt_at,
+        purchase_order.delivered_at,
+        purchase_order.received_at,
+        purchase_order.stored_at,
+        line_totals.line_count,
+        line_totals.order_quantity,
+        line_totals.delivery_quantity,
+        line_totals.receipt_quantity,
+        line_totals.storage_quantity,
+        line_totals.defective_quantity,
+        CASE
+          WHEN purchase_order.received_at IS NULL
+           AND purchase_order.delivered_at IS NULL
+           AND purchase_order.requested_delivery_at IS NOT NULL
+           AND purchase_order.requested_delivery_at < clock_timestamp()
+            THEN 'DELIVERY_OVERDUE'
+          WHEN purchase_order.received_at IS NULL
+           AND purchase_order.requested_receipt_at IS NOT NULL
+           AND purchase_order.requested_receipt_at < clock_timestamp()
+            THEN 'RECEIPT_OVERDUE'
+          WHEN line_totals.defective_quantity > 0
+            THEN 'DEFECTIVE_QUANTITY'
+          WHEN purchase_order.received_at IS NOT NULL
+           AND purchase_order.stored_at IS NULL
+            THEN 'RECEIVED_PENDING_STORAGE'
+          WHEN purchase_order.delivered_at IS NOT NULL
+           AND purchase_order.received_at IS NULL
+            THEN 'DELIVERED_PENDING_RECEIPT'
+          ELSE 'OPEN_PURCHASE_ORDER'
+        END AS attention_code,
+        CASE
+          WHEN purchase_order.received_at IS NULL
+           AND purchase_order.delivered_at IS NULL
+           AND purchase_order.requested_delivery_at IS NOT NULL
+           AND purchase_order.requested_delivery_at < clock_timestamp()
+            THEN '采购单已超过要求交付时间'
+          WHEN purchase_order.received_at IS NULL
+           AND purchase_order.requested_receipt_at IS NOT NULL
+           AND purchase_order.requested_receipt_at < clock_timestamp()
+            THEN '采购单已超过要求收货时间'
+          WHEN line_totals.defective_quantity > 0
+            THEN '采购单存在次品数量'
+          WHEN purchase_order.received_at IS NOT NULL
+           AND purchase_order.stored_at IS NULL
+            THEN '采购单已收货但尚未入库'
+          WHEN purchase_order.delivered_at IS NOT NULL
+           AND purchase_order.received_at IS NULL
+            THEN '采购单已交付但尚未收货'
+          ELSE '采购单尚未完成入库'
+        END AS attention_label,
+        CASE
+          WHEN purchase_order.received_at IS NULL
+           AND purchase_order.delivered_at IS NULL
+           AND purchase_order.requested_delivery_at IS NOT NULL
+           AND purchase_order.requested_delivery_at < clock_timestamp()
+            THEN 'critical'
+          WHEN purchase_order.received_at IS NULL
+           AND purchase_order.requested_receipt_at IS NOT NULL
+           AND purchase_order.requested_receipt_at < clock_timestamp()
+            THEN 'critical'
+          WHEN line_totals.defective_quantity > 0 THEN 'high'
+          WHEN purchase_order.received_at IS NOT NULL
+           AND purchase_order.stored_at IS NULL THEN 'high'
+          WHEN purchase_order.delivered_at IS NOT NULL
+           AND purchase_order.received_at IS NULL THEN 'high'
+          ELSE 'medium'
+        END AS severity,
+        greatest(
+          purchase_order.source_fetched_at,
+          line_totals.latest_line_fetched_at
+        ) AS latest_source_fetched_at
+      FROM fact.purchase_order AS purchase_order
+      JOIN dim.store AS store
+        ON store.store_id = purchase_order.store_id
+      LEFT JOIN line_totals
+        ON line_totals.store_id = purchase_order.store_id
+       AND line_totals.purchase_order_id = purchase_order.purchase_order_id
+      WHERE ($1::bigint[] IS NULL OR purchase_order.store_id = ANY($1::bigint[]))
+        AND COALESCE(purchase_order.status_code, '') NOT IN ('7', '8', '10')
+        AND COALESCE(purchase_order.status_name, '')
+            !~ '(已完成|已作废|已退货)'
+        AND (
+          line_totals.defective_quantity > 0
+          OR purchase_order.stored_at IS NULL
+        )
+    ),
+    counted AS (
+      SELECT risk_rows.*, count(*) OVER ()::bigint AS total_count
+      FROM risk_rows
+    )
+    SELECT *
+    FROM counted
+    ORDER BY
+      CASE severity
+        WHEN 'critical' THEN 4
+        WHEN 'high' THEN 3
+        WHEN 'medium' THEN 2
+        ELSE 1
+      END DESC,
+      COALESCE(requested_delivery_at, requested_receipt_at) ASC NULLS LAST,
+      store_code,
+      order_no
+    LIMIT 200`,
+  deliveryAttention: `
+    WITH line_totals AS (
+      SELECT
+        line.store_id,
+        line.delivery_id,
+        count(*)::bigint AS line_count,
+        CASE WHEN count(line.delivery_quantity) = count(*)
+          THEN sum(line.delivery_quantity)::bigint ELSE NULL
+        END AS delivery_quantity,
+        max(line.source_fetched_at) AS latest_line_fetched_at
+      FROM fact.delivery_line AS line
+      WHERE line.is_current
+        AND ($1::bigint[] IS NULL OR line.store_id = ANY($1::bigint[]))
+      GROUP BY line.store_id, line.delivery_id
+    ),
+    risk_rows AS (
+      SELECT
+        delivery.store_id,
+        store.store_code,
+        store.store_name,
+        delivery.delivery_code,
+        CASE
+          WHEN delivery.received_at IS NOT NULL THEN 'RECEIVED'
+          WHEN delivery.taken_at IS NOT NULL THEN 'IN_TRANSIT'
+          WHEN delivery.reserved_parcel_at IS NOT NULL THEN 'PICKUP_RESERVED'
+          ELSE 'CREATED'
+        END AS milestone_code,
+        delivery.warehouse_name,
+        delivery.express_code,
+        delivery.express_company_name,
+        delivery.reserved_parcel_at,
+        delivery.taken_at,
+        delivery.expected_receipt_at,
+        delivery.received_at,
+        line_totals.line_count,
+        line_totals.delivery_quantity,
+        CASE
+          WHEN delivery.received_at IS NULL
+           AND delivery.expected_receipt_at IS NOT NULL
+           AND delivery.expected_receipt_at < clock_timestamp()
+            THEN 'RECEIPT_OVERDUE'
+          WHEN delivery.taken_at IS NOT NULL
+            THEN 'IN_TRANSIT_PENDING_RECEIPT'
+          WHEN delivery.reserved_parcel_at IS NOT NULL
+            THEN 'PICKUP_RESERVED_PENDING'
+          ELSE 'DELIVERY_CREATED_PENDING'
+        END AS attention_code,
+        CASE
+          WHEN delivery.received_at IS NULL
+           AND delivery.expected_receipt_at IS NOT NULL
+           AND delivery.expected_receipt_at < clock_timestamp()
+            THEN '送货单已超过预计收货时间'
+          WHEN delivery.taken_at IS NOT NULL
+            THEN '送货单运输中，尚未收货'
+          WHEN delivery.reserved_parcel_at IS NOT NULL
+            THEN '送货单已预约揽收，尚未收货'
+          ELSE '送货单已创建，尚未收货'
+        END AS attention_label,
+        CASE
+          WHEN delivery.received_at IS NULL
+           AND delivery.expected_receipt_at IS NOT NULL
+           AND delivery.expected_receipt_at < clock_timestamp()
+            THEN 'critical'
+          WHEN delivery.taken_at IS NOT NULL THEN 'high'
+          ELSE 'medium'
+        END AS severity,
+        greatest(
+          delivery.source_fetched_at,
+          line_totals.latest_line_fetched_at
+        ) AS latest_source_fetched_at
+      FROM fact.delivery AS delivery
+      JOIN dim.store AS store ON store.store_id = delivery.store_id
+      LEFT JOIN line_totals
+        ON line_totals.store_id = delivery.store_id
+       AND line_totals.delivery_id = delivery.delivery_id
+      WHERE ($1::bigint[] IS NULL OR delivery.store_id = ANY($1::bigint[]))
+        AND delivery.received_at IS NULL
+    ),
+    counted AS (
+      SELECT risk_rows.*, count(*) OVER ()::bigint AS total_count
+      FROM risk_rows
+    )
+    SELECT *
+    FROM counted
+    ORDER BY
+      CASE severity
+        WHEN 'critical' THEN 4
+        WHEN 'high' THEN 3
+        WHEN 'medium' THEN 2
+        ELSE 1
+      END DESC,
+      expected_receipt_at ASC NULLS LAST,
+      store_code,
+      delivery_code
+    LIMIT 200`,
+  inventoryRisks: `
+    WITH ranked_batch AS (
+      SELECT
+        batch.*,
+        row_number() OVER (
+          PARTITION BY batch.store_id, batch.subtype_code
+          ORDER BY batch.source_fetched_at DESC,
+                   batch.supply_projection_batch_id DESC
+        ) AS recency
+      FROM fact.supply_projection_batch AS batch
+      JOIN raw.openapi_fetch_batch AS source_batch
+        ON source_batch.fetch_batch_id = batch.source_fetch_batch_id
+       AND source_batch.store_id = batch.store_id
+       AND source_batch.status = 'SUCCEEDED'
+      WHERE batch.domain_code = 'INVENTORY'
+        AND ($1::bigint[] IS NULL OR batch.store_id = ANY($1::bigint[]))
+    ),
+    latest_batch AS (
+      SELECT *
+      FROM ranked_batch
+      WHERE recency = 1
+    ),
+    risk_rows AS (
+      SELECT
+        latest_batch.store_id,
+        store.store_code,
+        store.store_name,
+        snapshot.sku_code,
+        COALESCE(snapshot.skc_name, sku.platform_skc_id) AS skc_name,
+        COALESCE(snapshot.spu_name, sku.platform_spu_id) AS spu_name,
+        snapshot.inventory_type_code,
+        snapshot.total_inventory_quantity AS total_inventory,
+        snapshot.total_usable_inventory AS usable_inventory,
+        snapshot.total_transit_quantity AS transit_quantity,
+        snapshot.total_out_of_stock_quantity AS shortage_quantity,
+        snapshot.reconciliation_status,
+        CASE
+          WHEN snapshot.total_out_of_stock_quantity > 0 THEN 'critical'
+          ELSE 'high'
+        END AS severity,
+        snapshot.source_fetched_at AS latest_source_fetched_at
+      FROM latest_batch
+      JOIN dim.store AS store ON store.store_id = latest_batch.store_id
+      JOIN fact.supply_projection_member AS membership
+        ON membership.store_id = latest_batch.store_id
+       AND membership.supply_projection_batch_id
+           = latest_batch.supply_projection_batch_id
+      JOIN dim.full_sku AS sku
+        ON sku.store_id = membership.store_id
+       AND sku.platform_sku_id = membership.sku_code
+       AND sku.is_active
+      JOIN fact.inventory_snapshot AS snapshot
+        ON snapshot.store_id = latest_batch.store_id
+       AND snapshot.source_fetch_batch_id = latest_batch.source_fetch_batch_id
+       AND snapshot.inventory_type_code = latest_batch.subtype_code
+       AND snapshot.sku_code = membership.sku_code
+      WHERE snapshot.total_out_of_stock_quantity > 0
+         OR snapshot.reconciliation_status = 'MISMATCH'
+    ),
+    counted AS (
+      SELECT risk_rows.*, count(*) OVER ()::bigint AS total_count
+      FROM risk_rows
+    )
+    SELECT *
+    FROM counted
+    ORDER BY
+      shortage_quantity DESC NULLS LAST,
+      CASE WHEN reconciliation_status = 'MISMATCH' THEN 1 ELSE 0 END DESC,
+      store_code,
+      sku_code
+    LIMIT 500`,
+  stockAdviceRisks: `
+    WITH ranked_batch AS (
+      SELECT
+        batch.*,
+        row_number() OVER (
+          PARTITION BY batch.store_id
+          ORDER BY batch.source_fetched_at DESC,
+                   batch.supply_projection_batch_id DESC
+        ) AS recency
+      FROM fact.supply_projection_batch AS batch
+      JOIN raw.openapi_fetch_batch AS source_batch
+        ON source_batch.fetch_batch_id = batch.source_fetch_batch_id
+       AND source_batch.store_id = batch.store_id
+       AND source_batch.status = 'SUCCEEDED'
+      WHERE batch.domain_code = 'STOCK_ADVICE'
+        AND ($1::bigint[] IS NULL OR batch.store_id = ANY($1::bigint[]))
+    ),
+    latest_batch AS (
+      SELECT *
+      FROM ranked_batch
+      WHERE recency = 1
+    ),
+    risk_rows AS (
+      SELECT
+        latest_batch.store_id,
+        store.store_code,
+        store.store_name,
+        advice.sku_code,
+        advice.skc_name,
+        advice.spu_name,
+        advice.supplier_code,
+        advice.predicted_daily_sales,
+        advice.pending_order_quantity,
+        advice.pending_delivery_quantity,
+        advice.pending_shelf_quantity,
+        advice.transit_quantity,
+        advice.stock_quantity,
+        advice.advised_order_quantity,
+        advice.placed_order_quantity,
+        advice.planned_urgent_quantity,
+        advice.supply_status_code,
+        advice.shelf_status_code,
+        advice.stock_warning_status_code,
+        advice.stock_warning_is_warning,
+        CASE
+          WHEN advice.planned_urgent_quantity > 0 THEN 'critical'
+          WHEN advice.stock_warning_is_warning IS TRUE THEN 'high'
+          ELSE 'medium'
+        END AS severity,
+        advice.source_fetched_at AS latest_source_fetched_at
+      FROM latest_batch
+      JOIN dim.store AS store ON store.store_id = latest_batch.store_id
+      JOIN fact.supply_projection_member AS membership
+        ON membership.store_id = latest_batch.store_id
+       AND membership.supply_projection_batch_id
+           = latest_batch.supply_projection_batch_id
+      JOIN dim.full_sku AS sku
+        ON sku.store_id = membership.store_id
+       AND sku.platform_sku_id = membership.sku_code
+       AND sku.is_active
+      JOIN fact.stock_advice_snapshot AS advice
+        ON advice.store_id = latest_batch.store_id
+       AND advice.source_fetch_batch_id = latest_batch.source_fetch_batch_id
+       AND advice.sku_code = membership.sku_code
+      WHERE advice.stock_warning_is_warning IS TRUE
+         OR advice.advised_order_quantity > 0
+         OR advice.planned_urgent_quantity > 0
+    ),
+    counted AS (
+      SELECT risk_rows.*, count(*) OVER ()::bigint AS total_count
+      FROM risk_rows
+    )
+    SELECT *
+    FROM counted
+    ORDER BY
+      CASE severity
+        WHEN 'critical' THEN 4
+        WHEN 'high' THEN 3
+        WHEN 'medium' THEN 2
+        ELSE 1
+      END DESC,
+      planned_urgent_quantity DESC NULLS LAST,
+      advised_order_quantity DESC NULLS LAST,
+      store_code,
+      sku_code
+    LIMIT 500`,
 });
 
 export const SUPPLY_SYNC_HEALTH_SQL = `
@@ -2386,6 +2779,77 @@ function commonSummaryRow(row) {
   };
 }
 
+function optionalDashboardText(value, location, maxLength) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') {
+    throw new TypeError(`${location} must be text or null`);
+  }
+  const normalized = value.trim();
+  return normalized ? normalized.slice(0, maxLength) : null;
+}
+
+function requiredDashboardText(value, location, maxLength) {
+  const normalized = optionalDashboardText(value, location, maxLength);
+  if (normalized === null) throw new TypeError(`${location} must be non-empty text`);
+  return normalized;
+}
+
+function optionalDashboardInstant(value, location) {
+  return value === null || value === undefined ? null : isoDate(value, location);
+}
+
+function optionalNonNegativeDecimal(value, location) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    throw new RangeError(`${location} must be a non-negative decimal or null`);
+  }
+  return number;
+}
+
+function optionalDashboardBoolean(value, location) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'boolean') {
+    throw new TypeError(`${location} must be boolean or null`);
+  }
+  return value;
+}
+
+function dashboardSeverity(value) {
+  const severity = requiredDashboardText(value, 'severity', 16);
+  if (!['low', 'medium', 'high', 'critical'].includes(severity)) {
+    throw new TypeError('severity must be low, medium, high or critical');
+  }
+  return severity;
+}
+
+function attentionCommonRow(row) {
+  return {
+    storeId: safeCount(row.store_id, 'store_id'),
+    storeCode: requiredDashboardText(row.store_code, 'store_code', 24),
+    storeName: requiredDashboardText(row.store_name, 'store_name', 80),
+    latestSourceFetchedAt: optionalDashboardInstant(
+      row.latest_source_fetched_at,
+      'latest_source_fetched_at',
+    ),
+  };
+}
+
+function resultMeta(rows, limit) {
+  const returnedCount = rows.length;
+  const totalCount = returnedCount === 0
+    ? 0
+    : safeCount(rows[0].total_count, 'total_count');
+  if (totalCount < returnedCount) {
+    throw new RangeError('total_count cannot be smaller than returned rows');
+  }
+  return Object.freeze({
+    total: totalCount,
+    returned: returnedCount,
+    truncated: totalCount > returnedCount || returnedCount === limit && totalCount > limit,
+  });
+}
+
 export async function readFullManagedSupplySyncHealth(client, {
   storeIds = null,
   freshnessScope = 'LIVE',
@@ -2449,12 +2913,154 @@ export async function readFullManagedSupplyDashboard(client, { storeIds = null }
     deliveryMilestonesResult,
     inventoryResult,
     stockAdviceResult,
+    purchaseOrderAttentionResult,
+    deliveryAttentionResult,
+    inventoryRisksResult,
+    stockAdviceRisksResult,
   ] = await Promise.all([
     client.query(SUPPLY_DASHBOARD_SQL.purchaseOrderStatus, [scope]),
     client.query(SUPPLY_DASHBOARD_SQL.deliveryMilestones, [scope]),
     client.query(SUPPLY_DASHBOARD_SQL.inventory, [scope]),
     client.query(SUPPLY_DASHBOARD_SQL.stockAdvice, [scope]),
+    client.query(SUPPLY_DASHBOARD_SQL.purchaseOrderAttention, [scope]),
+    client.query(SUPPLY_DASHBOARD_SQL.deliveryAttention, [scope]),
+    client.query(SUPPLY_DASHBOARD_SQL.inventoryRisks, [scope]),
+    client.query(SUPPLY_DASHBOARD_SQL.stockAdviceRisks, [scope]),
   ]);
+
+  const purchaseOrderAttention = purchaseOrderAttentionResult.rows.map((row) => Object.freeze({
+    ...attentionCommonRow(row),
+    orderNo: requiredDashboardText(row.order_no, 'order_no', 160),
+    statusCode: optionalDashboardText(row.status_code, 'status_code', 80),
+    statusName: optionalDashboardText(row.status_name, 'status_name', 120),
+    orderTypeName: optionalDashboardText(row.order_type_name, 'order_type_name', 120),
+    warehouseName: optionalDashboardText(row.warehouse_name, 'warehouse_name', 160),
+    requestedDeliveryAt: optionalDashboardInstant(
+      row.requested_delivery_at,
+      'requested_delivery_at',
+    ),
+    requestedReceiptAt: optionalDashboardInstant(
+      row.requested_receipt_at,
+      'requested_receipt_at',
+    ),
+    deliveredAt: optionalDashboardInstant(row.delivered_at, 'delivered_at'),
+    receivedAt: optionalDashboardInstant(row.received_at, 'received_at'),
+    storedAt: optionalDashboardInstant(row.stored_at, 'stored_at'),
+    lineCount: optionalSafeCount(row.line_count, 'line_count'),
+    orderQuantity: optionalSafeCount(row.order_quantity, 'order_quantity'),
+    deliveryQuantity: optionalSafeCount(row.delivery_quantity, 'delivery_quantity'),
+    receiptQuantity: optionalSafeCount(row.receipt_quantity, 'receipt_quantity'),
+    storageQuantity: optionalSafeCount(row.storage_quantity, 'storage_quantity'),
+    defectiveQuantity: optionalSafeCount(row.defective_quantity, 'defective_quantity'),
+    attentionCode: requiredDashboardText(row.attention_code, 'attention_code', 80),
+    attentionLabel: requiredDashboardText(row.attention_label, 'attention_label', 160),
+    severity: dashboardSeverity(row.severity),
+  }));
+  const deliveryAttention = deliveryAttentionResult.rows.map((row) => Object.freeze({
+    ...attentionCommonRow(row),
+    deliveryCode: requiredDashboardText(row.delivery_code, 'delivery_code', 160),
+    milestoneCode: requiredDashboardText(row.milestone_code, 'milestone_code', 80),
+    warehouseName: optionalDashboardText(row.warehouse_name, 'warehouse_name', 160),
+    expressCode: optionalDashboardText(row.express_code, 'express_code', 120),
+    expressCompanyName: optionalDashboardText(
+      row.express_company_name,
+      'express_company_name',
+      160,
+    ),
+    reservedParcelAt: optionalDashboardInstant(
+      row.reserved_parcel_at,
+      'reserved_parcel_at',
+    ),
+    takenAt: optionalDashboardInstant(row.taken_at, 'taken_at'),
+    expectedReceiptAt: optionalDashboardInstant(
+      row.expected_receipt_at,
+      'expected_receipt_at',
+    ),
+    receivedAt: optionalDashboardInstant(row.received_at, 'received_at'),
+    lineCount: optionalSafeCount(row.line_count, 'line_count'),
+    deliveryQuantity: optionalSafeCount(row.delivery_quantity, 'delivery_quantity'),
+    attentionCode: requiredDashboardText(row.attention_code, 'attention_code', 80),
+    attentionLabel: requiredDashboardText(row.attention_label, 'attention_label', 160),
+    severity: dashboardSeverity(row.severity),
+  }));
+  const inventoryRisks = inventoryRisksResult.rows.map((row) => Object.freeze({
+    ...attentionCommonRow(row),
+    skuCode: requiredDashboardText(row.sku_code, 'sku_code', 160),
+    skcName: optionalDashboardText(row.skc_name, 'skc_name', 160),
+    spuName: optionalDashboardText(row.spu_name, 'spu_name', 160),
+    inventoryTypeCode: requiredDashboardText(
+      row.inventory_type_code,
+      'inventory_type_code',
+      80,
+    ),
+    totalInventory: optionalSafeCount(row.total_inventory, 'total_inventory'),
+    usableInventory: optionalSafeCount(row.usable_inventory, 'usable_inventory'),
+    transitQuantity: optionalSafeCount(row.transit_quantity, 'transit_quantity'),
+    shortageQuantity: optionalSafeCount(row.shortage_quantity, 'shortage_quantity'),
+    reconciliationStatus: requiredDashboardText(
+      row.reconciliation_status,
+      'reconciliation_status',
+      80,
+    ),
+    severity: dashboardSeverity(row.severity),
+  }));
+  const stockAdviceRisks = stockAdviceRisksResult.rows.map((row) => Object.freeze({
+    ...attentionCommonRow(row),
+    skuCode: requiredDashboardText(row.sku_code, 'sku_code', 160),
+    skcName: optionalDashboardText(row.skc_name, 'skc_name', 160),
+    spuName: optionalDashboardText(row.spu_name, 'spu_name', 160),
+    supplierCode: optionalDashboardText(row.supplier_code, 'supplier_code', 160),
+    predictedDailySales: optionalNonNegativeDecimal(
+      row.predicted_daily_sales,
+      'predicted_daily_sales',
+    ),
+    pendingOrderQuantity: optionalSafeCount(
+      row.pending_order_quantity,
+      'pending_order_quantity',
+    ),
+    pendingDeliveryQuantity: optionalSafeCount(
+      row.pending_delivery_quantity,
+      'pending_delivery_quantity',
+    ),
+    pendingShelfQuantity: optionalSafeCount(
+      row.pending_shelf_quantity,
+      'pending_shelf_quantity',
+    ),
+    transitQuantity: optionalSafeCount(row.transit_quantity, 'transit_quantity'),
+    stockQuantity: optionalSafeCount(row.stock_quantity, 'stock_quantity'),
+    advisedOrderQuantity: optionalSafeCount(
+      row.advised_order_quantity,
+      'advised_order_quantity',
+    ),
+    placedOrderQuantity: optionalSafeCount(
+      row.placed_order_quantity,
+      'placed_order_quantity',
+    ),
+    plannedUrgentQuantity: optionalSafeCount(
+      row.planned_urgent_quantity,
+      'planned_urgent_quantity',
+    ),
+    supplyStatusCode: optionalDashboardText(
+      row.supply_status_code,
+      'supply_status_code',
+      80,
+    ),
+    shelfStatusCode: optionalDashboardText(
+      row.shelf_status_code,
+      'shelf_status_code',
+      80,
+    ),
+    stockWarningStatusCode: optionalDashboardText(
+      row.stock_warning_status_code,
+      'stock_warning_status_code',
+      80,
+    ),
+    stockWarningIsWarning: optionalDashboardBoolean(
+      row.stock_warning_is_warning,
+      'stock_warning_is_warning',
+    ),
+    severity: dashboardSeverity(row.severity),
+  }));
 
   return Object.freeze({
     purchaseOrderStatus: purchaseOrderStatusResult.rows.map((row) => Object.freeze({
@@ -2565,5 +3171,15 @@ export async function readFullManagedSupplyDashboard(client, { storeIds = null }
         totalSkuCount: safeCount(row.total_sku_count, 'total_sku_count'),
       }),
     })),
+    purchaseOrderAttention,
+    deliveryAttention,
+    inventoryRisks,
+    stockAdviceRisks,
+    attentionMeta: Object.freeze({
+      purchaseOrders: resultMeta(purchaseOrderAttentionResult.rows, 200),
+      deliveries: resultMeta(deliveryAttentionResult.rows, 200),
+      inventoryRisks: resultMeta(inventoryRisksResult.rows, 500),
+      stockAdviceRisks: resultMeta(stockAdviceRisksResult.rows, 500),
+    }),
   });
 }

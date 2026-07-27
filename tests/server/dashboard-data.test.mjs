@@ -422,11 +422,216 @@ test('preserves strict operational whitelists without exposing secrets or enabli
   );
   assert.equal(dashboard.actionPool.mode, 'observe_only');
   assert.equal(dashboard.actionPool.writeEnabled, false);
+  assert.deepEqual(dashboard.actionPool.meta, {
+    total: 1,
+    returned: 1,
+    truncated: false,
+  });
   assert.equal(dashboard.system.writeActionsEnabled, false);
   assert.doesNotMatch(
     JSON.stringify(dashboard),
     /secretKey|appSecretKey|consumerAddress|databaseUrl|drop-me|revenue/i,
   );
+});
+
+test('normalizes detailed supply attention without inventing unknown values or dropping decimals', () => {
+  const dashboard = normalizeDashboardData({
+    datasetStatus: 'live',
+    updatedAt: '2026-07-26T08:30:00.000Z',
+    supply: {
+      status: 'available',
+      purchaseOrderAttention: [{
+        storeCode: 'dl5477',
+        storeName: 'DL5477',
+        orderNo: 'PO-1',
+        statusCode: null,
+        statusName: null,
+        orderTypeName: '首单',
+        warehouseName: null,
+        requestedDeliveryAt: '2026-07-25T00:00:00.000Z',
+        requestedReceiptAt: null,
+        deliveredAt: null,
+        receivedAt: null,
+        storedAt: null,
+        lineCount: 2,
+        orderQuantity: null,
+        deliveryQuantity: 0,
+        receiptQuantity: null,
+        storageQuantity: null,
+        defectiveQuantity: null,
+        attentionCode: 'DELIVERY_OVERDUE',
+        attentionLabel: '采购单已超过要求交付时间',
+        severity: 'critical',
+        latestSourceFetchedAt: '2026-07-26T08:00:00.000Z',
+        contactPerson: 'drop-me',
+      }],
+      deliveryAttention: [{
+        storeCode: 'DL5477',
+        storeName: 'DL5477',
+        deliveryCode: 'DELIVERY-1',
+        milestoneCode: 'IN_TRANSIT',
+        warehouseName: '华南仓',
+        expressCode: null,
+        expressCompanyName: null,
+        reservedParcelAt: null,
+        takenAt: '2026-07-24T08:00:00.000Z',
+        expectedReceiptAt: '2026-07-25T00:00:00.000Z',
+        receivedAt: null,
+        lineCount: 1,
+        deliveryQuantity: null,
+        attentionCode: 'RECEIPT_OVERDUE',
+        attentionLabel: '送货单已超过预计收货时间',
+        severity: 'critical',
+      }],
+      inventoryRisks: [{
+        storeCode: 'DL5477',
+        storeName: 'DL5477',
+        skuCode: 'SKU-1',
+        skcName: null,
+        spuName: 'SPU-1',
+        inventoryTypeCode: 'PI',
+        totalInventory: 8,
+        usableInventory: 3,
+        transitQuantity: null,
+        shortageQuantity: 5,
+        reconciliationStatus: 'MISMATCH',
+        severity: 'critical',
+      }],
+      stockAdviceRisks: [{
+        storeCode: 'DL5477',
+        storeName: 'DL5477',
+        skuCode: 'SKU-1',
+        skcName: 'SKC-1',
+        spuName: 'SPU-1',
+        supplierCode: 'SUPPLIER-1',
+        predictedDailySales: '1.25',
+        pendingOrderQuantity: null,
+        pendingDeliveryQuantity: 0,
+        pendingShelfQuantity: 2,
+        transitQuantity: null,
+        stockQuantity: 3,
+        advisedOrderQuantity: 4,
+        placedOrderQuantity: null,
+        plannedUrgentQuantity: 2,
+        supplyStatusCode: null,
+        shelfStatusCode: 'ON_SHELF',
+        stockWarningStatusCode: 'WARN',
+        stockWarningIsWarning: true,
+        severity: 'critical',
+      }],
+      attentionMeta: {
+        purchaseOrders: { total: 250, returned: 1, truncated: true },
+        deliveries: { total: 1, returned: 1, truncated: false },
+        inventoryRisks: { total: 1, returned: 1, truncated: false },
+        stockAdviceRisks: { total: 1, returned: 1, truncated: false },
+      },
+    },
+    actionPool: {
+      candidates: Array.from({ length: 101 }, (_, index) => ({
+        candidateKey: `candidate-${index}`,
+        storeCode: 'DL5477',
+        type: 'SKU_SHORTAGE_REVIEW',
+        severity: 'critical',
+        title: '处理SKU缺货',
+        reason: '平台缺货',
+      })),
+    },
+  });
+
+  assert.equal(dashboard.supply.purchaseOrderAttention[0].statusCode, null);
+  assert.equal(dashboard.supply.purchaseOrderAttention[0].orderQuantity, null);
+  assert.equal(dashboard.supply.purchaseOrderAttention[0].deliveryQuantity, 0);
+  assert.equal(dashboard.supply.deliveryAttention[0].deliveryQuantity, null);
+  assert.equal(dashboard.supply.inventoryRisks[0].skuCode, 'SKU-1');
+  assert.equal(dashboard.supply.inventoryRisks[0].transitQuantity, null);
+  assert.equal(dashboard.supply.stockAdviceRisks[0].predictedDailySales, 1.25);
+  assert.equal(dashboard.supply.stockAdviceRisks[0].pendingOrderQuantity, null);
+  assert.equal(dashboard.supply.stockAdviceRisks[0].pendingDeliveryQuantity, 0);
+  assert.equal(dashboard.supply.stockAdviceRisks[0].stockWarningIsWarning, true);
+  assert.deepEqual(dashboard.supply.attentionMeta.purchaseOrders, {
+    available: true,
+    total: 250,
+    returned: 1,
+    truncated: true,
+  });
+  assert.equal(dashboard.actionPool.candidates.length, 100);
+  assert.deepEqual(dashboard.actionPool.meta, {
+    total: 101,
+    returned: 100,
+    truncated: true,
+  });
+  assert.doesNotMatch(JSON.stringify(dashboard), /contactPerson|drop-me/i);
+});
+
+test('distinguishes an unavailable attention contract from an available empty result', () => {
+  const legacy = normalizeDashboardData({
+    supply: {
+      status: 'available',
+      purchaseOrderStatus: [],
+    },
+  });
+  assert.deepEqual(legacy.supply.attentionMeta.purchaseOrders, {
+    available: false,
+    total: 0,
+    returned: 0,
+    truncated: false,
+  });
+
+  const empty = normalizeDashboardData({
+    supply: {
+      status: 'available',
+      purchaseOrderAttention: [],
+      attentionMeta: {
+        deliveries: { total: 0, returned: 0, truncated: false },
+      },
+    },
+  });
+  assert.equal(empty.supply.attentionMeta.purchaseOrders.available, true);
+  assert.equal(empty.supply.attentionMeta.deliveries.available, true);
+  assert.equal(empty.supply.attentionMeta.inventoryRisks.available, false);
+  assert.equal(empty.supply.attentionMeta.stockAdviceRisks.available, false);
+});
+
+test('preserves legal upstream ranking coverage and rejects inconsistent counts', () => {
+  const dashboard = normalizeDashboardData({
+    datasetStatus: 'live',
+    updatedAt: '2026-07-27T08:30:00.000Z',
+    storeRanking: [{
+      code: 'DL5477',
+      unitsSold: { today: 1, yesterday: 0, last7Days: 1, last30Days: 1 },
+    }],
+    storeSkuRanking: [{
+      storeCode: 'DL5477',
+      sku: 'SKU-1',
+      unitsSold: { today: 1, yesterday: 0, last7Days: 1, last30Days: 1 },
+    }],
+    productRanking: [{
+      storeCode: 'DL5477',
+      productKey: 'DL5477:SKU-1',
+      unitsSold: { today: 1, yesterday: 0, last7Days: 1, last30Days: 1 },
+    }],
+    rankingMeta: {
+      store: { returned: 1, total: 1, truncated: true },
+      sku: { returnedCount: 1, totalCount: 800, truncated: false },
+      product: { returned: 0, total: 9, truncated: true },
+    },
+  });
+
+  assert.deepEqual(dashboard.rankingMeta.store, {
+    returnedCount: 1,
+    totalCount: 1,
+    truncated: true,
+  });
+  assert.deepEqual(dashboard.rankingMeta.storeSku, {
+    returnedCount: 1,
+    totalCount: 800,
+    truncated: true,
+  });
+  assert.deepEqual(dashboard.rankingMeta.product, {
+    returnedCount: 1,
+    totalCount: 1,
+    truncated: false,
+  });
 });
 
 test('keeps a missing webhook quota unknown and rejects overflowing canonical totals', () => {

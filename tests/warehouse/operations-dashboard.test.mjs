@@ -48,6 +48,11 @@ test('missing operational migrations remain pending without invented zero facts'
   assert.equal(dashboard.platform.queue, null);
   assert.equal(dashboard.actionPool.writeEnabled, false);
   assert.deepEqual(dashboard.actionPool.candidates, []);
+  assert.deepEqual(dashboard.actionPool.meta, {
+    total: 0,
+    returned: 0,
+    truncated: false,
+  });
   const readinessSql = queries.find((sql) => (
     sql.includes("to_regclass('fact.purchase_order')")
   ));
@@ -164,5 +169,77 @@ test('read-only action pool surfaces data gaps but never enables writes', () => 
       { storeCode: 'BB2000', type: 'SUPPLY_SYNC_FAILURE_REVIEW' },
       { storeCode: 'CC3000', type: 'SUPPLY_COVERAGE_REVIEW' },
     ],
+  );
+  assert.deepEqual(pool.meta, {
+    total: 2,
+    returned: 2,
+    truncated: false,
+  });
+});
+
+test('read-only action pool deduplicates all risks and fairly rotates types within severity', () => {
+  const evidenceAt = '2026-07-26T08:00:00.000Z';
+  const overdueOrder = {
+    storeCode: 'DL5477',
+    orderNo: 'PO-1',
+    attentionCode: 'DELIVERY_OVERDUE',
+    attentionLabel: '采购单已超过要求交付时间',
+    severity: 'critical',
+    latestSourceFetchedAt: evidenceAt,
+  };
+  const pool = buildReadOnlyActionPool({
+    coverage: { domains: {} },
+    purchaseOrderAttention: [overdueOrder, { ...overdueOrder }],
+    deliveryAttention: [{
+      storeCode: 'DL5477',
+      deliveryCode: 'DELIVERY-1',
+      attentionCode: 'RECEIPT_OVERDUE',
+      attentionLabel: '送货单已超过预计收货时间',
+      severity: 'critical',
+      latestSourceFetchedAt: evidenceAt,
+    }],
+    inventoryRisks: Array.from({ length: 105 }, (_, index) => ({
+      storeCode: 'DL5477',
+      skuCode: `SKU-${index}`,
+      inventoryTypeCode: 'PI',
+      shortageQuantity: index + 1,
+      severity: 'critical',
+      latestSourceFetchedAt: evidenceAt,
+    })),
+    stockAdviceRisks: [{
+      storeCode: 'DL5477',
+      skuCode: 'SKU-URGENT',
+      plannedUrgentQuantity: 5,
+      severity: 'critical',
+      latestSourceFetchedAt: evidenceAt,
+    }],
+    inventory: [],
+    stockAdvice: [],
+  }, {
+    queue: null,
+  });
+
+  assert.equal(pool.writeEnabled, false);
+  assert.equal(pool.candidates.length, 100);
+  assert.deepEqual(pool.meta, {
+    total: 108,
+    returned: 100,
+    truncated: true,
+  });
+  assert.equal(
+    pool.candidates.filter(({ type, entityCode }) => (
+      type === 'PURCHASE_ORDER_OVERDUE' && entityCode === 'PO-1'
+    )).length,
+    1,
+  );
+  assert.deepEqual(pool.candidates.slice(0, 4).map(({ type }) => type), [
+    'PURCHASE_ORDER_OVERDUE',
+    'DELIVERY_OVERDUE',
+    'SKU_SHORTAGE_REVIEW',
+    'SKU_URGENT_SUPPLY_REVIEW',
+  ]);
+  assert.equal(
+    pool.candidates.some(({ type }) => type === 'SKU_URGENT_SUPPLY_REVIEW'),
+    true,
   );
 });

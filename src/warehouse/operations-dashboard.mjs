@@ -13,6 +13,16 @@ const EMPTY_SUPPLY = Object.freeze({
   deliveryMilestones: Object.freeze([]),
   inventory: Object.freeze([]),
   stockAdvice: Object.freeze([]),
+  purchaseOrderAttention: Object.freeze([]),
+  deliveryAttention: Object.freeze([]),
+  inventoryRisks: Object.freeze([]),
+  stockAdviceRisks: Object.freeze([]),
+  attentionMeta: Object.freeze({
+    purchaseOrders: Object.freeze({ total: 0, returned: 0, truncated: false }),
+    deliveries: Object.freeze({ total: 0, returned: 0, truncated: false }),
+    inventoryRisks: Object.freeze({ total: 0, returned: 0, truncated: false }),
+    stockAdviceRisks: Object.freeze({ total: 0, returned: 0, truncated: false }),
+  }),
 });
 
 const EMPTY_PLATFORM = Object.freeze({
@@ -246,8 +256,137 @@ function candidate({
   });
 }
 
+const ACTION_SEVERITY_WEIGHT = Object.freeze({
+  critical: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+});
+
+function fairlyOrderActionCandidates(candidates) {
+  const severityOrdered = [...candidates].sort(
+    (left, right) => (
+      (ACTION_SEVERITY_WEIGHT[right.severity] ?? 0)
+      - (ACTION_SEVERITY_WEIGHT[left.severity] ?? 0)
+    ),
+  );
+  const deduplicated = [];
+  const seen = new Set();
+  for (const item of severityOrdered) {
+    const key = [
+      item.storeCode ?? '',
+      item.type,
+      item.entityCode ?? '',
+    ].join('\u001f');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduplicated.push(item);
+  }
+
+  const severityGroups = new Map();
+  for (const item of deduplicated) {
+    const weight = ACTION_SEVERITY_WEIGHT[item.severity] ?? 0;
+    if (!severityGroups.has(weight)) severityGroups.set(weight, new Map());
+    const typeGroups = severityGroups.get(weight);
+    if (!typeGroups.has(item.type)) typeGroups.set(item.type, []);
+    typeGroups.get(item.type).push(item);
+  }
+
+  const fairlyOrdered = [];
+  const weights = [...severityGroups.keys()].sort((left, right) => right - left);
+  for (const weight of weights) {
+    const typeGroups = severityGroups.get(weight);
+    let remaining = true;
+    while (remaining) {
+      remaining = false;
+      for (const rows of typeGroups.values()) {
+        const item = rows.shift();
+        if (!item) continue;
+        fairlyOrdered.push(item);
+        remaining = true;
+      }
+    }
+  }
+  return fairlyOrdered;
+}
+
 export function buildReadOnlyActionPool(supply, platform) {
   const candidates = [];
+  for (const row of supply.purchaseOrderAttention ?? []) {
+    if (!String(row.attentionCode ?? '').endsWith('_OVERDUE')) continue;
+    candidates.push(candidate({
+      storeCode: row.storeCode,
+      type: 'PURCHASE_ORDER_OVERDUE',
+      severity: row.severity ?? 'critical',
+      title: '处理逾期采购单',
+      reason: `${row.orderNo}：${row.attentionLabel ?? '采购单已超过计划节点'}。`,
+      entityCode: row.orderNo,
+      evidenceAt: row.latestSourceFetchedAt,
+    }));
+  }
+  for (const row of supply.deliveryAttention ?? []) {
+    if (!String(row.attentionCode ?? '').endsWith('_OVERDUE')) continue;
+    candidates.push(candidate({
+      storeCode: row.storeCode,
+      type: 'DELIVERY_OVERDUE',
+      severity: row.severity ?? 'critical',
+      title: '处理逾期送货单',
+      reason: `${row.deliveryCode}：${row.attentionLabel ?? '送货单已超过计划节点'}。`,
+      entityCode: row.deliveryCode,
+      evidenceAt: row.latestSourceFetchedAt,
+    }));
+  }
+  for (const row of supply.inventoryRisks ?? []) {
+    if (!Number.isSafeInteger(row.shortageQuantity) || row.shortageQuantity <= 0) continue;
+    candidates.push(candidate({
+      storeCode: row.storeCode,
+      type: 'SKU_SHORTAGE_REVIEW',
+      severity: row.severity ?? 'critical',
+      title: '处理SKU缺货',
+      reason: `${row.skuCode}（${row.inventoryTypeCode}）平台缺货数量为 ${row.shortageQuantity}。`,
+      entityCode: `${row.inventoryTypeCode}:${row.skuCode}`,
+      evidenceAt: row.latestSourceFetchedAt,
+    }));
+  }
+  for (const row of supply.stockAdviceRisks ?? []) {
+    if (
+      Number.isSafeInteger(row.plannedUrgentQuantity)
+      && row.plannedUrgentQuantity > 0
+    ) {
+      candidates.push(candidate({
+        storeCode: row.storeCode,
+        type: 'SKU_URGENT_SUPPLY_REVIEW',
+        severity: row.severity ?? 'critical',
+        title: '处理SKU急采',
+        reason: `${row.skuCode} 的平台计划急采数量为 ${row.plannedUrgentQuantity}。`,
+        entityCode: row.skuCode,
+        evidenceAt: row.latestSourceFetchedAt,
+      }));
+    } else if (row.stockWarningIsWarning === true) {
+      candidates.push(candidate({
+        storeCode: row.storeCode,
+        type: 'SKU_STOCK_WARNING_REVIEW',
+        severity: row.severity ?? 'high',
+        title: '复核SKU库存预警',
+        reason: `${row.skuCode} 返回平台库存预警。`,
+        entityCode: row.skuCode,
+        evidenceAt: row.latestSourceFetchedAt,
+      }));
+    } else if (
+      Number.isSafeInteger(row.advisedOrderQuantity)
+      && row.advisedOrderQuantity > 0
+    ) {
+      candidates.push(candidate({
+        storeCode: row.storeCode,
+        type: 'SKU_RESTOCK_ADVICE_REVIEW',
+        severity: row.severity ?? 'medium',
+        title: '复核SKU建议备货',
+        reason: `${row.skuCode} 的平台建议备货数量为 ${row.advisedOrderQuantity}。`,
+        entityCode: row.skuCode,
+        evidenceAt: row.latestSourceFetchedAt,
+      }));
+    }
+  }
   for (const [domain, coverage] of Object.entries(supply.coverage?.domains ?? {})) {
     for (const storeCode of coverage.failedStoreCodes ?? []) {
       candidates.push(candidate({
@@ -361,10 +500,17 @@ export function buildReadOnlyActionPool(supply, platform) {
       evidenceAt: platform.queue.lastProcessedAt ?? platform.queue.lastReceivedAt,
     }));
   }
+  const fairlyOrdered = fairlyOrderActionCandidates(candidates);
+  const returnedCandidates = fairlyOrdered.slice(0, 100);
   return Object.freeze({
     mode: 'observe_only',
     writeEnabled: false,
-    candidates: Object.freeze(candidates),
+    candidates: Object.freeze(returnedCandidates),
+    meta: Object.freeze({
+      total: fairlyOrdered.length,
+      returned: returnedCandidates.length,
+      truncated: fairlyOrdered.length > returnedCandidates.length,
+    }),
   });
 }
 

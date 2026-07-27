@@ -32,19 +32,19 @@
 }
 
 html {
+  max-width: 100%;
   scroll-behavior: smooth;
+  overflow-x: clip;
 }
 
 body {
+  max-width: 100%;
   min-width: 320px;
   min-height: 100dvh;
   margin: 0;
   color: var(--ink);
-  background:
-    radial-gradient(circle at 93% -6%, rgba(173, 77, 56, 0.11), transparent 30rem),
-    linear-gradient(rgba(90, 93, 83, 0.025) 1px, transparent 1px),
-    var(--bg);
-  background-size: auto, 100% 22px, auto;
+  background: var(--bg);
+  overflow-x: clip;
 }
 
 button,
@@ -556,16 +556,20 @@ a {
 }
 
 main {
+  max-width: 100%;
   min-width: 0;
 }
 
 #view {
   width: 100%;
   max-width: 1540px;
+  min-width: 0;
   margin: 0 auto;
 }
 
 #view > * {
+  max-width: 100%;
+  min-width: 0;
   animation: page-enter 280ms ease both;
 }
 
@@ -715,9 +719,7 @@ main {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 22px 22px 13px 22px;
-  background:
-    radial-gradient(circle at 88% 12%, rgba(173, 77, 56, 0.1), transparent 17rem),
-    rgba(253, 253, 251, 0.93);
+  background: rgba(253, 253, 251, 0.93);
   box-shadow: var(--shadow);
 }
 
@@ -1173,7 +1175,7 @@ body[data-dataset="sample"] .metric-item > strong {
   padding: 4px 4px 0;
   overflow: hidden;
   border-radius: 12px;
-  background: linear-gradient(180deg, #faf8f3, #f2f1ec);
+  background: #f5f3ee;
 }
 
 .trend-chart svg {
@@ -1481,9 +1483,24 @@ body[data-dataset="sample"] .metric-item > strong {
   padding-bottom: 14px;
 }
 
+.table-section > .range-filter {
+  width: fit-content;
+  max-width: 100%;
+  margin: -1px 0 13px;
+  border-radius: 12px;
+  background: var(--paper-soft);
+  box-shadow: none;
+}
+
+.table-section > .range-filter button {
+  min-width: max-content;
+}
+
 .table-wrap {
   width: 100%;
+  max-width: 100%;
   overflow: auto;
+  overscroll-behavior-inline: contain;
   border: 1px solid var(--line);
   border-radius: 11px;
   background: var(--paper);
@@ -1496,6 +1513,14 @@ body[data-dataset="sample"] .metric-item > strong {
   min-width: 790px;
   border-collapse: separate;
   border-spacing: 0;
+}
+
+.data-table:has(th:nth-child(8)) {
+  min-width: 1180px;
+}
+
+.data-table:has(th:nth-child(10)) {
+  min-width: 1440px;
 }
 
 .data-table th,
@@ -1593,11 +1618,71 @@ body[data-dataset="sample"] .metric-item > strong {
   white-space: normal;
 }
 
+.boundary-cell > strong,
+.boundary-cell > span,
+.boundary-cell > small {
+  display: block;
+}
+
+.boundary-cell > strong {
+  color: var(--muted-strong);
+  font-size: 0.69rem;
+}
+
+.boundary-cell > span,
+.boundary-cell > small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
 .table-note {
   margin: 9px 2px 0;
   color: var(--muted);
   font-size: 0.66rem;
   line-height: 1.5;
+}
+
+.table-wrap + .table-note {
+  padding: 8px 10px;
+  border-left: 3px solid var(--line-strong);
+  border-radius: 0 8px 8px 0;
+  background: var(--paper-soft);
+}
+
+.table-section > .text-link {
+  margin: 12px 2px 0;
+}
+
+.table-section > .table-section {
+  margin-bottom: 10px;
+  padding: 13px;
+  border-radius: 12px;
+  background: var(--paper-soft);
+  box-shadow: none;
+}
+
+.table-section > .table-section:last-child {
+  margin-bottom: 0;
+}
+
+.table-section > .table-section:has(.evidence-empty) {
+  padding: 10px;
+}
+
+.table-section > .table-section:has(.evidence-empty) .panel-heading {
+  margin-bottom: 8px;
+}
+
+.table-section > .table-section:has(.evidence-empty) .evidence-empty {
+  min-height: 70px;
+  padding: 12px;
+  background: var(--paper);
+}
+
+.table-section > .table-section:has(.evidence-empty) .empty-mark {
+  width: 34px;
+  height: 34px;
 }
 
 .process-flow {
@@ -1668,6 +1753,10 @@ body[data-dataset="sample"] .metric-item > strong {
   min-width: 760px;
 }
 
+.pending-mapping-table {
+  min-width: 980px;
+}
+
 .integration-gate {
   display: grid;
   grid-template-columns: minmax(230px, 0.58fr) minmax(420px, 1.42fr);
@@ -1681,9 +1770,7 @@ body[data-dataset="sample"] .metric-item > strong {
 .gate-state {
   padding: 27px;
   color: #f7f3eb;
-  background:
-    radial-gradient(circle at 20% 10%, rgba(255, 255, 255, 0.08), transparent 15rem),
-    var(--side);
+  background: var(--side);
 }
 
 .gate-state > span {
@@ -2065,12 +2152,27 @@ body[data-dataset="sample"] .metric-item > strong {
   background: var(--success);
 }
 
+.operation-summary-card.available {
+  border-color: color-mix(in srgb, var(--success) 20%, var(--line));
+  background: #f8fbf8;
+}
+
 .operation-summary-card.partial::after {
   background: var(--warning);
 }
 
+.operation-summary-card.partial {
+  border-color: color-mix(in srgb, var(--warning) 24%, var(--line));
+  background: #fdf9f0;
+}
+
 .operation-summary-card.blocked::after {
   background: var(--danger);
+}
+
+.operation-summary-card.blocked {
+  border-color: color-mix(in srgb, var(--danger) 22%, var(--line));
+  background: #fff8f6;
 }
 
 .operation-summary-card > span,
@@ -2092,6 +2194,7 @@ body[data-dataset="sample"] .metric-item > strong {
   font-size: clamp(1.05rem, 1.6vw, 1.55rem);
   line-height: 1.08;
   letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
@@ -2106,12 +2209,16 @@ body[data-dataset="sample"] .metric-item > strong {
   min-width: 900px;
 }
 
+.operational-table:has(th:nth-child(8)) {
+  min-width: 1280px;
+}
+
 .operational-table.inventory-table {
   min-width: 1540px;
 }
 
 .operational-table.advice-table {
-  min-width: 1420px;
+  min-width: 1500px;
 }
 
 .webhook-table {
@@ -2120,6 +2227,15 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .action-table {
   min-width: 1120px;
+}
+
+.action-table .text-link {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.supply-coverage-table .boundary-cell {
+  min-width: 220px;
 }
 
 .queue-time-strip {
@@ -2382,10 +2498,10 @@ body[data-dataset="sample"] .metric-item > strong {
 .loading-line::after,
 .loading-grid span::after {
   display: block;
-  width: 50%;
+  width: 100%;
   height: 100%;
   content: "";
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.75), transparent);
+  background: rgba(255, 255, 255, 0.58);
   animation: skeleton 1.35s ease-in-out infinite;
 }
 
@@ -2436,8 +2552,8 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 @keyframes skeleton {
-  from { transform: translateX(-110%); }
-  to { transform: translateX(220%); }
+  0%, 100% { opacity: 0.18; }
+  50% { opacity: 0.82; }
 }
 
 @keyframes page-enter {
@@ -2461,9 +2577,11 @@ body[data-dataset="sample"] .metric-item > strong {
   .top-status {
     grid-area: status;
     display: flex;
+    width: fit-content;
     min-height: 29px;
     align-items: center;
     justify-content: flex-end;
+    justify-self: end;
     gap: 8px;
     padding: 2px 7px;
     border-radius: 9px;
@@ -2678,10 +2796,6 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 @media (max-width: 620px) {
-  body {
-    background-size: auto, 100% 20px, auto;
-  }
-
   .sidebar {
     position: static;
     grid-template-columns: 1fr;
@@ -2714,15 +2828,13 @@ body[data-dataset="sample"] .metric-item > strong {
 
   .command-bar {
     position: static;
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
-      "title"
-      "search"
-      "owner"
-      "store"
-      "range"
-      "clear"
-      "status";
+      "title title"
+      "search search"
+      "owner store"
+      "range range"
+      "clear status";
     padding: 10px 0;
     gap: 6px;
     backdrop-filter: none;
@@ -2770,7 +2882,20 @@ body[data-dataset="sample"] .metric-item > strong {
   }
 
   .top-status {
+    width: 100%;
+    min-height: 44px;
     justify-content: space-between;
+    justify-self: stretch;
+  }
+
+  .top-status p {
+    max-width: 112px;
+    overflow: visible;
+    font-size: 0.56rem;
+    line-height: 1.25;
+    text-align: right;
+    text-overflow: clip;
+    white-space: normal;
   }
 
   .dataset-notice,
@@ -2805,12 +2930,13 @@ body[data-dataset="sample"] .metric-item > strong {
   }
 
   .page-intro {
-    padding: 20px 18px 22px;
+    padding: 18px 17px 20px;
     border-radius: 17px 17px 10px 17px;
   }
 
   .page-intro h1 {
-    font-size: 2.15rem;
+    margin-top: 8px;
+    font-size: 1.95rem;
   }
 
   .panel-heading {
@@ -2830,6 +2956,16 @@ body[data-dataset="sample"] .metric-item > strong {
   .capability-section,
   .panel {
     padding: 13px;
+  }
+
+  .table-section > .range-filter {
+    width: 100%;
+    margin-bottom: 10px;
+  }
+
+  .table-section > .text-link {
+    min-height: 40px;
+    align-items: center;
   }
 
   .readiness-list,
