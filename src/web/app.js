@@ -64,6 +64,7 @@ const elements = {
   search: document.querySelector('#global-search'),
   scope: document.querySelector('#scope-filter'),
   rangeButtons: [...document.querySelectorAll('[data-range]')],
+  rangeSummary: document.querySelector('#range-summary'),
   clearFilters: document.querySelector('#clear-filters'),
   datasetBadge: document.querySelector('#dataset-badge'),
   updatedAt: document.querySelector('#updated-at'),
@@ -982,31 +983,35 @@ function formatAverage(value, days) {
     : '—';
 }
 
-function homeMetricTable(kicker, title, headers, rows, note) {
+function metricValue(main, note = '', tone = '') {
+  return `<span class="metric-main-value${tone ? ` ${escapeHtml(tone)}` : ''}">${escapeHtml(main)}</span>${note ? `<small class="metric-subvalue">${escapeHtml(note)}</small>` : ''}`;
+}
+
+function metricMatrix(headers, rows, extraClass = '') {
+  const columns = Math.max(1, headers.length - 1);
   return `
-    <article class="home-metric-table">
-      <header>
-        <div><span>${escapeHtml(kicker)}</span><h2>${escapeHtml(title)}</h2></div>
-        <p>${escapeHtml(note)}</p>
-      </header>
-      <div class="home-metric-table-scroll">
-        <table>
-          <thead><tr>${headers.map((header) => `<th scope="col">${escapeHtml(header)}</th>`).join('')}</tr></thead>
-          <tbody>
-            ${rows.map((row) => `
-              <tr>
-                <th scope="row">${escapeHtml(row.label)}</th>
-                <td class="metric-value">${escapeHtml(row.value)}</td>
-                <td>${escapeHtml(row.reference)}</td>
-                <td><span class="table-signal ${escapeHtml(row.tone || 'unknown')}">${escapeHtml(row.signal)}</span></td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
+    <div class="metric-matrix cols-${columns}${extraClass ? ` ${escapeHtml(extraClass)}` : ''}">
+      ${headers.map((header) => `<div class="matrix-cell head">${escapeHtml(header)}</div>`).join('')}
+      ${rows.map((row) => `
+        <div class="matrix-cell label">${escapeHtml(row.label)}</div>
+        ${row.cells.map((cell) => `<div class="matrix-cell value">${cell}</div>`).join('')}
+      `).join('')}
+    </div>`;
+}
+
+function metricCard(title, subtitle, headers, rows, note = '', extraClass = '') {
+  return `
+    <article class="overview-matrix-card">
+      <div class="matrix-card-head">
+        <h4>${escapeHtml(title)}</h4>
+        <div class="sub">${escapeHtml(subtitle)}</div>
       </div>
+      ${metricMatrix(headers, rows, extraClass)}
+      ${note ? `<p class="matrix-footnote">${escapeHtml(note)}</p>` : ''}
     </article>`;
 }
 
-function metricStrip() {
+function homeKpis() {
   const scope = scopedUnits();
   const currentStores = storeRowsForView();
   const currentProducts = skuRowsForView();
@@ -1030,27 +1035,87 @@ function metricStrip() {
   const coveredStores = visibleStores.filter(({ qualityStatus }) => (
     ['healthy', 'partial', 'legal_zero'].includes(qualityStatus)
   )).length;
+  const permission = state.data?.permission || {};
+  const permissionStores = isUnit(permission.authorizedStores) ? permission.authorizedStores : null;
+  const permissionTotal = isUnit(permission.totalStores) ? permission.totalStores : visibleStores.length;
+  const latestText = state.data?.updatedAt ? formatDateTime(state.data.updatedAt) : '尚无有效快照';
+  const financeNote = '账单接口尚未入仓；销售额、结算款和利润保持未接入，不用销量估算。';
 
   return `
-    <section class="home-metric-grid" aria-label="销量经营指标">
-      ${homeMetricTable('SALES VOLUME', '销量规模', ['时间口径', '销量', '日均', '状态'], [
-        { label: '今日', value: `${formatUnits(scope.units.today)} 件`, reference: '当日累计', signal: todayState.label, tone: todayState.tone },
-        { label: '昨日', value: `${formatUnits(scope.units.yesterday)} 件`, reference: '完整自然日', signal: yesterdayState.label, tone: yesterdayState.tone },
-        { label: '近 7 日', value: `${formatUnits(scope.units.last7Days)} 件`, reference: `${formatAverage(scope.units.last7Days, 7)} 件/日`, signal: sevenState.label, tone: sevenState.tone },
-        { label: '近 30 日', value: `${formatUnits(scope.units.last30Days)} 件`, reference: `${formatAverage(scope.units.last30Days, 30)} 件/日`, signal: thirtyState.label, tone: thirtyState.tone },
-      ], scope.title)}
-      ${homeMetricTable('SALES MOMENTUM', '销售动能', ['经营信号', '当前', '对比', '变化'], [
-        { label: '今日 / 昨日', value: `${formatUnits(scope.units.today)} 件`, reference: `${formatUnits(scope.units.yesterday)} 件`, signal: formatDelta(scope.units.today, scope.units.yesterday), tone: isUnit(scope.units.today) && isUnit(scope.units.yesterday) && scope.units.today >= scope.units.yesterday ? 'complete' : 'pending' },
-        { label: '近 7 日日均', value: `${formatAverage(scope.units.last7Days, 7)} 件`, reference: `${previous23 === null ? '—' : formatAverage(previous23, 23)} 件`, signal: previous23 === null ? '不可比' : formatDelta(Math.round(scope.units.last7Days / 7), Math.round(previous23 / 23)), tone: 'unknown' },
-        { label: '动销货号', value: `${numberFormatter.format(movingProducts)} 个`, reference: `可比 ${numberFormatter.format(currentProducts.length)} 个`, signal: RANGE_META[state.range].label, tone: 'complete' },
-        { label: '有销量店铺', value: `${numberFormatter.format(sellingStores)} 家`, reference: `范围内 ${numberFormatter.format(currentStores.length)} 家`, signal: RANGE_META[state.range].label, tone: 'complete' },
-      ], '当前窗口与可比基线')}
-      ${homeMetricTable('DATA COVERAGE', '销量口径与覆盖', ['核对项', '当前', '范围', '结论'], [
-        { label: '店铺覆盖', value: `${numberFormatter.format(coveredStores)} 家`, reference: `共 ${numberFormatter.format(visibleStores.length)} 家`, signal: coverageLabel(), tone: qualityTone() },
-        { label: '业务日期', value: businessDate() || '待确认', reference: '北京时间', signal: '平台统计日', tone: businessDate() ? 'complete' : 'unknown' },
-        { label: '商品身份', value: `${numberFormatter.format(identity.confirmed)} 个`, reference: `共 ${numberFormatter.format(identity.total)} 个 SKU`, signal: identity.label, tone: identity.unconfirmed === 0 ? 'complete' : 'pending' },
-        { label: '最新生成', value: formatDateTime(state.data?.updatedAt), reference: datasetLabel(), signal: qualityState().label, tone: qualityTone() },
-      ], scope.note)}
+    <section class="kpi-six" aria-label="销量经营指标">
+      ${metricCard('销量规模', `${scope.title} · 平台销量快照`, ['口径', '今日', '昨日', '近 7 日', '近 30 日'], [
+        { label: '销量', cells: [
+          metricValue(`${formatUnits(scope.units.today)} 件`, todayState.label, todayState.tone),
+          metricValue(`${formatUnits(scope.units.yesterday)} 件`, yesterdayState.label, yesterdayState.tone),
+          metricValue(`${formatUnits(scope.units.last7Days)} 件`, `${formatAverage(scope.units.last7Days, 7)} 件/日`, sevenState.tone),
+          metricValue(`${formatUnits(scope.units.last30Days)} 件`, `${formatAverage(scope.units.last30Days, 30)} 件/日`, thirtyState.tone),
+        ] },
+      ], scope.note, 'cols-4')}
+      ${metricCard('销售动能', `${RANGE_META[state.range].label} · 当前窗口与可比基线`, ['经营信号', '当前', '基线', '变化'], [
+        { label: '今日 / 昨日', cells: [
+          metricValue(`${formatUnits(scope.units.today)} 件`),
+          metricValue(`${formatUnits(scope.units.yesterday)} 件`),
+          metricValue(formatDelta(scope.units.today, scope.units.yesterday)),
+        ] },
+        { label: '近 7 日日均', cells: [
+          metricValue(`${formatAverage(scope.units.last7Days, 7)} 件`),
+          metricValue(previous23 === null ? '—' : `${formatAverage(previous23, 23)} 件`),
+          metricValue(previous23 === null ? '不可比' : formatDelta(Math.round(scope.units.last7Days / 7), Math.round(previous23 / 23))),
+        ] },
+      ])}
+      ${metricCard('店铺经营', '负责人和店铺在同一个范围选择器中切换', ['范围', '店铺', '有销量', '覆盖'], [
+        { label: RANGE_META[state.range].label, cells: [
+          metricValue(`${numberFormatter.format(currentStores.length)} 家`),
+          metricValue(`${numberFormatter.format(sellingStores)} 家`),
+          metricValue(coverageLabel()),
+        ] },
+        { label: '全部可见', cells: [
+          metricValue(`${numberFormatter.format(visibleStores.length)} 家`),
+          metricValue(`${numberFormatter.format(coveredStores)} 家`, '数据覆盖'),
+          metricValue(`${numberFormatter.format(allOwners().length)} 人`, '负责人'),
+        ] },
+      ])}
+      ${metricCard('商品与归并', `${productIdentityLabel(scopedProductRanking())} · ${RANGE_META[state.range].label}`, ['口径', '可见货号', '动销', '待归并'], [
+        { label: '商品身份', cells: [
+          metricValue(`${numberFormatter.format(currentProducts.length)} 个`),
+          metricValue(`${numberFormatter.format(movingProducts)} 个`),
+          metricValue(`${numberFormatter.format(identity.unconfirmed)} 个`),
+        ] },
+        { label: '归并覆盖', cells: [
+          metricValue(`${numberFormatter.format(identity.total)} 个`, '全部 SKU'),
+          metricValue(`${numberFormatter.format(identity.confirmed)} 个`, '已确认'),
+          metricValue(identity.label),
+        ] },
+      ])}
+      ${metricCard('数据健康', `${datasetLabel()} · 缺失值不补零`, ['核对项', '当前', '范围', '状态'], [
+        { label: '业务日期', cells: [
+          metricValue(businessDate() || '待确认'),
+          metricValue('北京时间'),
+          metricValue(qualityState().label),
+        ] },
+        { label: '销量权限', cells: [
+          metricValue(permissionStores === null ? '待确认' : `${numberFormatter.format(permissionStores)} 家`),
+          metricValue(`${numberFormatter.format(permissionTotal)} 家`),
+          metricValue(permission.label || '待确认'),
+        ] },
+        { label: '最新生成', cells: [
+          metricValue(latestText),
+          metricValue(datasetStatus() === 'live' ? '云端事实' : sourceLabel()),
+          metricValue(qualityState().label),
+        ] },
+      ])}
+      ${metricCard('财务与结算', '全托 & POP 财务账单独立入仓后启用', ['口径', '销售额', '结算件数', '利润'], [
+        { label: '实时经营', cells: [
+          metricValue('未接入', '不按件数估算', 'pending'),
+          metricValue('未接入', '等待账单', 'pending'),
+          metricValue('未接入', '等待成本', 'pending'),
+        ] },
+        { label: '历史结算', cells: [
+          metricValue('未接入', '账单销售明细', 'pending'),
+          metricValue('未接入', '结算口径', 'pending'),
+          metricValue('未接入', '结算后计算', 'pending'),
+        ] },
+      ], financeNote)}
     </section>`;
 }
 
@@ -1124,33 +1189,58 @@ function attentionSummary() {
     </section>`;
 }
 
-function compactRanking(items, kind) {
+function homeRankList(items, kind, windowKey = state.range) {
   if (!items.length) return emptyEvidence(
     kind === 'store' ? '店铺排行不可用' : '商品排行不可用',
     dimensionBoundary(kind),
   );
   const ranked = items
-    .filter((item) => isUnit(item?.unitsSold?.[state.range]))
-    .slice(0, 8);
-  const maximum = Math.max(...ranked.map((item) => item.unitsSold[state.range]), 1);
+    .filter((item) => isUnit(item?.unitsSold?.[windowKey]))
+    .sort((left, right) => right.unitsSold[windowKey] - left.unitsSold[windowKey])
+    .slice(0, 18);
+  if (!ranked.length) return emptyEvidence(
+    kind === 'store' ? '店铺排行不可用' : '商品排行不可用',
+    `${RANGE_META[windowKey]?.label || windowKey}没有可比的${kind === 'store' ? '店铺' : '货号'}销量事实。`,
+  );
+  const maximum = Math.max(...ranked.map((item) => item.unitsSold[windowKey]), 1);
   return `
-    <ol class="compact-ranking">
-      ${ranked.map((item, index) => `
-        <li class="rank-fill-${Math.max(1, Math.ceil((item.unitsSold[state.range] / maximum) * 10))}">
-          <span>${String(index + 1).padStart(2, '0')}</span>
-          <div>
-            <strong>${escapeHtml(kind === 'store' ? (item.name || item.code) : productCode(item))}</strong>
-            <small>${escapeHtml(kind === 'store'
-              ? [item.code, ownerNameForStore(item)].filter(Boolean).join(' · ')
-              : [
-                productName(item),
-                item.storeCode,
-                isCanonicalProduct(item) ? '标准商品' : '店内身份',
-              ].filter(Boolean).join(' · '))}</small>
-          </div>
-          <b>${formatUnits(item?.unitsSold?.[state.range])}<small>件</small></b>
-        </li>`).join('')}
-    </ol>`;
+    <div class="rank-list">
+      ${ranked.map((item, index) => {
+        const value = item.unitsSold[windowKey];
+        const fill = Math.max(1, Math.ceil((value / maximum) * 10));
+        const owner = kind === 'store' ? ownerNameForStore(item) : '';
+        const name = kind === 'store' ? (item.name || item.code) : productCode(item);
+        const meta = kind === 'store'
+          ? [
+            ['店铺', item.code || '—'],
+            ['负责人', owner || '待确认'],
+            ['今日', `${formatUnits(item?.unitsSold?.today)} 件`],
+            ['近 30 日', `${formatUnits(item?.unitsSold?.last30Days)} 件`],
+          ]
+          : [
+            ['商品', productName(item)],
+            ['店铺', item.storeCode || (isUnit(item.storeCount) ? `${item.storeCount} 店` : '范围汇总')],
+            ['今日', `${formatUnits(item?.unitsSold?.today)} 件`],
+            ['近 30 日', `${formatUnits(item?.unitsSold?.last30Days)} 件`],
+          ];
+        return `
+          <div class="rank-item rank-fill-${fill}">
+            <span class="rank-no">${index + 1}</span>
+            <span class="rank-main">
+              <span class="rank-title-line">
+                <span class="rank-name">${escapeHtml(name)}</span>
+                ${owner ? `<span class="rank-owner">${escapeHtml(owner)}</span>` : ''}
+              </span>
+              <span class="rank-meta">${meta.map(([label, itemValue]) => `<span class="meta-part">${escapeHtml(label)} <b>${escapeHtml(itemValue)}</b></span>`).join('<i class="meta-sep">·</i>')}</span>
+            </span>
+            <span class="rank-value">${formatUnits(value)} 件<small>${escapeHtml(RANGE_META[windowKey]?.label || windowKey)}</small></span>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function compactRanking(items, kind) {
+  return homeRankList(items, kind, state.range);
 }
 
 function supplyDomain() {
@@ -2060,51 +2150,68 @@ function businessMap() {
     </section>`;
 }
 
+function homeSectionHeading(title, description) {
+  return `
+    <div class="head">
+      <div>
+        <h3>${escapeHtml(title)}</h3>
+        <p>${escapeHtml(description)}</p>
+      </div>
+    </div>`;
+}
+
 function renderHome() {
   const coverage = identityCoverage();
+  const storeRows = storeRowsForView();
+  const productRows = skuRowsForView();
   return `
     ${sampleNotice()}
-    <header class="home-heading">
-      <div>
-        <span>FULL-MANAGED CONTROL</span>
-        <h1>总控驾驶舱</h1>
-        <p>销售规模、日月趋势与店铺/货号排行集中在一页；负责人只作为全托店铺范围，不改变全员可查看全部数据的权限。</p>
-      </div>
-      <div class="home-heading-status">
-        <span>${escapeHtml(filterSummary())}</span>
-        <strong>${escapeHtml(qualityState().label)}</strong>
-        <small>${escapeHtml(formatDateTime(state.data?.updatedAt))}</small>
-      </div>
-    </header>
-    ${metricStrip()}
-    ${salesTruthStrip()}
     ${dataQualityNotice()}
+    ${homeKpis()}
     <aside class="home-source-note">
       <strong>实时销量</strong>
       <span>今日件数取自 SHEIN SKU 销量接口的当日累计字段，以最近一次成功同步为准；销售额不按件数 × 商品价估算。</span>
       <strong>历史销售额</strong>
       <span>后续通过全托 &amp; POP 财务账单及销售明细回填“结算销售款/结算件数”，与实时销量分口径展示。</span>
     </aside>
-    <section class="home-trend-grid">
+    ${homeSectionHeading('趋势', '日图按业务日期，月图按现有日销量事实归月；当前范围随负责人、店铺与货号筛选同步变化。')}
+    <div class="trend-stack home-trend-stack">
       <article class="panel trend-panel">
-        ${panelHeading('DAILY TREND', '日销量趋势', `${trendWindowLabel()} · ${selectedOwner()?.name || selectedStore()?.code || '全部店铺'}`)}
+        <h4>日销量趋势</h4>
+        <p class="sub">${escapeHtml(`${trendWindowLabel()} · ${selectedOwner()?.name || selectedStore()?.code || '全部店铺'}`)}</p>
         ${renderTrendChart()}
       </article>
       <article class="panel trend-panel">
-        ${panelHeading('MONTHLY TREND', '月销量趋势', '按现有日销量事实归月；图中同时标注每月已覆盖业务日数')}
+        <h4>月销量趋势</h4>
+        <p class="sub">按现有日销量事实归月；每根柱同时标出实际覆盖业务日数。</p>
         ${renderMonthlyTrendChart()}
       </article>
-    </section>
-    <section class="home-ranking-grid">
-      <article class="panel ranking-panel">
-        ${panelHeading('STORE RANKING', '店铺销量排行', `${RANGE_META[state.range].label} · 负责人随店铺同行展示`)}
-        ${compactRanking(storeRowsForView(), 'store')}
+    </div>
+    ${homeSectionHeading('排行榜', '沿用半托首页的四块排行与比例条；全托首版只展示有事实支撑的销量，不虚构成交额。')}
+    <section class="rank-grid">
+      <article class="panel rank-panel">
+        <h4>店铺销量排行</h4>
+        <p class="sub">${escapeHtml(`${RANGE_META[state.range].label} · 当前范围 ${storeRows.length} 家店 · 负责人随店铺同行展示`)}</p>
+        ${homeRankList(storeRows, 'store', state.range)}
         <a class="text-link" href="#sales">查看完整店铺表 →</a>
       </article>
-      <article class="panel ranking-panel">
-        ${panelHeading('SKU RANKING', '货号销量排行', `${RANGE_META[state.range].label} · ${coverage.label}`)}
-        ${compactRanking(skuRowsForView(), 'sku')}
+      <article class="panel rank-panel">
+        <h4>店铺近 30 日排行</h4>
+        <p class="sub">${escapeHtml(`滚动近 30 日 · 当前范围 ${storeRows.length} 家店 · 用于识别稳定规模`)}</p>
+        ${homeRankList(storeRows, 'store', 'last30Days')}
+        <a class="text-link" href="#sales">查看店铺销量分析 →</a>
+      </article>
+      <article class="panel rank-panel">
+        <h4>货号销量排行</h4>
+        <p class="sub">${escapeHtml(`${RANGE_META[state.range].label} · ${coverage.label} · 当前可见 ${productRows.length} 个`)}</p>
+        ${homeRankList(productRows, 'sku', state.range)}
         <a class="text-link" href="#products">查看商品身份与完整排行 →</a>
+      </article>
+      <article class="panel rank-panel">
+        <h4>货号近 30 日排行</h4>
+        <p class="sub">${escapeHtml(`滚动近 30 日 · ${coverage.label} · 用于识别长期主力货号`)}</p>
+        ${homeRankList(productRows, 'sku', 'last30Days')}
+        <a class="text-link" href="#products">查看商品归并与明细 →</a>
       </article>
     </section>`;
 }
@@ -3665,6 +3772,9 @@ function updateFilters() {
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
+  if (elements.rangeSummary) {
+    elements.rangeSummary.textContent = `${RANGE_META[state.range].label} · ${RANGE_META[state.range].note}`;
+  }
   const hasFilters = Boolean(state.query.trim())
     || state.owner !== 'ALL'
     || state.store !== 'ALL'

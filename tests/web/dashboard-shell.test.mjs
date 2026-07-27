@@ -49,10 +49,11 @@ test('full-managed primary navigation follows the sales-first semi-managed inter
   assert.match(styles, /@media \(max-width: 620px\)/);
 });
 
-test('home shell includes combined scope, tabular sales KPIs, day/month trends and safe rankings', async () => {
-  const [html, app] = await Promise.all([
+test('home shell ports the semi-managed matrix, trend-stack and four-rank structure', async () => {
+  const [html, app, parityStyles] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
+    read('src/web/home-parity.css'),
   ]);
 
   assert.match(html, /id="scope-filter"/);
@@ -64,11 +65,25 @@ test('home shell includes combined scope, tabular sales KPIs, day/month trends a
   assert.match(app, /last30Days: \{ label: '近 30 日'/);
   assert.match(app, /销量规模/);
   assert.match(app, /销售动能/);
-  assert.match(app, /销量口径与覆盖/);
+  assert.match(app, /店铺经营/);
+  assert.match(app, /商品与归并/);
+  assert.match(app, /数据健康/);
+  assert.match(app, /财务与结算/);
   assert.match(app, /日销量趋势/);
   assert.match(app, /月销量趋势/);
   assert.match(app, /店铺销量排行/);
+  assert.match(app, /店铺近 30 日排行/);
   assert.match(app, /货号销量排行/);
+  assert.match(app, /货号近 30 日排行/);
+  assert.match(app, /function metricMatrix\(/);
+  assert.match(app, /function homeRankList\(/);
+  assert.match(app, /class="kpi-six"/);
+  assert.match(app, /class="trend-stack home-trend-stack"/);
+  assert.match(app, /class="rank-grid"/);
+  assert.match(parityStyles, /\.kpi-six\s*\{/);
+  assert.match(parityStyles, /\.metric-matrix\s*\{/);
+  assert.match(parityStyles, /\.trend-stack\s*\{/);
+  assert.match(parityStyles, /\.rank-grid\s*\{/);
   assert.match(app, /function monthlyTrendRows\(\)/);
   assert.match(app, /OWNER:\$\{owner\.key\}/);
   assert.match(app, /STORE:\$\{store\.code\}/);
@@ -81,7 +96,7 @@ test('home shell includes combined scope, tabular sales KPIs, day/month trends a
 
 test('full-managed shell keeps unsupported consumer metrics out of the KPI and ranking functions', async () => {
   const app = await read('src/web/app.js');
-  const homeStart = app.indexOf('function metricStrip()');
+  const homeStart = app.indexOf('function homeKpis()');
   const homeEnd = app.indexOf('function permissionBadge', homeStart);
   const homeFunctions = app.slice(homeStart, homeEnd);
 

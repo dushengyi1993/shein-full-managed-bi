@@ -81,10 +81,11 @@ test('GET /api/dashboard returns only the permitted volume dashboard shape', asy
 });
 
 test('serves the local dashboard and its static assets', async () => {
-  const [pageResponse, scriptResponse, styleResponse, faviconResponse] = await Promise.all([
+  const [pageResponse, scriptResponse, styleResponse, parityStyleResponse, faviconResponse] = await Promise.all([
     fetch(`${baseUrl}/`),
     fetch(`${baseUrl}/app.js`),
     fetch(`${baseUrl}/styles.css`),
+    fetch(`${baseUrl}/home-parity.css`),
     fetch(`${baseUrl}/favicon.svg`),
   ]);
 
@@ -99,12 +100,15 @@ test('serves the local dashboard and its static assets', async () => {
   assert.equal(styleResponse.status, 200);
   assert.match(styleResponse.headers.get('content-type'), /^text\/css/);
 
+  assert.equal(parityStyleResponse.status, 200);
+  assert.match(parityStyleResponse.headers.get('content-type'), /^text\/css/);
+
   assert.equal(faviconResponse.status, 200);
   assert.match(faviconResponse.headers.get('content-type'), /^image\/svg\+xml/);
 });
 
 test('static UI excludes consumer commerce metrics while allowing SHEIN purchase-order counts', async () => {
-  const files = ['index.html', 'app.js', 'styles.css'];
+  const files = ['index.html', 'app.js', 'styles.css', 'home-parity.css'];
   const contents = await Promise.all(
     files.map((name) => readFile(new URL(`../../src/web/${name}`, import.meta.url), 'utf8')),
   );

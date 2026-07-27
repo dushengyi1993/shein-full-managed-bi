@@ -9,6 +9,7 @@
     <title>SHEIN 全托运营驾驶舱</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/home-parity.css">
     <script src="/app.js" defer></script>
   </head>
   <body>
@@ -17,14 +18,14 @@
     <div class="app-shell">
       <aside class="sidebar" aria-label="全托运营工作台">
         <div class="brand">
-          <div class="brand-mark" aria-hidden="true">FM</div>
+          <div class="mark" aria-hidden="true">BI</div>
           <div>
-            <strong>SHEIN BI</strong>
-            <span>全托运营工作台</span>
+            <h1>SHEIN BI</h1>
+            <p>全托运营工作台</p>
           </div>
         </div>
 
-        <nav class="primary-nav" aria-label="主导航">
+        <nav class="nav primary-nav" aria-label="主导航">
           <a href="#home" data-route="home"><span>总控驾驶舱</span><small>CONTROL</small></a>
           <a href="#sales" data-route="sales"><span>销量分析</span><small>SALES</small></a>
           <a href="#products" data-route="products"><span>商品分析</span><small>PRODUCT</small></a>
@@ -36,15 +37,20 @@
           <a href="#system" data-route="system"><span>系统管理</span><small>SYSTEM</small></a>
         </nav>
 
-        <div class="sidebar-context" aria-live="polite">
-          <span class="context-label">当前数据环境</span>
-          <strong id="sidebar-dataset">正在读取</strong>
+        <div class="account-box sidebar-context" aria-live="polite">
+          <div class="account-main">
+            <div class="account-identity">
+              <span class="account-label">数据环境</span>
+              <strong id="sidebar-dataset" class="account-name">正在读取</strong>
+            </div>
+            <button id="logout-button" class="logout-button logout-btn" type="button">退出</button>
+          </div>
           <p id="sidebar-permission">销量权限待确认</p>
           <div class="context-flags">
-            <span class="flag">云端运行</span>
+            <span id="dataset-badge" class="status-badge neutral">正在读取</span>
             <span class="flag">只读</span>
           </div>
-          <button id="logout-button" class="logout-button" type="button">退出登录</button>
+          <p id="updated-at">更新时间：--</p>
         </div>
 
         <div id="sidebar-sample-note" class="sample-note" hidden>
@@ -53,40 +59,46 @@
         </div>
       </aside>
 
-      <div class="workspace">
-        <header class="command-bar" aria-label="全局销量筛选">
+      <div class="workspace main">
+        <header class="command command-bar" aria-label="全局销量筛选">
           <div class="mobile-title">
             <span>FULL-MANAGED OPERATIONS</span>
             <strong id="mobile-page-title">今日经营</strong>
           </div>
 
-          <div class="filter-field search-field">
-            <label for="global-search">商品 / 货号</label>
-            <input id="global-search" type="search" placeholder="标准货号、SKC、SKU 或商品名" autocomplete="off">
-          </div>
-
-          <div class="filter-field scope-field">
-            <label for="scope-filter">店铺范围</label>
-            <select id="scope-filter" aria-label="店铺或负责人范围">
-              <option value="ALL">全部店铺</option>
-            </select>
-          </div>
-
-          <div class="range-filter" role="group" aria-label="销量时间口径">
-            <span>时间口径</span>
-            <div>
-              <button type="button" data-range="today" aria-pressed="true">今日</button>
-              <button type="button" data-range="yesterday" aria-pressed="false">昨日</button>
-              <button type="button" data-range="last7Days" aria-pressed="false">近 7 日</button>
-              <button type="button" data-range="last30Days" aria-pressed="false">近 30 日</button>
+          <div class="bar home-filter-bar">
+            <div class="field filter-field search-field">
+              <label for="global-search">搜索</label>
+              <input id="global-search" type="search" placeholder="标准货号 / SKC / SKU / 商品名" autocomplete="off">
             </div>
-          </div>
 
-          <button id="clear-filters" class="clear-button" type="button">清空</button>
+            <div class="field filter-field scope-field">
+              <label for="scope-filter">店铺</label>
+              <select id="scope-filter" aria-label="店铺或负责人范围">
+                <option value="ALL">全部店铺</option>
+              </select>
+            </div>
 
-          <div class="top-status" aria-live="polite">
-            <span id="dataset-badge" class="status-badge neutral">正在读取</span>
-            <p id="updated-at">更新时间：--</p>
+            <div class="range-dock" role="group" aria-label="销量时间口径">
+              <div class="range-toolbar">
+                <div class="range-toolbar-main">
+                  <div class="range-button" aria-hidden="true">
+                    <span>时间范围</span>
+                    <strong id="range-summary">今日 · 当日累计</strong>
+                  </div>
+                  <div class="range-preset-strip">
+                    <button type="button" data-range="today" aria-pressed="true">今日</button>
+                    <button type="button" data-range="yesterday" aria-pressed="false">昨日</button>
+                    <button type="button" data-range="last7Days" aria-pressed="false">近 7 日</button>
+                    <button type="button" data-range="last30Days" aria-pressed="false">近 30 日</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="quick command-actions">
+              <button id="clear-filters" class="clear-button" type="button">清空</button>
+            </div>
           </div>
         </header>
 
