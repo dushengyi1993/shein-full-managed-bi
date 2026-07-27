@@ -2167,7 +2167,7 @@ function renderHome() {
   const scope = scopedUnits();
   const owner = selectedOwner();
   const store = selectedStore();
-  const scopeLabel = owner?.name || store?.code || "全部店铺";
+  const scopeLabel = owner?.name || store?.code || '全部店铺';
   const rangeLabel = RANGE_META[state.range].label;
 
   const todayVal = formatUnits(scope.units.today);
@@ -2224,11 +2224,11 @@ function renderHome() {
         <small class="kpi-sub">${escapeHtml(rangeLabel)} · ${escapeHtml(coverage.label)}</small>
       </div>
     </div>
-    ${homeSectionHeading("趋势", "日图按业务日期，月图按现有日销量事实归月；当前范围随负责人、店铺与货号筛选同步变化。")}
+    ${homeSectionHeading('趋势', '日图按业务日期，月图按现有日销量事实归月；当前范围随负责人、店铺与货号筛选同步变化。')}
     <div class="trend-stack home-trend-stack">
       <article class="panel trend-panel">
         <h4>日销量趋势</h4>
-        <p class="sub">${escapeHtml(trendWindowLabel() + " · " + scopeLabel)}</p>
+        <p class="sub">${escapeHtml(trendWindowLabel() + ' · ' + scopeLabel)}</p>
         ${renderTrendChart()}
       </article>
       <article class="panel trend-panel">
@@ -2237,14 +2237,14 @@ function renderHome() {
         ${renderMonthlyTrendChart()}
       </article>
     </div>
-    ${homeSectionHeading("排行榜", "店铺只显示代号，货号显示归并后的标准货号；排行榜按上方时间段重算。")}
+    ${homeSectionHeading('排行榜', '店铺只显示代号，货号显示归并后的标准货号；排行榜按上方时间段重算。')}
     <div class="dashboard-grid equal">
-      ${homePanel("店铺销量排行", rangeLabel + " · 当前范围 " + storeRows.length + " 家店", homeRankList(storeRows, "store", state.range), "#sales")}
-      ${homePanel("店铺近30日排行", "滚动近30日 · " + storeRows.length + " 家店 · 用于识别稳定规模", homeRankList(storeRows, "store", "last30Days"), "#sales")}
+      ${homePanel('店铺销量排行', rangeLabel + ' · 当前范围 ' + storeRows.length + ' 家店', homeRankList(storeRows, 'store', state.range), '#sales')}
+      ${homePanel('店铺近30日排行', '滚动近30日 · ' + storeRows.length + ' 家店 · 用于识别稳定规模', homeRankList(storeRows, 'store', 'last30Days'), '#sales')}
     </div>
     <div class="dashboard-grid equal" style="margin-top:16px">
-      ${homePanel("货号销量排行", rangeLabel + " · " + coverage.label + " · 当前可见 " + productRows.length + " 个", homeRankList(productRows, "sku", state.range), "#products")}
-      ${homePanel("货号近30日排行", "滚动近30日 · " + coverage.label + " · 用于识别长期主力货号", homeRankList(productRows, "sku", "last30Days"), "#products")}
+      ${homePanel('货号销量排行', rangeLabel + ' · ' + coverage.label + ' · 当前可见 ' + productRows.length + ' 个', homeRankList(productRows, 'sku', state.range), '#products')}
+      ${homePanel('货号近30日排行', '滚动近30日 · ' + coverage.label + ' · 用于识别长期主力货号', homeRankList(productRows, 'sku', 'last30Days'), '#products')}
     </div>
     <aside class="home-source-note">
       <strong>实时销量</strong>
@@ -2254,15 +2254,16 @@ function renderHome() {
     </aside>`;
 }
 
-function homePanel(title, subtitle, body, link = "") {
+function homePanel(title, subtitle, body, link = '') {
   return `
     <article class="panel rank-panel">
       <h4>${escapeHtml(title)}</h4>
       <p class="sub">${escapeHtml(subtitle)}</p>
       ${body}
-      ${link ? `<a class="text-link" href="${escapeHtml(link)}">查看完整明细 →</a>` : ""}
+      ${link ? `<a class="text-link" href="${escapeHtml(link)}">查看完整明细 →</a>` : ''}
     </article>`;
 }
+
 
 function permissionBadge(permission) {
   const status = permission?.status || 'unknown';
