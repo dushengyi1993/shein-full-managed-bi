@@ -91,7 +91,11 @@ test('serves the local dashboard and its static assets', async () => {
 
   assert.equal(pageResponse.status, 200);
   assert.match(pageResponse.headers.get('content-type'), /^text\/html/);
-  assert.match(await pageResponse.text(), /全托运营驾驶舱/);
+  const pageHtml = await pageResponse.text();
+  assert.match(pageHtml, /全托运营驾驶舱/);
+  assert.match(pageHtml, /\/app\.js\?v=20260727\.2/);
+  assert.match(pageHtml, /\/styles\.css\?v=20260727\.2/);
+  assert.match(pageHtml, /\/home-parity\.css\?v=20260727\.2/);
 
   assert.equal(scriptResponse.status, 200);
   assert.match(scriptResponse.headers.get('content-type'), /^text\/javascript/);
