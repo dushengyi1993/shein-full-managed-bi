@@ -77,6 +77,7 @@ function sendLoginPage(response, method, error = '', statusCode = 200) {
     `default-src 'none'; style-src 'nonce-${page.nonce}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
   );
   response.setHeader('Cache-Control', 'no-store');
+  response.setHeader('Referrer-Policy', 'same-origin');
   send(response, statusCode, page.html, 'text/html; charset=utf-8', method);
 }
 

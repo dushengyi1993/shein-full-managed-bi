@@ -266,6 +266,7 @@ test('keeps health public while redirecting pages and rejecting unauthenticated 
   const login = await fetch(`${baseUrl}/login`);
   assert.equal(login.status, 200);
   assert.equal(login.headers.get('cache-control'), 'no-store');
+  assert.equal(login.headers.get('referrer-policy'), 'same-origin');
   assert.match(login.headers.get('content-security-policy'), /style-src 'nonce-/);
   const html = await login.text();
   assert.match(html, /全托运营驾驶舱/);
@@ -281,6 +282,20 @@ test('requires a same-origin POST and enforces the login request body limit', as
   });
   assert.equal(missingOrigin.status, 403);
   assert.match(await missingOrigin.text(), /CROSS_ORIGIN_REJECTED/);
+
+  const nullOrigin = await fetch(`${baseUrl}/api/login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Origin: 'null',
+    },
+    body: new URLSearchParams({
+      username: 'operator',
+      password: 'correct-test-password',
+    }),
+  });
+  assert.equal(nullOrigin.status, 403);
+  assert.match(await nullOrigin.text(), /CROSS_ORIGIN_REJECTED/);
 
   const wrongOrigin = await fetch(`${baseUrl}/api/login`, {
     method: 'POST',
