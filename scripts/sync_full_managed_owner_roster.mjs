@@ -224,9 +224,11 @@ async function applyRoster(pool, roster) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const databaseUrl = process.env.FULL_BI_DATABASE_URL || process.env.DATABASE_URL;
-  if (!databaseUrl) throw new Error('FULL_BI_DATABASE_URL is required.');
+  if (!databaseUrl && !process.env.PGDATABASE) {
+    throw new Error('FULL_BI_DATABASE_URL or libpq PG* variables are required.');
+  }
   const roster = await readRoster(args.roster);
-  const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+  const pool = new Pool(databaseUrl ? { connectionString: databaseUrl, max: 2 } : { max: 2 });
   try {
     const before = await readWarehouseState(pool, roster);
     if (before.stores.length !== roster.storeCodes.length) {
