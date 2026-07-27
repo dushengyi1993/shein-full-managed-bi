@@ -27,6 +27,7 @@
     "start:webhook": "node scripts/serve_full_managed_webhook.mjs",
     "worker:webhook": "node scripts/run_full_managed_webhook_worker.mjs",
     "materialize:dashboard": "node scripts/materialize_full_managed_dashboard.mjs",
+    "sync:owner-roster": "node scripts/sync_full_managed_owner_roster.mjs",
     "test": "node --test",
     "test:domain": "node --test tests/domain/*.test.mjs",
     "test:server": "node --test tests/server/*.test.mjs"
