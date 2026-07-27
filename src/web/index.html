@@ -25,14 +25,15 @@
         </div>
 
         <nav class="primary-nav" aria-label="主导航">
-          <a href="#home" data-route="home"><span>今日经营</span><small>TODAY</small></a>
-          <a href="#ops" data-route="ops"><span>运营待办</span><small>ACTIONS</small></a>
-          <a href="#sales" data-route="sales"><span>销量洞察</span><small>SALES</small></a>
-          <a href="#inventory" data-route="inventory"><span>供给与备货</span><small>SUPPLY</small></a>
+          <a href="#home" data-route="home"><span>总控驾驶舱</span><small>CONTROL</small></a>
+          <a href="#sales" data-route="sales"><span>销量分析</span><small>SALES</small></a>
+          <a href="#products" data-route="products"><span>商品分析</span><small>PRODUCT</small></a>
+          <a href="#inventory" data-route="inventory"><span>库存与备货</span><small>SUPPLY</small></a>
           <a href="#procurement" data-route="procurement"><span>采购单</span><small>PO</small></a>
           <a href="#fulfilment" data-route="fulfilment"><span>交付入仓</span><small>INBOUND</small></a>
-          <a href="#products" data-route="products"><span>商品中心</span><small>PRODUCT</small></a>
-          <a href="#system" data-route="system"><span>数据健康</span><small>DATA</small></a>
+          <a href="#platform" data-route="platform"><span>平台动态</span><small>WEBHOOK</small></a>
+          <a href="#ops" data-route="ops"><span>运营工具</span><small>ACTIONS</small></a>
+          <a href="#system" data-route="system"><span>系统管理</span><small>SYSTEM</small></a>
         </nav>
 
         <div class="sidebar-context" aria-live="polite">
@@ -64,16 +65,9 @@
             <input id="global-search" type="search" placeholder="标准货号、SKC、SKU 或商品名" autocomplete="off">
           </div>
 
-          <div class="filter-field owner-field">
-            <label for="owner-filter">负责人</label>
-            <select id="owner-filter">
-              <option value="ALL">全部负责人</option>
-            </select>
-          </div>
-
-          <div class="filter-field store-field">
-            <label for="store-filter">店铺</label>
-            <select id="store-filter">
+          <div class="filter-field scope-field">
+            <label for="scope-filter">店铺范围</label>
+            <select id="scope-filter" aria-label="店铺或负责人范围">
               <option value="ALL">全部店铺</option>
             </select>
           </div>

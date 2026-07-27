@@ -8,7 +8,7 @@ async function read(relativePath) {
   return readFile(new URL(relativePath, projectRoot), 'utf8');
 }
 
-test('full-managed primary navigation exposes eight operator workspaces in decision order', async () => {
+test('full-managed primary navigation follows the sales-first semi-managed interaction order', async () => {
   const [html, app, styles] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
@@ -16,12 +16,13 @@ test('full-managed primary navigation exposes eight operator workspaces in decis
   ]);
   const routes = [
     'home',
-    'ops',
     'sales',
+    'products',
     'inventory',
     'procurement',
     'fulfilment',
-    'products',
+    'platform',
+    'ops',
     'system',
   ];
 
@@ -29,37 +30,48 @@ test('full-managed primary navigation exposes eight operator workspaces in decis
     assert.match(html, new RegExp(`data-route="${route}"`));
     assert.match(app, new RegExp(`\\b${route}: \\{ title:`));
   }
-  assert.equal((html.match(/data-route=/g) || []).length, 8);
+  assert.equal((html.match(/data-route=/g) || []).length, 9);
   assert.deepEqual(
     [...html.matchAll(/data-route="([^"]+)"/g)].map((match) => match[1]),
     routes,
   );
-  assert.doesNotMatch(html, /data-route="(?:returns|compliance|finance|platform)"/);
-  assert.match(html, /data-route="home"><span>今日经营<\/span>/);
-  assert.match(html, /data-route="ops"><span>运营待办<\/span>/);
-  assert.match(html, /data-route="sales"><span>销量洞察<\/span>/);
-  assert.match(html, /data-route="inventory"><span>供给与备货<\/span>/);
-  assert.match(html, /data-route="system"><span>数据健康<\/span>/);
+  assert.doesNotMatch(html, /data-route="(?:returns|compliance|finance)"/);
+  assert.match(html, /data-route="home"><span>总控驾驶舱<\/span>/);
+  assert.match(html, /data-route="sales"><span>销量分析<\/span>/);
+  assert.match(html, /data-route="products"><span>商品分析<\/span>/);
+  assert.match(html, /data-route="inventory"><span>库存与备货<\/span>/);
+  assert.match(html, /data-route="platform"><span>平台动态<\/span>/);
+  assert.match(html, /data-route="ops"><span>运营工具<\/span>/);
+  assert.match(html, /data-route="system"><span>系统管理<\/span>/);
   assert.match(html, /缺失值不补零；建议不等于已执行/);
   assert.doesNotMatch(styles, /gradient\(/);
   assert.match(styles, /\.table-wrap\s*\{[^}]*max-width:\s*100%[^}]*overflow:\s*auto/s);
   assert.match(styles, /@media \(max-width: 620px\)/);
 });
 
-test('home shell includes sales windows, truth states, owner scope, trend and safe rankings', async () => {
+test('home shell includes combined scope, tabular sales KPIs, day/month trends and safe rankings', async () => {
   const [html, app] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
   ]);
 
-  assert.match(html, /id="owner-filter"/);
+  assert.match(html, /id="scope-filter"/);
+  assert.match(html, /aria-label="店铺或负责人范围"/);
+  assert.doesNotMatch(html, /id="owner-filter"|id="store-filter"/);
   assert.match(app, /today: \{ label: '今日'/);
   assert.match(app, /yesterday: \{ label: '昨日'/);
   assert.match(app, /last7Days: \{ label: '近 7 日'/);
   assert.match(app, /last30Days: \{ label: '近 30 日'/);
-  assert.match(app, /\$\{escapeHtml\(meta\.label\)\}销量/);
-  assert.match(app, /真实销量趋势/);
-  assert.match(app, /店铺销量 Top/);
+  assert.match(app, /销量规模/);
+  assert.match(app, /销售动能/);
+  assert.match(app, /销量口径与覆盖/);
+  assert.match(app, /日销量趋势/);
+  assert.match(app, /月销量趋势/);
+  assert.match(app, /店铺销量排行/);
+  assert.match(app, /货号销量排行/);
+  assert.match(app, /function monthlyTrendRows\(\)/);
+  assert.match(app, /OWNER:\$\{owner\.key\}/);
+  assert.match(app, /STORE:\$\{store\.code\}/);
   assert.match(app, /店内商品排行（标准商品待归并）/);
   assert.match(app, /合法为 0/);
   assert.match(app, /数据已过期/);

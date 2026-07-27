@@ -6,7 +6,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
 });
 
 const ROUTES = Object.freeze({
-  home: { title: '今日经营', code: 'CONTROL' },
+  home: { title: '总控驾驶舱', code: 'CONTROL' },
   procurement: { title: '采购单', code: 'PO' },
   fulfilment: { title: '交付入仓', code: 'INBOUND' },
   products: { title: '商品中心', code: 'MDM' },
@@ -62,8 +62,7 @@ const elements = {
   view: document.querySelector('#view'),
   navLinks: [...document.querySelectorAll('[data-route]')],
   search: document.querySelector('#global-search'),
-  owner: document.querySelector('#owner-filter'),
-  store: document.querySelector('#store-filter'),
+  scope: document.querySelector('#scope-filter'),
   rangeButtons: [...document.querySelectorAll('[data-range]')],
   clearFilters: document.querySelector('#clear-filters'),
   datasetBadge: document.querySelector('#dataset-badge'),
@@ -804,6 +803,69 @@ function renderTrendChart() {
     </div>`;
 }
 
+function monthlyTrendRows() {
+  const byMonth = new Map();
+  trendSourceRows().forEach((row) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(row?.date || '')) || !isUnit(row.unitsSold)) return;
+    const month = row.date.slice(0, 7);
+    const current = byMonth.get(month) || { month, unitsSold: 0, days: new Set() };
+    current.unitsSold += row.unitsSold;
+    current.days.add(row.date);
+    byMonth.set(month, current);
+  });
+  return [...byMonth.values()]
+    .sort((left, right) => left.month.localeCompare(right.month))
+    .slice(-12)
+    .map((row) => ({ month: row.month, unitsSold: row.unitsSold, days: row.days.size }));
+}
+
+function renderMonthlyTrendChart() {
+  const rows = monthlyTrendRows();
+  if (!rows.length) {
+    return emptyEvidence(
+      '月趋势暂不可画',
+      normalizedQuery()
+        ? '月趋势没有货号维度，搜索条件生效时不展示全局走势。'
+        : '当前仓库还没有可按业务日期归集的日销量快照。',
+    );
+  }
+
+  const width = 720;
+  const height = 250;
+  const left = 42;
+  const right = 22;
+  const top = 24;
+  const bottom = 45;
+  const innerWidth = width - left - right;
+  const innerHeight = height - top - bottom;
+  const maximum = Math.max(...rows.map((row) => row.unitsSold), 1);
+  const band = innerWidth / rows.length;
+  const barWidth = Math.min(58, Math.max(12, band * 0.58));
+  const bars = rows.map((row, index) => {
+    const barHeight = Math.max(2, (row.unitsSold / maximum) * innerHeight);
+    const x = left + (band * index) + ((band - barWidth) / 2);
+    const y = top + innerHeight - barHeight;
+    return { ...row, x, y, barHeight };
+  });
+  const ariaLabel = `${rows[0].month} 至 ${rows.at(-1).month} 的月度销量趋势`;
+
+  return `
+    <div class="trend-chart month-chart">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(ariaLabel)}">
+        <title>${escapeHtml(ariaLabel)}</title>
+        <line class="chart-grid" x1="${left}" y1="${top}" x2="${left + innerWidth}" y2="${top}"></line>
+        <line class="chart-grid" x1="${left}" y1="${top + innerHeight / 2}" x2="${left + innerWidth}" y2="${top + innerHeight / 2}"></line>
+        <line class="chart-grid" x1="${left}" y1="${top + innerHeight}" x2="${left + innerWidth}" y2="${top + innerHeight}"></line>
+        ${bars.map((bar) => `
+          <rect class="chart-bar" x="${bar.x.toFixed(1)}" y="${bar.y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${bar.barHeight.toFixed(1)}" rx="5"></rect>
+          <text class="chart-value chart-value-center" x="${(bar.x + barWidth / 2).toFixed(1)}" y="${Math.max(bar.y - 8, 14).toFixed(1)}">${escapeHtml(numberFormatter.format(bar.unitsSold))}</text>
+          <text class="chart-axis chart-axis-center" x="${(bar.x + barWidth / 2).toFixed(1)}" y="${height - 22}">${escapeHtml(bar.month.slice(2))}</text>
+          <text class="chart-axis chart-axis-center" x="${(bar.x + barWidth / 2).toFixed(1)}" y="${height - 9}">${escapeHtml(`${bar.days}日`)}</text>`).join('')}
+        <text class="chart-axis" x="${left}" y="${top - 8}">${escapeHtml(numberFormatter.format(maximum))} 件</text>
+      </svg>
+    </div>`;
+}
+
 function emptyEvidence(title, message, action = '') {
   return `
     <div class="evidence-empty">
@@ -907,24 +969,88 @@ function metricState(value) {
   return { label: value === 0 ? '销量为 0' : '销量事实', tone: qualityTone(quality.status) };
 }
 
+function formatDelta(current, baseline) {
+  if (!isUnit(current) || !isUnit(baseline)) return '不可比';
+  if (baseline === 0) return current === 0 ? '持平' : '新增';
+  const delta = (current - baseline) / baseline;
+  return `${delta >= 0 ? '+' : ''}${(delta * 100).toFixed(1)}%`;
+}
+
+function formatAverage(value, days) {
+  return isUnit(value)
+    ? new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 }).format(value / days)
+    : '—';
+}
+
+function homeMetricTable(kicker, title, headers, rows, note) {
+  return `
+    <article class="home-metric-table">
+      <header>
+        <div><span>${escapeHtml(kicker)}</span><h2>${escapeHtml(title)}</h2></div>
+        <p>${escapeHtml(note)}</p>
+      </header>
+      <div class="home-metric-table-scroll">
+        <table>
+          <thead><tr>${headers.map((header) => `<th scope="col">${escapeHtml(header)}</th>`).join('')}</tr></thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <th scope="row">${escapeHtml(row.label)}</th>
+                <td class="metric-value">${escapeHtml(row.value)}</td>
+                <td>${escapeHtml(row.reference)}</td>
+                <td><span class="table-signal ${escapeHtml(row.tone || 'unknown')}">${escapeHtml(row.signal)}</span></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </article>`;
+}
+
 function metricStrip() {
   const scope = scopedUnits();
-  const cards = Object.entries(RANGE_META).map(([key, meta]) => {
-    const valueState = metricState(scope.units[key]);
-    return `
-      <article class="metric-item ${state.range === key ? 'active' : ''}">
-        <div><span>${escapeHtml(meta.label)}销量</span><span class="metric-state ${escapeHtml(valueState.tone)}">${escapeHtml(valueState.label)}</span></div>
-        <strong>${formatUnits(scope.units[key])}</strong>
-        <p>${escapeHtml(meta.note)} · 单位：件</p>
-      </article>`;
-  }).join('');
+  const currentStores = storeRowsForView();
+  const currentProducts = skuRowsForView();
+  const visibleStores = baseStores();
+  const todayState = metricState(scope.units.today);
+  const yesterdayState = metricState(scope.units.yesterday);
+  const sevenState = metricState(scope.units.last7Days);
+  const thirtyState = metricState(scope.units.last30Days);
+  const previous23 = (
+    isUnit(scope.units.last30Days)
+    && isUnit(scope.units.last7Days)
+    && scope.units.last30Days >= scope.units.last7Days
+  )
+    ? scope.units.last30Days - scope.units.last7Days
+    : null;
+  const movingProducts = currentProducts.filter((item) => isUnit(item?.unitsSold?.[state.range])
+    && item.unitsSold[state.range] > 0).length;
+  const sellingStores = currentStores.filter((item) => isUnit(item?.unitsSold?.[state.range])
+    && item.unitsSold[state.range] > 0).length;
+  const identity = identityCoverage();
+  const coveredStores = visibleStores.filter(({ qualityStatus }) => (
+    ['healthy', 'partial', 'legal_zero'].includes(qualityStatus)
+  )).length;
+
   return `
-    <section class="metric-panel" aria-label="销量数量指标">
-      <header>
-        <div><span>销量规模</span><strong>${escapeHtml(scope.title)}</strong></div>
-        <p>${escapeHtml(scope.note)}</p>
-      </header>
-      <div class="metric-grid">${cards}</div>
+    <section class="home-metric-grid" aria-label="销量经营指标">
+      ${homeMetricTable('SALES VOLUME', '销量规模', ['时间口径', '销量', '日均', '状态'], [
+        { label: '今日', value: `${formatUnits(scope.units.today)} 件`, reference: '当日累计', signal: todayState.label, tone: todayState.tone },
+        { label: '昨日', value: `${formatUnits(scope.units.yesterday)} 件`, reference: '完整自然日', signal: yesterdayState.label, tone: yesterdayState.tone },
+        { label: '近 7 日', value: `${formatUnits(scope.units.last7Days)} 件`, reference: `${formatAverage(scope.units.last7Days, 7)} 件/日`, signal: sevenState.label, tone: sevenState.tone },
+        { label: '近 30 日', value: `${formatUnits(scope.units.last30Days)} 件`, reference: `${formatAverage(scope.units.last30Days, 30)} 件/日`, signal: thirtyState.label, tone: thirtyState.tone },
+      ], scope.title)}
+      ${homeMetricTable('SALES MOMENTUM', '销售动能', ['经营信号', '当前', '对比', '变化'], [
+        { label: '今日 / 昨日', value: `${formatUnits(scope.units.today)} 件`, reference: `${formatUnits(scope.units.yesterday)} 件`, signal: formatDelta(scope.units.today, scope.units.yesterday), tone: isUnit(scope.units.today) && isUnit(scope.units.yesterday) && scope.units.today >= scope.units.yesterday ? 'complete' : 'pending' },
+        { label: '近 7 日日均', value: `${formatAverage(scope.units.last7Days, 7)} 件`, reference: `${previous23 === null ? '—' : formatAverage(previous23, 23)} 件`, signal: previous23 === null ? '不可比' : formatDelta(Math.round(scope.units.last7Days / 7), Math.round(previous23 / 23)), tone: 'unknown' },
+        { label: '动销货号', value: `${numberFormatter.format(movingProducts)} 个`, reference: `可比 ${numberFormatter.format(currentProducts.length)} 个`, signal: RANGE_META[state.range].label, tone: 'complete' },
+        { label: '有销量店铺', value: `${numberFormatter.format(sellingStores)} 家`, reference: `范围内 ${numberFormatter.format(currentStores.length)} 家`, signal: RANGE_META[state.range].label, tone: 'complete' },
+      ], '当前窗口与可比基线')}
+      ${homeMetricTable('DATA COVERAGE', '销量口径与覆盖', ['核对项', '当前', '范围', '结论'], [
+        { label: '店铺覆盖', value: `${numberFormatter.format(coveredStores)} 家`, reference: `共 ${numberFormatter.format(visibleStores.length)} 家`, signal: coverageLabel(), tone: qualityTone() },
+        { label: '业务日期', value: businessDate() || '待确认', reference: '北京时间', signal: '平台统计日', tone: businessDate() ? 'complete' : 'unknown' },
+        { label: '商品身份', value: `${numberFormatter.format(identity.confirmed)} 个`, reference: `共 ${numberFormatter.format(identity.total)} 个 SKU`, signal: identity.label, tone: identity.unconfirmed === 0 ? 'complete' : 'pending' },
+        { label: '最新生成', value: formatDateTime(state.data?.updatedAt), reference: datasetLabel(), signal: qualityState().label, tone: qualityTone() },
+      ], scope.note)}
     </section>`;
 }
 
@@ -1003,11 +1129,14 @@ function compactRanking(items, kind) {
     kind === 'store' ? '店铺排行不可用' : '商品排行不可用',
     dimensionBoundary(kind),
   );
-  const source = scopedProductRanking();
+  const ranked = items
+    .filter((item) => isUnit(item?.unitsSold?.[state.range]))
+    .slice(0, 8);
+  const maximum = Math.max(...ranked.map((item) => item.unitsSold[state.range]), 1);
   return `
     <ol class="compact-ranking">
-      ${items.slice(0, 5).map((item, index) => `
-        <li>
+      ${ranked.map((item, index) => `
+        <li class="rank-fill-${Math.max(1, Math.ceil((item.unitsSold[state.range] / maximum) * 10))}">
           <span>${String(index + 1).padStart(2, '0')}</span>
           <div>
             <strong>${escapeHtml(kind === 'store' ? (item.name || item.code) : productCode(item))}</strong>
@@ -1935,34 +2064,49 @@ function renderHome() {
   const coverage = identityCoverage();
   return `
     ${sampleNotice()}
-    ${pageIntro(
-      'FULL-MANAGED CONTROL',
-      '全托运营总控',
-      '先看今日、昨日与滚动销量，再看真实趋势、负责人店铺排行和商品排行；所有数字同时带业务日期、覆盖与质量边界。',
-      `<span>当前数据关注</span><strong>${escapeHtml(qualityState().label)}</strong><small>${escapeHtml(filterSummary())}</small>`,
-    )}
+    <header class="home-heading">
+      <div>
+        <span>FULL-MANAGED CONTROL</span>
+        <h1>总控驾驶舱</h1>
+        <p>销售规模、日月趋势与店铺/货号排行集中在一页；负责人只作为全托店铺范围，不改变全员可查看全部数据的权限。</p>
+      </div>
+      <div class="home-heading-status">
+        <span>${escapeHtml(filterSummary())}</span>
+        <strong>${escapeHtml(qualityState().label)}</strong>
+        <small>${escapeHtml(formatDateTime(state.data?.updatedAt))}</small>
+      </div>
+    </header>
+    ${metricStrip()}
     ${salesTruthStrip()}
     ${dataQualityNotice()}
-    ${metricStrip()}
-    <section class="home-analysis-grid">
+    <aside class="home-source-note">
+      <strong>实时销量</strong>
+      <span>今日件数取自 SHEIN SKU 销量接口的当日累计字段，以最近一次成功同步为准；销售额不按件数 × 商品价估算。</span>
+      <strong>历史销售额</strong>
+      <span>后续通过全托 &amp; POP 财务账单及销售明细回填“结算销售款/结算件数”，与实时销量分口径展示。</span>
+    </aside>
+    <section class="home-trend-grid">
       <article class="panel trend-panel">
-        ${panelHeading('SALES TREND', '真实销量趋势', `${trendWindowLabel()} · 日粒度 · ${selectedOwner()?.name || selectedStore()?.code || '全部店铺'}`)}
+        ${panelHeading('DAILY TREND', '日销量趋势', `${trendWindowLabel()} · ${selectedOwner()?.name || selectedStore()?.code || '全部店铺'}`)}
         ${renderTrendChart()}
       </article>
-      <article class="panel">
-        ${panelHeading('STORE TOP', '店铺销量 Top', RANGE_META[state.range].label)}
+      <article class="panel trend-panel">
+        ${panelHeading('MONTHLY TREND', '月销量趋势', '按现有日销量事实归月；图中同时标注每月已覆盖业务日数')}
+        ${renderMonthlyTrendChart()}
+      </article>
+    </section>
+    <section class="home-ranking-grid">
+      <article class="panel ranking-panel">
+        ${panelHeading('STORE RANKING', '店铺销量排行', `${RANGE_META[state.range].label} · 负责人随店铺同行展示`)}
         ${compactRanking(storeRowsForView(), 'store')}
         <a class="text-link" href="#sales">查看完整店铺表 →</a>
       </article>
-      <article class="panel">
-        ${panelHeading('PRODUCT TOP', productIdentityLabel(), `${RANGE_META[state.range].label} · ${coverage.label}`)}
+      <article class="panel ranking-panel">
+        ${panelHeading('SKU RANKING', '货号销量排行', `${RANGE_META[state.range].label} · ${coverage.label}`)}
         ${compactRanking(skuRowsForView(), 'sku')}
         <a class="text-link" href="#products">查看商品身份与完整排行 →</a>
       </article>
-    </section>
-    ${renderOperationalPriorities({ home: true })}
-    ${supplyRadar()}
-    ${compactTechnicalFooter()}`;
+    </section>`;
 }
 
 function permissionBadge(permission) {
@@ -3511,8 +3655,11 @@ function updateNavigation() {
 
 function updateFilters() {
   elements.search.value = state.query;
-  elements.owner.value = state.owner;
-  elements.store.value = state.store;
+  elements.scope.value = state.store !== 'ALL'
+    ? `STORE:${state.store}`
+    : state.owner !== 'ALL'
+      ? `OWNER:${state.owner}`
+      : 'ALL';
   elements.rangeButtons.forEach((button) => {
     const active = button.dataset.range === state.range;
     button.classList.toggle('active', active);
@@ -3554,46 +3701,48 @@ function updateErrorPanel() {
   elements.retryButton.textContent = state.loading ? '重新加载中…' : '重新加载';
 }
 
-function populateStoreOptions() {
-  const previous = state.store;
+function populateScopeOptions() {
+  const previousStore = state.store;
+  const previousOwner = state.owner;
   const fragment = document.createDocumentFragment();
   const allOption = document.createElement('option');
   allOption.value = 'ALL';
   allOption.textContent = '全部店铺';
   fragment.append(allOption);
 
-  allStores().forEach((store) => {
-    const option = document.createElement('option');
-    option.value = store.code;
-    option.textContent = store.name && store.name !== store.code
-      ? `${store.code} · ${store.name}`
-      : store.code;
-    fragment.append(option);
-  });
-  elements.store.replaceChildren(fragment);
-  state.store = allStores().some((store) => store.code === previous) ? previous : 'ALL';
-  elements.store.value = state.store;
-}
-
-function populateOwnerOptions() {
-  const previous = state.owner;
   const owners = allOwners();
-  const fragment = document.createDocumentFragment();
-  const allOption = document.createElement('option');
-  allOption.value = 'ALL';
-  allOption.textContent = owners.length ? '全部负责人' : '负责人未接入';
-  fragment.append(allOption);
+  if (owners.length) {
+    const ownerGroup = document.createElement('optgroup');
+    ownerGroup.label = '按负责人';
+    owners.forEach((owner) => {
+      const option = document.createElement('option');
+      option.value = `OWNER:${owner.key}`;
+      option.textContent = `${owner.name} · ${owner.storeCodes.length} 家店`;
+      ownerGroup.append(option);
+    });
+    fragment.append(ownerGroup);
+  }
 
-  owners.forEach((owner) => {
+  const storeGroup = document.createElement('optgroup');
+  storeGroup.label = '按店铺';
+  baseStores().forEach((store) => {
     const option = document.createElement('option');
-    option.value = owner.key;
-    option.textContent = `${owner.name} · ${owner.storeCodes.length} 家店`;
-    fragment.append(option);
+    option.value = `STORE:${store.code}`;
+    const ownerName = ownerNameForStore(store);
+    option.textContent = [
+      store.name && store.name !== store.code ? `${store.code} · ${store.name}` : store.code,
+      ownerName,
+    ].filter(Boolean).join(' · ');
+    storeGroup.append(option);
   });
-  elements.owner.replaceChildren(fragment);
-  state.owner = owners.some((owner) => owner.key === previous) ? previous : 'ALL';
-  elements.owner.value = state.owner;
-  elements.owner.disabled = owners.length === 0;
+  fragment.append(storeGroup);
+
+  state.store = baseStores().some((store) => store.code === previousStore) ? previousStore : 'ALL';
+  state.owner = state.store === 'ALL' && owners.some((owner) => owner.key === previousOwner)
+    ? previousOwner
+    : 'ALL';
+  elements.scope.replaceChildren(fragment);
+  updateFilters();
 }
 
 function render() {
@@ -3645,8 +3794,7 @@ async function loadDashboard() {
       throw new Error('销量数据结构无效');
     }
     state.data = dashboard;
-    populateOwnerOptions();
-    populateStoreOptions();
+    populateScopeOptions();
   } catch (error) {
     state.data = null;
     state.error = error instanceof Error ? error.message : '云端只读数据服务暂不可用。';
@@ -3684,15 +3832,10 @@ elements.search.addEventListener('input', (event) => {
   render();
 });
 
-elements.owner.addEventListener('change', (event) => {
-  state.owner = event.currentTarget.value;
-  state.store = 'ALL';
-  populateStoreOptions();
-  render();
-});
-
-elements.store.addEventListener('change', (event) => {
-  state.store = event.currentTarget.value;
+elements.scope.addEventListener('change', (event) => {
+  const value = String(event.currentTarget.value || 'ALL');
+  state.owner = value.startsWith('OWNER:') ? value.slice(6) : 'ALL';
+  state.store = value.startsWith('STORE:') ? value.slice(6) : 'ALL';
   render();
 });
 
@@ -3720,8 +3863,7 @@ elements.clearFilters.addEventListener('click', () => {
   state.store = 'ALL';
   state.range = 'today';
   state.quickFilters = Object.create(null);
-  populateOwnerOptions();
-  populateStoreOptions();
+  populateScopeOptions();
   render();
   elements.search.focus();
 });
