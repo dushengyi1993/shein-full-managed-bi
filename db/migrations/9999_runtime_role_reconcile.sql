@@ -351,6 +351,7 @@ GRANT SELECT ON
     dim.full_sku_canonical_assignment,
     fact.full_sku_sales_snapshot,
     fact.purchase_order,
+    fact.purchase_order_line,
     fact.delivery,
     fact.delivery_line,
     fact.inventory_snapshot,

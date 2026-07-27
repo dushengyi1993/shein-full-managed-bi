@@ -182,6 +182,9 @@ test('9999 preflight tracks every runtime table and project function through 001
 test('9999 grants one group per login and proves cross-domain negative privileges', async () => {
   const migration = await text('db/migrations/9999_runtime_role_reconcile.sql');
   const verify = await text('db/verify/9999_runtime_role_reconcile.sql');
+  const materializerGrant = migration.match(
+    /GRANT SELECT ON[\s\S]*?TO sheinfm_materializer_ro, sheinfm_app;/,
+  )?.[0] || '';
   for (const pair of [
     ['sheinfm_materializer_ro', 'sheinfm_materializer_login'],
     ['sheinfm_sales_loader', 'sheinfm_sales_login'],
@@ -196,6 +199,11 @@ test('9999 grants one group per login and proves cross-domain negative privilege
   assert.match(
     migration,
     /GRANT SELECT ON[\s\S]*ops\.sales_quality_event,[\s\S]*TO sheinfm_materializer_ro, sheinfm_app/,
+  );
+  assert.match(materializerGrant, /fact\.purchase_order_line/);
+  assert.match(
+    verify,
+    /'fact\.purchase_order',[\s\S]*'fact\.purchase_order_line',[\s\S]*'fact\.delivery'/,
   );
   assert.match(migration, /GRANT SELECT ON ops\.sales_sync_run\s+TO sheinfm_supply_loader/);
   assert.match(
