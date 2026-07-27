@@ -2164,21 +2164,71 @@ function renderHome() {
   const coverage = identityCoverage();
   const storeRows = storeRowsForView();
   const productRows = skuRowsForView();
+  const scope = scopedUnits();
+  const owner = selectedOwner();
+  const store = selectedStore();
+  const scopeLabel = owner?.name || store?.code || "全部店铺";
+  const rangeLabel = RANGE_META[state.range].label;
+
+  const todayVal = formatUnits(scope.units.today);
+  const yesterdayVal = formatUnits(scope.units.yesterday);
+  const last7Val = formatUnits(scope.units.last7Days);
+  const last30Val = formatUnits(scope.units.last30Days);
+  const last7Avg = formatAverage(scope.units.last7Days, 7);
+  const last30Avg = formatAverage(scope.units.last30Days, 30);
+  const sellingStores = storeRows.filter((item) => isUnit(item?.unitsSold?.[state.range]) && item.unitsSold[state.range] > 0).length;
+  const movingProducts = productRows.filter((item) => isUnit(item?.unitsSold?.[state.range]) && item.unitsSold[state.range] > 0).length;
+  const totalStores = baseStores().length;
+  const totalProducts = productRows.length;
+  const owners = allOwners();
+
   return `
     ${sampleNotice()}
     ${dataQualityNotice()}
-    ${homeKpis()}
-    <aside class="home-source-note">
-      <strong>实时销量</strong>
-      <span>今日件数取自 SHEIN SKU 销量接口的当日累计字段，以最近一次成功同步为准；销售额不按件数 × 商品价估算。</span>
-      <strong>历史销售额</strong>
-      <span>后续通过全托 &amp; POP 财务账单及销售明细回填“结算销售款/结算件数”，与实时销量分口径展示。</span>
-    </aside>
-    ${homeSectionHeading('趋势', '日图按业务日期，月图按现有日销量事实归月；当前范围随负责人、店铺与货号筛选同步变化。')}
+    <div class="home-kpi-row">
+      <div class="home-kpi-card">
+        <span class="kpi-label">销量汇总 · ${escapeHtml(rangeLabel)}</span>
+        <strong class="kpi-value">${todayVal}<small>件</small></strong>
+        <div class="kpi-meta">
+          <span>昨日 ${yesterdayVal}</span>
+          <span>近7日 ${last7Val}</span>
+          <span>近30日 ${last30Val}</span>
+        </div>
+        <small class="kpi-sub">${escapeHtml(scopeLabel)} · ${escapeHtml(scope.title)}</small>
+      </div>
+      <div class="home-kpi-card">
+        <span class="kpi-label">日均销量</span>
+        <strong class="kpi-value">${last7Avg}<small>件/日</small></strong>
+        <div class="kpi-meta">
+          <span>近7日日均</span>
+          <span>近30日日均 ${last30Avg}</span>
+        </div>
+        <small class="kpi-sub">${escapeHtml(rangeLabel)} · ${escapeHtml(scopeLabel)}</small>
+      </div>
+      <div class="home-kpi-card">
+        <span class="kpi-label">店铺覆盖</span>
+        <strong class="kpi-value">${sellingStores}<small>/${totalStores} 家</small></strong>
+        <div class="kpi-meta">
+          <span>有销量 ${sellingStores} 家</span>
+          <span>负责人 ${owners.length} 人</span>
+        </div>
+        <small class="kpi-sub">${escapeHtml(rangeLabel)} · ${escapeHtml(scopeLabel)}</small>
+      </div>
+      <div class="home-kpi-card">
+        <span class="kpi-label">商品动销</span>
+        <strong class="kpi-value">${movingProducts}<small>/${totalProducts} 个</small></strong>
+        <div class="kpi-meta">
+          <span>动销 ${movingProducts} 个</span>
+          <span>待归并 ${coverage.unconfirmed} 个</span>
+        </div>
+        <small class="kpi-sub">${escapeHtml(rangeLabel)} · ${escapeHtml(coverage.label)}</small>
+      </div>
+    </div>
+    ${homeSectionHeading("趋势", "日图按业务日期，月图按现有日销量事实归月；当前范围随负责人、店铺与货号筛选同步变化。")}
     <div class="trend-stack home-trend-stack">
       <article class="panel trend-panel">
         <h4>日销量趋势</h4>
-        <p class="sub">${escapeHtml(`${trendWindowLabel()} · ${selectedOwner()?.name || selectedStore()?.code || '全部店铺'}`)}</p>
+        <p class="sub">${escapeHtml(trendWindowLabel() + " · " + scopeLabel)}</p>
         ${renderTrendChart()}
       </article>
       <article class="panel trend-panel">
@@ -2187,33 +2237,31 @@ function renderHome() {
         ${renderMonthlyTrendChart()}
       </article>
     </div>
-    ${homeSectionHeading('排行榜', '沿用半托首页的四块排行与比例条；全托首版只展示有事实支撑的销量，不虚构成交额。')}
-    <section class="rank-grid">
-      <article class="panel rank-panel">
-        <h4>店铺销量排行</h4>
-        <p class="sub">${escapeHtml(`${RANGE_META[state.range].label} · 当前范围 ${storeRows.length} 家店 · 负责人随店铺同行展示`)}</p>
-        ${homeRankList(storeRows, 'store', state.range)}
-        <a class="text-link" href="#sales">查看完整店铺表 →</a>
-      </article>
-      <article class="panel rank-panel">
-        <h4>店铺近 30 日排行</h4>
-        <p class="sub">${escapeHtml(`滚动近 30 日 · 当前范围 ${storeRows.length} 家店 · 用于识别稳定规模`)}</p>
-        ${homeRankList(storeRows, 'store', 'last30Days')}
-        <a class="text-link" href="#sales">查看店铺销量分析 →</a>
-      </article>
-      <article class="panel rank-panel">
-        <h4>货号销量排行</h4>
-        <p class="sub">${escapeHtml(`${RANGE_META[state.range].label} · ${coverage.label} · 当前可见 ${productRows.length} 个`)}</p>
-        ${homeRankList(productRows, 'sku', state.range)}
-        <a class="text-link" href="#products">查看商品身份与完整排行 →</a>
-      </article>
-      <article class="panel rank-panel">
-        <h4>货号近 30 日排行</h4>
-        <p class="sub">${escapeHtml(`滚动近 30 日 · ${coverage.label} · 用于识别长期主力货号`)}</p>
-        ${homeRankList(productRows, 'sku', 'last30Days')}
-        <a class="text-link" href="#products">查看商品归并与明细 →</a>
-      </article>
-    </section>`;
+    ${homeSectionHeading("排行榜", "店铺只显示代号，货号显示归并后的标准货号；排行榜按上方时间段重算。")}
+    <div class="dashboard-grid equal">
+      ${homePanel("店铺销量排行", rangeLabel + " · 当前范围 " + storeRows.length + " 家店", homeRankList(storeRows, "store", state.range), "#sales")}
+      ${homePanel("店铺近30日排行", "滚动近30日 · " + storeRows.length + " 家店 · 用于识别稳定规模", homeRankList(storeRows, "store", "last30Days"), "#sales")}
+    </div>
+    <div class="dashboard-grid equal" style="margin-top:16px">
+      ${homePanel("货号销量排行", rangeLabel + " · " + coverage.label + " · 当前可见 " + productRows.length + " 个", homeRankList(productRows, "sku", state.range), "#products")}
+      ${homePanel("货号近30日排行", "滚动近30日 · " + coverage.label + " · 用于识别长期主力货号", homeRankList(productRows, "sku", "last30Days"), "#products")}
+    </div>
+    <aside class="home-source-note">
+      <strong>实时销量</strong>
+      <span>今日件数取自 SHEIN SKU 销量接口的当日累计字段，以最近一次成功同步为准；销售额不按件数 × 商品价估算。</span>
+      <strong>历史销售额</strong>
+      <span>后续通过全托 &amp; POP 财务账单及销售明细回填“结算销售款/结算件数”，与实时销量分口径展示。</span>
+    </aside>`;
+}
+
+function homePanel(title, subtitle, body, link = "") {
+  return `
+    <article class="panel rank-panel">
+      <h4>${escapeHtml(title)}</h4>
+      <p class="sub">${escapeHtml(subtitle)}</p>
+      ${body}
+      ${link ? `<a class="text-link" href="${escapeHtml(link)}">查看完整明细 →</a>` : ""}
+    </article>`;
 }
 
 function permissionBadge(permission) {

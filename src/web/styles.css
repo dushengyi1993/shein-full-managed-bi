@@ -1,30 +1,32 @@
 :root {
-  color: #1d1e1b;
-  background: #f1f2ee;
+  color: #e0f2fe;
+  background: #050816;
   font-family: Geist, Aptos, "Segoe UI Variable", "Microsoft YaHei UI", system-ui, sans-serif;
   font-synthesis: none;
-  --bg: #f1f2ee;
-  --paper: #fdfdfb;
-  --paper-soft: #f7f5f0;
-  --paper-warm: #f4efe7;
-  --ink: #1d1e1b;
-  --muted: #696b65;
-  --muted-strong: #50534d;
-  --line: #d9dbd4;
-  --line-strong: #bfc2b9;
-  --side: #171814;
-  --side-muted: #aaa89f;
-  --accent: #ad4d38;
-  --accent-dark: #7f3527;
-  --accent-soft: #f8e8e2;
-  --success: #26704c;
-  --success-soft: #e7f3ea;
-  --warning: #875615;
-  --warning-soft: #faf0d9;
-  --danger: #a53b32;
-  --danger-soft: #fae8e5;
-  --focus: #2459d7;
-  --shadow: 0 16px 42px rgba(42, 45, 37, 0.065), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --bg: #050816;
+  --paper: rgba(2, 6, 23, .43);
+  --paper-soft: rgba(15, 23, 42, .55);
+  --paper-warm: rgba(15, 23, 42, .42);
+  --ink: #e0f2fe;
+  --muted: #94a3b8;
+  --muted-strong: #cbd5e1;
+  --line: rgba(148, 163, 184, .18);
+  --line-strong: rgba(148, 163, 184, .28);
+  --side: #020617;
+  --side-muted: #94a3b8;
+  --accent: #22d3ee;
+  --accent-dark: #0891b2;
+  --accent-soft: rgba(34, 211, 238, .12);
+  --success: #34d399;
+  --success-soft: rgba(52, 211, 153, .12);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, .12);
+  --danger: #fb7185;
+  --danger-soft: rgba(251, 113, 133, .12);
+  --focus: #22d3ee;
+  --shadow: 0 16px 42px rgba(0, 0, 0, .22), inset 0 1px 0 rgba(255, 255, 255, .04);
+  --cyan: #22d3ee;
+  --violet: #a78bfa;
 }
 
 * {
@@ -43,8 +45,29 @@ body {
   min-height: 100dvh;
   margin: 0;
   color: var(--ink);
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 82% 8%, rgba(167, 139, 250, .28), transparent 32%),
+    radial-gradient(circle at 78% 88%, rgba(34, 211, 238, .12), transparent 30%),
+    linear-gradient(135deg, #050816 0%, #08111f 52%, #050814 100%);
   overflow-x: clip;
+}
+
+body:before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, .025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .025) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to bottom, black, transparent 88%);
+}
+
+.app-shell {
+  position: relative;
+  z-index: 1;
 }
 
 button,
