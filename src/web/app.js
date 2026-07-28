@@ -1322,6 +1322,61 @@ function monthlyCoverageLabel(rows) {
     : `${numberFormatter.format(rows.length)} 个自然月 · ${numberFormatter.format(partial)} 个仅部分覆盖`;
 }
 
+/**
+ * Exact day-grain history coverage.
+ *
+ * The rolling windows (today / 7d / 30d) are pre-aggregated quantities, not a
+ * time series. Only the dated rows below can carry a trend, so their real count
+ * is reported verbatim instead of implying 30 complete days or a full month.
+ */
+function trendHistoryState() {
+  const dates = [...new Set(
+    trendSourceRows()
+      .map((row) => String(row?.date || ''))
+      .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)),
+  )].sort();
+  const monthly = monthlyTrendRows();
+  return {
+    days: dates.length,
+    first: dates[0] || null,
+    last: dates.at(-1) || null,
+    requestedDays: RANGE_META[state.range].days,
+    completeMonths: monthly.filter((row) => row.complete).length,
+    partialMonths: monthly.filter((row) => !row.complete).length,
+  };
+}
+
+/** One sentence stating how many real business days exist right now. */
+function trendHistoryNotice() {
+  const history = trendHistoryState();
+  if (history.days === 0) return '当前还没有任何日粒度业务日事实，两张图都保持空态。';
+  return `当前真实日粒度历史只有 ${numberFormatter.format(history.days)} 个业务日（${history.first} → ${history.last}），不代表 30 个完整日或任何完整自然月。`;
+}
+
+/** Unmissable coverage banner: partial history must not be read as a full series. */
+function trendCoverageBanner() {
+  const history = trendHistoryState();
+  const scopeNote = normalizedQuery()
+    ? '货号搜索生效时不展示全局走势，避免把全局趋势冒充商品趋势。'
+    : '趋势随负责人、店铺范围联动。';
+  if (history.days === 0) {
+    return `
+      <aside class="quality-notice unknown trend-coverage-banner" aria-label="趋势历史覆盖">
+        <strong>日粒度历史尚未建立</strong>
+        <span>${escapeHtml(`没有可用业务日序列，因此不画任何趋势线；四个滚动窗口是预聚合数量，不会被当作历史时间序列补线。${scopeNote}`)}</span>
+      </aside>`;
+  }
+  const monthNote = history.completeMonths === 0
+    ? '目前没有任何完整自然月，月图只能作为部分覆盖参考'
+    : `${numberFormatter.format(history.completeMonths)} 个自然月完整 · ${numberFormatter.format(history.partialMonths)} 个仅部分覆盖`;
+  const incomplete = history.days < history.requestedDays;
+  return `
+    <aside class="quality-notice ${incomplete ? 'unknown' : 'complete'} trend-coverage-banner" aria-label="趋势历史覆盖">
+      <strong>${escapeHtml(`真实日粒度历史 ${numberFormatter.format(history.days)} 个业务日${incomplete ? `，少于当前窗口请求的 ${numberFormatter.format(history.requestedDays)} 日` : ''}`)}</strong>
+      <span>${escapeHtml(`区间 ${history.first} → ${history.last} · ${monthNote}；缺失的业务日和月份不会被补线或补零。${scopeNote}`)}</span>
+    </aside>`;
+}
+
 function renderMonthlyTrendChart() {
   const rows = monthlyTrendRows();
   if (!rows.length) {
@@ -1886,65 +1941,6 @@ function rankingCoverageNote(kind) {
     return '服务端返回范围待确认';
   }
   return `服务端返回 ${numberFormatter.format(meta.returnedCount)} / ${numberFormatter.format(meta.totalCount)} 条${meta.truncated === true ? '（已截断，未命中不代表没有销量）' : ''}`;
-}
-
-function homeRankList(items, kind, windowKey = state.range) {
-  if (!items.length) return emptyEvidence(
-    kind === 'store' ? '店铺排行不可用' : '商品排行不可用',
-    dimensionBoundary(kind),
-  );
-  const ranked = items
-    .filter((item) => isUnit(item?.unitsSold?.[windowKey]))
-    .sort((left, right) => right.unitsSold[windowKey] - left.unitsSold[windowKey])
-    .slice(0, 10);
-  if (!ranked.length) return emptyEvidence(
-    kind === 'store' ? '店铺排行不可用' : '商品排行不可用',
-    `${RANGE_META[windowKey]?.label || windowKey}没有可比的${kind === 'store' ? '店铺' : '货号'}销量事实。`,
-  );
-  const maximum = Math.max(...ranked.map((item) => item.unitsSold[windowKey]), 1);
-  return `
-    <ol class="rank-list">
-      ${ranked.map((item, index) => {
-        const value = item.unitsSold[windowKey];
-        const fill = Math.max(1, Math.ceil((value / maximum) * 10));
-        const isStore = kind === 'store';
-        const owner = isStore ? ownerNameForStore(item) : '';
-        const canonical = isStore ? null : isCanonicalProduct(item);
-        const name = isStore ? (item.name || item.code) : productCode(item, canonical);
-        const meta = isStore
-          ? [
-            ['店铺', item.code || '—'],
-            ['负责人', owner || '待分配'],
-            ['今日', `${formatUnits(item?.unitsSold?.today)} 件`],
-            ['近 30 日', `${formatUnits(item?.unitsSold?.last30Days)} 件`],
-          ]
-          : [
-            ['商品', productName(item)],
-            ['归属', canonical
-              ? (isUnit(item.storeCount) ? `跨店 ${item.storeCount} 店` : '跨店标准商品')
-              : (item.storeCode ? `店铺 ${item.storeCode}` : '店内身份待确认')],
-            ['今日', `${formatUnits(item?.unitsSold?.today)} 件`],
-            ['近 30 日', `${formatUnits(item?.unitsSold?.last30Days)} 件`],
-          ];
-        return `
-        <li class="rank-item rank-fill-${fill}">
-          <span class="rank-no">${index + 1}</span>
-          <span class="rank-main">
-            <span class="rank-title-line">
-              <span class="rank-name">${escapeHtml(name)}</span>
-              ${owner ? `<span class="rank-owner">负责人 ${escapeHtml(owner)}</span>` : ''}
-              ${canonical === null ? '' : `<span class="rank-identity ${canonical ? 'canonical' : 'local'}">${canonical ? '标准商品' : '店内身份'}</span>`}
-            </span>
-            <span class="rank-meta">${meta.map(([label, itemValue]) => `<span class="meta-part">${escapeHtml(label)} <b>${escapeHtml(itemValue)}</b></span>`).join('<i class="meta-sep">·</i>')}</span>
-          </span>
-          <span class="rank-value">${formatUnits(value)} 件<small>${escapeHtml(RANGE_META[windowKey]?.label || windowKey)}</small></span>
-        </li>`;
-      }).join('')}
-    </ol>`;
-}
-
-function compactRanking(items, kind) {
-  return homeRankList(items, kind, state.range);
 }
 
 function supplyDomain() {
@@ -3897,69 +3893,299 @@ function homePulseHref(route, quick = 'ALL', focus = null) {
   });
 }
 
-function homeBusinessPulse() {
-  const scope = scopedUnits();
-  const salesSignal = comparableDailySignal({ unitsSold: scope.units });
+/* --- home-decision-summary:start ---
+   Four evidence-backed decisions, each stating the fact, why it matters and
+   where to prove it. Only quantity, coverage, supply and identity facts feed
+   these cards; unknown, partial and legal zero stay distinguishable. */
+
+/** Today against the last complete day, never hiding that today is partial. */
+function pulseTodaySignal(units) {
+  const today = units?.today;
+  const yesterday = units?.yesterday;
+  if (!isUnit(today)) {
+    return {
+      label: '今日 vs 昨日',
+      value: '今日未知',
+      why: '今日窗口缺少可信数量事实，不能当作 0 判断经营节奏。',
+      evidence: `昨日 ${formatUnits(yesterday)} 件 · 今日仍在累计`,
+      tone: 'attention',
+      href: homePulseHref('system'),
+      linkLabel: '核对覆盖与同步',
+    };
+  }
+  if (!isUnit(yesterday)) {
+    return {
+      label: '今日 vs 昨日',
+      value: `今日 ${formatUnits(today)} 件`,
+      why: '缺完整昨日窗口，今日只能单独看累计量，不做增降结论。',
+      evidence: '昨日窗口不可比 · 今日仍在累计，尚未走完整日',
+      tone: 'attention',
+      href: homePulseHref('sales'),
+      linkLabel: '查看销量明细',
+    };
+  }
+  const delta = formatDelta(today, yesterday);
+  return {
+    label: '今日 vs 昨日',
+    value: `${formatUnits(today)} 件 · ${delta}`,
+    why: '今日仍在累计，与已走完的昨日相比只能作为进度参考，不能直接当作增降结论。',
+    evidence: `昨日 ${formatUnits(yesterday)} 件 · 今日为当日累计，非完整自然日`,
+    tone: '',
+    href: homePulseHref('sales'),
+    linkLabel: '查看销量明细',
+  };
+}
+
+/** Rolling 7-day daily average against the prior 23 days, only when comparable. */
+function pulseMomentumSignal(units) {
+  const signal = comparableDailySignal({ unitsSold: units });
+  if (signal.recent === null) {
+    return {
+      label: '近 7 日日均 vs 此前 23 日日均',
+      value: '不可比',
+      why: '缺少完整的近 7 日或近 30 日窗口时，任何日均对比都会失真。',
+      evidence: '近 7 日或此前 23 日窗口不完整 · 不用其他窗口替代',
+      tone: 'attention',
+      href: homePulseHref('sales'),
+      linkLabel: '查看销量窗口',
+    };
+  }
+  return {
+    label: '近 7 日日均 vs 此前 23 日日均',
+    value: signal.label,
+    why: '这是当前唯一同口径的趋势判断：两侧都是滚动窗口日均，不受今日未走完影响。',
+    evidence: `近 7 日日均 ${formatDailyAverage(signal.recent)} 件 · 此前 23 日日均 ${formatDailyAverage(signal.previous)} 件 · 滚动窗口不是历史时间序列`,
+    tone: signal.tone === 'blocked' ? 'attention' : '',
+    href: homePulseHref('sales', signal.tone === 'blocked' ? 'DECLINING' : 'GROWING'),
+    linkLabel: signal.tone === 'blocked' ? '查看下降货号' : '查看增长货号',
+  };
+}
+
+/** Supply urgency from current shortage, urgent, purchase and delivery facts. */
+function pulseSupplySignal() {
+  const inventoryRisks = scopedOperationRows(attentionRows('inventoryRisks'));
+  const adviceRisks = scopedOperationRows(attentionRows('stockAdviceRisks'));
   const purchaseRows = scopedOperationRows(attentionRows('purchaseOrderAttention'));
   const deliveryRows = scopedOperationRows(attentionRows('deliveryAttention'));
-  const inventoryRows = scopedOperationRows(attentionRows('inventoryRisks'));
-  const shortageRows = inventoryRows.filter(
+  const shortageRows = inventoryRisks.filter(
     (row) => isUnit(row.shortageQuantity) && row.shortageQuantity > 0,
   );
-  const stores = storeRowsForView();
-  const products = skuRowsForView();
-  const leadingStore = stores[0] || null;
-  const leadingProduct = products[0] || null;
+  const urgentRows = adviceRisks.filter(
+    (row) => isUnit(row.plannedUrgentQuantity) && row.plannedUrgentQuantity > 0,
+  );
+  const shortageMetric = riskWindowMetric(shortageRows, 'inventoryRisks', 'shortageQuantity');
+  const urgentMetric = riskWindowMetric(urgentRows, 'stockAdviceRisks', 'plannedUrgentQuantity');
+  const purchaseMetric = riskWindowMetric(purchaseRows, 'purchaseOrders', null, '条');
+  const deliveryMetric = riskWindowMetric(deliveryRows, 'deliveries', null, '条');
+  const hasInventoryDetail = attentionEvidence('inventoryRisks');
+  const hasAdviceDetail = attentionEvidence('stockAdviceRisks');
+  const urgentTotal = shortageRows.length + urgentRows.length;
+  const value = hasInventoryDetail || hasAdviceDetail
+    ? `缺货 ${shortageMetric.countLabel} · 急采 ${urgentMetric.countLabel}`
+    : '明细待接入';
+  return {
+    label: '供给紧迫度',
+    value,
+    why: '缺货和急采直接决定要不要今天补单；采购与交付关注决定在途能否接上。',
+    evidence: [
+      `采购关注 ${purchaseMetric.countLabel} · 交付关注 ${deliveryMetric.countLabel}`,
+      shortageMetric.note,
+      '仅统计已物化明细，未命中不等于无风险',
+    ].filter(Boolean).join(' · '),
+    tone: urgentTotal > 0 ? 'attention' : '',
+    href: homePulseHref('inventory', shortageRows.length ? 'SHORTAGE' : urgentRows.length ? 'URGENT' : 'ALL'),
+    linkLabel: '进入库存与备货工作台',
+  };
+}
+
+/** Same-day store coverage, identity confirmation and source freshness. */
+function pulseTrustSignal() {
+  const coverage = state.data?.salesCoverage || {};
   const quality = qualityState();
-  const momentumValue = salesSignal.comparable === false
-    ? '不可比'
-    : salesSignal.label;
-  const momentumNote = salesSignal.recent === null
-    ? '近 7 日或此前 23 日缺少完整销量窗口'
-    : `近 7 日日均 ${formatDailyAverage(salesSignal.recent)} 件 · 此前 23 日日均 ${formatDailyAverage(salesSignal.previous)} 件`;
-  const attentionCount = purchaseRows.length + deliveryRows.length;
-  const topEntity = leadingStore || leadingProduct;
-  const topEntityValue = leadingStore
-    ? (leadingStore.name || leadingStore.code)
-    : leadingProduct ? productCode(leadingProduct, isCanonicalProduct(leadingProduct)) : '暂无';
-  const topEntityNote = leadingStore
-    ? `${RANGE_META[state.range].label} ${formatUnits(leadingStore.unitsSold?.[state.range])} 件 · ${ownerNameForStore(leadingStore) || '负责人未分配'}`
-    : leadingProduct
-      ? `${RANGE_META[state.range].label} ${formatUnits(leadingProduct.unitsSold?.[state.range])} 件`
-      : '当前范围没有可排行的店铺或货号';
+  const identity = identityCoverage();
+  const covered = coverage.coveredStores;
+  const total = coverage.totalStores;
+  const sameDay = isUnit(covered) && isUnit(total)
+    ? `当日覆盖 ${numberFormatter.format(covered)} / ${numberFormatter.format(total)} 家店`
+    : '当日店铺覆盖待确认';
+  const reasons = [
+    isUnit(coverage.mixedStatisticsDateStores) && coverage.mixedStatisticsDateStores > 0
+      ? `${numberFormatter.format(coverage.mixedStatisticsDateStores)} 家店统计日混合`
+      : '',
+    isUnit(coverage.quarantinedRows) && coverage.quarantinedRows > 0
+      ? `${numberFormatter.format(coverage.quarantinedRows)} 行被隔离`
+      : '',
+  ].filter(Boolean);
+  return {
+    label: '数据与身份可信度',
+    value: `${coverageLabel()} · ${quality.label}`,
+    why: '覆盖不全或身份未归并时，排行和合计只能当作部分事实，不能当经营结论。',
+    evidence: [
+      sameDay,
+      reasons.length ? reasons.join(' · ') : '未发现统计日混合或隔离行',
+      `标准身份 ${numberFormatter.format(identity.confirmed)} / ${numberFormatter.format(identity.total)} 已确认`,
+      `事实业务日 ${businessDate() || '待确认'} · 数据生成 ${formatDateTime(state.data?.updatedAt)}`,
+    ].filter(Boolean).join(' · '),
+    tone: ['healthy', 'complete', 'legal_zero'].includes(quality.status) ? '' : 'attention',
+    href: homePulseHref('system'),
+    linkLabel: '查看数据健康',
+  };
+}
+
+function pulseCard(signal) {
   return `
-    <section class="business-pulse" aria-label="经营脉搏">
+    <a href="${escapeHtml(signal.href)}" class="pulse-card${signal.tone ? ` ${escapeHtml(signal.tone)}` : ''}">
+      <span>${escapeHtml(signal.label)}</span>
+      <strong>${escapeHtml(signal.value)}</strong>
+      <em class="pulse-why">${escapeHtml(signal.why)}</em>
+      <small>${escapeHtml(signal.evidence)}</small>
+      <b class="pulse-link">${escapeHtml(signal.linkLabel)} →</b>
+    </a>`;
+}
+
+function homeBusinessPulse() {
+  const units = scopedUnits().units;
+  const signals = [
+    pulseTodaySignal(units),
+    pulseMomentumSignal(units),
+    pulseSupplySignal(),
+    pulseTrustSignal(),
+  ];
+  return `
+    <section class="business-pulse" aria-label="经营决策摘要">
       <div class="business-pulse-head">
         <div>
           <span class="eyebrow">OPERATING PULSE</span>
           <h2>今日经营简报</h2>
         </div>
-        <p>只列需要判断和下钻的信号；金额、消费者订单和未知值不参与推导。</p>
+        <p>每张卡给出事实、为何关注和证据入口；金额、消费者订单和未知值不参与推导，合法 0 与未知分开表达。</p>
       </div>
       <div class="business-pulse-grid">
-        <a href="${escapeHtml(homePulseHref('sales', salesSignal.tone === 'blocked' ? 'DECLINING' : 'ALL'))}" class="pulse-card">
-          <span>销量动量</span>
-          <strong>${escapeHtml(momentumValue)}</strong>
-          <small>${escapeHtml(momentumNote)}</small>
-        </a>
-        <a href="${escapeHtml(homePulseHref('inventory', shortageRows.length ? 'SHORTAGE' : 'ALL'))}" class="pulse-card">
-          <span>供给与履约关注</span>
-          <strong>${numberFormatter.format(shortageRows.length)} 个缺货风险</strong>
-          <small>采购 / 交付关注 ${numberFormatter.format(attentionCount)} 条；只统计当前物化范围</small>
-        </a>
-        <a href="${escapeHtml(homePulseHref(leadingStore ? 'sales' : 'products'))}" class="pulse-card">
-          <span>优先下钻</span>
-          <strong>${escapeHtml(topEntityValue)}</strong>
-          <small>${escapeHtml(topEntityNote)}</small>
-        </a>
-        <a href="${escapeHtml(homePulseHref('system'))}" class="pulse-card ${quality.status === 'healthy' ? '' : 'attention'}">
-          <span>数据完整性</span>
-          <strong>${escapeHtml(quality.label)}</strong>
-          <small>${escapeHtml(quality.reason || '查看当前销量、供应链和同步覆盖')}</small>
-        </a>
+        ${signals.map(pulseCard).join('')}
       </div>
     </section>`;
 }
+/* --- home-decision-summary:end --- */
+
+/* --- home-ranking-tables:start ---
+   Two operational ranking tables replace the four single-window ranking cards.
+   Every row shows all four quantity windows plus the only comparable momentum
+   signal, its data-quality or identity boundary, and a scope-preserving
+   drilldown. Nothing is aggregated across identities that cannot be merged. */
+
+const HOME_RANK_LIMIT = 8;
+
+/** Rank by the active window, keeping unknown windows out of the ordering. */
+function homeRankedRows(items, windowKey = state.range) {
+  return items
+    .filter((item) => isUnit(item?.unitsSold?.[windowKey]))
+    .sort((left, right) => right.unitsSold[windowKey] - left.unitsSold[windowKey])
+    .slice(0, HOME_RANK_LIMIT);
+}
+
+function homeWindowCells(item) {
+  return WINDOW_KEYS
+    .map((key) => `<td class="number-column">${formatUnits(item?.unitsSold?.[key])}</td>`)
+    .join('');
+}
+
+function homeMomentumCell(item) {
+  const signal = comparableDailySignal(item);
+  const detail = signal.recent === null
+    ? '缺完整窗口'
+    : `${formatDailyAverage(signal.recent)} / ${formatDailyAverage(signal.previous)} 件·日`;
+  return `<td class="boundary-cell"><span class="row-status ${escapeHtml(signal.tone)}">${escapeHtml(signal.label)}</span><span>${escapeHtml(detail)}</span></td>`;
+}
+
+/** Store-level quality wording; a legal zero never reads as missing data. */
+function homeStoreQualityCell(item) {
+  const status = String(item?.qualityStatus || '');
+  const label = ({
+    healthy: '完整覆盖',
+    legal_zero: '合法零销量',
+    partial: '部分覆盖',
+    stale: '数据已过期',
+    error: '数据异常',
+    unavailable: '未接入',
+  })[status] || '覆盖待确认';
+  const businessDay = item?.businessDate || businessDate() || '待确认';
+  return `<td class="boundary-cell"><span class="row-status ${escapeHtml(qualityTone(status))}">${escapeHtml(label)}</span><span>${escapeHtml(`业务日 ${businessDay}`)}</span></td>`;
+}
+
+function homeStoreDrilldownHref(item) {
+  return serializeHashState({
+    route: 'sales',
+    owner: 'ALL',
+    store: String(item?.code || '').toUpperCase(),
+    range: state.range,
+    query: '',
+    quick: 'ALL',
+    salesSort: state.sales.sort,
+    productPage: 1,
+    standardPage: 1,
+  });
+}
+
+function homeProductDrilldownHref(item) {
+  const code = focusCodeFor(item, 'product');
+  return canonicalHref({
+    route: 'products',
+    storeCode: item?.storeCode || '',
+    range: state.range,
+    focus: code === '' ? null : { domain: 'product', storeCode: item?.storeCode || '', code },
+  });
+}
+
+function homeStoreRankingTable(rows) {
+  const ranked = homeRankedRows(rows);
+  if (!ranked.length) {
+    return emptyEvidence('店铺排行不可用', dimensionBoundary('store'));
+  }
+  return `
+    <div class="table-wrap">
+      <table class="data-table home-rank-table">
+        <caption class="sr-only">按当前窗口排序的店铺销量，含四个窗口与可比动量</caption>
+        <thead><tr><th scope="col">店铺 / 负责人</th>${WINDOW_KEYS.map((key) => `<th scope="col" class="number-column">${escapeHtml(RANGE_META[key].label)}</th>`).join('')}<th scope="col">可比动量</th><th scope="col">数据质量 / 覆盖</th><th scope="col">下钻</th></tr></thead>
+        <tbody>${ranked.map((item) => `
+          <tr>
+            <td class="entity-column"><strong>${escapeHtml(item.name || item.code || '店铺待确认')}</strong><span>${escapeHtml(`${item.code || '编码未知'} · 负责人 ${ownerNameForStore(item) || '待分配'}`)}</span></td>
+            ${homeWindowCells(item)}
+            ${homeMomentumCell(item)}
+            ${homeStoreQualityCell(item)}
+            <td><a class="text-link" href="${escapeHtml(homeStoreDrilldownHref(item))}">查看店铺销量 →</a></td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function homeProductRankingTable(rows) {
+  const ranked = homeRankedRows(rows);
+  if (!ranked.length) {
+    return emptyEvidence('商品排行不可用', dimensionBoundary('sku'));
+  }
+  return `
+    <div class="table-wrap">
+      <table class="data-table home-rank-table">
+        <caption class="sr-only">按当前窗口排序的货号销量，标准商品与店内身份分开</caption>
+        <thead><tr><th scope="col">货号 / 商品</th>${WINDOW_KEYS.map((key) => `<th scope="col" class="number-column">${escapeHtml(RANGE_META[key].label)}</th>`).join('')}<th scope="col">可比动量</th><th scope="col">身份边界</th><th scope="col">下钻</th></tr></thead>
+        <tbody>${ranked.map((item) => {
+          const canonical = isCanonicalProduct(item);
+          const boundary = canonical
+            ? (isUnit(item.storeCount) ? `跨店 ${numberFormatter.format(item.storeCount)} 店可合计` : '跨店标准商品')
+            : (item.storeCode ? `店铺 ${item.storeCode} 内身份，禁止跨店合并` : '店内身份待确认');
+          return `
+          <tr>
+            <td class="entity-column"><strong>${escapeHtml(productCode(item, canonical))}</strong><span>${escapeHtml(productName(item))}</span></td>
+            ${homeWindowCells(item)}
+            ${homeMomentumCell(item)}
+            <td class="boundary-cell"><span class="rank-identity ${canonical ? 'canonical' : 'local'}">${canonical ? '标准商品' : '店内身份'}</span><span>${escapeHtml(boundary)}</span></td>
+            <td><a class="text-link" href="${escapeHtml(homeProductDrilldownHref(item))}">查看商品身份 →</a></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+/* --- home-ranking-tables:end --- */
 
 function renderHome() {
   const coverage = identityCoverage();
@@ -3986,10 +4212,12 @@ function renderHome() {
       true,
     )}
     ${homeKpis()}
+    ${supplyRadar()}
     ${homeSectionHeading(
       '趋势',
-      '日图按业务日期取真实日粒度点，月图只按可证明的日粒度事实归自然月；两图都随负责人、店铺与货号范围联动。',
+      `日图按业务日期取真实日粒度点，月图只按可证明的日粒度事实归自然月；两图都随负责人、店铺与货号范围联动。${trendHistoryNotice()}`,
     )}
+    ${trendCoverageBanner()}
     <div class="trend-stack home-trend-stack">
       <article class="panel trend-panel">
         <h4>日销量趋势</h4>
@@ -4006,38 +4234,24 @@ function renderHome() {
     </div>
     ${homeSectionHeading(
       '排行榜',
-      '店铺排行与商品排行同时存在；标准商品与店铺本地 SKU 分别标记，未归并商品不会伪装成跨店标准商品。负责人姓名直接显示在店铺结果中。',
+      '两张运营排行表同时给出四个数量窗口和唯一可比的日均动量；标准商品与店铺本地 SKU 分别标记，未归并商品不会伪装成跨店标准商品。负责人姓名直接显示在店铺结果中。',
     )}
-    <section class="rank-grid">
+    <section class="rank-grid rank-tables">
       <article class="panel rank-panel">
-        <h4>店铺销量排行</h4>
-        <p class="sub">${escapeHtml(`${RANGE_META[state.range].label} · 当前范围 ${storeRows.length} 家店 · ${rankingCoverageNote('store')}`)}</p>
-        ${homeRankList(storeRows, 'store', state.range)}
-        <a class="text-link" href="#sales">查看完整店铺表 →</a>
+        <h4>店铺经营排行</h4>
+        <p class="sub">${escapeHtml(`按${RANGE_META[state.range].label}排序 · 当前范围 ${storeRows.length} 家店 · 前 ${Math.min(HOME_RANK_LIMIT, storeRows.length)} 行 · ${rankingCoverageNote('store')}`)}</p>
+        ${homeStoreRankingTable(storeRows)}
+        <p class="table-note">四个窗口同表比较，“—”表示该窗口未知而非 0；动量只用近 7 日日均对此前 23 日日均，不把滚动窗口当作历史时间序列。</p>
+        <a class="text-link" href="${escapeHtml(homePulseHref('sales'))}">查看完整店铺销量工作台 →</a>
       </article>
       <article class="panel rank-panel">
-        <h4>店铺近 30 日排行</h4>
-        <p class="sub">${escapeHtml(`滚动近 30 日 · 当前范围 ${storeRows.length} 家店 · 用于识别稳定规模`)}</p>
-        ${homeRankList(storeRows, 'store', 'last30Days')}
-        <a class="text-link" href="#sales">查看店铺销量分析 →</a>
-      </article>
-      <article class="panel rank-panel">
-        <h4>货号销量排行</h4>
-        <p class="sub">${escapeHtml(`${RANGE_META[state.range].label} · ${productIdentityLabel(productSource)} · ${rankingCoverageNote(productRankingKey)}`)}</p>
-        ${homeRankList(productRows, 'sku', state.range)}
-        <a class="text-link" href="#products">查看商品身份与完整排行 →</a>
-      </article>
-      <article class="panel rank-panel">
-        <h4>货号近 30 日排行</h4>
-        <p class="sub">${escapeHtml(`滚动近 30 日 · ${coverage.label} · 用于识别长期主力货号`)}</p>
-        ${homeRankList(productRows, 'sku', 'last30Days')}
-        <a class="text-link" href="#products">查看商品归并与明细 →</a>
+        <h4>货号经营排行</h4>
+        <p class="sub">${escapeHtml(`按${RANGE_META[state.range].label}排序 · ${productIdentityLabel(productSource)} · 前 ${Math.min(HOME_RANK_LIMIT, productRows.length)} 行 · ${coverage.label} · ${rankingCoverageNote(productRankingKey)}`)}</p>
+        ${homeProductRankingTable(productRows)}
+        <p class="table-note">标准商品可跨店合计，店内身份只在本店有效；服务端返回范围可能已截断，命中数不是 SHEIN 仓库全量货号数。</p>
+        <a class="text-link" href="${escapeHtml(homePulseHref('products'))}">查看完整商品身份与排行 →</a>
       </article>
     </section>
-    ${homeSectionHeading(
-      '运营提醒',
-      '汇总库存缺货、采购交付、商品身份、Webhook 与数据质量异常；每条给出来源、影响范围、严重度和建议查看的子页面。本批只读，不提供执行入口。',
-    )}
     ${renderOperationalPriorities({ home: true })}`;
 }
 

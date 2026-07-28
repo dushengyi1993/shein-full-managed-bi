@@ -51,20 +51,123 @@ test('home renders a compact head with scope, fact time and dataset state', asyn
   assert.match(strip, /不使用抓取时间冒充业务日期/);
   assert.match(strip, /窗口口径独立取数，不跨业务日混算/);
 
-  // Page order: head, truth strip, matrix, trends, rankings, alerts.
+  // Page order: head, truth strip, decision summary, matrix, supply radar,
+  // trends, ranking tables, alerts.
   const order = [
     'homeHeader()',
     'homeTruthStrip()',
+    'homeBusinessPulse()',
     '销售数据矩阵',
     'homeKpis()',
+    'supplyRadar()',
+    '趋势',
+    'trendCoverageBanner()',
     '日销量趋势',
     '月销量趋势',
     '排行榜',
-    '运营提醒',
+    'homeStoreRankingTable(storeRows)',
+    'homeProductRankingTable(productRows)',
     'renderOperationalPriorities({ home: true })',
   ].map((marker) => home.indexOf(marker));
   assert.ok(order.every((index) => index !== -1), '每个首页区块都必须存在');
   assert.deepEqual(order, [...order].sort((left, right) => left - right));
+});
+
+test('decision summary states each signal, why it matters and a scope-preserving drilldown', async () => {
+  const app = await read('src/web/app.js');
+  const pulse = functionBody(app, 'homeBusinessPulse');
+  const today = functionBody(app, 'pulseTodaySignal');
+  const momentum = functionBody(app, 'pulseMomentumSignal');
+  const supply = functionBody(app, 'pulseSupplySignal');
+  const trust = functionBody(app, 'pulseTrustSignal');
+  const card = functionBody(app, 'pulseCard');
+
+  // Four concrete decisions, in order, each rendered through one card helper.
+  for (const signal of [
+    'pulseTodaySignal(units)',
+    'pulseMomentumSignal(units)',
+    'pulseSupplySignal()',
+    'pulseTrustSignal()',
+  ]) {
+    assert.ok(pulse.includes(signal), signal);
+  }
+  assert.match(card, /signal\.why/);
+  assert.match(card, /signal\.evidence/);
+  assert.match(card, /signal\.linkLabel/);
+
+  // Today is never presented as a finished day.
+  assert.match(today, /今日 vs 昨日/);
+  assert.match(today, /今日仍在累计/);
+  assert.match(today, /今日为当日累计，非完整自然日/);
+  assert.match(today, /不能当作 0 判断经营节奏/);
+  assert.match(today, /缺完整昨日窗口/);
+  assert.match(today, /isUnit\(today\)/);
+  assert.match(today, /isUnit\(yesterday\)/);
+
+  // Momentum only exists where the two rolling windows are comparable.
+  assert.match(momentum, /近 7 日日均 vs 此前 23 日日均/);
+  assert.match(momentum, /comparableDailySignal\(\{ unitsSold: units \}\)/);
+  assert.match(momentum, /signal\.recent === null/);
+  assert.match(momentum, /'不可比'/);
+  assert.match(momentum, /滚动窗口不是历史时间序列/);
+  assert.match(momentum, /formatDailyAverage\(signal\.recent\)/);
+  assert.match(momentum, /formatDailyAverage\(signal\.previous\)/);
+
+  // Supply urgency uses current shortage, urgent, purchase and delivery facts
+  // together with honest returned/total coverage.
+  assert.match(supply, /attentionRows\('inventoryRisks'\)/);
+  assert.match(supply, /attentionRows\('stockAdviceRisks'\)/);
+  assert.match(supply, /attentionRows\('purchaseOrderAttention'\)/);
+  assert.match(supply, /attentionRows\('deliveryAttention'\)/);
+  assert.match(supply, /riskWindowMetric\(shortageRows, 'inventoryRisks', 'shortageQuantity'\)/);
+  assert.match(supply, /riskWindowMetric\(urgentRows, 'stockAdviceRisks', 'plannedUrgentQuantity'\)/);
+  assert.match(supply, /仅统计已物化明细，未命中不等于无风险/);
+  assert.match(supply, /shortageMetric\.note/);
+
+  // Trust names same-day coverage, mixed dates, quarantine and identity.
+  assert.match(trust, /coverage\.coveredStores/);
+  assert.match(trust, /coverage\.totalStores/);
+  assert.match(trust, /当日覆盖 \$\{numberFormatter\.format\(covered\)\} \/ \$\{numberFormatter\.format\(total\)\} 家店/);
+  assert.match(trust, /coverage\.mixedStatisticsDateStores/);
+  assert.match(trust, /coverage\.quarantinedRows/);
+  assert.match(trust, /identityCoverage\(\)/);
+  assert.match(trust, /标准身份 \$\{numberFormatter\.format\(identity\.confirmed\)\}/);
+  assert.match(trust, /businessDate\(\)/);
+
+  // Every card keeps the current scope and adds no amount or consumer metric.
+  for (const body of [today, momentum, supply, trust]) {
+    assert.match(body, /homePulseHref\(/);
+    assert.doesNotMatch(body, /[¥€]|\bSAR\b|\bRMB\b|\bGMV\b|订单数|利润|转化率|支付人数/i);
+  }
+});
+
+test('limited day-grain history is stated exactly and never padded into a full series', async () => {
+  const app = await read('src/web/app.js');
+  const history = functionBody(app, 'trendHistoryState');
+  const notice = functionBody(app, 'trendHistoryNotice');
+  const banner = functionBody(app, 'trendCoverageBanner');
+
+  // Coverage is counted from real dated rows only.
+  assert.match(history, /trendSourceRows\(\)/);
+  assert.match(history, /\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//);
+  assert.match(history, /days: dates\.length/);
+  assert.match(history, /completeMonths/);
+  assert.match(history, /partialMonths/);
+  assert.doesNotMatch(history, /last7Days|last30Days/);
+
+  assert.match(notice, /当前真实日粒度历史只有/);
+  assert.match(notice, /不代表 30 个完整日或任何完整自然月/);
+
+  // The banner is a visible block, not a footnote, and refuses to fabricate.
+  assert.match(banner, /class="quality-notice/);
+  assert.match(banner, /trend-coverage-banner/);
+  assert.match(banner, /日粒度历史尚未建立/);
+  assert.match(banner, /不会被当作历史时间序列补线/);
+  assert.match(banner, /缺失的业务日和月份不会被补线或补零/);
+  assert.match(banner, /少于当前窗口请求的/);
+  assert.match(banner, /目前没有任何完整自然月/);
+  // A product search must not show a global trend as if it were product-scoped.
+  assert.match(banner, /货号搜索生效时不展示全局走势，避免把全局趋势冒充商品趋势/);
 });
 
 test('sales matrix compares today, yesterday, last 7 and last 30 days with coverage and comparable change', async () => {
@@ -173,38 +276,82 @@ test('daily trend uses real day-grain points and the month trend refuses fabrica
   assert.match(monthCoverage, /暂无可归月的日粒度事实/);
 });
 
-test('rankings keep stores with owners and never merge canonical products with store-local SKUs', async () => {
+test('ranking tables show all four windows, comparable momentum and honest boundaries', async () => {
   const app = await read('src/web/app.js');
-  const rankList = functionBody(app, 'homeRankList');
+  const storeTable = functionBody(app, 'homeStoreRankingTable');
+  const productTable = functionBody(app, 'homeProductRankingTable');
+  const windowCells = functionBody(app, 'homeWindowCells');
+  const momentumCell = functionBody(app, 'homeMomentumCell');
+  const qualityCell = functionBody(app, 'homeStoreQualityCell');
+  const ranked = functionBody(app, 'homeRankedRows');
   const rankMeta = functionBody(app, 'rankingCoverageNote');
   const home = functionBody(app, 'renderHome');
 
-  // Store rows show the owner name inline.
-  assert.match(rankList, /const owner = isStore \? ownerNameForStore\(item\) : ''/);
-  assert.match(rankList, /class="rank-owner">负责人 \$\{escapeHtml\(owner\)\}/);
-  assert.match(rankList, /\['负责人', owner \|\| '待分配'\]/);
+  // The four quantity windows are columns, sourced from WINDOW_KEYS only.
+  assert.match(windowCells, /WINDOW_KEYS/);
+  assert.match(windowCells, /formatUnits\(item\?\.unitsSold\?\.\[key\]\)/);
+  assert.doesNotMatch(windowCells, /\|\| 0|\?\? 0/);
+  for (const table of [storeTable, productTable]) {
+    assert.match(table, /WINDOW_KEYS\.map\(\(key\) => `<th scope="col" class="number-column">\$\{escapeHtml\(RANGE_META\[key\]\.label\)\}<\/th>`\)/);
+    assert.match(table, /homeWindowCells\(item\)/);
+    assert.match(table, /homeMomentumCell\(item\)/);
+    assert.match(table, /<th scope="col">可比动量<\/th>/);
+    assert.match(table, /homeRankedRows\(rows\)/);
+    assert.match(table, /emptyEvidence\(/);
+  }
 
-  // Product rows are explicitly canonical or store-local.
-  assert.match(rankList, /const canonical = isStore \? null : isCanonicalProduct\(item\)/);
-  assert.match(rankList, /class="rank-identity \$\{canonical \? 'canonical' : 'local'\}"/);
-  assert.match(rankList, /canonical \? '标准商品' : '店内身份'/);
-  assert.match(rankList, /'跨店标准商品'/);
-  assert.match(rankList, /'店内身份待确认'/);
-  assert.match(rankList, /item\.storeCode \? `店铺 \$\{item\.storeCode\}`/);
-  assert.match(rankList, /productCode\(item, canonical\)/);
-  assert.doesNotMatch(rankList, /aggregateCanonicalProducts/);
+  // Momentum is the only comparable trend signal and names its two averages.
+  assert.match(momentumCell, /comparableDailySignal\(item\)/);
+  assert.match(momentumCell, /signal\.recent === null/);
+  assert.match(momentumCell, /'缺完整窗口'/);
+  assert.match(momentumCell, /formatDailyAverage\(signal\.recent\)/);
+  assert.match(momentumCell, /formatDailyAverage\(signal\.previous\)/);
 
-  // Both store and product rankings exist, with server coverage disclosed.
+  // Unknown windows never enter the ordering and the list stays bounded.
+  assert.match(ranked, /isUnit\(item\?\.unitsSold\?\.\[windowKey\]\)/);
+  assert.match(ranked, /slice\(0, HOME_RANK_LIMIT\)/);
+  assert.match(app, /const HOME_RANK_LIMIT = 8/);
+
+  // Store rows carry the owner inline plus data quality and coverage.
+  assert.match(storeTable, /<th scope="col">店铺 \/ 负责人<\/th>/);
+  assert.match(storeTable, /<th scope="col">数据质量 \/ 覆盖<\/th>/);
+  assert.match(storeTable, /ownerNameForStore\(item\)/);
+  assert.match(storeTable, /负责人 \$\{ownerNameForStore\(item\) \|\| '待分配'\}/);
+  assert.match(storeTable, /homeStoreQualityCell\(item\)/);
+  assert.match(storeTable, /homeStoreDrilldownHref\(item\)/);
+  assert.match(qualityCell, /legal_zero: '合法零销量'/);
+  assert.match(qualityCell, /partial: '部分覆盖'/);
+  assert.match(qualityCell, /unavailable: '未接入'/);
+  assert.match(qualityCell, /'覆盖待确认'/);
+  assert.match(qualityCell, /业务日 \$\{businessDay\}/);
+
+  // Product rows separate canonical identity from store-local identity.
+  assert.match(productTable, /<th scope="col">身份边界<\/th>/);
+  assert.match(productTable, /isCanonicalProduct\(item\)/);
+  assert.match(productTable, /class="rank-identity \$\{canonical \? 'canonical' : 'local'\}"/);
+  assert.match(productTable, /canonical \? '标准商品' : '店内身份'/);
+  assert.match(productTable, /跨店 \$\{numberFormatter\.format\(item\.storeCount\)\} 店可合计/);
+  assert.match(productTable, /'跨店标准商品'/);
+  assert.match(productTable, /店铺 \$\{item\.storeCode\} 内身份，禁止跨店合并/);
+  assert.match(productTable, /'店内身份待确认'/);
+  assert.match(productTable, /productCode\(item, canonical\)/);
+  assert.match(productTable, /homeProductDrilldownHref\(item\)/);
+  assert.doesNotMatch(productTable, /aggregateCanonicalProducts/);
+
+  // Both tables sit on home with server coverage and truncation disclosed.
   assert.match(rankMeta, /rankingMeta\?\.\[kind\]/);
   assert.match(rankMeta, /服务端返回范围待确认/);
   assert.match(rankMeta, /已截断，未命中不代表没有销量/);
-  assert.match(home, /homeRankList\(storeRows, 'store', state\.range\)/);
-  assert.match(home, /homeRankList\(storeRows, 'store', 'last30Days'\)/);
-  assert.match(home, /homeRankList\(productRows, 'sku', state\.range\)/);
-  assert.match(home, /homeRankList\(productRows, 'sku', 'last30Days'\)/);
+  assert.match(home, /homeStoreRankingTable\(storeRows\)/);
+  assert.match(home, /homeProductRankingTable\(productRows\)/);
   assert.match(home, /rankingCoverageNote\('store'\)/);
   assert.match(home, /rankingCoverageNote\(productRankingKey\)/);
   assert.match(home, /标准商品与店铺本地 SKU 分别标记，未归并商品不会伪装成跨店标准商品/);
+  assert.match(home, /不把滚动窗口当作历史时间序列/);
+  assert.match(home, /命中数不是 SHEIN 仓库全量货号数/);
+  // Home only shows a bounded top list and links to the full workspaces.
+  assert.match(home, /查看完整店铺销量工作台 →/);
+  assert.match(home, /查看完整商品身份与排行 →/);
 });
 
 test('owner scope lives inside the single store selector with no separate owner control', async () => {

@@ -602,6 +602,19 @@ body {
   padding: 14px;
 }
 
+/* The two operational ranking tables stack full width: eight columns cannot
+   stay readable side by side, and each table scrolls inside .table-wrap rather
+   than widening the document. */
+.rank-tables {
+  grid-template-columns: 1fr;
+}
+
+.rank-tables .table-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .rank-list {
   display: grid;
   gap: 6px;
@@ -1298,9 +1311,18 @@ body {
   .matrix-footnote,
   .chart-legend,
   .head p,
-  .home-topbar p {
+  .home-topbar p,
+  .rank-tables .table-note,
+  .pulse-card .pulse-why,
+  .pulse-card small {
     overflow-wrap: anywhere;
     white-space: normal;
+  }
+
+  /* Eight columns cannot fit 390px; the table scrolls inside its own wrapper
+     while the document keeps its width. */
+  .home-rank-table {
+    min-width: 640px;
   }
 
   .home-trend-stack .trend-chart {

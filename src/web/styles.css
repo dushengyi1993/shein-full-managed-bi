@@ -592,6 +592,48 @@ a {
   line-height: 1.45;
 }
 
+/* "Why it matters" sits between the fact and its evidence, in ink so the
+   reason reads as a statement rather than a footnote. */
+.pulse-card .pulse-why {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.pulse-card .pulse-link {
+  align-self: start;
+  margin-top: 0.15rem;
+  color: var(--accent-dark);
+  font-size: 0.73rem;
+  font-weight: 700;
+}
+
+.pulse-card strong {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Home ranking tables: four windows plus momentum and boundary columns. */
+.home-rank-table {
+  font-size: 0.78rem;
+}
+
+.home-rank-table .number-column {
+  font-variant-numeric: tabular-nums;
+}
+
+.home-rank-table .boundary-cell span + span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.trend-coverage-banner strong {
+  font-variant-numeric: tabular-nums;
+}
+
 .table-pagination p,
 .query-refresh-note {
   color: var(--muted);

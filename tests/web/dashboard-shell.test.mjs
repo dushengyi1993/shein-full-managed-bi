@@ -49,7 +49,7 @@ test('full-managed primary navigation follows the sales-first semi-managed inter
   assert.match(styles, /@media \(max-width: 620px\)/);
 });
 
-test('home shell keeps the sales matrix, trend stack, four-rank grid and operating alerts', async () => {
+test('home shell keeps the decision flow, sales matrix, trends, ranking tables and operating alerts', async () => {
   const [html, app, parityStyles] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
@@ -71,18 +71,17 @@ test('home shell keeps the sales matrix, trend stack, four-rank grid and operati
   assert.match(app, /财务与结算/);
   assert.match(app, /日销量趋势/);
   assert.match(app, /月销量趋势/);
-  assert.match(app, /店铺销量排行/);
-  assert.match(app, /店铺近 30 日排行/);
-  assert.match(app, /货号销量排行/);
-  assert.match(app, /货号近 30 日排行/);
+  assert.match(app, /店铺经营排行/);
+  assert.match(app, /货号经营排行/);
   assert.match(app, /function metricMatrix\(/);
-  assert.match(app, /function homeRankList\(/);
+  assert.match(app, /function homeStoreRankingTable\(/);
+  assert.match(app, /function homeProductRankingTable\(/);
   assert.match(app, /function homeHeader\(\)/);
   assert.match(app, /function homeTruthStrip\(\)/);
   assert.match(app, /class="home-topbar"/);
   assert.match(app, /class="kpi-six sales-matrix"/);
   assert.match(app, /class="trend-stack home-trend-stack"/);
-  assert.match(app, /class="rank-grid"/);
+  assert.match(app, /class="rank-grid rank-tables"/);
   assert.match(app, /renderOperationalPriorities\(\{ home: true \}\)/);
   assert.match(parityStyles, /\.kpi-six\s*\{/);
   assert.match(parityStyles, /\.metric-matrix\s*\{/);
@@ -141,7 +140,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.5`));
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.6`));
   }
   assert.doesNotMatch(html, /v=20260728\.[123]/);
   for (const sheet of [styles, parityStyles]) {
