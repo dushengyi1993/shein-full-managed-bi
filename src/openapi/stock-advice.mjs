@@ -7,6 +7,10 @@ import {
 
 export const STOCK_GOODS_LIST_PATH = '/open-api/openapi-business-backend/stock-goods-list';
 export const MAX_STOCK_GOODS_PAGE_SIZE = 20;
+const VOLATILE_ADVERTISED_COUNT_ERRORS = Object.freeze(new Set([
+  'PAGINATION_COUNT_DRIFT',
+  'PAGINATION_COUNT_MISMATCH',
+]));
 
 function record(value, location) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -176,14 +180,13 @@ function normalizeFetchedAt(value) {
   return date.toISOString();
 }
 
-export async function fetchFullManagedStockAdvice(client, {
-  pageSize = 20,
-  maxPages = 10_000,
-  maxItems = 1_000_000,
-  fetchedAt = new Date(),
-} = {}) {
-  requirePositiveInteger(pageSize, 'pageSize', MAX_STOCK_GOODS_PAGE_SIZE);
-  const result = await fetchPageSequence({
+async function fetchStockAdvicePageSequence(client, {
+  pageSize,
+  maxPages,
+  maxItems,
+  enforceAdvertisedCount,
+}) {
+  return fetchPageSequence({
     pageSize,
     maxPages,
     maxItems,
@@ -220,7 +223,7 @@ export async function fetchFullManagedStockAdvice(client, {
       return { rows: info.list, count };
     },
     getItems: ({ rows }) => rows,
-    getAdvertisedCount: ({ count }) => count,
+    getAdvertisedCount: enforceAdvertisedCount ? ({ count }) => count : () => null,
     fingerprintItem: (row) => ({
       id: row?.id ?? null,
       skc: row?.skc ?? null,
@@ -228,6 +231,92 @@ export async function fetchFullManagedStockAdvice(client, {
       skuList: row?.skuList ?? null,
     }),
   });
+}
+
+function stockAdviceMembershipEvidence(items, sweep) {
+  const keys = items.map((value, index) => {
+    const row = record(value, `sweep${sweep}.items[${index}]`);
+    return nonEmptyText(row.skc, `sweep${sweep}.items[${index}].skc`);
+  });
+  const uniqueKeys = new Set(keys);
+  if (uniqueKeys.size !== keys.length) {
+    throw new SheinOpenApiError(
+      'PAGINATION_DUPLICATE_ITEM',
+      'stock-advice sweep returned a duplicate SKC membership key',
+      { sweep, observedCount: keys.length, uniqueCount: uniqueKeys.size },
+    );
+  }
+  const sortedKeys = [...uniqueKeys].sort((left, right) => left.localeCompare(right));
+  return Object.freeze({
+    count: sortedKeys.length,
+    fingerprint: payloadFingerprint(sortedKeys),
+  });
+}
+
+async function fetchStableStockAdviceSequence(client, options) {
+  const first = await fetchStockAdvicePageSequence(client, {
+    ...options,
+    enforceAdvertisedCount: false,
+  });
+  const second = await fetchStockAdvicePageSequence(client, {
+    ...options,
+    enforceAdvertisedCount: false,
+  });
+  const firstMembership = stockAdviceMembershipEvidence(first.items, 1);
+  const secondMembership = stockAdviceMembershipEvidence(second.items, 2);
+  if (
+    firstMembership.count !== secondMembership.count
+    || firstMembership.fingerprint !== secondMembership.fingerprint
+  ) {
+    throw new SheinOpenApiError(
+      'PAGINATION_UNSTABLE_MEMBERSHIP',
+      'stock-advice membership changed across two complete terminal sweeps',
+      {
+        firstCount: firstMembership.count,
+        secondCount: secondMembership.count,
+      },
+    );
+  }
+  return second;
+}
+
+export async function fetchFullManagedStockAdvice(client, {
+  pageSize = 20,
+  maxPages = 10_000,
+  maxItems = 1_000_000,
+  fetchedAt = new Date(),
+} = {}) {
+  requirePositiveInteger(pageSize, 'pageSize', MAX_STOCK_GOODS_PAGE_SIZE);
+  const sequenceOptions = {
+    pageSize,
+    maxPages,
+    maxItems,
+  };
+  let result;
+  let paginationConsistency = 'STRICT_ADVERTISED_COUNT';
+  try {
+    result = await fetchStockAdvicePageSequence(client, {
+      ...sequenceOptions,
+      enforceAdvertisedCount: true,
+    });
+    if (
+      result.advertisedCount !== null
+      && result.advertisedCount !== result.items.length
+    ) {
+      throw new SheinOpenApiError(
+        'PAGINATION_COUNT_MISMATCH',
+        'terminal stock-advice membership differs from the advertised count',
+        {
+          advertisedCount: result.advertisedCount,
+          observedItems: result.items.length,
+        },
+      );
+    }
+  } catch (error) {
+    if (!VOLATILE_ADVERTISED_COUNT_ERRORS.has(error?.code)) throw error;
+    result = await fetchStableStockAdviceSequence(client, sequenceOptions);
+    paginationConsistency = 'DOUBLE_SWEEP_IDENTITY';
+  }
   const goods = result.items.map((row, index) => mapGoods(row, `items[${index}]`));
   const observationTime = normalizeFetchedAt(fetchedAt);
   const advice = goods.flatMap(({ skus, ...product }) => (
@@ -252,10 +341,13 @@ export async function fetchFullManagedStockAdvice(client, {
       status: 'COMPLETE',
       requestedCount: null,
       observedCount: advice.length,
-      explanation: 'All pages reached a short or empty terminal page; an empty list clears the current advice projection.',
+      explanation: paginationConsistency === 'STRICT_ADVERTISED_COUNT'
+        ? 'All pages reached a short or empty terminal page with one stable advertised count; an empty list clears the current advice projection.'
+        : 'Two consecutive terminal sweeps returned the same unique SKC membership after the live advertised count changed; values come from the second sweep.',
     }),
     pages: result.pages,
     terminalReason: result.terminalReason,
-    requestFingerprint: payloadFingerprint({ pageSize }),
+    paginationConsistency,
+    requestFingerprint: payloadFingerprint({ pageSize, paginationConsistency }),
   });
 }

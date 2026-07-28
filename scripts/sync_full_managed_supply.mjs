@@ -386,7 +386,12 @@ function safeErrorCode(error, fallback) {
 
 export function isRetryableSupplyFetchError(error) {
   const code = safeErrorCode(error, '');
-  if (['NETWORK_ERROR', 'REQUEST_TIMEOUT', 'PAGINATION_COUNT_DRIFT'].includes(code)) {
+  if ([
+    'NETWORK_ERROR',
+    'REQUEST_TIMEOUT',
+    'PAGINATION_COUNT_DRIFT',
+    'PAGINATION_UNSTABLE_MEMBERSHIP',
+  ].includes(code)) {
     return true;
   }
   if (code !== 'HTTP_ERROR') return false;
@@ -1290,6 +1295,9 @@ async function syncStore({
         recordCount: countForPrimaryDomain('stock-advice', advice),
         pageCount: advice.pages.length,
         terminalReason: advice.terminalReason,
+        ...(advice.paginationConsistency
+          ? { paginationConsistency: advice.paginationConsistency }
+          : {}),
         attemptCount: stockAdviceAttempt.attemptCount,
         retryCount: stockAdviceAttempt.retryCount,
       }));

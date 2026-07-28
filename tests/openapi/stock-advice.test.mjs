@@ -65,6 +65,7 @@ test('stock-goods-list honors pageSize<=20, fully paginates and removes summary 
   assert.equal(result.advice[0].skuCode, 'SKU-1');
   assert.equal(result.advice[0].productStatuses.supplyStatus.code, '7');
   assert.equal(result.advice[0].productStatuses.stockWarningStatus.observed, false);
+  assert.equal(result.paginationConsistency, 'STRICT_ADVERTISED_COUNT');
 });
 
 test('stock-goods-list rejects page sizes over the official maximum', async () => {
@@ -167,4 +168,90 @@ test('stock advice still rejects decimal actual unit counts', async () => {
     () => fetchFullManagedStockAdvice(client),
     /stock must be a non-negative integer/,
   );
+});
+
+test('live advertised-count drift falls back to two equal terminal membership sweeps', async () => {
+  const calls = [];
+  let sweep = 0;
+  const client = {
+    async request(_path, { body }) {
+      if (body.pageNum === 1) sweep += 1;
+      calls.push({ sweep, page: body.pageNum });
+      const rows = body.pageNum <= 2 ? [goods(body.pageNum)] : [];
+      const count = sweep === 1 && body.pageNum === 2 ? 3 : 2;
+      return {
+        data: {
+          code: '0',
+          info: { count, list: rows },
+        },
+      };
+    },
+  };
+
+  const result = await fetchFullManagedStockAdvice(client, {
+    pageSize: 1,
+    fetchedAt: '2026-07-26T12:00:00Z',
+  });
+
+  assert.deepEqual(calls, [
+    { sweep: 1, page: 1 },
+    { sweep: 1, page: 2 },
+    { sweep: 2, page: 1 },
+    { sweep: 2, page: 2 },
+    { sweep: 2, page: 3 },
+    { sweep: 3, page: 1 },
+    { sweep: 3, page: 2 },
+    { sweep: 3, page: 3 },
+  ]);
+  assert.equal(result.paginationConsistency, 'DOUBLE_SWEEP_IDENTITY');
+  assert.equal(result.goods.length, 2);
+  assert.equal(result.advice.length, 2);
+  assert.match(result.coverage.explanation, /second sweep/i);
+});
+
+test('two terminal fallback sweeps with different SKC membership fail closed', async () => {
+  let sweep = 0;
+  const client = {
+    async request(_path, { body }) {
+      if (body.pageNum === 1) sweep += 1;
+      const suffix = sweep === 3 && body.pageNum === 2 ? 'CHANGED' : body.pageNum;
+      const rows = body.pageNum <= 2 ? [goods(suffix)] : [];
+      const count = sweep === 1 && body.pageNum === 2 ? 3 : 2;
+      return {
+        data: {
+          code: '0',
+          info: { count, list: rows },
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => fetchFullManagedStockAdvice(client, { pageSize: 1 }),
+    (error) => error.code === 'PAGINATION_UNSTABLE_MEMBERSHIP'
+      && error.details.firstCount === 2
+      && error.details.secondCount === 2,
+  );
+});
+
+test('a stale lower advertised count also requires two stable membership sweeps', async () => {
+  let sweep = 0;
+  const client = {
+    async request(_path, { body }) {
+      if (body.pageNum === 1) sweep += 1;
+      return {
+        data: {
+          code: '0',
+          info: {
+            count: sweep === 1 ? 0 : 1,
+            list: body.pageNum === 1 ? [goods('ONLY')] : [],
+          },
+        },
+      };
+    },
+  };
+
+  const result = await fetchFullManagedStockAdvice(client);
+  assert.equal(result.paginationConsistency, 'DOUBLE_SWEEP_IDENTITY');
+  assert.equal(result.goods.length, 1);
 });

@@ -141,7 +141,12 @@ function stockResponse(body) {
 }
 
 test('supply retry policy is limited to transient transport and pagination failures', () => {
-  for (const code of ['NETWORK_ERROR', 'REQUEST_TIMEOUT', 'PAGINATION_COUNT_DRIFT']) {
+  for (const code of [
+    'NETWORK_ERROR',
+    'REQUEST_TIMEOUT',
+    'PAGINATION_COUNT_DRIFT',
+    'PAGINATION_UNSTABLE_MEMBERSHIP',
+  ]) {
     assert.equal(isRetryableSupplyFetchError({ code }), true);
   }
   assert.equal(isRetryableSupplyFetchError({
