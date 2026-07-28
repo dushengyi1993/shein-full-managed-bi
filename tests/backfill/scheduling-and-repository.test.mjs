@@ -396,6 +396,33 @@ test('openRun persists one instant for created_at and started_at and detects sco
   );
   assert.ok(driftPool.statements.some((item) => item.text === 'ROLLBACK'));
 
+  const replayPool = fakePool((text) => {
+    if (text.includes('INSERT INTO ops.backfill_run')) return { rows: [], rowCount: 0 };
+    if (text.includes('FROM ops.backfill_run')) {
+      return {
+        rows: [{
+          backfill_run_id: 11,
+          status: 'FAILED',
+          requested_domains: ['deliveries'],
+          requested_store_codes: ['DL5477'],
+          // node-postgres represents a DATE as local midnight, not a UTC
+          // instant. Exact replay must compare its local calendar fields.
+          requested_from: new Date(2026, 6, 1),
+          requested_to: new Date(2026, 6, 2),
+          window_span_days: 1,
+          planned_window_count: 2,
+          created_by: 'codex.batch2',
+        }],
+        rowCount: 1,
+      };
+    }
+    return { rows: [], rowCount: 0 };
+  });
+  assert.deepEqual(
+    await createBackfillRepository({ pool: replayPool }).openRun(request),
+    { backfillRunId: 11, resumed: true, status: 'FAILED' },
+  );
+
   await assert.rejects(
     () => createBackfillRepository({ pool: insertPool }).openRun({ ...request, startedAt: 'nope' }),
     (error) => error.code === 'BACKFILL_RUN_START_INSTANT_INVALID',

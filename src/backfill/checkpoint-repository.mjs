@@ -16,7 +16,16 @@ function timestamp(value) {
 }
 
 function dateText(value) {
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (value instanceof Date) {
+    // node-postgres parses a PostgreSQL DATE as local midnight. Converting that
+    // value to UTC first moves it to the previous calendar day on the
+    // Asia/Shanghai production host and makes an exact plan replay look like
+    // scope drift. Read the local calendar fields instead; DATE has no timezone.
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
   return String(value ?? '').slice(0, 10);
 }
 
