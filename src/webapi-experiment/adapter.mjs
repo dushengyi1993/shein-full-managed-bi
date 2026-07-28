@@ -7,6 +7,7 @@ import {
 import {
   payloadFingerprint,
   schemaHash,
+  schemaPathCatalog,
   validateEndpointRequest,
   validateEndpointResponse,
 } from './schema.mjs';
@@ -114,6 +115,7 @@ export function createWebApiExperimentAdapter({
         illegalDecimalCount: 0,
         unknownMetricCount: 0,
         discoveredMetaIndexIds: NO_DISCOVERED_IDS,
+        responseSchemaPaths: NO_DISCOVERED_IDS,
       });
     }
 
@@ -144,9 +146,11 @@ export function createWebApiExperimentAdapter({
         illegalDecimalCount: 0,
         unknownMetricCount: 0,
         discoveredMetaIndexIds: NO_DISCOVERED_IDS,
+        responseSchemaPaths: NO_DISCOVERED_IDS,
       });
     }
 
+    const responseSchemaPaths = schemaPathCatalog(transportResult?.body ?? null);
     const httpStatus = Number.isSafeInteger(transportResult?.httpStatus)
       ? transportResult.httpStatus
       : null;
@@ -168,6 +172,7 @@ export function createWebApiExperimentAdapter({
         illegalDecimalCount: 0,
         unknownMetricCount: 0,
         discoveredMetaIndexIds: NO_DISCOVERED_IDS,
+        responseSchemaPaths,
       });
     }
 
@@ -192,6 +197,7 @@ export function createWebApiExperimentAdapter({
         illegalDecimalCount: 0,
         unknownMetricCount: 0,
         discoveredMetaIndexIds: NO_DISCOVERED_IDS,
+        responseSchemaPaths,
       });
     }
 
@@ -230,6 +236,7 @@ export function createWebApiExperimentAdapter({
         illegalDecimalCount: 0,
         unknownMetricCount: 0,
         discoveredMetaIndexIds: NO_DISCOVERED_IDS,
+        responseSchemaPaths,
       });
     }
 
@@ -252,6 +259,7 @@ export function createWebApiExperimentAdapter({
       // Technical ids only, so a reviewed metric-detail stage can be planned
       // explicitly. Never a label, a caliber or a metric value.
       discoveredMetaIndexIds: discoveredMetaIndexIdsFor(endpoint, validatedResponse),
+      responseSchemaPaths,
     });
   }
 

@@ -318,6 +318,7 @@ test('an authorized execute run is sequential, persists once and always cleans u
             observations: [],
             rejected: [],
             discoveredMetaIndexIds: [60, 353],
+            responseSchemaPaths: ['$:object', '$.list:array'],
           };
         },
       }),
@@ -343,6 +344,7 @@ test('an authorized execute run is sequential, persists once and always cleans u
   ]);
   // Acceptance 2: technical ids travel; no label or value exists in the output.
   assert.deepEqual(result.probes[0].discoveredMetaIndexIds, [60, 353]);
+  assert.deepEqual(result.probes[0].responseSchemaPaths, ['$:object', '$.list:array']);
   assert.equal(result.probes[0].persisted, true);
   assert.doesNotThrow(() => assertSafeCliOutput(result));
   // The safe projection carries no Profile key and no metric label.

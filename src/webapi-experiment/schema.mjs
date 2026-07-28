@@ -51,6 +51,72 @@ export function payloadFingerprint(value) {
   return createHash('sha256').update(stableStringify(value ?? null), 'utf8').digest('hex');
 }
 
+const SCHEMA_PATH_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const SENSITIVE_SCHEMA_KEY_PATTERN =
+  /cookie|token|secret|password|authorization|credential|session|csrf|api[-_]?key/i;
+
+function safeSchemaKey(value) {
+  const key = String(value ?? '');
+  if (SCHEMA_PATH_KEY_PATTERN.test(key) && !SENSITIVE_SCHEMA_KEY_PATTERN.test(key)) {
+    return key;
+  }
+  const digest = createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 12);
+  return `key_${digest}`;
+}
+
+/**
+ * Bounded, value-free response shape evidence for live contract review.
+ *
+ * Only field paths and JavaScript types are returned. Suspicious, oversized or
+ * non-identifier keys are replaced by a digest, traversal depth and entry count
+ * are capped, and no scalar value can enter the catalog.
+ */
+export function schemaPathCatalog(value, {
+  maxPaths = 80,
+  maxDepth = 6,
+} = {}) {
+  if (!Number.isSafeInteger(maxPaths) || maxPaths < 1 || maxPaths > 200) {
+    throw new TypeError('maxPaths must be a bounded positive integer');
+  }
+  if (!Number.isSafeInteger(maxDepth) || maxDepth < 1 || maxDepth > 10) {
+    throw new TypeError('maxDepth must be a bounded positive integer');
+  }
+  const paths = new Set();
+  const add = (path, type) => {
+    if (paths.size < maxPaths) paths.add(`${path}:${type}`);
+  };
+  const walk = (node, path, depth) => {
+    if (paths.size >= maxPaths) return;
+    if (depth > maxDepth) {
+      add(path, 'depth_limit');
+      return;
+    }
+    if (node === null || node === undefined) {
+      add(path, 'null');
+      return;
+    }
+    if (Array.isArray(node)) {
+      add(path, 'array');
+      for (const member of node) {
+        walk(member, `${path}[]`, depth + 1);
+        if (paths.size >= maxPaths) break;
+      }
+      return;
+    }
+    if (typeof node === 'object') {
+      add(path, 'object');
+      for (const key of Object.keys(node).sort()) {
+        walk(node[key], `${path}.${safeSchemaKey(key)}`, depth + 1);
+        if (paths.size >= maxPaths) break;
+      }
+      return;
+    }
+    add(path, typeof node);
+  };
+  walk(value, '$', 0);
+  return Object.freeze([...paths].sort());
+}
+
 function requireIntegerArray(value, field) {
   if (!Array.isArray(value) || value.length === 0 || value.length > 200) {
     throw new WebApiContractError(

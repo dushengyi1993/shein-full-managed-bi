@@ -103,6 +103,8 @@ function safeProbeProjection(entry) {
     rejectedCount: entry.rejectedCount ?? 0,
     // Opaque platform ids only; a catalog stage needs them to plan stage B.
     discoveredMetaIndexIds: entry.discoveredMetaIndexIds ?? [],
+    // Bounded field paths and JavaScript types only; never response values.
+    responseSchemaPaths: entry.responseSchemaPaths ?? [],
     sanitizedErrorCode: entry.sanitizedErrorCode ?? null,
     persisted: entry.persisted === true,
   };
@@ -186,6 +188,7 @@ export async function runExperimentPlan({
         probes.push(safeProbeProjection({
           ...result.batch,
           discoveredMetaIndexIds: result.discoveredMetaIndexIds ?? [],
+          responseSchemaPaths: result.responseSchemaPaths ?? [],
           persisted: persistence?.webapiFetchBatchId !== undefined,
         }));
         const succeeded = result.batch.resultStatus === 'SCHEMA_ONLY';
@@ -238,6 +241,7 @@ export async function runExperimentPlan({
         observationCount: 0,
         rejectedCount: 0,
         discoveredMetaIndexIds: [],
+        responseSchemaPaths: [],
         sanitizedErrorCode: failureCode,
         persisted: false,
       });

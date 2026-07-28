@@ -25,7 +25,10 @@ import {
 } from '../../src/webapi-experiment/profile-guard.mjs';
 import { createWebApiExperimentAdapter } from '../../src/webapi-experiment/adapter.mjs';
 import { assertSecretFreeOutput } from '../../src/webapi-experiment/redaction.mjs';
-import { validateEndpointResponse } from '../../src/webapi-experiment/schema.mjs';
+import {
+  schemaPathCatalog,
+  validateEndpointResponse,
+} from '../../src/webapi-experiment/schema.mjs';
 
 const projectRoot = new URL('../../', import.meta.url);
 
@@ -297,6 +300,28 @@ test('a rejected envelope stores a FAILED batch with a schema hash and no discov
   assert.match(result.batch.sanitizedErrorCode, /^[A-Z][A-Z0-9_]+$/);
   assert.deepEqual(result.discoveredMetaIndexIds, []);
   assert.equal(result.observations.length, 0);
+  assert.deepEqual(result.responseSchemaPaths, [
+    '$.code:string',
+    '$.info.meta:object',
+    '$.info:object',
+    '$.msg:string',
+    '$:object',
+  ]);
+});
+
+test('schema path evidence is bounded, value-free and digests sensitive keys', () => {
+  const value = {
+    info: [{ metaIndexId: 60, label: 'never-output-this-value' }],
+    accessToken: 'never-output-this-secret',
+    'unexpected value key': 12,
+  };
+  const paths = schemaPathCatalog(value, { maxPaths: 20, maxDepth: 4 });
+  const serialized = JSON.stringify(paths);
+  assert.match(serialized, /\$\.info\[\]\.metaIndexId:number/);
+  assert.match(serialized, /key_[0-9a-f]{12}/);
+  assert.doesNotMatch(serialized, /accessToken|unexpected value key|never-output/i);
+  assert.ok(paths.length <= 20);
+  assert.ok(Object.isFrozen(paths));
 });
 
 test('the experiment layer never writes a formal fact, mart or dashboard value', async () => {
