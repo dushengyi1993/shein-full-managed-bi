@@ -54,7 +54,14 @@ BEGIN
         'fact.warehouse_inventory_snapshot',
         'fact.stock_advice_snapshot',
         'fact.shortage_event',
-        'ops.reconciliation_result'
+        'ops.reconciliation_result',
+        'ops.backfill_run',
+        'ops.backfill_window',
+        'ops.backfill_checkpoint',
+        'raw.webapi_fetch_batch',
+        'raw.webapi_metric_observation',
+        'dim.webapi_metric_definition',
+        'ops.webapi_session_health'
     ]
     LOOP
         IF to_regclass(required_name) IS NULL THEN
@@ -73,7 +80,9 @@ BEGIN
         'ops.reject_webhook_runtime_heartbeat_mutation()',
         'ops.guard_webhook_store_gate_recovery()',
         'ops.reopen_webhook_authorization_gate_after_probe(text,bigint)',
-        'ops.reject_supply_append_only_mutation()'
+        'ops.reject_supply_append_only_mutation()',
+        'ops.reject_webapi_evidence_mutation()',
+        'ops.guard_backfill_checkpoint_progress()'
     ]
     LOOP
         IF to_regprocedure(required_name) IS NULL THEN
@@ -89,9 +98,10 @@ BEGIN
             'sheinfm_sales_loader',
             'sheinfm_supply_loader',
             'sheinfm_webhook_ingress',
-            'sheinfm_webhook_worker'
+            'sheinfm_webhook_worker',
+            'sheinfm_webapi_loader'
         ])
-    ) <> 5 THEN
+    ) <> 6 THEN
         RAISE EXCEPTION 'runtime capability role set is incomplete';
     END IF;
     FOR role_row IN
@@ -103,7 +113,8 @@ BEGIN
             'sheinfm_sales_loader',
             'sheinfm_supply_loader',
             'sheinfm_webhook_ingress',
-            'sheinfm_webhook_worker'
+            'sheinfm_webhook_worker',
+            'sheinfm_webapi_loader'
         ])
     LOOP
         IF role_row.rolcanlogin
@@ -126,10 +137,37 @@ BEGIN
             'sheinfm_sales_login',
             'sheinfm_supply_login',
             'sheinfm_webhook_ingress_login',
-            'sheinfm_webhook_worker_login'
+            'sheinfm_webhook_worker_login',
+            'sheinfm_webapi_login'
         ])
-    ) <> 5 THEN
+    ) <> 6 THEN
         RAISE EXCEPTION 'runtime LOGIN role set is incomplete';
+    END IF;
+
+    -- The isolated WebAPI login is deliberately NOINHERIT: it holds no privilege
+    -- until it explicitly runs SET ROLE sheinfm_webapi_loader.
+    SELECT role_view.*, role_secret.rolpassword AS actual_password
+    INTO role_row
+    FROM pg_roles AS role_view
+    JOIN pg_authid AS role_secret ON role_secret.oid = role_view.oid
+    WHERE role_view.rolname = 'sheinfm_webapi_login';
+    IF NOT FOUND
+       OR NOT role_row.rolcanlogin
+       OR role_row.rolinherit
+       OR role_row.rolsuper
+       OR role_row.rolcreatedb
+       OR role_row.rolcreaterole
+       OR role_row.rolreplication
+       OR role_row.rolbypassrls
+       OR role_row.actual_password IS NULL
+       OR role_row.actual_password NOT LIKE 'SCRAM-SHA-256$%' THEN
+        RAISE EXCEPTION 'sheinfm_webapi_login is not a safe NOINHERIT login';
+    END IF;
+    IF NOT pg_has_role('sheinfm_webapi_login', 'sheinfm_webapi_loader', 'MEMBER') THEN
+        RAISE EXCEPTION 'sheinfm_webapi_login lacks its capability group';
+    END IF;
+    IF NOT has_database_privilege('sheinfm_webapi_login', current_database(), 'CONNECT') THEN
+        RAISE EXCEPTION 'sheinfm_webapi_login cannot connect';
     END IF;
     FOR role_row IN
         SELECT role_view.*, role_secret.rolpassword AS actual_password
@@ -202,6 +240,7 @@ BEGIN
         'sheinfm_supply_login',
         'sheinfm_webhook_ingress_login',
         'sheinfm_webhook_worker_login',
+        'sheinfm_webapi_login',
         'sheinfm_app'
     ])
       AND (member.rolname, granted.rolname) NOT IN (
@@ -209,7 +248,8 @@ BEGIN
         ('sheinfm_sales_login', 'sheinfm_sales_loader'),
         ('sheinfm_supply_login', 'sheinfm_supply_loader'),
         ('sheinfm_webhook_ingress_login', 'sheinfm_webhook_ingress'),
-        ('sheinfm_webhook_worker_login', 'sheinfm_webhook_worker')
+        ('sheinfm_webhook_worker_login', 'sheinfm_webhook_worker'),
+        ('sheinfm_webapi_login', 'sheinfm_webapi_loader')
       )
     LIMIT 1;
     IF FOUND THEN
@@ -656,6 +696,147 @@ BEGIN
         RAISE EXCEPTION 'webhook worker privilege boundary is invalid';
     END IF;
 
+    -- WebAPI experiment loader: positive on its own isolated evidence layer.
+    FOREACH required_name IN ARRAY ARRAY[
+        'raw.webapi_fetch_batch',
+        'raw.webapi_metric_observation',
+        'ops.webapi_session_health'
+    ]
+    LOOP
+        IF NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'SELECT')
+           OR NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'INSERT')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'UPDATE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'DELETE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'TRUNCATE') THEN
+            RAISE EXCEPTION 'WebAPI experiment evidence boundary is invalid for %',
+                required_name;
+        END IF;
+    END LOOP;
+    IF NOT has_table_privilege(
+        'sheinfm_webapi_loader', 'dim.webapi_metric_definition', 'SELECT'
+    ) OR has_table_privilege(
+        'sheinfm_webapi_loader', 'dim.webapi_metric_definition', 'INSERT'
+    ) OR has_table_privilege(
+        'sheinfm_webapi_loader', 'dim.webapi_metric_definition', 'UPDATE'
+    ) OR has_table_privilege(
+        'sheinfm_webapi_loader', 'dim.webapi_metric_definition', 'DELETE'
+    ) THEN
+        RAISE EXCEPTION 'WebAPI metric definition must stay human-reviewed and read-only';
+    END IF;
+
+    -- WebAPI experiment loader: negative everywhere else, including the store
+    -- dimension, credential-bearing webhook receipts and the backfill plane.
+    FOREACH required_name IN ARRAY ARRAY[
+        'dim.store',
+        'fact.full_sku_sales_snapshot',
+        'fact.inventory_snapshot',
+        'fact.purchase_order',
+        'fact.delivery',
+        'fact.stock_advice_snapshot',
+        'mart.full_store_sales_latest',
+        'mart.full_product_sales_latest',
+        'raw.openapi_fetch_batch',
+        'raw.openapi_fetch_page',
+        'raw.webhook_receipt',
+        'ops.webhook_job',
+        'ops.operational_event',
+        'ops.sales_business_watermark',
+        'ops.employee_principal',
+        'ops.employee_store_assignment',
+        'ops.backfill_run',
+        'ops.backfill_window',
+        'ops.backfill_checkpoint',
+        'dim.canonical_product',
+        'dim.full_sku_canonical_assignment'
+    ]
+    LOOP
+        FOREACH privilege_name IN ARRAY ARRAY[
+            'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'
+        ]
+        LOOP
+            IF has_table_privilege('sheinfm_webapi_loader', required_name, privilege_name) THEN
+                RAISE EXCEPTION 'WebAPI experiment loader retained % on %',
+                    privilege_name, required_name;
+            END IF;
+        END LOOP;
+    END LOOP;
+    IF has_schema_privilege('sheinfm_webapi_loader', 'fact', 'USAGE')
+       OR has_schema_privilege('sheinfm_webapi_loader', 'mart', 'USAGE') THEN
+        RAISE EXCEPTION 'WebAPI experiment loader must not reach fact or mart schemas';
+    END IF;
+
+    -- Existing component roles must not gain WebAPI write access.
+    FOREACH required_name IN ARRAY ARRAY[
+        'raw.webapi_fetch_batch',
+        'raw.webapi_metric_observation',
+        'ops.webapi_session_health',
+        'dim.webapi_metric_definition'
+    ]
+    LOOP
+        FOREACH expected_group IN ARRAY ARRAY[
+            'sheinfm_sales_login',
+            'sheinfm_supply_login',
+            'sheinfm_webhook_ingress_login',
+            'sheinfm_webhook_worker_login',
+            'sheinfm_materializer_login',
+            'sheinfm_app'
+        ]
+        LOOP
+            FOREACH privilege_name IN ARRAY ARRAY[
+                'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'
+            ]
+            LOOP
+                IF has_table_privilege(expected_group, required_name, privilege_name) THEN
+                    RAISE EXCEPTION 'runtime principal % gained % on WebAPI relation %',
+                        expected_group, privilege_name, required_name;
+                END IF;
+            END LOOP;
+        END LOOP;
+    END LOOP;
+
+    -- Backfill control plane: only the two verified OpenAPI domain loaders write
+    -- it, the ledgers stay non-deletable, and identity columns stay immutable.
+    FOREACH expected_group IN ARRAY ARRAY['sheinfm_sales_login', 'sheinfm_supply_login']
+    LOOP
+        IF NOT has_table_privilege(expected_group, 'ops.backfill_run', 'INSERT')
+           OR NOT has_table_privilege(expected_group, 'ops.backfill_window', 'INSERT')
+           OR NOT has_table_privilege(expected_group, 'ops.backfill_checkpoint', 'INSERT')
+           OR NOT has_table_privilege(expected_group, 'ops.backfill_checkpoint', 'UPDATE')
+           OR has_table_privilege(expected_group, 'ops.backfill_run', 'DELETE')
+           OR has_table_privilege(expected_group, 'ops.backfill_window', 'DELETE')
+           OR has_table_privilege(expected_group, 'ops.backfill_checkpoint', 'DELETE')
+           OR has_table_privilege(expected_group, 'ops.backfill_window', 'TRUNCATE') THEN
+            RAISE EXCEPTION 'backfill control-plane boundary is invalid for %',
+                expected_group;
+        END IF;
+        FOREACH required_name IN ARRAY ARRAY[
+            'window_key', 'store_code', 'domain', 'adapter_key',
+            'window_start', 'window_end', 'capability_status'
+        ]
+        LOOP
+            IF has_column_privilege(
+                expected_group, 'ops.backfill_window', required_name, 'UPDATE'
+            ) THEN
+                RAISE EXCEPTION
+                    'backfill window identity column % is updatable by %',
+                    required_name, expected_group;
+            END IF;
+        END LOOP;
+        IF has_column_privilege(expected_group, 'ops.backfill_run', 'plan_hash', 'UPDATE')
+           OR has_column_privilege(expected_group, 'ops.backfill_run', 'mode', 'UPDATE') THEN
+            RAISE EXCEPTION 'backfill run plan identity is updatable by %', expected_group;
+        END IF;
+    END LOOP;
+    IF NOT has_table_privilege('sheinfm_materializer_login', 'ops.backfill_run', 'SELECT')
+       OR has_table_privilege('sheinfm_materializer_login', 'ops.backfill_run', 'INSERT')
+       OR has_table_privilege('sheinfm_materializer_login', 'ops.backfill_checkpoint', 'UPDATE') THEN
+        RAISE EXCEPTION 'materializer backfill projection must stay read-only';
+    END IF;
+    IF has_table_privilege('sheinfm_webhook_worker_login', 'ops.backfill_checkpoint', 'UPDATE')
+       OR has_table_privilege('sheinfm_webhook_ingress_login', 'ops.backfill_window', 'INSERT') THEN
+        RAISE EXCEPTION 'webhook runtimes must not touch the backfill control plane';
+    END IF;
+
     -- Every identity writer has exactly the sequence capability needed for
     -- nextval. This list covers all 0001-0006 runtime-write identities.
     FOR sequence_row IN
@@ -699,7 +880,18 @@ BEGIN
             ('sheinfm_webhook_ingress_login', 'ops.webhook_runtime_heartbeat', 'webhook_runtime_heartbeat_id'),
             ('sheinfm_webhook_worker_login', 'ops.webhook_runtime_heartbeat', 'webhook_runtime_heartbeat_id'),
             ('sheinfm_webhook_worker_login', 'ops.operational_event', 'operational_event_id'),
-            ('sheinfm_webhook_worker_login', 'ops.webhook_hydration_directive', 'hydration_directive_id')
+            ('sheinfm_webhook_worker_login', 'ops.webhook_hydration_directive', 'hydration_directive_id'),
+            ('sheinfm_sales_login', 'ops.backfill_run', 'backfill_run_id'),
+            ('sheinfm_sales_login', 'ops.backfill_window', 'backfill_window_id'),
+            ('sheinfm_sales_login', 'ops.backfill_checkpoint', 'backfill_checkpoint_id'),
+            ('sheinfm_supply_login', 'ops.backfill_run', 'backfill_run_id'),
+            ('sheinfm_supply_login', 'ops.backfill_window', 'backfill_window_id'),
+            ('sheinfm_supply_login', 'ops.backfill_checkpoint', 'backfill_checkpoint_id'),
+            -- The WebAPI login is NOINHERIT, so its sequence USAGE is asserted on
+            -- the capability group it must SET ROLE into.
+            ('sheinfm_webapi_loader', 'raw.webapi_fetch_batch', 'webapi_fetch_batch_id'),
+            ('sheinfm_webapi_loader', 'raw.webapi_metric_observation', 'webapi_metric_observation_id'),
+            ('sheinfm_webapi_loader', 'ops.webapi_session_health', 'webapi_session_health_id')
         ) AS expected(role_name, table_name, column_name)
     LOOP
         sequence_name := pg_get_serial_sequence(
@@ -812,7 +1004,9 @@ BEGIN
         'ops.reject_webhook_runtime_heartbeat_mutation()',
         'ops.guard_webhook_store_gate_recovery()',
         'ops.reopen_webhook_authorization_gate_after_probe(text,bigint)',
-        'ops.reject_supply_append_only_mutation()'
+        'ops.reject_supply_append_only_mutation()',
+        'ops.reject_webapi_evidence_mutation()',
+        'ops.guard_backfill_checkpoint_progress()'
     ]
     LOOP
         FOREACH expected_group IN ARRAY ARRAY[
@@ -826,6 +1020,8 @@ BEGIN
             'sheinfm_webhook_ingress_login',
             'sheinfm_webhook_worker',
             'sheinfm_webhook_worker_login',
+            'sheinfm_webapi_loader',
+            'sheinfm_webapi_login',
             'sheinfm_app'
         ]
         LOOP

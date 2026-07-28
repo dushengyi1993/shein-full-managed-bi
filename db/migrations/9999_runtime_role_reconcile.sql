@@ -3,6 +3,7 @@
 \getenv sheinfm_supply_password SHEIN_FM_SUPPLY_DB_PASSWORD
 \getenv sheinfm_webhook_ingress_password SHEIN_FM_WEBHOOK_INGRESS_DB_PASSWORD
 \getenv sheinfm_webhook_worker_password SHEIN_FM_WEBHOOK_WORKER_DB_PASSWORD
+\getenv sheinfm_webapi_login_password SHEIN_FM_WEBAPI_LOGIN_DB_PASSWORD
 
 BEGIN;
 
@@ -12,6 +13,7 @@ SELECT 1 / CASE WHEN length(:'sheinfm_sales_password') >= 24 THEN 1 ELSE 0 END;
 SELECT 1 / CASE WHEN length(:'sheinfm_supply_password') >= 24 THEN 1 ELSE 0 END;
 SELECT 1 / CASE WHEN length(:'sheinfm_webhook_ingress_password') >= 24 THEN 1 ELSE 0 END;
 SELECT 1 / CASE WHEN length(:'sheinfm_webhook_worker_password') >= 24 THEN 1 ELSE 0 END;
+SELECT 1 / CASE WHEN length(:'sheinfm_webapi_login_password') >= 24 THEN 1 ELSE 0 END;
 
 DO $$
 DECLARE
@@ -61,7 +63,14 @@ BEGIN
         'fact.warehouse_inventory_snapshot',
         'fact.stock_advice_snapshot',
         'fact.shortage_event',
-        'ops.reconciliation_result'
+        'ops.reconciliation_result',
+        'ops.backfill_run',
+        'ops.backfill_window',
+        'ops.backfill_checkpoint',
+        'raw.webapi_fetch_batch',
+        'raw.webapi_metric_observation',
+        'dim.webapi_metric_definition',
+        'ops.webapi_session_health'
     ]
     LOOP
         IF to_regclass(relation_name) IS NULL THEN
@@ -80,7 +89,9 @@ BEGIN
         'ops.reject_webhook_runtime_heartbeat_mutation()',
         'ops.guard_webhook_store_gate_recovery()',
         'ops.reopen_webhook_authorization_gate_after_probe(text,bigint)',
-        'ops.reject_supply_append_only_mutation()'
+        'ops.reject_supply_append_only_mutation()',
+        'ops.reject_webapi_evidence_mutation()',
+        'ops.guard_backfill_checkpoint_progress()'
     ]
     LOOP
         IF to_regprocedure(function_name) IS NULL THEN
@@ -107,6 +118,11 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_webhook_ingres
 SELECT 'CREATE ROLE sheinfm_webhook_worker NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_webhook_worker')
 \gexec
+-- Isolated WebAPI experiment capability group. It owns only the experiment
+-- evidence layer and must never gain OpenAPI sales/supply or Webhook access.
+SELECT 'CREATE ROLE sheinfm_webapi_loader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_webapi_loader')
+\gexec
 
 SELECT 'CREATE ROLE sheinfm_materializer_login LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS'
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_materializer_login')
@@ -123,8 +139,15 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_webhook_ingres
 SELECT 'CREATE ROLE sheinfm_webhook_worker_login LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS'
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_webhook_worker_login')
 \gexec
+-- The WebAPI login is NOINHERIT: it holds no privilege until it explicitly
+-- executes SET ROLE sheinfm_webapi_loader, so an accidental connection cannot
+-- read or write anything at all.
+SELECT 'CREATE ROLE sheinfm_webapi_login LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_webapi_login')
+\gexec
 
 ALTER ROLE sheinfm_materializer_ro PASSWORD NULL NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+ALTER ROLE sheinfm_webapi_loader PASSWORD NULL NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE sheinfm_sales_loader PASSWORD NULL NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE sheinfm_supply_loader PASSWORD NULL NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE sheinfm_webhook_ingress PASSWORD NULL NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
@@ -155,6 +178,11 @@ SELECT format(
     :'sheinfm_webhook_worker_password'
 )
 \gexec
+SELECT format(
+    'ALTER ROLE sheinfm_webapi_login PASSWORD %L LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2',
+    :'sheinfm_webapi_login_password'
+)
+\gexec
 
 ALTER ROLE sheinfm_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 
@@ -176,6 +204,7 @@ BEGIN
             'sheinfm_supply_login',
             'sheinfm_webhook_ingress_login',
             'sheinfm_webhook_worker_login',
+            'sheinfm_webapi_login',
             'sheinfm_app'
         ])
     LOOP
@@ -193,6 +222,7 @@ GRANT sheinfm_sales_loader TO sheinfm_sales_login;
 GRANT sheinfm_supply_loader TO sheinfm_supply_login;
 GRANT sheinfm_webhook_ingress TO sheinfm_webhook_ingress_login;
 GRANT sheinfm_webhook_worker TO sheinfm_webhook_worker_login;
+GRANT sheinfm_webapi_loader TO sheinfm_webapi_login;
 
 SELECT current_database() AS sheinfm_runtime_database
 \gset
@@ -201,17 +231,19 @@ REVOKE ALL PRIVILEGES ON DATABASE :"sheinfm_runtime_database" FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON DATABASE :"sheinfm_runtime_database"
 FROM sheinfm_app,
      sheinfm_materializer_ro, sheinfm_sales_loader, sheinfm_supply_loader,
-     sheinfm_webhook_ingress, sheinfm_webhook_worker,
+     sheinfm_webhook_ingress, sheinfm_webhook_worker, sheinfm_webapi_loader,
      sheinfm_materializer_login, sheinfm_sales_login, sheinfm_supply_login,
-     sheinfm_webhook_ingress_login, sheinfm_webhook_worker_login;
+     sheinfm_webhook_ingress_login, sheinfm_webhook_worker_login,
+     sheinfm_webapi_login;
 
 REVOKE ALL PRIVILEGES ON SCHEMA raw, dim, fact, mart, ops FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON SCHEMA raw, dim, fact, mart, ops
 FROM sheinfm_app,
      sheinfm_materializer_ro, sheinfm_sales_loader, sheinfm_supply_loader,
-     sheinfm_webhook_ingress, sheinfm_webhook_worker,
+     sheinfm_webhook_ingress, sheinfm_webhook_worker, sheinfm_webapi_loader,
      sheinfm_materializer_login, sheinfm_sales_login, sheinfm_supply_login,
-     sheinfm_webhook_ingress_login, sheinfm_webhook_worker_login;
+     sheinfm_webhook_ingress_login, sheinfm_webhook_worker_login,
+     sheinfm_webapi_login;
 
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA raw, dim, fact, mart, ops FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA raw, dim, fact, mart, ops FROM PUBLIC;
@@ -328,7 +360,11 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA raw, dim, fact, mart, ops
 GRANT CONNECT ON DATABASE :"sheinfm_runtime_database"
 TO sheinfm_app,
    sheinfm_materializer_ro, sheinfm_sales_loader, sheinfm_supply_loader,
-   sheinfm_webhook_ingress, sheinfm_webhook_worker;
+   sheinfm_webhook_ingress, sheinfm_webhook_worker, sheinfm_webapi_loader;
+-- NOINHERIT: the login itself needs CONNECT, since SET ROLE happens after the
+-- connection is already established.
+GRANT CONNECT ON DATABASE :"sheinfm_runtime_database"
+TO sheinfm_webapi_login;
 
 GRANT USAGE ON SCHEMA raw, dim, fact, mart, ops
 TO sheinfm_materializer_ro, sheinfm_app;
@@ -338,6 +374,9 @@ GRANT USAGE ON SCHEMA raw, dim, fact, ops
 TO sheinfm_supply_loader;
 GRANT USAGE ON SCHEMA raw, dim, ops
 TO sheinfm_webhook_ingress, sheinfm_webhook_worker;
+-- The WebAPI experiment never needs fact or mart usage at all.
+GRANT USAGE ON SCHEMA raw, dim, ops
+TO sheinfm_webapi_loader;
 
 GRANT EXECUTE ON FUNCTION ops.distinct_identity_evidence_count(text[])
 TO sheinfm_supply_loader;
@@ -490,6 +529,46 @@ TO sheinfm_webhook_worker;
 GRANT SELECT, INSERT ON ops.webhook_runtime_heartbeat
 TO sheinfm_webhook_worker;
 
+-- WebAPI experiment loader: only its own isolated evidence layer. It appends
+-- batches, observations and session health, reads back its own rows for the
+-- idempotent replay check, and reads reviewed metric definitions. It never gains
+-- SELECT or INSERT on OpenAPI sales/supply facts, webhook private objects, marts
+-- or any other schema.
+GRANT SELECT, INSERT ON
+    raw.webapi_fetch_batch,
+    raw.webapi_metric_observation,
+    ops.webapi_session_health
+TO sheinfm_webapi_loader;
+GRANT SELECT ON dim.webapi_metric_definition
+TO sheinfm_webapi_loader;
+
+-- Backfill control plane. Only the two OpenAPI domain loaders may open runs and
+-- record windows/checkpoints, because only they own a verified adapter contract.
+-- The WebAPI experiment loader is deliberately absent here.
+GRANT SELECT, INSERT ON ops.backfill_run, ops.backfill_window
+TO sheinfm_sales_loader, sheinfm_supply_loader;
+GRANT UPDATE (status, completed_at, sanitized_error_code) ON ops.backfill_run
+TO sheinfm_sales_loader, sheinfm_supply_loader;
+GRANT UPDATE (
+    execution_status,
+    quality_status,
+    attempt_count,
+    accepted_row_count,
+    rejected_row_count,
+    expected_page_count,
+    observed_page_count,
+    source_business_watermark,
+    schema_fingerprint,
+    next_retry_at,
+    sanitized_error_code,
+    updated_at
+) ON ops.backfill_window
+TO sheinfm_sales_loader, sheinfm_supply_loader;
+GRANT SELECT, INSERT, UPDATE ON ops.backfill_checkpoint
+TO sheinfm_sales_loader, sheinfm_supply_loader;
+GRANT SELECT ON ops.backfill_run, ops.backfill_window, ops.backfill_checkpoint
+TO sheinfm_materializer_ro;
+
 DO $$
 DECLARE
     grant_row record;
@@ -536,7 +615,16 @@ BEGIN
             ('sheinfm_webhook_ingress', 'ops.webhook_runtime_heartbeat', 'webhook_runtime_heartbeat_id'),
             ('sheinfm_webhook_worker', 'ops.webhook_runtime_heartbeat', 'webhook_runtime_heartbeat_id'),
             ('sheinfm_webhook_worker', 'ops.operational_event', 'operational_event_id'),
-            ('sheinfm_webhook_worker', 'ops.webhook_hydration_directive', 'hydration_directive_id')
+            ('sheinfm_webhook_worker', 'ops.webhook_hydration_directive', 'hydration_directive_id'),
+            ('sheinfm_webapi_loader', 'raw.webapi_fetch_batch', 'webapi_fetch_batch_id'),
+            ('sheinfm_webapi_loader', 'raw.webapi_metric_observation', 'webapi_metric_observation_id'),
+            ('sheinfm_webapi_loader', 'ops.webapi_session_health', 'webapi_session_health_id'),
+            ('sheinfm_sales_loader', 'ops.backfill_run', 'backfill_run_id'),
+            ('sheinfm_sales_loader', 'ops.backfill_window', 'backfill_window_id'),
+            ('sheinfm_sales_loader', 'ops.backfill_checkpoint', 'backfill_checkpoint_id'),
+            ('sheinfm_supply_loader', 'ops.backfill_run', 'backfill_run_id'),
+            ('sheinfm_supply_loader', 'ops.backfill_window', 'backfill_window_id'),
+            ('sheinfm_supply_loader', 'ops.backfill_checkpoint', 'backfill_checkpoint_id')
         ) AS expected(role_name, table_name, column_name)
     LOOP
         sequence_name := pg_get_serial_sequence(
@@ -563,6 +651,7 @@ DECLARE
     relation_row record;
     privilege_name text;
     required_name text;
+    principal_check text;
 BEGIN
     FOR role_row IN
         SELECT role.rolname, role.rolcanlogin, role.rolsuper, role.rolcreatedb,
@@ -571,7 +660,7 @@ BEGIN
         WHERE role.rolname = ANY (ARRAY[
             'sheinfm_materializer_ro', 'sheinfm_sales_loader',
             'sheinfm_supply_loader', 'sheinfm_webhook_ingress',
-            'sheinfm_webhook_worker'
+            'sheinfm_webhook_worker', 'sheinfm_webapi_loader'
         ])
     LOOP
         IF role_row.rolcanlogin
@@ -586,9 +675,16 @@ BEGIN
     IF (SELECT count(*) FROM pg_roles WHERE rolname = ANY (ARRAY[
         'sheinfm_materializer_ro', 'sheinfm_sales_loader',
         'sheinfm_supply_loader', 'sheinfm_webhook_ingress',
-        'sheinfm_webhook_worker'
-    ])) <> 5 THEN
+        'sheinfm_webhook_worker', 'sheinfm_webapi_loader'
+    ])) <> 6 THEN
         RAISE EXCEPTION 'runtime capability role set is incomplete';
+    END IF;
+
+    -- The WebAPI login must hold no inherited privilege at connection time.
+    IF (
+        SELECT rolinherit FROM pg_roles WHERE rolname = 'sheinfm_webapi_login'
+    ) THEN
+        RAISE EXCEPTION 'sheinfm_webapi_login must be NOINHERIT';
     END IF;
 
     SELECT member.rolname AS member_name, granted.rolname AS granted_name
@@ -599,14 +695,15 @@ BEGIN
     WHERE member.rolname = ANY (ARRAY[
         'sheinfm_materializer_login', 'sheinfm_sales_login',
         'sheinfm_supply_login', 'sheinfm_webhook_ingress_login',
-        'sheinfm_webhook_worker_login'
+        'sheinfm_webhook_worker_login', 'sheinfm_webapi_login'
     ])
       AND (member.rolname, granted.rolname) NOT IN (
         ('sheinfm_materializer_login', 'sheinfm_materializer_ro'),
         ('sheinfm_sales_login', 'sheinfm_sales_loader'),
         ('sheinfm_supply_login', 'sheinfm_supply_loader'),
         ('sheinfm_webhook_ingress_login', 'sheinfm_webhook_ingress'),
-        ('sheinfm_webhook_worker_login', 'sheinfm_webhook_worker')
+        ('sheinfm_webhook_worker_login', 'sheinfm_webhook_worker'),
+        ('sheinfm_webapi_login', 'sheinfm_webapi_loader')
       )
     LIMIT 1;
     IF FOUND THEN
@@ -762,6 +859,116 @@ BEGIN
         'INSERT,UPDATE,DELETE'
     ) THEN
         RAISE EXCEPTION 'materializer read-only operational projection is invalid';
+    END IF;
+
+    -- WebAPI experiment loader: positive on its own evidence layer only.
+    FOREACH required_name IN ARRAY ARRAY[
+        'raw.webapi_fetch_batch',
+        'raw.webapi_metric_observation',
+        'ops.webapi_session_health'
+    ]
+    LOOP
+        IF NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'SELECT')
+           OR NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'INSERT')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'UPDATE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'DELETE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'TRUNCATE') THEN
+            RAISE EXCEPTION 'WebAPI experiment evidence boundary is invalid for %',
+                required_name;
+        END IF;
+    END LOOP;
+    IF NOT has_table_privilege(
+        'sheinfm_webapi_loader', 'dim.webapi_metric_definition', 'SELECT'
+    ) OR has_table_privilege(
+        'sheinfm_webapi_loader', 'dim.webapi_metric_definition', 'INSERT,UPDATE,DELETE'
+    ) THEN
+        RAISE EXCEPTION 'WebAPI metric definition must stay human-reviewed and read-only';
+    END IF;
+
+    -- WebAPI experiment loader: negative on every other component's objects.
+    FOREACH required_name IN ARRAY ARRAY[
+        'fact.full_sku_sales_snapshot',
+        'fact.inventory_snapshot',
+        'fact.purchase_order',
+        'fact.delivery',
+        'fact.stock_advice_snapshot',
+        'mart.full_store_sales_latest',
+        'mart.full_product_sales_latest',
+        'raw.openapi_fetch_batch',
+        'raw.openapi_fetch_page',
+        'raw.webhook_receipt',
+        'ops.webhook_job',
+        'ops.operational_event',
+        'ops.sales_business_watermark',
+        'ops.employee_principal',
+        'ops.employee_store_assignment',
+        'ops.backfill_run',
+        'ops.backfill_window',
+        'ops.backfill_checkpoint',
+        'dim.canonical_product',
+        'dim.full_sku_canonical_assignment'
+    ]
+    LOOP
+        FOREACH privilege_name IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']
+        LOOP
+            IF has_table_privilege('sheinfm_webapi_loader', required_name, privilege_name) THEN
+                RAISE EXCEPTION
+                    'WebAPI experiment loader must not hold % on %',
+                    privilege_name, required_name;
+            END IF;
+        END LOOP;
+    END LOOP;
+    IF has_column_privilege('sheinfm_webapi_loader', 'dim.store', 'store_code', 'SELECT') THEN
+        RAISE EXCEPTION 'WebAPI experiment loader must not read the store dimension';
+    END IF;
+
+    -- Existing component roles must not gain WebAPI write access.
+    FOREACH required_name IN ARRAY ARRAY[
+        'raw.webapi_fetch_batch',
+        'raw.webapi_metric_observation',
+        'ops.webapi_session_health',
+        'dim.webapi_metric_definition'
+    ]
+    LOOP
+        FOREACH principal_check IN ARRAY ARRAY[
+            'sheinfm_sales_loader',
+            'sheinfm_supply_loader',
+            'sheinfm_webhook_ingress',
+            'sheinfm_webhook_worker',
+            'sheinfm_app'
+        ]
+        LOOP
+            FOREACH privilege_name IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']
+            LOOP
+                IF has_table_privilege(principal_check, required_name, privilege_name) THEN
+                    RAISE EXCEPTION
+                        'runtime principal % gained % on WebAPI relation %',
+                        principal_check, privilege_name, required_name;
+                END IF;
+            END LOOP;
+        END LOOP;
+    END LOOP;
+
+    -- Backfill control plane: only the two verified domain loaders may write it,
+    -- and the append-only ledgers must not be deletable.
+    FOREACH principal_check IN ARRAY ARRAY['sheinfm_sales_login', 'sheinfm_supply_login']
+    LOOP
+        IF NOT has_table_privilege(principal_check, 'ops.backfill_run', 'INSERT')
+           OR NOT has_table_privilege(principal_check, 'ops.backfill_window', 'INSERT')
+           OR NOT has_table_privilege(principal_check, 'ops.backfill_checkpoint', 'UPDATE')
+           OR has_table_privilege(principal_check, 'ops.backfill_run', 'DELETE')
+           OR has_table_privilege(principal_check, 'ops.backfill_window', 'DELETE')
+           OR has_table_privilege(principal_check, 'ops.backfill_checkpoint', 'DELETE') THEN
+            RAISE EXCEPTION 'backfill control-plane boundary is invalid for %',
+                principal_check;
+        END IF;
+    END LOOP;
+    IF has_column_privilege(
+        'sheinfm_sales_login', 'ops.backfill_window', 'window_key', 'UPDATE'
+    ) OR has_column_privilege(
+        'sheinfm_supply_login', 'ops.backfill_window', 'store_code', 'UPDATE'
+    ) THEN
+        RAISE EXCEPTION 'backfill window identity columns must remain immutable';
     END IF;
 
     FOR relation_row IN

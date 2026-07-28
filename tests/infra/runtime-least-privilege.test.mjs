@@ -147,7 +147,8 @@ test('9999 preflight tracks every runtime table and project function through 001
     ['0001_full_managed_bi.sql', '0002_runtime_role.sql', '0003_sales_trust.sql',
       '0004_product_identity_and_access.sql', '0005_webhook_runtime.sql',
       '0006_supply_domains.sql', '0010_product_identity_observation_sets.sql',
-      '0011_product_identity_resolution.sql']
+      '0011_product_identity_resolution.sql',
+      '0012_backfill_and_webapi_experiment.sql']
       .map((name) => text(`db/migrations/${name}`)),
   );
   const allSql = migrations.join('\n');
@@ -382,6 +383,81 @@ test('9999 preserves only append permissions needed by the identity evidence and
   }
 });
 
+test('the isolated WebAPI experiment role is least-privilege in 9999 and verify', async () => {
+  const migration = await text('db/migrations/9999_runtime_role_reconcile.sql');
+  const verify = await text('db/verify/9999_runtime_role_reconcile.sql');
+
+  // NOLOGIN capability group plus a NOINHERIT login that must SET ROLE.
+  assert.match(
+    migration,
+    /CREATE ROLE sheinfm_webapi_loader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT/,
+  );
+  assert.match(
+    migration,
+    /CREATE ROLE sheinfm_webapi_login LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT/,
+  );
+  assert.match(migration, /GRANT sheinfm_webapi_loader TO sheinfm_webapi_login/);
+  assert.match(migration, /SHEIN_FM_WEBAPI_LOGIN_DB_PASSWORD/);
+  assert.match(migration, /sheinfm_webapi_login must be NOINHERIT/);
+  assert.match(verify, /sheinfm_webapi_login is not a safe NOINHERIT login/);
+
+  // Positive: only its own isolated evidence layer, plus reviewed definitions.
+  const evidenceGrant = migration.match(
+    /GRANT SELECT, INSERT ON\s+raw\.webapi_fetch_batch,[\s\S]*?TO sheinfm_webapi_loader;/,
+  )?.[0] ?? '';
+  assert.notEqual(evidenceGrant, '');
+  assert.match(evidenceGrant, /raw\.webapi_metric_observation/);
+  assert.match(evidenceGrant, /ops\.webapi_session_health/);
+  assert.doesNotMatch(evidenceGrant, /\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/);
+  assert.match(
+    migration,
+    /GRANT SELECT ON dim\.webapi_metric_definition\s+TO sheinfm_webapi_loader;/,
+  );
+  assert.match(migration, /GRANT USAGE ON SCHEMA raw, dim, ops\s+TO sheinfm_webapi_loader;/);
+
+  // Negative: no fact, mart, OpenAPI, webhook, employee or backfill access.
+  for (const boundary of [
+    'WebAPI experiment evidence boundary is invalid for %',
+    'WebAPI metric definition must stay human-reviewed and read-only',
+    'WebAPI experiment loader must not hold % on %',
+    'WebAPI experiment loader must not read the store dimension',
+    'runtime principal % gained % on WebAPI relation %',
+  ]) {
+    assert.ok(migration.includes(boundary), `9999 omits: ${boundary}`);
+  }
+  for (const boundary of [
+    'WebAPI experiment loader retained % on %',
+    'WebAPI experiment loader must not reach fact or mart schemas',
+    'runtime principal % gained % on WebAPI relation %',
+  ]) {
+    assert.ok(verify.includes(boundary), `verify omits: ${boundary}`);
+  }
+  assert.match(verify, /'sheinfm_webapi_loader', 'raw\.webapi_fetch_batch', 'webapi_fetch_batch_id'/);
+
+  // The experiment role must never be given backfill control-plane write access.
+  const backfillGrant = migration.match(
+    /GRANT SELECT, INSERT ON ops\.backfill_run, ops\.backfill_window\s+TO ([^;]+);/,
+  )?.[1] ?? '';
+  assert.equal(backfillGrant.trim(), 'sheinfm_sales_loader, sheinfm_supply_loader');
+  assert.match(verify, /backfill control-plane boundary is invalid for %/);
+  assert.match(verify, /backfill window identity column % is updatable by %/);
+  assert.match(verify, /materializer backfill projection must stay read-only/);
+  assert.match(verify, /webhook runtimes must not touch the backfill control plane/);
+});
+
+test('the WebAPI experiment migration secret is a separate root-private value', async () => {
+  const manifest = await text(
+    'infra/systemd/shein-fm-db-migrate-secrets.env.example',
+  );
+  const runner = await text('scripts/migrate_full_managed_db.sh');
+  assert.match(manifest, /^SHEIN_FM_WEBAPI_LOGIN_DB_PASSWORD=$/m);
+  assert.match(manifest, /sixth independent secret/);
+  assert.match(manifest, /never be shared with a sales, supply, webhook or materializer role/);
+  assert.match(runner, /\bSHEIN_FM_WEBAPI_LOGIN_DB_PASSWORD\b/);
+  // Values still travel by name only, never in docker argv.
+  assert.match(runner, /docker_secret_env_args\+=\(--env "\$secret_name"\)/);
+});
+
 test('migration passwords come from one root-private manifest and values never enter docker argv', async () => {
   const service = await text('infra/systemd/shein-fm-db-migrate.service');
   const runner = await text('scripts/migrate_full_managed_db.sh');
@@ -405,6 +481,7 @@ test('migration passwords come from one root-private manifest and values never e
     'SHEIN_FM_SUPPLY_DB_PASSWORD',
     'SHEIN_FM_WEBHOOK_INGRESS_DB_PASSWORD',
     'SHEIN_FM_WEBHOOK_WORKER_DB_PASSWORD',
+    'SHEIN_FM_WEBAPI_LOGIN_DB_PASSWORD',
   ];
   for (const name of names) {
     assert.match(manifest, new RegExp(`^${name}=$`, 'm'));
@@ -421,6 +498,6 @@ test('migration passwords come from one root-private manifest and values never e
     manifest,
     /SHEIN_FM_APP_DB_PASSWORD must be the exact current production value/,
   );
-  assert.match(manifest, /Generate five new, mutually[\s\S]*independent/);
-  assert.doesNotMatch(manifest, /Generate six independent/i);
+  assert.match(manifest, /Generate six new, mutually[\s\S]*independent/);
+  assert.doesNotMatch(manifest, /Generate seven independent/i);
 });
