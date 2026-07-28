@@ -49,7 +49,7 @@ test('full-managed primary navigation follows the sales-first semi-managed inter
   assert.match(styles, /@media \(max-width: 620px\)/);
 });
 
-test('home shell ports the semi-managed matrix, trend-stack and four-rank structure', async () => {
+test('home shell keeps the sales matrix, trend stack, four-rank grid and operating alerts', async () => {
   const [html, app, parityStyles] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
@@ -77,13 +77,20 @@ test('home shell ports the semi-managed matrix, trend-stack and four-rank struct
   assert.match(app, /货号近 30 日排行/);
   assert.match(app, /function metricMatrix\(/);
   assert.match(app, /function homeRankList\(/);
-  assert.match(app, /class="kpi-six"/);
+  assert.match(app, /function homeHeader\(\)/);
+  assert.match(app, /function homeTruthStrip\(\)/);
+  assert.match(app, /class="home-topbar"/);
+  assert.match(app, /class="kpi-six sales-matrix"/);
   assert.match(app, /class="trend-stack home-trend-stack"/);
   assert.match(app, /class="rank-grid"/);
+  assert.match(app, /renderOperationalPriorities\(\{ home: true \}\)/);
   assert.match(parityStyles, /\.kpi-six\s*\{/);
   assert.match(parityStyles, /\.metric-matrix\s*\{/);
   assert.match(parityStyles, /\.trend-stack\s*\{/);
   assert.match(parityStyles, /\.rank-grid\s*\{/);
+  assert.match(parityStyles, /\.kpi-six \.matrix-span-2\s*\{/);
+  assert.match(parityStyles, /\.metric-matrix-scroll\s*\{/);
+  assert.match(parityStyles, /\.rank-identity\.canonical\s*\{/);
   assert.match(app, /function monthlyTrendRows\(\)/);
   assert.match(app, /OWNER:\$\{owner\.key\}/);
   assert.match(app, /STORE:\$\{store\.code\}/);
@@ -122,4 +129,26 @@ test('product identity page keeps unmapped store-local SKUs visible without cros
   assert.match(app, /全量活跃目录/);
   assert.match(app, /function rankingProducts\(\)[\s\S]*rows: products/);
   assert.match(app, /排行同时保留已确认标准商品和未确认店内商品/);
+});
+
+test('web assets stay self-hosted and off the banned typefaces', async () => {
+  const [html, styles, parityStyles] = await Promise.all([
+    read('src/web/index.html'),
+    read('src/web/styles.css'),
+    read('src/web/home-parity.css'),
+  ]);
+
+  assert.doesNotMatch(html, /https?:\/\//);
+  assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
+  for (const sheet of [styles, parityStyles]) {
+    assert.doesNotMatch(sheet, /font-family:[^;]*(?:Inter|Roboto|Open Sans)/i);
+    assert.doesNotMatch(sheet, /gradient\(/);
+    assert.match(sheet, /font:[^;]*"PingFang SC"|font-family:[^;]*"PingFang SC"/);
+  }
+  assert.match(styles, /--bg: #fafaf8/);
+  assert.match(styles, /--paper: #ffffff/);
+  assert.match(styles, /--ink: #1a1916/);
+  assert.match(styles, /--line: #e8e6e1/);
+  assert.match(styles, /--accent: #2d6a4f/);
+  assert.match(parityStyles, /\.overview-matrix-card\s*\{[^}]*border: 1px solid var\(--line\)[^}]*border-radius: 12px/s);
 });

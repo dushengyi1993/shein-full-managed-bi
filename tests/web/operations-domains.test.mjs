@@ -133,6 +133,42 @@ test('operations queue is prioritized, localized, drillable and has no write con
   assert.doesNotMatch(ops, /fetch\(|XMLHttpRequest|method:\s*['"]POST['"]/);
 });
 
+test('operating alerts aggregate supply, identity, webhook and data-quality evidence read-only', async () => {
+  const app = await read('src/web/app.js');
+  const worklist = functionBody(app, 'operationPriorityItems');
+  const table = functionBody(app, 'priorityWorklistTable');
+  const section = functionBody(app, 'renderOperationalPriorities');
+
+  for (const helper of [
+    'productIdentityAlertItems',
+    'salesQualityAlertItems',
+    'platformAlertItems',
+    'itemSourceLabel',
+  ]) {
+    assert.match(app, new RegExp(`function ${helper}\\(`));
+    if (helper !== 'itemSourceLabel') {
+      assert.match(worklist, new RegExp(`\\.\\.\\.${helper}\\(\\)`));
+    }
+  }
+
+  // Each row must name its source domain, impact, next page and evidence time.
+  assert.match(table, /来源域/);
+  assert.match(table, /itemSourceLabel\(item\)/);
+  assert.match(table, /item\.impact \|\| '影响范围待回读'/);
+  assert.match(table, /item\.nextStep \|\| '打开业务页核对事实'/);
+  assert.match(table, /sourceTime\(item\.evidenceAt\)/);
+  assert.match(section, /'OPERATING ALERTS'/);
+  assert.match(section, /itemSourceLabel/);
+  assert.doesNotMatch(table, /<button|<input|<form/);
+  assert.doesNotMatch(section, /<button|fetch\(|method:\s*['"]POST['"]/);
+
+  // Derived alerts stay inside the read-only drill-down contract.
+  assert.match(app, /nextStep: '在商品中心按销量影响优先归并；未确认身份不参与跨店合计'/);
+  assert.match(app, /nextStep: quality\.nextStep \|\| '在系统健康页核对覆盖水位、统计日与同步失败'/);
+  assert.match(app, /nextStep: '在平台动态页核对死信原因、受阻店铺与补查指令'/);
+  assert.match(app, /candidateTypes\.has\('WEBHOOK_DEAD_LETTER'\)/);
+});
+
 test('complete product ranking keeps canonical and store-local rows together without unsafe merging', async () => {
   const app = await read('src/web/app.js');
   const ranking = functionBody(app, 'rankingProducts');

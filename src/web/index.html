@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="SHEIN 全托销量总览、趋势排行、供给履约与运营筛查工作台">
-    <meta name="theme-color" content="#171814">
+    <meta name="description" content="SHEIN 全托销量矩阵、日月趋势、店铺与商品排行、运营提醒的只读驾驶舱">
+    <meta name="theme-color" content="#fafaf8">
     <meta name="color-scheme" content="light">
     <title>SHEIN 全托运营驾驶舱</title>
-    <link rel="icon" href="/favicon.svg?v=20260727.2" type="image/svg+xml">
-    <link rel="stylesheet" href="/styles.css?v=20260727.2">
-    <link rel="stylesheet" href="/home-parity.css?v=20260727.2">
-    <script src="/app.js?v=20260727.2" defer></script>
+    <link rel="icon" href="/favicon.svg?v=20260728.1" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css?v=20260728.1">
+    <link rel="stylesheet" href="/home-parity.css?v=20260728.1">
+    <script src="/app.js?v=20260728.1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#content">跳到主要内容</a>
@@ -74,9 +74,10 @@
 
             <div class="field filter-field scope-field">
               <label for="scope-filter">店铺</label>
-              <select id="scope-filter" aria-label="店铺或负责人范围">
+              <select id="scope-filter" aria-label="店铺或负责人范围" aria-describedby="scope-filter-hint">
                 <option value="ALL">全部店铺</option>
               </select>
+              <span id="scope-filter-hint" class="field-hint">内含负责人分组</span>
             </div>
 
             <div class="range-dock" role="group" aria-label="销量时间口径">
@@ -129,5 +130,7 @@
         </footer>
       </div>
     </div>
+
+    <div id="chart-tooltip" class="chart-tooltip" role="presentation" hidden></div>
   </body>
 </html>
