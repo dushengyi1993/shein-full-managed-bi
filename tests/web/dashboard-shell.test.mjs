@@ -141,9 +141,9 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260728\\.3`));
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.2`));
   }
-  assert.doesNotMatch(html, /v=20260728\.[12]/);
+  assert.doesNotMatch(html, /v=20260728\.[123]/);
   for (const sheet of [styles, parityStyles]) {
     assert.doesNotMatch(sheet, /font-family:[^;]*(?:Inter|Roboto|Open Sans)/i);
     assert.doesNotMatch(sheet, /gradient\(/);
@@ -155,4 +155,23 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.match(styles, /--line: #e8e6e1/);
   assert.match(styles, /--accent: #2d6a4f/);
   assert.match(parityStyles, /\.overview-matrix-card\s*\{[^}]*border: 1px solid var\(--line\)[^}]*border-radius: 12px/s);
+});
+
+test('procurement uses an independent server query and authenticated snapshot update stream', async () => {
+  const [html, app, styles] = await Promise.all([
+    read('src/web/index.html'),
+    read('src/web/app.js'),
+    read('src/web/styles.css'),
+  ]);
+  assert.match(html, /id="live-update-badge"/);
+  assert.match(app, /\/api\/procurement\?/);
+  assert.match(app, /function loadProcurement\(/);
+  assert.match(app, /matchedMaterializedAttentionCount/);
+  assert.match(app, /源数据已截断/);
+  assert.match(app, /data-procurement-page/);
+  assert.match(app, /new EventSource\('\/api\/events'\)/);
+  assert.match(app, /dashboard-updated/);
+  assert.match(app, /快照自动更新/);
+  assert.doesNotMatch(app, /实时采购|采购实时/);
+  assert.match(styles, /\.table-pagination\s*\{/);
 });

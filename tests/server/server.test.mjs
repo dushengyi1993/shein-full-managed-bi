@@ -80,6 +80,110 @@ test('GET /api/dashboard returns only the permitted volume dashboard shape', asy
   );
 });
 
+test('GET /api/procurement is a bounded read-only query surface', async () => {
+  const response = await fetch(
+    `${baseUrl}/api/procurement?page=1&pageSize=25&quick=ALL&sort=PRIORITY`,
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.schemaVersion, 1);
+  assert.equal(result.readOnly, true);
+  assert.equal(result.query.page, 1);
+  assert.equal(result.query.pageSize, 25);
+  assert.ok(Array.isArray(result.statusRows));
+  assert.ok(Array.isArray(result.attention.rows));
+  assert.equal(typeof result.source.materializedAttention.truncated, 'boolean');
+});
+
+test('procurement query rejects duplicates and mutation methods', async () => {
+  const duplicate = await fetch(`${baseUrl}/api/procurement?q=a&q=b`);
+  assert.equal(duplicate.status, 400);
+  assert.match(await duplicate.text(), /QUERY_PARAMETER_DUPLICATED/);
+
+  const mutation = await fetch(`${baseUrl}/api/procurement`, { method: 'POST' });
+  assert.equal(mutation.status, 405);
+  assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
+});
+
+test('GET /api/events opens a no-buffer read-only SSE stream', async () => {
+  const result = await new Promise((resolve, reject) => {
+    const clientRequest = request(
+      {
+        host: '127.0.0.1',
+        port,
+        method: 'GET',
+        path: '/api/events',
+        headers: { Accept: 'text/event-stream' },
+      },
+      (response) => {
+        response.setEncoding('utf8');
+        response.once('data', (chunk) => {
+          resolve({
+            status: response.statusCode,
+            contentType: response.headers['content-type'],
+            buffering: response.headers['x-accel-buffering'],
+            chunk,
+          });
+          clientRequest.destroy();
+          response.destroy();
+        });
+      },
+    );
+    clientRequest.once('error', (error) => {
+      if (error.code !== 'ECONNRESET') reject(error);
+    });
+    clientRequest.end();
+  });
+  assert.equal(result.status, 200);
+  assert.match(result.contentType, /^text\/event-stream/);
+  assert.equal(result.buffering, 'no');
+  assert.match(result.chunk, /retry: 5000|event: ready/);
+});
+
+test('server shutdown ends owned SSE subscribers before draining HTTP', async () => {
+  const streamServer = createDashboardServer({
+    dataFile: fixture,
+    updatePollIntervalMs: 20,
+    updateHeartbeatIntervalMs: 30,
+  });
+  await new Promise((resolve, reject) => {
+    streamServer.once('error', reject);
+    streamServer.listen(0, '127.0.0.1', resolve);
+  });
+  const address = streamServer.address();
+  let responseEnded = false;
+  const clientRequest = request({
+    host: '127.0.0.1',
+    port: address.port,
+    method: 'GET',
+    path: '/api/events',
+  });
+  const opened = new Promise((resolve, reject) => {
+    clientRequest.once('error', reject);
+    clientRequest.once('response', (response) => {
+      response.setEncoding('utf8');
+      response.once('data', resolve);
+      response.once('end', () => { responseEnded = true; });
+      response.once('close', () => { responseEnded = true; });
+    });
+  });
+  clientRequest.end();
+  await opened;
+  await Promise.race([
+    new Promise((resolve, reject) => {
+      streamServer.close((error) => (error ? reject(error) : resolve()));
+    }),
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('server close did not drain SSE')), 1_000);
+    }),
+  ]);
+  for (let attempt = 0; attempt < 10 && !responseEnded; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  clientRequest.destroy();
+  assert.equal(responseEnded, true);
+});
+
 test('serves the local dashboard and its static assets', async () => {
   const [pageResponse, scriptResponse, styleResponse, parityStyleResponse, faviconResponse] = await Promise.all([
     fetch(`${baseUrl}/`),
@@ -93,9 +197,9 @@ test('serves the local dashboard and its static assets', async () => {
   assert.match(pageResponse.headers.get('content-type'), /^text\/html/);
   const pageHtml = await pageResponse.text();
   assert.match(pageHtml, /全托运营驾驶舱/);
-  assert.match(pageHtml, /\/app\.js\?v=20260728\.3/);
-  assert.match(pageHtml, /\/styles\.css\?v=20260728\.3/);
-  assert.match(pageHtml, /\/home-parity\.css\?v=20260728\.3/);
+  assert.match(pageHtml, /\/app\.js\?v=20260729\.2/);
+  assert.match(pageHtml, /\/styles\.css\?v=20260729\.2/);
+  assert.match(pageHtml, /\/home-parity\.css\?v=20260729\.2/);
 
   assert.equal(scriptResponse.status, 200);
   assert.match(scriptResponse.headers.get('content-type'), /^text\/javascript/);

@@ -487,6 +487,75 @@ a {
   white-space: nowrap;
 }
 
+.table-pagination {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-top: 0.8rem;
+  padding-top: 0.8rem;
+}
+
+.table-pagination p,
+.query-refresh-note {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.table-pagination div {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.table-pagination button,
+.procurement-query-state button {
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  cursor: pointer;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.8rem;
+}
+
+.table-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.procurement-query-state {
+  margin: 1rem 0;
+}
+
+.procurement-query-state h2 {
+  margin: 0.35rem 0;
+}
+
+.procurement-query-state.error {
+  border-color: color-mix(in srgb, var(--danger) 36%, var(--line));
+}
+
+.warning-note {
+  color: var(--warning);
+}
+
+@media (max-width: 640px) {
+  .table-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .table-pagination div {
+    width: 100%;
+  }
+
+  .table-pagination button {
+    flex: 1;
+  }
+}
+
 .status-badge {
   min-height: 22px;
   padding: 2px 8px;
@@ -495,6 +564,7 @@ a {
 }
 
 .status-badge.live,
+.status-badge.complete,
 .source-chip.live,
 .row-status.granted,
 .row-status.complete,

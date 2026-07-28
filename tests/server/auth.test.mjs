@@ -263,6 +263,11 @@ test('keeps health public while redirecting pages and rejecting unauthenticated 
   assert.equal(api.headers.get('www-authenticate'), 'Session');
   assert.match(await api.text(), /AUTH_REQUIRED/);
 
+  const events = await fetch(`${baseUrl}/api/events`);
+  assert.equal(events.status, 401);
+  assert.equal(events.headers.get('www-authenticate'), 'Session');
+  assert.match(await events.text(), /AUTH_REQUIRED/);
+
   const login = await fetch(`${baseUrl}/login`);
   assert.equal(login.status, 200);
   assert.equal(login.headers.get('cache-control'), 'no-store');

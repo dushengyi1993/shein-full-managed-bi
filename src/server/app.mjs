@@ -6,6 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { loadDashboardData } from './dashboard-data.mjs';
 import { projectDashboardForUser } from './dashboard-access.mjs';
 import {
+  ProcurementQueryError,
+  queryProcurementDashboard,
+} from './procurement-query.mjs';
+import { createDashboardUpdateBroker } from './dashboard-update-stream.mjs';
+import {
   createAuthService,
   isSameOriginPost,
   loginPage,
@@ -135,6 +140,7 @@ function staticFilePath(pathname, webRoot) {
 export function createRequestHandler(options = {}) {
   const dataFile = options.dataFile;
   const webRoot = options.webRoot || DEFAULT_WEB_ROOT;
+  const updateBroker = options.updateBroker || null;
   const runtimeEnvironment = options.runtimeEnvironment || options.auth?.runtimeEnvironment || 'development';
   const auth = options.authService || createAuthService({
     ...(options.auth || {}),
@@ -297,6 +303,24 @@ export function createRequestHandler(options = {}) {
       return;
     }
 
+    if (url.pathname === '/api/events') {
+      if (method !== 'GET') {
+        response.setHeader('Allow', 'GET');
+        sendJson(response, 405, {
+          error: { code: 'METHOD_NOT_ALLOWED', message: '更新流仅支持 GET' },
+        }, method);
+        return;
+      }
+      if (!updateBroker) {
+        sendJson(response, 503, {
+          error: { code: 'UPDATE_STREAM_UNAVAILABLE', message: '数据更新流暂不可用' },
+        }, method);
+        return;
+      }
+      updateBroker.open(request, response);
+      return;
+    }
+
     if (url.pathname === '/api/logout') {
       if (!auth.enabled) {
         sendJson(response, 404, { error: { code: 'NOT_FOUND', message: '页面不存在' } }, method);
@@ -362,6 +386,33 @@ export function createRequestHandler(options = {}) {
       return;
     }
 
+    if (url.pathname === '/api/procurement') {
+      try {
+        const dashboard = await loadDashboardData(dataFile);
+        const projected = projectDashboardForUser(dashboard, signedInUser);
+        sendJson(
+          response,
+          200,
+          queryProcurementDashboard(projected, url.searchParams),
+          method,
+        );
+      } catch (error) {
+        if (error instanceof ProcurementQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'PROCUREMENT_DATA_UNAVAILABLE',
+            message: '采购单查询暂不可用',
+          },
+        }, method);
+      }
+      return;
+    }
+
     const filePath = staticFilePath(url.pathname, webRoot);
     if (!filePath) {
       sendJson(
@@ -405,5 +456,30 @@ export function createRequestHandler(options = {}) {
 }
 
 export function createDashboardServer(options = {}) {
-  return createServer(createRequestHandler(options));
+  const ownedUpdateBroker = options.updateBroker
+    ? null
+    : (
+      typeof options.dataFile === 'string' && options.dataFile.trim() !== ''
+        ? createDashboardUpdateBroker({
+            dataFile: options.dataFile,
+            pollIntervalMs: options.updatePollIntervalMs,
+            heartbeatIntervalMs: options.updateHeartbeatIntervalMs,
+          })
+        : null
+    );
+  const server = createServer(createRequestHandler({
+    ...options,
+    updateBroker: options.updateBroker || ownedUpdateBroker,
+  }));
+  if (ownedUpdateBroker) {
+    const closeHttpServer = server.close.bind(server);
+    // Active SSE responses keep Node's HTTP server open. End owned subscribers
+    // before asking the HTTP server to drain, otherwise systemd shutdown can
+    // wait for a stream whose normal lifetime is intentionally unbounded.
+    server.close = (callback) => {
+      ownedUpdateBroker.close();
+      return closeHttpServer(callback);
+    };
+  }
+  return server;
 }

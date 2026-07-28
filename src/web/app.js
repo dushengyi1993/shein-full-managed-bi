@@ -271,6 +271,19 @@ const state = {
   healthError: '',
   loading: true,
   error: '',
+  procurement: {
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+    page: 1,
+    pageSize: 25,
+    sort: 'PRIORITY',
+  },
+  updates: {
+    status: 'connecting',
+    observedAt: null,
+  },
 };
 
 const elements = {
@@ -282,6 +295,7 @@ const elements = {
   rangeSummary: document.querySelector('#range-summary'),
   clearFilters: document.querySelector('#clear-filters'),
   datasetBadge: document.querySelector('#dataset-badge'),
+  liveUpdateBadge: document.querySelector('#live-update-badge'),
   updatedAt: document.querySelector('#updated-at'),
   sidebarDataset: document.querySelector('#sidebar-dataset'),
   sidebarPermission: document.querySelector('#sidebar-permission'),
@@ -292,6 +306,9 @@ const elements = {
   retryButton: document.querySelector('#retry-button'),
   logoutButton: document.querySelector('#logout-button'),
 };
+
+let procurementLoadTimer = null;
+let dashboardEventSource = null;
 
 function routeFromLocation() {
   const candidate = String(window.location.hash || '').replace(/^#/, '');
@@ -2018,6 +2035,110 @@ function quickFilterBar(route, label, options) {
     </div>`;
 }
 
+function procurementQueryUrl() {
+  const params = new URLSearchParams({
+    owner: state.owner,
+    store: state.store,
+    q: state.query,
+    quick: quickFilterValue('procurement'),
+    sort: state.procurement.sort,
+    page: String(state.procurement.page),
+    pageSize: String(state.procurement.pageSize),
+  });
+  return `/api/procurement?${params.toString()}`;
+}
+
+async function loadProcurement({ resetPage = false } = {}) {
+  if (resetPage) state.procurement.page = 1;
+  if (state.route !== 'procurement') return;
+  const requestSerial = state.procurement.requestSerial + 1;
+  state.procurement.requestSerial = requestSerial;
+  state.procurement.loading = true;
+  state.procurement.error = '';
+  render();
+  try {
+    const result = await fetchJson(procurementQueryUrl());
+    if (requestSerial !== state.procurement.requestSerial) return;
+    if (
+      !result
+      || result.readOnly !== true
+      || !result.attention
+      || !Array.isArray(result.attention.rows)
+      || !Array.isArray(result.statusRows)
+    ) {
+      throw new Error('采购单查询结构无效');
+    }
+    state.procurement.data = result;
+  } catch (error) {
+    if (requestSerial !== state.procurement.requestSerial) return;
+    state.procurement.data = null;
+    state.procurement.error = error instanceof Error
+      ? error.message
+      : '采购单查询暂不可用';
+  } finally {
+    if (requestSerial === state.procurement.requestSerial) {
+      state.procurement.loading = false;
+      render();
+    }
+  }
+}
+
+function scheduleProcurementLoad({ resetPage = false, delay = 0 } = {}) {
+  if (procurementLoadTimer !== null) window.clearTimeout(procurementLoadTimer);
+  // Invalidate an in-flight response immediately. Waiting until the debounce
+  // fires would let an old filter result flash under the new URL state.
+  state.procurement.requestSerial += 1;
+  if (resetPage) {
+    state.procurement.page = 1;
+    state.procurement.data = null;
+    state.procurement.error = '';
+    state.procurement.loading = true;
+  }
+  if (state.route !== 'procurement') return;
+  if (resetPage) render();
+  procurementLoadTimer = window.setTimeout(() => {
+    procurementLoadTimer = null;
+    void loadProcurement();
+  }, delay);
+}
+
+function procurementLoadingState() {
+  return `
+    <section class="panel procurement-query-state" role="status">
+      <span class="eyebrow">PROCUREMENT QUERY</span>
+      <h2>正在按当前条件查询采购单</h2>
+      <p>筛选和分页在服务端执行；页面不会把旧筛选结果冒充新结果。</p>
+    </section>`;
+}
+
+function procurementErrorState() {
+  return `
+    <section class="panel procurement-query-state error" role="alert">
+      <span class="eyebrow">PROCUREMENT QUERY</span>
+      <h2>采购单独立查询暂不可用</h2>
+      <p>${escapeHtml(state.procurement.error || '请稍后重试。')}</p>
+      <button type="button" class="clear-button" data-procurement-retry="1">重新查询</button>
+    </section>`;
+}
+
+function procurementPagination(queryData) {
+  const pagination = queryData?.attention?.pagination;
+  if (!pagination || !isUnit(pagination.page) || !isUnit(pagination.pageSize)) return '';
+  const matched = isUnit(pagination.matchedMaterializedRows)
+    ? pagination.matchedMaterializedRows
+    : 0;
+  const pageCount = isUnit(pagination.pageCount) ? pagination.pageCount : 0;
+  const displayedPage = pageCount === 0 ? 0 : pagination.page;
+  return `
+    <nav class="table-pagination" aria-label="采购单关注清单分页">
+      <p>已物化范围命中 ${numberFormatter.format(matched)} 条 · 第 ${numberFormatter.format(displayedPage)} / ${numberFormatter.format(pageCount)} 页</p>
+      <div>
+        <button type="button" data-procurement-page="${Math.max(1, pagination.page - 1)}" ${pagination.hasPrevious ? '' : 'disabled'}>上一页</button>
+        <button type="button" data-procurement-page="${pagination.page + 1}" ${pagination.hasNext ? '' : 'disabled'}>下一页</button>
+      </div>
+    </nav>`;
+}
+
 function rowAttentionStage(row, kind) {
   if (row?.attentionLabel) return row.attentionLabel;
   if (kind === 'procurement') {
@@ -3641,23 +3762,40 @@ function procurementTable(rows) {
 }
 
 function renderProcurement() {
-  const supply = supplyDomain();
-  const allRows = domainRows(supply, 'purchaseOrderStatus');
-  const rows = scopedOperationRows(allRows);
-  const attentionAvailable = attentionEvidence('purchaseOrderAttention', 'purchaseOrders');
-  const allAttention = scopedOperationRows(attentionRows('purchaseOrderAttention'));
-  const attention = allAttention.filter((row) => matchesQuickFilter(row, 'procurement', 'procurement'));
-  const totalOrders = completeNullableSum(rows, 'orderCount');
-  const statusCount = new Set(rows.map((row) => row.statusCode || row.statusName).filter(Boolean)).size;
-  const connectionState = domainConnectionState(
-    supply,
-    ['purchaseOrderAttention', 'purchaseOrderStatus'],
-    ['purchaseOrders'],
-  );
-  const connected = connectionState === 'available';
-  const connectedLabel = allRows.length
+  if (state.procurement.loading && !state.procurement.data) {
+    return `${sampleNotice()}${focusEvidencePanel()}${procurementLoadingState()}`;
+  }
+  if (state.procurement.error && !state.procurement.data) {
+    return `${sampleNotice()}${focusEvidencePanel()}${procurementErrorState()}`;
+  }
+  const queryData = state.procurement.data;
+  if (!queryData) return procurementLoadingState();
+  const rows = queryData.statusRows;
+  const attention = queryData.attention.rows;
+  const sourceMeta = queryData.source?.materializedAttention || {};
+  const attentionAvailable = sourceMeta.available === true
+    || attention.length > 0
+    || sourceMeta.truncated === true;
+  const totalOrders = queryData.summary?.orderCount ?? null;
+  const statusCount = queryData.summary?.statusCount ?? 0;
+  const connected = queryData.source?.supplyStatus === 'available'
+    || queryData.source?.coverage?.status === 'complete'
+    || queryData.source?.coverage?.status === 'partial';
+  const connectedLabel = rows.length
     ? '真实状态已接入'
-    : connected ? '接口覆盖完整 · 当前窗口无事实行' : '尚未完成可信接入';
+    : connected ? '接口已有覆盖 · 当前筛选无事实行' : '尚未完成可信接入';
+  const sourceTotal = isUnit(sourceMeta.total) ? sourceMeta.total : null;
+  const sourceReturned = isUnit(sourceMeta.returned) ? sourceMeta.returned : null;
+  const matchedMaterialized = isUnit(queryData.summary?.matchedMaterializedAttentionCount)
+    ? queryData.summary.matchedMaterializedAttentionCount
+    : attention.length;
+  const queryCoverageLabel = [
+    `服务端筛选命中 ${numberFormatter.format(matchedMaterialized)} 条`,
+    sourceReturned === null || sourceTotal === null
+      ? '物化范围未知'
+      : `源物化 ${numberFormatter.format(sourceReturned)} / ${numberFormatter.format(sourceTotal)} 条`,
+    sourceMeta.truncated === true ? '源数据已截断' : '源物化未截断',
+  ].join(' · ');
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
@@ -3668,7 +3806,11 @@ function renderProcurement() {
       `<span>采购单事实</span><strong>${escapeHtml(connectedLabel)}</strong><small>${escapeHtml(connected ? operationScopeNote(rows, '采购单状态') : '不展示订单数或伪造状态')}</small>`,
     )}
     <section class="table-section">
-      ${panelHeading('PURCHASE ATTENTION', '采购单关注清单', attentionAvailable ? `${metaCountLabel('purchaseOrders', allAttention)} · 单据级事实优先` : '兼容旧契约 · 单据级事实待接入')}
+      ${panelHeading(
+        'PURCHASE ATTENTION',
+        '采购单关注清单',
+        attentionAvailable ? `${queryCoverageLabel} · 单据级事实优先` : '单据级事实待接入',
+      )}
       ${quickFilterBar('procurement', '快速筛查', [
         ['ALL', '全部关注'],
         ['HIGH', '高优先'],
@@ -3678,6 +3820,9 @@ function renderProcurement() {
         ['PENDING_STORAGE', '待入库'],
       ])}
       ${purchaseOrderAttentionTable(attention, attentionAvailable)}
+      ${procurementPagination(queryData)}
+      ${state.procurement.loading ? '<p class="query-refresh-note" role="status">正在刷新当前筛选结果…</p>' : ''}
+      ${sourceMeta.truncated === true ? '<p class="table-note warning-note">当前接口只筛选物化到页面的单据级关注记录；源明细已截断，因此筛选结果不是仓库全量采购单数量。</p>' : ''}
     </section>
     ${connected ? `
       ${operationSummaryCards([
@@ -3694,12 +3839,16 @@ function renderProcurement() {
         },
         {
           label: '店铺覆盖',
-          value: rows.length ? `${new Set(rows.map((row) => row.storeCode).filter(Boolean)).size} 家` : '当前筛选无行',
-          note: operationScopeNote(rows, '采购单状态'),
+          value: isUnit(queryData.summary?.storeCount)
+            ? `${numberFormatter.format(queryData.summary.storeCount)} 家`
+            : '未知',
+          note: '按服务端当前筛选命中的状态行与物化关注行去重',
         },
         {
           label: '最新来源快照',
-          value: latestTimestamp(rows) ? formatDateTime(latestTimestamp(rows)) : '未知',
+          value: queryData.summary?.latestSourceFetchedAt
+            ? formatDateTime(queryData.summary.latestSourceFetchedAt)
+            : '未知',
           note: '展示源接口抓取时间，不冒充采购单业务时间',
         },
       ])}
@@ -4786,6 +4935,24 @@ function updateDatasetChrome() {
   document.body.dataset.dataset = status;
 }
 
+function updateLiveUpdateChrome() {
+  if (!elements.liveUpdateBadge) return;
+  const labels = {
+    connecting: ['自动更新连接中', 'neutral'],
+    connected: ['快照自动更新', 'complete'],
+    refreshing: ['正在读取新快照', 'partial'],
+    reconnecting: ['自动更新重连中', 'partial'],
+    unsupported: ['浏览器需手动刷新', 'neutral'],
+  };
+  const [label, tone] = labels[state.updates.status] || labels.connecting;
+  elements.liveUpdateBadge.textContent = label;
+  elements.liveUpdateBadge.className = `status-badge ${tone}`;
+  const observed = state.updates.observedAt
+    ? `；最近检测到新快照：${formatDateTime(state.updates.observedAt)}`
+    : '';
+  elements.liveUpdateBadge.title = `只监听已物化 Dashboard 快照，不直接连接 SHEIN${observed}`;
+}
+
 function updateErrorPanel() {
   elements.errorPanel.hidden = !state.error;
   elements.errorMessage.textContent = state.error || '';
@@ -4841,6 +5008,7 @@ function render() {
   updateNavigation();
   updateFilters();
   updateDatasetChrome();
+  updateLiveUpdateChrome();
   updateErrorPanel();
 
   if (state.loading && !state.data) {
@@ -4903,6 +5071,55 @@ async function loadDashboard() {
 
   state.loading = false;
   render();
+  if (state.data && state.route === 'procurement') {
+    scheduleProcurementLoad();
+  }
+}
+
+function connectDashboardUpdates() {
+  if (typeof EventSource !== 'function') {
+    state.updates.status = 'unsupported';
+    render();
+    return;
+  }
+  if (dashboardEventSource) dashboardEventSource.close();
+  const source = new EventSource('/api/events');
+  dashboardEventSource = source;
+  state.updates.status = 'connecting';
+  render();
+  source.addEventListener('open', () => {
+    if (dashboardEventSource !== source) return;
+    state.updates.status = 'connected';
+    render();
+  });
+  source.addEventListener('dashboard-updated', async (event) => {
+    if (dashboardEventSource !== source) return;
+    let observedAt = new Date().toISOString();
+    try {
+      const payload = JSON.parse(event.data);
+      if (payload?.observedAt && !Number.isNaN(new Date(payload.observedAt).valueOf())) {
+        observedAt = payload.observedAt;
+      }
+    } catch {
+      // Event data is only freshness evidence. A malformed optional timestamp
+      // never replaces the authenticated dashboard fetch below.
+    }
+    state.updates.observedAt = observedAt;
+    state.updates.status = 'refreshing';
+    render();
+    await loadDashboard();
+    if (dashboardEventSource === source) {
+      state.updates.status = source.readyState === EventSource.OPEN
+        ? 'connected'
+        : 'reconnecting';
+      render();
+    }
+  });
+  source.addEventListener('error', () => {
+    if (dashboardEventSource !== source) return;
+    state.updates.status = 'reconnecting';
+    render();
+  });
 }
 
 /** Current investigation state in canonical-link shape. */
@@ -4949,6 +5166,12 @@ function syncRouteFromLocation() {
   applyHashState(parsed);
   syncUrlFromState();
   render();
+  if (state.route === 'procurement') {
+    scheduleProcurementLoad({ resetPage: routeChanged });
+  } else if (routeChanged) {
+    state.procurement.requestSerial += 1;
+    state.procurement.loading = false;
+  }
   if (routeChanged && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -4958,6 +5181,7 @@ elements.search.addEventListener('input', (event) => {
   state.query = event.currentTarget.value;
   syncUrlFromState();
   render();
+  scheduleProcurementLoad({ resetPage: true, delay: 220 });
 });
 
 elements.scope.addEventListener('change', (event) => {
@@ -4966,6 +5190,7 @@ elements.scope.addEventListener('change', (event) => {
   state.store = value.startsWith('STORE:') ? value.slice(6) : 'ALL';
   syncUrlFromState();
   render();
+  scheduleProcurementLoad({ resetPage: true });
 });
 
 elements.rangeButtons.forEach((button) => {
@@ -4978,6 +5203,20 @@ elements.rangeButtons.forEach((button) => {
 });
 
 elements.view.addEventListener('click', (event) => {
+  const procurementRetry = event.target.closest?.('[data-procurement-retry]');
+  if (procurementRetry && elements.view.contains(procurementRetry)) {
+    void loadProcurement();
+    return;
+  }
+  const procurementPage = event.target.closest?.('[data-procurement-page]');
+  if (procurementPage && elements.view.contains(procurementPage)) {
+    const nextPage = Number(procurementPage.dataset.procurementPage);
+    if (Number.isSafeInteger(nextPage) && nextPage >= 1 && !procurementPage.disabled) {
+      state.procurement.page = nextPage;
+      void loadProcurement();
+    }
+    return;
+  }
   const clearFocus = event.target.closest?.('[data-clear-focus]');
   if (clearFocus && elements.view.contains(clearFocus)) {
     // Clearing a focus keeps the broader store/range investigation intact.
@@ -4997,6 +5236,7 @@ elements.view.addEventListener('click', (event) => {
   state.quickFilters[route] = value;
   syncUrlFromState();
   render();
+  if (route === 'procurement') scheduleProcurementLoad({ resetPage: true });
 });
 
 elements.clearFilters.addEventListener('click', () => {
@@ -5009,6 +5249,7 @@ elements.clearFilters.addEventListener('click', () => {
   populateScopeOptions();
   syncUrlFromState();
   render();
+  scheduleProcurementLoad({ resetPage: true });
   elements.search.focus();
 });
 
@@ -5078,9 +5319,14 @@ document.addEventListener('focusin', (event) => {
 document.addEventListener('focusout', hideChartTooltip);
 document.addEventListener('scroll', hideChartTooltip, true);
 window.addEventListener('hashchange', syncRouteFromLocation);
+window.addEventListener('beforeunload', () => {
+  if (procurementLoadTimer !== null) window.clearTimeout(procurementLoadTimer);
+  dashboardEventSource?.close();
+});
 
 // Normalize whatever arrived in the address bar into the canonical form once, so
 // a hand-edited or stale link becomes shareable without a reload.
 syncUrlFromState();
 render();
 loadDashboard();
+connectDashboardUpdates();
