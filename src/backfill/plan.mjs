@@ -140,6 +140,13 @@ export function windowKeyFor({ storeCode, domain, adapterKey, windowStart, windo
  *
  * `windowEnd` is exclusive so adjacent windows never overlap and a late fact can
  * be replayed for exactly one business-date range.
+ *
+ * A non-executable capability collapses to the fewest schema-compatible ledger
+ * chunks. Repeating the same immovable blocker once per business date would
+ * inflate the plan and operator report, but ops.backfill_window deliberately
+ * rejects ranges longer than PLAN_LIMITS.maxWindowSpanDays. A 65-day blocked
+ * request therefore produces three rows (31, 31 and 3 days), not 65 rows and
+ * not one row that the database cannot persist.
  */
 function planWindowRanges({
   from,
@@ -147,7 +154,22 @@ function planWindowRanges({
   windowSpanDays,
   maxWindowSpanDays,
   windowGrain,
+  executable,
 }) {
+  if (!executable) {
+    const ranges = [];
+    let cursorEnd = addDays(to, 1);
+    while (cursorEnd.valueOf() > from.valueOf()) {
+      const candidateStart = addDays(cursorEnd, -PLAN_LIMITS.maxWindowSpanDays);
+      const windowStart = candidateStart.valueOf() < from.valueOf() ? from : candidateStart;
+      ranges.push({
+        windowStart: toIsoDate(windowStart),
+        windowEnd: toIsoDate(cursorEnd),
+      });
+      cursorEnd = windowStart;
+    }
+    return ranges;
+  }
   if (windowGrain === 'DIMENSION' || windowGrain === 'WINDOW_SNAPSHOT') {
     return [{
       windowStart: toIsoDate(to),
@@ -222,15 +244,16 @@ export function buildBackfillPlan(request = {}) {
   for (const storeCode of storeCodes) {
     for (const domain of domains) {
       const capability = BACKFILL_DOMAIN_CATALOG[domain];
+      const executable = isExecutableCapability(capability.capabilityStatus);
       const ranges = planWindowRanges({
         from,
         to,
         windowSpanDays,
         maxWindowSpanDays: capability.maxWindowSpanDays,
         windowGrain: capability.windowGrain,
+        executable,
       });
       for (const range of ranges) {
-        const executable = isExecutableCapability(capability.capabilityStatus);
         windows.push({
           storeCode,
           domain,
@@ -297,6 +320,10 @@ export function buildBackfillPlan(request = {}) {
       capabilityStatus: window.capabilityStatus,
       windowStart: window.windowStart,
       windowEnd: window.windowEnd,
+      // The blocker reason is part of the reviewed evidence, so a catalog change
+      // that keeps the same non-executable status still produces a new hash.
+      blockedReasonCode: window.blockedReasonCode ?? null,
+      executable: window.executable,
     })),
   };
   const planHash = canonicalHash(hashInput);
@@ -307,6 +334,30 @@ export function buildBackfillPlan(request = {}) {
       windows.filter((window) => window.capabilityStatus === status).length,
     ]),
   );
+
+  const blockedDomains = [...new Set(
+    windows.filter((window) => !window.executable).map((window) => window.domain),
+  )].sort();
+  const blockedWindowCount = windows.filter((window) => !window.executable).length;
+  const blockedWindowCountPerStoreDomain = Math.ceil(
+    rangeDays / PLAN_LIMITS.maxWindowSpanDays,
+  );
+  // Assert the minimal schema-compatible chunk count in production code, not
+  // only in tests, so a future change cannot silently restore daily fan-out or
+  // produce an overlong row rejected by ops.backfill_window.
+  if (
+    blockedWindowCount
+    !== storeCodes.length * blockedDomains.length * blockedWindowCountPerStoreDomain
+  ) {
+    fail('BLOCKER_NOT_COLLAPSED', 'blocked domains must use minimal bounded ledger chunks', {
+      blockedWindowCount,
+      expected: (
+        storeCodes.length
+        * blockedDomains.length
+        * blockedWindowCountPerStoreDomain
+      ),
+    });
+  }
 
   return Object.freeze({
     planVersion: BACKFILL_PLAN_VERSION,
@@ -323,7 +374,17 @@ export function buildBackfillPlan(request = {}) {
     summary: Object.freeze({
       plannedWindowCount: windows.length,
       executableWindowCount: windows.filter((window) => window.executable).length,
-      blockedWindowCount: windows.filter((window) => !window.executable).length,
+      blockedWindowCount,
+      blockedDomains: Object.freeze(blockedDomains),
+      // Blockers are chunked only to satisfy the immutable 31-day warehouse
+      // constraint; they are never expanded to one row per business date.
+      blockedWindowChunkDays: PLAN_LIMITS.maxWindowSpanDays,
+      blockedWindowCountPerStoreDomain: (
+        blockedDomains.length === 0 ? 0 : blockedWindowCountPerStoreDomain
+      ),
+      executableDomains: Object.freeze([...new Set(
+        windows.filter((window) => window.executable).map((window) => window.domain),
+      )].sort()),
       byCapability: Object.freeze(byCapability),
       blockedReasonCodes: Object.freeze([...new Set(
         windows.filter((window) => !window.executable)

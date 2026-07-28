@@ -108,6 +108,7 @@ export function parseArgs(argv) {
     '--run-id',
     '--mode',
     '--backfill-start',
+    '--backfill-end',
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -235,7 +236,7 @@ function normalizeMode(value) {
 
 function splitBackfillWindows(start, end, maximumDays) {
   if (!(start instanceof Date) || !(end instanceof Date) || end <= start) {
-    throw new TypeError('backfill-start must be before now');
+    throw new TypeError('backfill-start must be before the backfill end');
   }
   const result = [];
   let cursor = new Date(start.getTime());
@@ -254,41 +255,74 @@ function splitBackfillWindows(start, end, maximumDays) {
   return Object.freeze(result);
 }
 
+/**
+ * Build the fetch plan.
+ *
+ * `now` is always the real observation instant and is the only source of
+ * `sourceFetchedAt`. In BACKFILL mode `backfillStart` and `backfillEnd` define
+ * the exact requested history range, which is a separate concept: replaying an
+ * old range must not claim that the warehouse observed it at that old instant.
+ * `backfillEnd` defaults to `now` so an existing caller keeps its behaviour.
+ */
 export function computeSupplyPlan({
   now = new Date(),
   mode = SUPPLY_SYNC_MODES.INCREMENTAL,
   backfillStart,
+  backfillEnd,
 } = {}) {
   const current = normalizeNow(now);
   const normalizedMode = normalizeMode(mode);
+  const hasBackfillStart = backfillStart !== undefined
+    && backfillStart !== null
+    && backfillStart !== '';
+  const hasBackfillEnd = backfillEnd !== undefined
+    && backfillEnd !== null
+    && backfillEnd !== '';
   if (normalizedMode === SUPPLY_SYNC_MODES.INCREMENTAL) {
-    if (backfillStart !== undefined && backfillStart !== null && backfillStart !== '') {
+    if (hasBackfillStart) {
       throw new TypeError('backfill-start is only valid with mode=backfill');
+    }
+    if (hasBackfillEnd) {
+      throw new TypeError('backfill-end is only valid with mode=backfill');
     }
     return computeSupplyWindows(current);
   }
-  if (backfillStart === undefined || backfillStart === null || backfillStart === '') {
+  if (!hasBackfillStart) {
     throw new TypeError('backfill-start is required with mode=backfill');
   }
   const start = normalizeNow(backfillStart);
+  // Default to the observation instant: without an explicit end, the requested
+  // history range runs up to now, exactly as before this flag existed.
+  const end = hasBackfillEnd ? normalizeNow(backfillEnd) : current;
+  if (end <= start) {
+    throw new TypeError('backfill-end must be after backfill-start');
+  }
+  if (end > current) {
+    throw new TypeError('backfill-end must not be after now');
+  }
   const purchaseOrderWindows = splitBackfillWindows(
     start,
-    current,
+    end,
     PURCHASE_ORDER_BACKFILL_WINDOW_DAYS,
   );
   const deliveryWindows = splitBackfillWindows(
     start,
-    current,
+    end,
     DELIVERY_BACKFILL_WINDOW_DAYS,
   );
   return Object.freeze({
+    // The real fetch instant, never the requested history boundary.
     sourceFetchedAt: current.toISOString(),
+    backfillStart: formatShanghaiDateTime(start),
+    backfillEnd: formatShanghaiDateTime(end),
+    backfillEndExplicit: hasBackfillEnd,
+    timezone: 'Asia/Shanghai',
     purchaseOrders: Object.freeze({
       mode: SUPPLY_SYNC_MODES.BACKFILL,
       field: 'updateTime',
       maximumWindowDays: PURCHASE_ORDER_BACKFILL_WINDOW_DAYS,
       start: formatShanghaiDateTime(start),
-      end: formatShanghaiDateTime(current),
+      end: formatShanghaiDateTime(end),
       timezone: 'Asia/Shanghai',
       windows: purchaseOrderWindows,
       completeRequestedRange: true,
@@ -299,7 +333,7 @@ export function computeSupplyPlan({
       field: 'addTime',
       maximumWindowDays: DELIVERY_BACKFILL_WINDOW_DAYS,
       start: formatShanghaiDateTime(start),
-      end: formatShanghaiDateTime(current),
+      end: formatShanghaiDateTime(end),
       timezone: 'Asia/Shanghai',
       supportsUpdateTimeFilter: false,
       pendingPointLookup: false,
@@ -1327,6 +1361,7 @@ export async function runSupplySync({
   runId,
   mode = SUPPLY_SYNC_MODES.INCREMENTAL,
   backfillStart,
+  backfillEnd,
   poolFactory = (connectionString) => new Pool({ connectionString, max: 3 }),
   clientFactory = (options) => new SheinOpenApiClient(options),
   operations: operationOverrides = {},
@@ -1341,6 +1376,7 @@ export async function runSupplySync({
     now: current,
     mode: normalizedMode,
     backfillStart,
+    backfillEnd,
   });
   const normalizedDomains = normalizeSupplyDomains(domains);
   const selectedStores = selectStores(config.stores, stores);
@@ -1456,6 +1492,7 @@ async function main() {
     runId: args['run-id'],
     mode: args.mode,
     backfillStart: args['backfill-start'],
+    backfillEnd: args['backfill-end'],
   });
   console.log(JSON.stringify(summary, null, 2));
   if (!summary.ok) process.exitCode = 2;

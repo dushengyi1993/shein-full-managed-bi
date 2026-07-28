@@ -88,7 +88,7 @@ test('plan hash is deterministic across store and domain input ordering', () => 
 });
 
 test('windows are planned newest-first, non-overlapping and half-open', () => {
-  const plan = buildBackfillPlan({ ...BASE, domains: ['deliveries'], storeCodes: ['DL5477'] });
+  const plan = buildBackfillPlan({ ...BASE, domains: ['purchase-orders'], storeCodes: ['DL5477'] });
   const starts = plan.windows.map((window) => window.windowStart);
   assert.deepEqual(starts, ['2026-07-03', '2026-07-02', '2026-07-01']);
   for (const window of plan.windows) {
@@ -133,18 +133,47 @@ test('unverified, unsupported and experiment-only domains plan as explicit block
   }
 });
 
-test('four-window sales snapshots are verified but never daily-history reconstructable', () => {
+test('blocked ranges use the fewest 31-day ledger chunks instead of daily fan-out', () => {
+  const plan = buildBackfillPlan({
+    ...BASE,
+    storeCodes: ['DL5477'],
+    domains: ['deliveries'],
+    from: '2026-05-01',
+    to: '2026-07-04',
+  });
+  assert.equal(plan.summary.blockedWindowChunkDays, 31);
+  assert.equal(plan.summary.blockedWindowCountPerStoreDomain, 3);
+  assert.equal(plan.summary.blockedWindowCount, 3);
+  assert.deepEqual(
+    plan.windows.map(({ windowStart, windowEnd }) => ({ windowStart, windowEnd })),
+    [
+      { windowStart: '2026-06-04', windowEnd: '2026-07-05' },
+      { windowStart: '2026-05-04', windowEnd: '2026-06-04' },
+      { windowStart: '2026-05-01', windowEnd: '2026-05-04' },
+    ],
+  );
+  for (const window of plan.windows) {
+    const start = new Date(`${window.windowStart}T00:00:00.000Z`);
+    const end = new Date(`${window.windowEnd}T00:00:00.000Z`);
+    assert.ok((end - start) / 86_400_000 <= 31);
+    assert.equal(window.executable, false);
+  }
+});
+
+test('four-window sales snapshots are blocked because they are not historical', () => {
   const plan = buildBackfillPlan({
     ...BASE,
     storeCodes: ['DL5477'],
     domains: ['sales-window-snapshot'],
   });
   for (const window of plan.windows) {
-    assert.equal(window.capabilityStatus, CAPABILITY_STATUSES.VERIFIED);
+    assert.equal(window.capabilityStatus, CAPABILITY_STATUSES.UNSUPPORTED);
+    assert.equal(window.blockedReasonCode, 'SALES_WINDOW_SNAPSHOT_NOT_HISTORICAL');
     assert.equal(window.dailyHistoryReconstructable, false);
     assert.equal(window.windowGrain, 'WINDOW_SNAPSHOT');
   }
   assert.deepEqual(EXECUTABLE_BACKFILL_DOMAINS.includes('financial-settlement'), false);
+  assert.deepEqual(EXECUTABLE_BACKFILL_DOMAINS, ['purchase-orders']);
 });
 
 test('execute authorization requires the exact hash and explicit allow-lists', () => {
@@ -225,7 +254,7 @@ test('unverified, unsupported and experiment-only windows make zero adapter call
 });
 
 test('same plan hash replay resumes only incomplete verified windows', async () => {
-  const plan = buildBackfillPlan({ ...BASE, storeCodes: ['DL5477'], domains: ['deliveries'] });
+  const plan = buildBackfillPlan({ ...BASE, storeCodes: ['DL5477'], domains: ['purchase-orders'] });
   const completed = [plan.windows[0].windowKey, plan.windows[1].windowKey];
   const seen = [];
   const repository = recordingRepository({ completedWindowKeys: completed });
@@ -234,10 +263,10 @@ test('same plan hash replay resumes only incomplete verified windows', async () 
     mode: BACKFILL_MODES.EXECUTE,
     approvedPlanHash: plan.planHash,
     allowedStoreCodes: ['DL5477'],
-    allowedDomains: ['deliveries'],
+    allowedDomains: ['purchase-orders'],
     repository,
     adapters: {
-      'openapi.deliveries.v1': {
+      'openapi.purchase-orders.v1': {
         async fetchWindow({ windowStart }) {
           seen.push(windowStart);
           return passingResult({ businessDates: [windowStart] });
@@ -255,7 +284,7 @@ test('same plan hash replay resumes only incomplete verified windows', async () 
 });
 
 test('failed and partial windows never advance a checkpoint', async () => {
-  const plan = buildBackfillPlan({ ...BASE, storeCodes: ['DL5477'], domains: ['deliveries'], to: '2026-07-01' });
+  const plan = buildBackfillPlan({ ...BASE, storeCodes: ['DL5477'], domains: ['purchase-orders'], to: '2026-07-01' });
   for (const badResult of [
     { ok: false, sanitizedErrorCode: 'UPSTREAM_TIMEOUT' },
     passingResult({ observedPageCount: 1 }),
@@ -268,9 +297,9 @@ test('failed and partial windows never advance a checkpoint', async () => {
       mode: BACKFILL_MODES.EXECUTE,
       approvedPlanHash: plan.planHash,
       allowedStoreCodes: ['DL5477'],
-      allowedDomains: ['deliveries'],
+      allowedDomains: ['purchase-orders'],
       repository,
-      adapters: { 'openapi.deliveries.v1': { async fetchWindow() { return badResult; } } },
+      adapters: { 'openapi.purchase-orders.v1': { async fetchWindow() { return badResult; } } },
     });
     assert.equal(result.checkpointAdvancedCount, 0);
     assert.notEqual(result.runStatus, 'SUCCEEDED');
@@ -282,7 +311,7 @@ test('failed and partial windows never advance a checkpoint', async () => {
 
 test('quality gate blocks every unproven condition and never advances a checkpoint', () => {
   const window = buildBackfillPlan({
-    ...BASE, storeCodes: ['DL5477'], domains: ['deliveries'], to: '2026-07-01',
+    ...BASE, storeCodes: ['DL5477'], domains: ['purchase-orders'], to: '2026-07-01',
   }).windows[0];
 
   const cases = [
@@ -333,14 +362,14 @@ test('quality gate blocks every unproven condition and never advances a checkpoi
 });
 
 test('a missing adapter is an explicit blocker, not an empty success', async () => {
-  const plan = buildBackfillPlan({ ...BASE, storeCodes: ['DL5477'], domains: ['deliveries'], to: '2026-07-01' });
+  const plan = buildBackfillPlan({ ...BASE, storeCodes: ['DL5477'], domains: ['purchase-orders'], to: '2026-07-01' });
   const repository = recordingRepository();
   const result = await runBackfillPlan({
     plan,
     mode: BACKFILL_MODES.EXECUTE,
     approvedPlanHash: plan.planHash,
     allowedStoreCodes: ['DL5477'],
-    allowedDomains: ['deliveries'],
+    allowedDomains: ['purchase-orders'],
     repository,
     adapters: {},
   });

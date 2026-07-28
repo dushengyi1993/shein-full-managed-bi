@@ -14,7 +14,7 @@ import { buildPlanReport } from '../../scripts/plan_full_managed_backfill.mjs';
 
 const PLAN_ARGS = Object.freeze([
   '--stores=DL5477',
-  '--domains=deliveries',
+  '--domains=purchase-orders',
   '--from=2026-07-01',
   '--to=2026-07-03',
   '--created-by=codex.batch2',
@@ -66,7 +66,7 @@ function grainRepository() {
 test('same-grain windows never overlap and each observes the previous checkpoint', async () => {
   const plan = buildBackfillPlan({
     storeCodes: ['DL5477'],
-    domains: ['deliveries'],
+    domains: ['purchase-orders'],
     from: '2026-07-01',
     to: '2026-07-03',
     concurrency: 4,
@@ -84,10 +84,10 @@ test('same-grain windows never overlap and each observes the previous checkpoint
     mode: BACKFILL_MODES.EXECUTE,
     approvedPlanHash: plan.planHash,
     allowedStoreCodes: ['DL5477'],
-    allowedDomains: ['deliveries'],
+    allowedDomains: ['purchase-orders'],
     repository,
     adapters: {
-      'openapi.deliveries.v1': {
+      'openapi.purchase-orders.v1': {
         async fetchWindow({ windowStart, checkpoint }) {
           inFlight += 1;
           maxInFlight = Math.max(maxInFlight, inFlight);
@@ -114,7 +114,7 @@ test('same-grain windows never overlap and each observes the previous checkpoint
 test('a same-grain schema drift is detected because the second window sees the first fingerprint', async () => {
   const plan = buildBackfillPlan({
     storeCodes: ['DL5477'],
-    domains: ['deliveries'],
+    domains: ['purchase-orders'],
     from: '2026-07-02',
     to: '2026-07-03',
     concurrency: 4,
@@ -127,10 +127,10 @@ test('a same-grain schema drift is detected because the second window sees the f
     mode: BACKFILL_MODES.EXECUTE,
     approvedPlanHash: plan.planHash,
     allowedStoreCodes: ['DL5477'],
-    allowedDomains: ['deliveries'],
+    allowedDomains: ['purchase-orders'],
     repository,
     adapters: {
-      'openapi.deliveries.v1': {
+      'openapi.purchase-orders.v1': {
         async fetchWindow({ windowStart }) {
           return windowStart === '2026-07-03'
             ? passing(windowStart, 'a'.repeat(64))
@@ -178,8 +178,8 @@ test('different grains still overlap up to the plan concurrency bound', async ()
       'openapi.purchase-orders.v1': adapter,
     },
   });
-  // Four distinct grains, concurrency 4.
-  assert.equal(maxInFlight, 4);
+  // Only purchase-orders is executable, so two stores yield two live grains.
+  assert.equal(maxInFlight, 2);
 });
 
 /** Deterministic fake pg pool that records every statement. */
@@ -476,7 +476,7 @@ test('duplicate and unknown flags are rejected per entrypoint', () => {
   );
 });
 
-test('execute mode authorizes before reaching the deliberate not-wired blocker', () => {
+test('execute mode authorizes the exact purchase-order scope', () => {
   const dryRun = parseRunRequest(PLAN_ARGS);
   assert.throws(
     () => parseRunRequest([
@@ -484,7 +484,7 @@ test('execute mode authorizes before reaching the deliberate not-wired blocker',
       '--execute',
       `--approved-plan-hash=${'b'.repeat(64)}`,
       '--allow-stores=DL5477',
-      '--allow-domains=deliveries',
+      '--allow-domains=purchase-orders',
     ]),
     (error) => error.code === 'PLAN_HASH_MISMATCH',
   );
@@ -494,7 +494,7 @@ test('execute mode authorizes before reaching the deliberate not-wired blocker',
       '--execute',
       `--approved-plan-hash=${dryRun.plan.planHash}`,
       '--allow-stores=MZ2406',
-      '--allow-domains=deliveries',
+      '--allow-domains=purchase-orders',
     ]),
     (error) => error.code === 'STORE_NOT_AUTHORIZED',
   );
@@ -504,7 +504,7 @@ test('execute mode authorizes before reaching the deliberate not-wired blocker',
       '--execute',
       `--approved-plan-hash=${dryRun.plan.planHash}`,
       '--allow-stores=DL5477',
-      '--allow-domains=purchase-orders',
+      '--allow-domains=deliveries',
     ]),
     (error) => error.code === 'DOMAIN_NOT_AUTHORIZED',
   );
@@ -513,7 +513,7 @@ test('execute mode authorizes before reaching the deliberate not-wired blocker',
     '--execute',
     `--approved-plan-hash=${dryRun.plan.planHash}`,
     '--allow-stores=DL5477',
-    '--allow-domains=deliveries',
+    '--allow-domains=purchase-orders',
   ]);
   assert.equal(authorized.authorization.planHash, dryRun.plan.planHash);
 });

@@ -32,7 +32,7 @@ test('the planner CLI is deterministic and reports unproven work as blockers', (
   assert.ok(first.summary.blockedWindowCount > 0);
   assert.deepEqual(
     first.blockers.map((item) => item.blockedReasonCode),
-    ['FINANCIAL_SETTLEMENT_UNVERIFIED'],
+    ['DELIVERY_HISTORY_CREATED_AT_ONLY', 'FINANCIAL_SETTLEMENT_UNVERIFIED'],
   );
   // The report exposes counts, states and hashes only, never a raw store secret.
   assert.equal(first.storeCount, 2);
@@ -110,7 +110,6 @@ test('backfill and experiment sources never construct a network client or spawn 
     'src/webapi-experiment/adapter.mjs',
     'src/webapi-experiment/profile-guard.mjs',
     'scripts/plan_full_managed_backfill.mjs',
-    'scripts/run_full_managed_backfill.mjs',
   ];
   for (const path of files) {
     const source = await readFile(new URL(path, projectRoot), 'utf8');
@@ -119,6 +118,14 @@ test('backfill and experiment sources never construct a network client or spawn 
     assert.doesNotMatch(source, /new Pool\(/, path);
     assert.doesNotMatch(source, /console\.log/, path);
   }
+  const runner = await readFile(
+    new URL('scripts/run_full_managed_backfill.mjs', projectRoot),
+    'utf8',
+  );
+  assert.doesNotMatch(runner, /\bfetch\s*\(|node:child_process|spawn\(|execFile/, 'runner');
+  assert.match(runner, /parseRunRequest\(argv\)[\s\S]*createRuntime\(/);
+  assert.match(runner, /loadPg = \(\) => import\('pg'\)/);
+  assert.doesNotMatch(runner, /process\.env\.DATABASE_URL/);
 });
 
 test('existing migrations stay immutable and 0012 is purely additive', async () => {

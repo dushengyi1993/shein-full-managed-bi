@@ -1,8 +1,9 @@
-# Backfill control plane and isolated WebAPI experiment (Batch 2)
+# Backfill control plane, purchase-order history and isolated WebAPI experiment
 
-Date: 2026-07-28
-Status: control framework only. No real backfill, no real WebAPI request, no
-production gate, no enabled timer, no 14-day validation.
+Date: 2026-07-29
+Status: the purchase-order adapter is the only executable historical backfill
+path. It is manual, plan-hash gated and unscheduled. The WebAPI path remains an
+isolated `UNMAPPED` experiment with no production gate or timer.
 
 ## 1. What this batch is
 
@@ -22,11 +23,11 @@ JSON contract is unchanged.
 
 | Domain | Status | Rule |
 |---|---|---|
-| `store-identity` | VERIFIED | existing OpenAPI store contract |
-| `product-identity` | VERIFIED | existing catalog/detail/identity repositories |
-| `sales-window-snapshot` | VERIFIED | refreshes the four rolling windows only; `dailyHistoryReconstructable: false` |
-| `purchase-orders` | VERIFIED | existing supply pagination + reconciliation gate |
-| `deliveries` | VERIFIED | existing supply pagination + reconciliation gate |
+| `store-identity` | UNSUPPORTED | current membership has no per-business-date history |
+| `product-identity` | UNSUPPORTED | current catalog identity has no historical identity grain |
+| `sales-window-snapshot` | UNSUPPORTED | the four rolling windows exist only at the current observation instant |
+| `purchase-orders` | VERIFIED | `updateTime` supports an exact one-day replay through the existing supply pagination and reconciliation gate |
+| `deliveries` | UNVERIFIED | the endpoint filters creation time only, so late updates cannot be replayed completely |
 | `financial-settlement` | UNVERIFIED | endpoint, permission, pagination and money caliber unproven |
 | `inventory-history` | UNSUPPORTED | cannot be rebuilt from a current snapshot |
 | `webhook-history` | UNSUPPORTED | pre-subscription events do not exist |
@@ -43,6 +44,12 @@ Grain: `run × store × domain × adapter × [window_start, window_end)`.
 replays exactly one business-date range. Planning walks backward from the most
 recent date. Store codes and domains are normalized and sorted before hashing, so
 input ordering cannot change the plan hash.
+
+Executable purchase-order windows are exactly one day. Non-executable domains
+are not repeated once per business date: the planner produces the fewest
+31-day-or-shorter blocker chunks required by the immutable
+`ops.backfill_window` range constraint. A 65-day blocked request therefore
+records 3 explicit blockers, not 65 duplicates and not one invalid 65-day row.
 
 The plan hash covers the plan version, requested scope, planner bounds and the
 window list — not the mode, the operator or a timestamp. A reviewed dry-run hash
@@ -108,9 +115,19 @@ so `--concurrency=1x` is rejected rather than silently parsed as `1`. Output is 
 and `assertSafeCliOutput` fails the process rather than print anything
 secret-shaped, including a Profile path or a Profile key.
 
-In this batch the execute path exits with
-`BACKFILL_EXECUTE_ADAPTERS_NOT_WIRED`: no verified adapter or pool is wired in,
-so it fails closed instead of reporting a hollow success.
+The execute runtime is created only after the plan hash and exact allow-lists
+have passed authorization. It accepts only `FULL_BI_DATABASE_URL` plus one of
+`FULL_BI_OPENAPI_CONFIG` / `FULL_BI_OPENAPI_CONFIG_FILE`; the generic
+`DATABASE_URL` fallback is deliberately rejected. Only
+`openapi.purchase-orders.v1` is registered. Dry-run dynamically imports none of
+the database, credential, OpenAPI or adapter modules.
+
+For every planned day the adapter delegates exactly once to the existing supply
+sync with one store, the `purchase-orders` domain, `mode=BACKFILL`, and the exact
+half-open `updateTime` range. `backfillEnd` is the historical window boundary;
+`now` remains the real observation instant. The adapter advances a checkpoint
+only after terminal-page, page-count, exact-range and warehouse persisted-count
+evidence all agree.
 
 ## 6. WebAPI experiment isolation
 
@@ -274,7 +291,7 @@ bundle establish the current contract: catalog rows live at
 `metaIndexIds`, and detail rows are matched from `info.list` by
 `metaIndexId`. Titles, labels and values are not retained by catalog discovery.
 
-### Deployment prerequisites (not applied by this batch)
+### Runtime prerequisites
 
 - migration 0012 must already be applied;
 - the `sheinfm_webapi_login` credential must exist and be reachable as
@@ -284,14 +301,18 @@ bundle establish the current contract: catalog rows live at
 - the explicit gate `/srv/shein-fm/runtime/webapi-experiment.enabled` must exist
   only for the bounded manual execution window.
 
-This batch applies no migration, creates no gate file, ships no systemd unit or
-timer, and performs no real WebAPI call. Manual cloud execution runs later as the
-existing Profile owner under Codex control.
+No WebAPI systemd unit or timer is shipped. The gate is created only around one
+bounded manual run and removed immediately afterward. WebAPI observations do not
+authorize or feed the purchase-order backfill.
 
 ## 9. Deliberately deferred
 
-- No verified backfill adapter is wired into the runner.
+- No historical adapter other than `purchase-orders`.
+- No delivery history claim until an update-time-complete contract exists.
+- No historical daily sales reconstruction from the four rolling snapshots.
+- No backfill systemd unit or timer; execution remains an explicitly reviewed,
+  hash-locked manual operation.
 - No WebAPI systemd unit or timer; execution remains a bounded manual run.
 - No `fact.full_store_realtime_metric_snapshot`.
 - No metric definition rows, so no metric is `VERIFIED`.
-- No production gate file, no enabled timer, no migration applied.
+- No persistent production WebAPI gate file and no enabled WebAPI timer.

@@ -620,6 +620,39 @@ test('explicit backfill splits PO and delivery coverage into bounded windows and
   assert.equal(loads[0].deliveries.incrementalStrategy.pendingPointLookup, false);
 });
 
+test('explicit backfill end scopes history without changing the real fetch instant', () => {
+  const plan = computeSupplyPlan({
+    mode: 'backfill',
+    backfillStart: '2026-07-01T00:00:00+08:00',
+    backfillEnd: '2026-07-02T00:00:00+08:00',
+    now: '2026-07-28T12:34:56Z',
+  });
+  assert.equal(plan.sourceFetchedAt, '2026-07-28T12:34:56.000Z');
+  assert.equal(plan.purchaseOrders.start, '2026-07-01 00:00:00');
+  assert.equal(plan.purchaseOrders.end, '2026-07-02 00:00:00');
+  assert.deepEqual(plan.purchaseOrders.windows, [{
+    start: '2026-07-01 00:00:00',
+    end: '2026-07-02 00:00:00',
+  }]);
+  assert.throws(() => computeSupplyPlan({
+    mode: 'incremental',
+    backfillEnd: '2026-07-02T00:00:00+08:00',
+    now: '2026-07-28T12:34:56Z',
+  }), /backfill-end/);
+  assert.throws(() => computeSupplyPlan({
+    mode: 'backfill',
+    backfillStart: '2026-07-02T00:00:00+08:00',
+    backfillEnd: '2026-07-01T00:00:00+08:00',
+    now: '2026-07-28T12:34:56Z',
+  }), /after backfill-start/);
+  assert.throws(() => computeSupplyPlan({
+    mode: 'backfill',
+    backfillStart: '2026-07-01T00:00:00+08:00',
+    backfillEnd: '2026-07-29T00:00:00+08:00',
+    now: '2026-07-28T12:34:56Z',
+  }), /after now/);
+});
+
 test('incremental delivery combines rolling creation window with older pending point lookups', async () => {
   const calls = [];
   const loads = [];
