@@ -340,7 +340,11 @@ export function createWebApiExperimentRepository({ pool } = {}) {
                  currency, source_update_time, observed_at, business_date,
                  semantic_status
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $6::numeric, $7, $8, $9, $10, 'UNMAPPED')
+             VALUES (
+               $1, $2, $3, $4, $5,
+               $6::text, ($6::text)::numeric,
+               $7, $8, $9, $10, 'UNMAPPED'
+             )
              ON CONFLICT (webapi_fetch_batch_id, observation_key) DO NOTHING
              RETURNING webapi_metric_observation_id`,
             [

@@ -114,7 +114,7 @@ test('a new batch and its observations commit atomically inside one role transac
   assert.equal(pool.client.released, true);
   // The decimal travels as text and is cast by PostgreSQL, never by JavaScript.
   const insert = pool.statements.find((item) => item.text.startsWith('INSERT INTO raw.webapi_metric_observation'));
-  assert.match(insert.text, /\$6, \$6::numeric/);
+  assert.match(insert.text, /\$6::text, \(\$6::text\)::numeric/);
   assert.equal(insert.values[5], '12.30');
   assert.equal(typeof insert.values[5], 'string');
 });
