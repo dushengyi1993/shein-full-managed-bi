@@ -262,6 +262,47 @@ test('a catalog probe exposes technical metric ids only, sorted and bounded', as
   assert.doesNotMatch(JSON.stringify(result.batch), /"metaIndexId"|"label"/i);
 });
 
+test('the evidenced full-managed catalog envelope yields dataMetaIndexIds only', async () => {
+  const adapter = createWebApiExperimentAdapter({
+    storeCode: 'DL5477',
+    transport: async () => ({
+      httpStatus: 200,
+      body: {
+        code: '0',
+        info: {
+          dataModels: [
+            {
+              dataModelId: 8,
+              dataIndexes: [
+                { dataIndexId: 901, dataMetaIndexId: 353, dataIndexTitle: 'not retained' },
+                { dataIndexId: 902, dataMetaIndexId: 60, dataIndexTitle: 'not retained' },
+              ],
+            },
+          ],
+        },
+      },
+    }),
+  });
+  const result = await adapter.probeEndpoint('HOME_DATA_OVERVIEW_LIST');
+  assert.equal(result.batch.resultStatus, 'SCHEMA_ONLY');
+  assert.deepEqual(result.discoveredMetaIndexIds, [60, 353]);
+  assert.equal(result.observations.length, 0);
+  assert.doesNotMatch(JSON.stringify(result.batch), /not retained|dataIndexTitle/);
+});
+
+test('the evidenced full-managed detail envelope reads metric rows from info.list', () => {
+  const validated = validateEndpointResponse('HOME_DATA_OVERVIEW_DETAIL', {
+    code: '0',
+    info: {
+      list: [{ metaIndexId: 60, code: 'SBN000007', count: '12' }],
+    },
+  });
+  assert.equal(validated.rows.length, 1);
+  assert.equal(validated.rows[0].metaIndexId, 60);
+  assert.equal(validated.rows[0].code, 'SBN000007');
+  assert.equal(validated.rows[0].count, '12');
+});
+
 test('a value endpoint and a permission endpoint expose no discovered ids', async () => {
   const detail = createWebApiExperimentAdapter({
     storeCode: 'MZ2406',

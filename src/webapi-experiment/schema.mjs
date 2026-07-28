@@ -186,7 +186,9 @@ export function validateEndpointRequest(endpointCode, request = {}) {
 }
 
 function requireList(response, endpointCode) {
-  const list = Array.isArray(response) ? response : response?.list ?? response?.data;
+  const list = Array.isArray(response)
+    ? response
+    : response?.list ?? response?.data ?? response?.info?.list;
   if (!Array.isArray(list)) {
     throw new WebApiContractError(
       'WEBAPI_RESPONSE_SHAPE_INVALID',
@@ -202,6 +204,37 @@ function requireList(response, endpointCode) {
     );
   }
   return list;
+}
+
+function requireCatalogList(response, endpointCode) {
+  const dataModels = response?.info?.dataModels;
+  if (!Array.isArray(dataModels)) return requireList(response, endpointCode);
+  if (dataModels.length > 100) {
+    throw new WebApiContractError(
+      'WEBAPI_RESPONSE_TOO_LARGE',
+      'catalog data-model list exceeds the experiment bound',
+      { endpointCode },
+    );
+  }
+  const rows = [];
+  for (const model of dataModels) {
+    if (!model || typeof model !== 'object' || !Array.isArray(model.dataIndexes)) {
+      throw new WebApiContractError(
+        'WEBAPI_RESPONSE_SHAPE_INVALID',
+        'catalog data model must expose a dataIndexes list',
+        { endpointCode },
+      );
+    }
+    rows.push(...model.dataIndexes);
+    if (rows.length > 500) {
+      throw new WebApiContractError(
+        'WEBAPI_RESPONSE_TOO_LARGE',
+        'catalog data-index list exceeds the experiment bound',
+        { endpointCode },
+      );
+    }
+  }
+  return rows;
 }
 
 /**
@@ -231,12 +264,14 @@ export function validateEndpointResponse(endpointCode, response) {
     return Object.freeze({ shape: endpoint.responseShape, rows: Object.freeze([]) });
   }
 
-  const list = requireList(response, endpointCode);
+  const list = endpoint.responseShape === WEBAPI_RESPONSE_SHAPES.META_INDEX_CATALOG
+    ? requireCatalogList(response, endpointCode)
+    : requireList(response, endpointCode);
   if (endpoint.responseShape === WEBAPI_RESPONSE_SHAPES.META_INDEX_CATALOG) {
     const seenMetaIndexIds = new Set();
     const rows = list.map((item, index) => {
       const metaIndexId = typeof item === 'object' && item !== null
-        ? item.metaIndexId
+        ? item.metaIndexId ?? item.dataMetaIndexId
         : item;
       // Bounded to match the request contract and the database check.
       if (

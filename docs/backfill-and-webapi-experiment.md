@@ -268,6 +268,12 @@ intended outcome: the schema is **not** broadened and no response meaning is
 guessed. A human reads the hash, captures the shape under review, and a later
 batch amends `schema.mjs`.
 
+The 2026-07-29 live DL catalog evidence and the matching official SSO frontend
+bundle establish the current contract: catalog rows live at
+`info.dataModels[].dataIndexes[]`, `dataMetaIndexId` is sent as
+`metaIndexIds`, and detail rows are matched from `info.list` by
+`metaIndexId`. Titles, labels and values are not retained by catalog discovery.
+
 ### Deployment prerequisites (not applied by this batch)
 
 - migration 0012 must already be applied;
