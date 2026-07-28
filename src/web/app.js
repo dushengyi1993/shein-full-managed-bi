@@ -29,6 +29,200 @@ const RANGE_META = Object.freeze({
 
 const WINDOW_KEYS = Object.freeze(['today', 'yesterday', 'last7Days', 'last30Days']);
 
+/* --- canonical-hash-state:start ---
+   Pure, DOM-free investigation-state contract.
+
+   URL shape: #<route>?scope=<ALL|OWNER:key|STORE:code>&range=<window>
+              &q=<text>&quick=<value>&focus=<domain:store:code>
+
+   Defaults are omitted so a shared link stays short. Every value is
+   allow-listed; anything unknown falls back to the default instead of throwing,
+   and nothing parsed here is ever treated as HTML. */
+
+const URL_ROUTE_KEYS = Object.freeze([
+  'home', 'procurement', 'fulfilment', 'products', 'sales', 'inventory',
+  'returns', 'compliance', 'finance', 'platform', 'ops', 'system',
+]);
+
+const URL_RANGE_KEYS = Object.freeze(['today', 'yesterday', 'last7Days', 'last30Days']);
+
+const URL_DEFAULT_ROUTE = 'home';
+const URL_DEFAULT_RANGE = 'today';
+
+/** Focus domains map one alert or row to the surface that can prove it. */
+const FOCUS_DOMAINS = Object.freeze({
+  inventory: { route: 'inventory', label: '库存风险' },
+  advice: { route: 'inventory', label: '备货建议' },
+  procurement: { route: 'procurement', label: '采购单' },
+  fulfilment: { route: 'fulfilment', label: '交付单' },
+  product: { route: 'products', label: '商品身份' },
+  ops: { route: 'ops', label: '运营提醒' },
+});
+
+const QUICK_FILTER_VALUES = Object.freeze([
+  'ALL', 'HIGH', 'SHORTAGE', 'URGENT', 'ADVICE', 'SYNC',
+  'PENDING_DELIVERY', 'PENDING_RECEIPT', 'PENDING_STORAGE', 'OVERDUE',
+  'GROWING', 'DECLINING', 'UNCOMPARABLE', 'CANONICAL', 'UNMAPPED',
+  'WITH_SALES', 'MISSING_SPU',
+]);
+
+const URL_STORE_PATTERN = /^[A-Z0-9]{2,12}$/;
+const URL_OWNER_PATTERN = /^[\p{L}\p{N}._:-]{1,64}$/u;
+const URL_CODE_PATTERN = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}<>"'`\\]{1,120}$/u;
+const URL_CODE_MAX = 120;
+const URL_QUERY_MAX = 120;
+
+function urlSafeText(value, maxLength) {
+  // Preserve Unicode business text (Chinese search terms, owner keys and
+  // supplier codes) while removing controls and markup delimiters before the
+  // value reaches state. Rendering still escapes every value independently.
+  return Array.from(String(value ?? ''))
+    .filter((character) => (
+      !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(character)
+      && !['<', '>', '"', "'", '`', '\\'].includes(character)
+    ))
+    .slice(0, maxLength)
+    .join('')
+    .trim();
+}
+
+function parseScopeToken(value) {
+  const token = urlSafeText(value, 80);
+  if (token === '' || token === 'ALL') return { owner: 'ALL', store: 'ALL' };
+  if (token.startsWith('STORE:')) {
+    const store = token.slice(6).toUpperCase();
+    return URL_STORE_PATTERN.test(store)
+      ? { owner: 'ALL', store }
+      : { owner: 'ALL', store: 'ALL' };
+  }
+  if (token.startsWith('OWNER:')) {
+    const owner = token.slice(6);
+    return URL_OWNER_PATTERN.test(owner)
+      ? { owner, store: 'ALL' }
+      : { owner: 'ALL', store: 'ALL' };
+  }
+  return { owner: 'ALL', store: 'ALL' };
+}
+
+function serializeScopeToken({ owner = 'ALL', store = 'ALL' } = {}) {
+  if (store && store !== 'ALL') return `STORE:${store}`;
+  if (owner && owner !== 'ALL') return `OWNER:${owner}`;
+  return 'ALL';
+}
+
+/** `domain:store:code`; the code may itself contain separators. */
+function parseFocusToken(value) {
+  const token = urlSafeText(value, URL_CODE_MAX + 40);
+  if (token === '') return null;
+  const separator = token.indexOf(':');
+  if (separator <= 0) return null;
+  const domain = token.slice(0, separator);
+  if (!Object.prototype.hasOwnProperty.call(FOCUS_DOMAINS, domain)) return null;
+  const rest = token.slice(separator + 1);
+  const storeSeparator = rest.indexOf(':');
+  const storeCode = storeSeparator === -1
+    ? ''
+    : rest.slice(0, storeSeparator).toUpperCase();
+  const code = storeSeparator === -1 ? rest : rest.slice(storeSeparator + 1);
+  if (storeCode !== '' && !URL_STORE_PATTERN.test(storeCode)) return null;
+  if (!URL_CODE_PATTERN.test(code)) return null;
+  return { domain, storeCode, code };
+}
+
+function serializeFocusToken(focus) {
+  if (!focus || !Object.prototype.hasOwnProperty.call(FOCUS_DOMAINS, focus.domain)) {
+    return '';
+  }
+  const code = urlSafeText(focus.code, URL_CODE_MAX);
+  if (!URL_CODE_PATTERN.test(code)) return '';
+  const storeCode = urlSafeText(focus.storeCode, 12).toUpperCase();
+  return `${focus.domain}:${URL_STORE_PATTERN.test(storeCode) ? storeCode : ''}:${code}`;
+}
+
+/**
+ * Parse a location hash into investigation state.
+ *
+ * A bare hash such as `#inventory` is main-nav navigation: it carries no
+ * parameters, so the caller's current scope/range/query are inherited and the
+ * focus is cleared. A hash with a query string is a canonical link, so absent
+ * parameters mean their default value.
+ */
+function parseHashState(rawHash, inherited = {}) {
+  const hash = String(rawHash ?? '').replace(/^#/, '');
+  const separator = hash.indexOf('?');
+  const routeToken = urlSafeText(separator === -1 ? hash : hash.slice(0, separator), 40);
+  const route = URL_ROUTE_KEYS.includes(routeToken) ? routeToken : URL_DEFAULT_ROUTE;
+  const isCanonicalLink = separator !== -1;
+  if (!isCanonicalLink) {
+    return {
+      route,
+      owner: inherited.owner ?? 'ALL',
+      store: inherited.store ?? 'ALL',
+      range: URL_RANGE_KEYS.includes(inherited.range) ? inherited.range : URL_DEFAULT_RANGE,
+      query: urlSafeText(inherited.query, URL_QUERY_MAX),
+      quick: 'ALL',
+      // Navigating to another surface invalidates a focus that belonged to the
+      // previous one.
+      focus: null,
+      canonicalLink: false,
+    };
+  }
+
+  const params = new URLSearchParams(hash.slice(separator + 1));
+  const scope = parseScopeToken(params.get('scope'));
+  const rangeToken = urlSafeText(params.get('range'), 20);
+  const quickToken = urlSafeText(params.get('quick'), 32).toUpperCase();
+  const focus = parseFocusToken(params.get('focus'));
+  return {
+    route,
+    owner: scope.owner,
+    store: scope.store,
+    range: URL_RANGE_KEYS.includes(rangeToken) ? rangeToken : URL_DEFAULT_RANGE,
+    query: urlSafeText(params.get('q'), URL_QUERY_MAX),
+    quick: QUICK_FILTER_VALUES.includes(quickToken) ? quickToken : 'ALL',
+    // A focus only applies on the surface that can prove it.
+    focus: focus && FOCUS_DOMAINS[focus.domain].route === route ? focus : null,
+    canonicalLink: true,
+  };
+}
+
+/** Deterministic serialization: fixed parameter order, defaults omitted. */
+function serializeHashState(input = {}) {
+  const route = URL_ROUTE_KEYS.includes(input.route) ? input.route : URL_DEFAULT_ROUTE;
+  const params = new URLSearchParams();
+  const scope = serializeScopeToken(input);
+  if (scope !== 'ALL') params.set('scope', scope);
+  if (URL_RANGE_KEYS.includes(input.range) && input.range !== URL_DEFAULT_RANGE) {
+    params.set('range', input.range);
+  }
+  const query = urlSafeText(input.query, URL_QUERY_MAX);
+  if (query !== '') params.set('q', query);
+  const quick = urlSafeText(input.quick, 32).toUpperCase();
+  if (QUICK_FILTER_VALUES.includes(quick) && quick !== 'ALL') params.set('quick', quick);
+  const focus = input.focus && FOCUS_DOMAINS[input.focus.domain]?.route === route
+    ? serializeFocusToken(input.focus)
+    : '';
+  if (focus !== '') params.set('focus', focus);
+  const search = params.toString();
+  return search === '' ? `#${route}` : `#${route}?${search}`;
+}
+
+/** Canonical link builder used by every alert and row drilldown. */
+function canonicalHref({ route, storeCode = '', range, query = '', quick = 'ALL', focus = null } = {}) {
+  const targetRoute = URL_ROUTE_KEYS.includes(route) ? route : URL_DEFAULT_ROUTE;
+  const store = urlSafeText(storeCode, 12).toUpperCase();
+  return serializeHashState({
+    route: targetRoute,
+    store: URL_STORE_PATTERN.test(store) ? store : 'ALL',
+    owner: 'ALL',
+    range,
+    query,
+    quick,
+    focus,
+  });
+}
+/* --- canonical-hash-state:end --- */
+
 const GROUP_LABELS = Object.freeze({
   procurement: '采购单',
   fulfilment: '交付入仓',
@@ -57,13 +251,21 @@ const SUPPLY_COVERAGE_META = Object.freeze({
   deliveries: '交付单',
 });
 
+const initialHashState = parseHashState(
+  typeof window === 'undefined' ? '' : window.location.hash,
+);
+
 const state = {
-  route: routeFromLocation(),
-  range: 'today',
-  query: '',
-  owner: 'ALL',
-  store: 'ALL',
-  quickFilters: Object.create(null),
+  route: initialHashState.route,
+  range: initialHashState.range,
+  query: initialHashState.query,
+  owner: initialHashState.owner,
+  store: initialHashState.store,
+  quickFilters: Object.assign(Object.create(null), (
+    initialHashState.quick === 'ALL' ? {} : { [initialHashState.route]: initialHashState.quick }
+  )),
+  // Read-only investigation target restored from the canonical link.
+  focus: initialHashState.focus,
   data: null,
   health: null,
   healthError: '',
@@ -2008,6 +2210,305 @@ function itemSourceLabel(item) {
   return item?.sourceLabel || GROUP_LABELS[item?.group] || GROUP_LABELS.other;
 }
 
+/* --- focused-evidence:start ---
+   Read-only drilldown. Every candidate code below already exists in the current
+   /api/dashboard payload; nothing is derived, estimated or invented. */
+
+/** Codes that can identify one row, most specific first. */
+function focusCandidateCodes(row, domain) {
+  if (domain === 'procurement') return [row?.orderNo];
+  if (domain === 'fulfilment') return [row?.deliveryCode];
+  if (domain === 'product') {
+    return [
+      row?.standardProductCode,
+      row?.canonicalProductId,
+      row?.productKey,
+      row?.supplierCode,
+      row?.supplierSku,
+      row?.skc,
+      row?.sku,
+    ];
+  }
+  // inventory and advice share the SKU-centric supply grain.
+  return [row?.skuCode, row?.sku, row?.skcName, row?.skc, row?.supplierCode];
+}
+
+function focusCodeFor(row, domain) {
+  const candidate = focusCandidateCodes(row, domain)
+    .map((value) => String(value ?? '').trim())
+    .find((value) => value !== '' && URL_CODE_PATTERN.test(value));
+  return candidate ?? '';
+}
+
+/** A row matches a focus when any of its identifying codes equals the target. */
+function rowMatchesFocus(row, focus) {
+  if (!focus) return false;
+  const target = String(focus.code).toUpperCase();
+  const storeCode = String(row?.storeCode ?? '').trim().toUpperCase();
+  if (focus.storeCode !== '' && storeCode !== '' && storeCode !== focus.storeCode) {
+    return false;
+  }
+  return focusCandidateCodes(row, focus.domain)
+    .map((value) => String(value ?? '').trim().toUpperCase())
+    .some((value) => value !== '' && value === target);
+}
+
+/** Rows that the active focus could name, per domain. */
+function focusSearchRows(domain) {
+  if (domain === 'inventory') return scopedOperationRows(attentionRows('inventoryRisks'));
+  if (domain === 'advice') return scopedOperationRows(attentionRows('stockAdviceRisks'));
+  if (domain === 'procurement') return scopedOperationRows(attentionRows('purchaseOrderAttention'));
+  if (domain === 'fulfilment') return scopedOperationRows(attentionRows('deliveryAttention'));
+  if (domain === 'product') {
+    // Product identity has two honest grains: canonical cross-store rows and
+    // store-local SKU evidence. Search both so neither kind of drilldown turns
+    // into a false "not found".
+    return [...new Set([
+      ...scopedProductRanking().rows,
+      ...matchingStoreSkuRows(),
+    ])];
+  }
+  return [];
+}
+
+/**
+ * Resolve the active focus against the current snapshot.
+ *
+ * Returns `null` when no focus applies to this route, `{found: false}` when the
+ * target is genuinely absent. A near miss is never substituted for the request.
+ */
+function activeFocus(route = state.route) {
+  const focus = state.focus;
+  if (!focus) return null;
+  if (FOCUS_DOMAINS[focus.domain].route !== route && route !== 'ops') return null;
+  const domains = focus.domain === 'ops'
+    ? ['inventory', 'advice', 'procurement', 'fulfilment', 'product']
+    : [focus.domain];
+  for (const domain of domains) {
+    const rows = focusSearchRows(domain);
+    const match = rows.find((row) => rowMatchesFocus(row, { ...focus, domain }));
+    if (match) return { focus, domain, row: match, found: true };
+  }
+  return { focus, domain: focus.domain, row: null, found: false };
+}
+
+function focusDetailRows(domain, row) {
+  const optional = (label, value) => (
+    value === undefined || value === null || value === '' ? null : [label, value]
+  );
+  const quantity = (label, value) => [label, nullableUnits(value, '—')];
+  if (domain === 'inventory') {
+    return [
+      optional('SKU', row.skuCode),
+      optional('SKC / 商品', row.skcName || row.spuName),
+      optional('库存类型', row.inventoryTypeCode),
+      quantity('库存', row.totalInventoryQuantity ?? row.totalInventory),
+      quantity('可用', row.usableInventory),
+      quantity('在途', row.transitQuantity),
+      quantity('缺货', row.shortageQuantity),
+      optional('对账状态', row.reconciliationStatus),
+    ];
+  }
+  if (domain === 'advice') {
+    return [
+      optional('SKU', row.skuCode),
+      optional('SKC / 商品', row.skcName || row.spuName),
+      optional('供应商货号', row.supplierCode),
+      ['预测日销', nullableDecimal(row.predictedDailySales, '—')],
+      quantity('建议下单', row.advisedOrderQuantity),
+      quantity('已下单', row.placedOrderQuantity),
+      quantity('计划急采', row.plannedUrgentQuantity),
+      quantity('库存', row.stockQuantity),
+      quantity('在途', row.transitQuantity),
+      optional('供给状态', row.supplyStatusCode),
+      optional('预警状态', row.stockWarningStatusCode),
+    ];
+  }
+  if (domain === 'procurement') {
+    return [
+      optional('采购单号', row.orderNo),
+      optional('状态', row.statusName || row.statusCode),
+      optional('类型', row.orderTypeName),
+      optional('关注语义', row.attentionLabel || row.attentionCode),
+      quantity('订购', row.orderQuantity),
+      quantity('交付', row.deliveryQuantity),
+      quantity('收货', row.receiptQuantity),
+      quantity('入库', row.storageQuantity),
+      quantity('残次', row.defectiveQuantity),
+      optional('要求交付', row.requestedDeliveryAt ? sourceTime(row.requestedDeliveryAt) : null),
+      optional('要求收货', row.requestedReceiptAt ? sourceTime(row.requestedReceiptAt) : null),
+      optional('仓库', row.warehouseName),
+    ];
+  }
+  if (domain === 'fulfilment') {
+    return [
+      optional('交付单号', row.deliveryCode),
+      optional('里程碑', row.milestoneCode),
+      optional('关注语义', row.attentionLabel || row.attentionCode),
+      quantity('交付数量', row.deliveryQuantity),
+      quantity('行项目', row.lineCount),
+      optional('预约揽收', row.reservedParcelAt ? sourceTime(row.reservedParcelAt) : null),
+      optional('实际揽收', row.takenAt ? sourceTime(row.takenAt) : null),
+      optional('预计收货', row.expectedReceiptAt ? sourceTime(row.expectedReceiptAt) : null),
+      optional('仓库', row.warehouseName),
+      optional('物流', row.expressCompanyName),
+    ];
+  }
+  return [
+    optional('店内货号', row.supplierCode || row.productKey),
+    optional('SKC', row.skc),
+    optional('平台 SKU', row.sku),
+    optional('商品名', productName(row)),
+    optional('标准商品', row.standardProductCode || row.canonicalProductId),
+    ['身份范围', isCanonicalProduct(row) ? '标准商品（可跨店聚合）' : '店内身份（禁止跨店合并）'],
+    ['归并状态', mappingStatusLabel(row.mappingStatus)],
+    [`${RANGE_META[state.range].label}销量`, `${formatUnits(row?.unitsSold?.[state.range])} 件`],
+  ];
+}
+
+function queryAfterClearingFocus() {
+  const focusCode = String(state.focus?.code ?? '');
+  return focusCode !== '' && state.query === focusCode ? '' : state.query;
+}
+
+function clearFocusControl() {
+  return `
+    <a class="text-link focus-clear" data-clear-focus="1" href="${escapeHtml(serializeHashState({
+      ...currentHashState(),
+      query: queryAfterClearingFocus(),
+      focus: null,
+    }))}">清除定位，查看当前范围全部结果</a>`;
+}
+
+/**
+ * Read-only focused-evidence panel.
+ *
+ * It contains no form, submit, edit or approve control: this batch only proves a
+ * fact, it never changes one.
+ */
+function focusEvidencePanel(route = state.route) {
+  const resolved = activeFocus(route);
+  if (!resolved) return '';
+  const { focus } = resolved;
+  const identifiers = [
+    ['数据域', FOCUS_DOMAINS[focus.domain].label],
+    ['店铺', focus.storeCode === '' ? '未指定店铺' : focus.storeCode],
+    ['定位对象', focus.code],
+  ];
+  if (!resolved.found) {
+    return `
+      <section class="focus-panel focus-panel-missing" aria-label="定位事实未找到">
+        <header>
+          <span class="eyebrow">FOCUSED EVIDENCE</span>
+          <h2>当前快照未找到该事实</h2>
+          <p>该对象不在当前 /api/dashboard 快照的可见范围内，可能已完成、超出返回窗口或尚未同步。系统不会改用其他相近记录冒充定位结果。</p>
+        </header>
+        <dl class="focus-facts">
+          ${identifiers.map(([label, value]) => `
+            <div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}
+        </dl>
+        ${clearFocusControl()}
+      </section>`;
+  }
+  const details = focusDetailRows(resolved.domain, resolved.row)
+    .filter(Boolean)
+    .map(([label, value]) => [label, String(value)]);
+  const storeLabel = resolved.row.storeName || resolved.row.storeCode || focus.storeCode;
+  return `
+    <section class="focus-panel" aria-label="定位事实证据">
+      <header>
+        <span class="eyebrow">FOCUSED EVIDENCE</span>
+        <h2>${escapeHtml(`${FOCUS_DOMAINS[resolved.domain].label} · ${focus.code}`)}</h2>
+        <p>${escapeHtml(`店铺 ${storeLabel || '未指定'} · 只读证据，不提供任何执行入口`)}</p>
+      </header>
+      <dl class="focus-facts">
+        ${details.map(([label, value]) => `
+          <div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}
+        <div>
+          <dt>证据时间</dt>
+          <dd>${escapeHtml(sourceTime(resolved.row.latestSourceFetchedAt ?? resolved.row.evidenceAt))}</dd>
+        </div>
+        <div>
+          <dt>来源与状态</dt>
+          <dd>${escapeHtml(`${sourceLabel()} · ${qualityState().label}`)}</dd>
+        </div>
+      </dl>
+      ${clearFocusControl()}
+    </section>`;
+}
+
+/** Put the focused row first so the investigation target is never buried. */
+function orderRowsForFocus(rows, domain, route = state.route) {
+  const resolved = activeFocus(route);
+  if (!resolved?.found || resolved.domain !== domain) return rows;
+  const matched = rows.filter((row) => rowMatchesFocus(row, { ...resolved.focus, domain }));
+  if (!matched.length) return rows;
+  return [...matched, ...rows.filter((row) => !matched.includes(row))];
+}
+
+function isFocusedRow(row, domain, route = state.route) {
+  const resolved = activeFocus(route);
+  return Boolean(
+    resolved?.found
+    && resolved.domain === domain
+    && rowMatchesFocus(row, { ...resolved.focus, domain }),
+  );
+}
+
+const ALERT_GROUP_FOCUS_DOMAINS = Object.freeze({
+  procurement: 'procurement',
+  fulfilment: 'fulfilment',
+  inventory: 'inventory',
+  supply: 'advice',
+  products: 'product',
+});
+
+/**
+ * Canonical drilldown href for one operating alert.
+ *
+ * The alert already knows its store and its object code, so the link carries
+ * target route, store scope, an exact object query and a typed focus instead of
+ * a bare `#inventory` that opens an all-store table.
+ */
+function alertFocusHref(item) {
+  const domain = item?.focusDomain
+    ?? ALERT_GROUP_FOCUS_DOMAINS[String(item?.group ?? '')];
+  if (!domain) return item?.href || '#ops';
+  const explicit = String(item?.focusCode ?? '').trim();
+  const code = explicit !== '' && URL_CODE_PATTERN.test(explicit)
+    ? explicit
+    : focusCodeFor(item, domain) || (() => {
+      const fallback = String(item?.objectCode ?? item?.entityCode ?? '').trim();
+      return URL_CODE_PATTERN.test(fallback) ? fallback : '';
+    })();
+  if (code === '') return item?.href || '#ops';
+  const storeCode = String(item?.storeCode ?? '').trim().toUpperCase();
+  return canonicalHref({
+    route: FOCUS_DOMAINS[domain].route,
+    storeCode,
+    range: state.range,
+    // The exact object also seeds the global query so the underlying table is
+    // narrowed to the fact, not merely scrolled to it.
+    query: code,
+    focus: { domain, storeCode, code },
+  });
+}
+
+/** Keyboard-reachable canonical drilldown link for one row. */
+function rowFocusLink(row, domain, { label = '查看详情' } = {}) {
+  const code = focusCodeFor(row, domain);
+  if (code === '') return '';
+  const storeCode = String(row?.storeCode ?? '').trim().toUpperCase();
+  const href = canonicalHref({
+    route: FOCUS_DOMAINS[domain].route,
+    storeCode,
+    range: state.range,
+    focus: { domain, storeCode, code },
+  });
+  return `<a class="text-link row-focus-link" href="${escapeHtml(href)}">${escapeHtml(label)}<span class="sr-only">${escapeHtml(`：${code}`)}</span></a>`;
+}
+/* --- focused-evidence:end --- */
+
 /** Product identity is a first-class operating alert, not only a catalogue task. */
 function productIdentityAlertItems() {
   const pending = unmappedStoreSkuRows();
@@ -2029,6 +2530,9 @@ function productIdentityAlertItems() {
       ? `${RANGE_META[state.range].label}销量影响存在缺失窗口，拒绝补零合计`
       : `${RANGE_META[state.range].label}涉及 ${numberFormatter.format(impact)} 件`,
     nextStep: '在商品中心按销量影响优先归并；未确认身份不参与跨店合计',
+    // The highest-impact pending row is the best identity key this alert owns.
+    focusDomain: 'product',
+    focusCode: focusCodeFor(pending[0], 'product'),
     href: '#products',
     evidenceAt: state.data?.updatedAt || null,
   }];
@@ -2359,7 +2863,7 @@ function priorityWorklistTable(
             <td class="entity-column"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.impact || '影响范围待回读')}</span></td>
             <td class="boundary-cell">${escapeHtml(item.nextStep || '打开业务页核对事实')}</td>
             <td class="boundary-cell">${escapeHtml(sourceTime(item.evidenceAt))}</td>
-            <td><a class="text-link" href="${escapeHtml(item.href || '#ops')}">查看事实 →</a></td>
+            <td><a class="text-link" href="${escapeHtml(alertFocusHref(item))}">查看事实 →<span class="sr-only">${escapeHtml(`：${item.objectCode || item.entityCode || item.title}`)}</span></a></td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
@@ -2890,15 +3394,16 @@ function pendingProductMappingTable(rows) {
   return `
     <div class="table-wrap">
       <table class="data-table product-table pending-mapping-table">
-        <thead><tr><th scope="col">店铺</th><th scope="col">原始货号 / SKC</th><th scope="col">平台 SKU</th><th scope="col">商品名称</th><th scope="col" class="number-column">${escapeHtml(RANGE_META[state.range].label)}销量</th><th scope="col">归并状态</th></tr></thead>
+        <thead><tr><th scope="col">店铺</th><th scope="col">原始货号 / SKC</th><th scope="col">平台 SKU</th><th scope="col">商品名称</th><th scope="col" class="number-column">${escapeHtml(RANGE_META[state.range].label)}销量</th><th scope="col">归并状态</th><th scope="col">定位</th></tr></thead>
         <tbody>${visible.map((item) => `
-          <tr>
+          <tr class="${isFocusedRow(item, 'product') ? 'focused-row' : ''}">
             <td class="entity-column"><strong>${escapeHtml(item.storeCode || '店铺待确认')}</strong><span>店内身份隔离</span></td>
             <td class="entity-column"><strong>${escapeHtml(item.supplierCode || item.supplierSku || item.productKey || '原始货号待确认')}</strong><span>${escapeHtml(item.skc || 'SKC 待确认')}</span></td>
             <td class="entity-column"><strong>${escapeHtml(item.sku || 'SKU 待确认')}</strong><span>${escapeHtml(item.productKey || '')}</span></td>
             <td>${escapeHtml(productName(item))}</td>
             <td class="number-column">${formatUnits(item?.unitsSold?.[state.range])}</td>
             <td><span class="row-status partial">${escapeHtml(mappingStatusLabel(item.mappingStatus))}</span></td>
+            <td>${rowFocusLink(item, 'product')}</td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
@@ -2917,6 +3422,7 @@ function renderProducts() {
     : source.canonical ? '标准商品身份已接入' : '店内商品身份待归并';
   return `
     ${sampleNotice()}
+    ${focusEvidencePanel()}
     ${pageIntro(
       'PRODUCT IDENTITY',
       '商品中心',
@@ -2953,14 +3459,15 @@ function renderProducts() {
       ${visibleRows.length ? `
         <div class="table-wrap">
           <table class="data-table product-table">
-            <thead><tr><th scope="col">标准商品 / 店内商品键</th><th scope="col">商品名 / 店铺</th><th scope="col">当前窗口销量</th><th scope="col">身份范围</th><th scope="col">映射状态</th></tr></thead>
+            <thead><tr><th scope="col">标准商品 / 店内商品键</th><th scope="col">商品名 / 店铺</th><th scope="col">当前窗口销量</th><th scope="col">身份范围</th><th scope="col">映射状态</th><th scope="col">定位</th></tr></thead>
             <tbody>${visibleRows.map((item) => `
-              <tr>
+              <tr class="${isFocusedRow(item, 'product') ? 'focused-row' : ''}">
                 <td class="entity-column"><strong>${escapeHtml(productCode(item))}</strong><span>${escapeHtml(item.canonicalProductId || item.skc || item.sku || '')}</span></td>
                 <td class="entity-column"><strong>${escapeHtml(productName(item))}</strong><span>${escapeHtml(item.storeCode ? `店铺 ${item.storeCode}` : `${item.storeCount || '—'} 家店铺`)}</span></td>
                 <td class="number-column">${formatUnits(item?.unitsSold?.[state.range])}</td>
                 <td>${productIdentityBadge(item)}</td>
                 <td class="boundary-cell">${escapeHtml(mappingStatusLabel(item.mappingStatus || (isCanonicalProduct(item) ? 'CONFIRMED' : 'UNMAPPED')))}</td>
+                <td>${rowFocusLink(item, 'product')}</td>
               </tr>`).join('')}</tbody>
           </table>
         </div>
@@ -3082,13 +3589,14 @@ function purchaseOrderAttentionTable(rows, hasEvidence) {
         : '先使用下方店铺×状态汇总判断范围；单据级契约接入后可按采购单号、要求时间和数量下钻。',
     );
   }
-  const visible = [...rows].sort(comparePriority).slice(0, 100);
+  const visible = orderRowsForFocus([...rows].sort(comparePriority), 'procurement')
+    .slice(0, 100);
   return `
     <div class="table-wrap">
       <table class="data-table operational-table">
-        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / 采购单</th><th scope="col">关注语义</th><th scope="col">状态 / 类型</th><th scope="col">订购→交付→收货→入库</th><th scope="col">要求时间</th><th scope="col">仓库</th><th scope="col">证据时间</th></tr></thead>
+        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / 采购单</th><th scope="col">关注语义</th><th scope="col">状态 / 类型</th><th scope="col">订购→交付→收货→入库</th><th scope="col">要求时间</th><th scope="col">仓库</th><th scope="col">证据时间</th><th scope="col">定位</th></tr></thead>
         <tbody>${visible.map((row) => `
-          <tr>
+          <tr class="${isFocusedRow(row, 'procurement') ? 'focused-row' : ''}">
             <td>${severityBadge(row.severity)}</td>
             <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.orderNo || '采购单号待确认')}</span></td>
             <td class="entity-column"><strong>${escapeHtml(rowAttentionStage(row, 'procurement'))}</strong><span>${escapeHtml(row.attentionCode || '单据状态复核')}</span></td>
@@ -3102,6 +3610,7 @@ function purchaseOrderAttentionTable(rows, hasEvidence) {
             <td class="boundary-cell"><strong>交付：${escapeHtml(sourceTime(row.requestedDeliveryAt))}</strong><span>收货：${escapeHtml(sourceTime(row.requestedReceiptAt))}</span></td>
             <td class="boundary-cell">${escapeHtml(row.warehouseName || '仓库待确认')}</td>
             <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
+            <td>${rowFocusLink(row, 'procurement')}</td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
@@ -3151,6 +3660,7 @@ function renderProcurement() {
     : connected ? '接口覆盖完整 · 当前窗口无事实行' : '尚未完成可信接入';
   return `
     ${sampleNotice()}
+    ${focusEvidencePanel()}
     ${pageIntro(
       'PURCHASE ORDERS',
       '采购单中心',
@@ -3241,13 +3751,14 @@ function deliveryAttentionTable(rows, hasEvidence) {
         : '先使用下方店铺×里程碑汇总；单据级契约接入后可按交付单号、预计收货和物流状态下钻。',
     );
   }
-  const visible = [...rows].sort(comparePriority).slice(0, 100);
+  const visible = orderRowsForFocus([...rows].sort(comparePriority), 'fulfilment')
+    .slice(0, 100);
   return `
     <div class="table-wrap">
       <table class="data-table operational-table">
-        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / 交付单</th><th scope="col">关注语义</th><th scope="col">里程碑</th><th scope="col">交付数量</th><th scope="col">预约 / 揽收 / 预计收货</th><th scope="col">仓库 / 物流</th><th scope="col">证据时间</th></tr></thead>
+        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / 交付单</th><th scope="col">关注语义</th><th scope="col">里程碑</th><th scope="col">交付数量</th><th scope="col">预约 / 揽收 / 预计收货</th><th scope="col">仓库 / 物流</th><th scope="col">证据时间</th><th scope="col">定位</th></tr></thead>
         <tbody>${visible.map((row) => `
-          <tr>
+          <tr class="${isFocusedRow(row, 'fulfilment') ? 'focused-row' : ''}">
             <td>${severityBadge(row.severity)}</td>
             <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.deliveryCode || '交付单号待确认')}</span></td>
             <td class="entity-column"><strong>${escapeHtml(rowAttentionStage(row, 'fulfilment'))}</strong><span>${escapeHtml(row.attentionCode || '交付状态复核')}</span></td>
@@ -3256,6 +3767,7 @@ function deliveryAttentionTable(rows, hasEvidence) {
             <td class="boundary-cell"><strong>预约：${escapeHtml(sourceTime(row.reservedParcelAt))}</strong><span>揽收：${escapeHtml(sourceTime(row.takenAt))} · 预计收货：${escapeHtml(sourceTime(row.expectedReceiptAt))}</span></td>
             <td class="boundary-cell"><strong>${escapeHtml(row.warehouseName || '仓库待确认')}</strong><span>${escapeHtml(row.expressCompanyName || '物流待确认')}</span></td>
             <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
+            <td>${rowFocusLink(row, 'fulfilment')}</td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
@@ -3311,6 +3823,7 @@ function renderFulfilment() {
   );
   return `
     ${sampleNotice()}
+    ${focusEvidencePanel()}
     ${pageIntro(
       'DELIVERY & INBOUND',
       '交付与入仓',
@@ -3380,17 +3893,17 @@ function inventoryRiskTable(rows, hasEvidence) {
         : '先使用下方店铺级库存汇总；SKU 风险契约接入后可直接查看缺货数量、可用库存和在途。',
     );
   }
-  const visible = [...rows].sort((left, right) => (
+  const visible = orderRowsForFocus([...rows].sort((left, right) => (
     comparePriority(left, right)
     || (isUnit(right.shortageQuantity) ? right.shortageQuantity : -1)
       - (isUnit(left.shortageQuantity) ? left.shortageQuantity : -1)
-  )).slice(0, 100);
+  )), 'inventory').slice(0, 100);
   return `
     <div class="table-wrap">
       <table class="data-table operational-table inventory-table">
-        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / SKU</th><th scope="col">商品</th><th scope="col">库存类型</th><th scope="col" class="number-column">库存</th><th scope="col" class="number-column">可用</th><th scope="col" class="number-column">在途</th><th scope="col" class="number-column">缺货</th><th scope="col">对账状态</th><th scope="col">证据时间</th></tr></thead>
+        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / SKU</th><th scope="col">商品</th><th scope="col">库存类型</th><th scope="col" class="number-column">库存</th><th scope="col" class="number-column">可用</th><th scope="col" class="number-column">在途</th><th scope="col" class="number-column">缺货</th><th scope="col">对账状态</th><th scope="col">证据时间</th><th scope="col">定位</th></tr></thead>
         <tbody>${visible.map((row) => `
-          <tr>
+          <tr class="${isFocusedRow(row, 'inventory') ? 'focused-row' : ''}">
             <td>${severityBadge(row.severity)}</td>
             <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.skuCode || 'SKU 待确认')}</span></td>
             <td class="entity-column"><strong>${escapeHtml(row.skcName || row.spuName || '商品待确认')}</strong><span>${escapeHtml(row.spuName || '')}</span></td>
@@ -3401,6 +3914,7 @@ function inventoryRiskTable(rows, hasEvidence) {
             <td class="number-column">${nullableUnits(row.shortageQuantity)}</td>
             <td><span class="row-status ${sourceStatusTone(row.reconciliationStatus)}">${escapeHtml(row.reconciliationStatus || '未知')}</span></td>
             <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
+            <td>${rowFocusLink(row, 'inventory')}</td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
@@ -3416,19 +3930,19 @@ function stockAdviceRiskTable(rows, hasEvidence) {
         : '先使用下方店铺级建议汇总；SKU 风险契约接入后可联看预测日销、待供给链路和建议量。',
     );
   }
-  const visible = [...rows].sort((left, right) => (
+  const visible = orderRowsForFocus([...rows].sort((left, right) => (
     comparePriority(left, right)
     || (isUnit(right.plannedUrgentQuantity) ? right.plannedUrgentQuantity : -1)
       - (isUnit(left.plannedUrgentQuantity) ? left.plannedUrgentQuantity : -1)
     || (isUnit(right.advisedOrderQuantity) ? right.advisedOrderQuantity : -1)
       - (isUnit(left.advisedOrderQuantity) ? left.advisedOrderQuantity : -1)
-  )).slice(0, 100);
+  )), 'advice').slice(0, 100);
   return `
     <div class="table-wrap">
       <table class="data-table operational-table advice-table">
-        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / SKU</th><th scope="col">商品 / 货号</th><th scope="col" class="number-column">预测日销</th><th scope="col">待下单 / 待交付 / 待上架 / 在途</th><th scope="col" class="number-column">库存</th><th scope="col" class="number-column">建议</th><th scope="col" class="number-column">已下单</th><th scope="col" class="number-column">急采</th><th scope="col">供给状态</th><th scope="col">证据时间</th></tr></thead>
+        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / SKU</th><th scope="col">商品 / 货号</th><th scope="col" class="number-column">预测日销</th><th scope="col">待下单 / 待交付 / 待上架 / 在途</th><th scope="col" class="number-column">库存</th><th scope="col" class="number-column">建议</th><th scope="col" class="number-column">已下单</th><th scope="col" class="number-column">急采</th><th scope="col">供给状态</th><th scope="col">证据时间</th><th scope="col">定位</th></tr></thead>
         <tbody>${visible.map((row) => `
-          <tr>
+          <tr class="${isFocusedRow(row, 'advice') ? 'focused-row' : ''}">
             <td>${severityBadge(row.severity)}</td>
             <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.skuCode || 'SKU 待确认')}</span></td>
             <td class="entity-column"><strong>${escapeHtml(row.skcName || row.spuName || '商品待确认')}</strong><span>${escapeHtml(row.supplierCode || '')}</span></td>
@@ -3445,6 +3959,7 @@ function stockAdviceRiskTable(rows, hasEvidence) {
             <td class="number-column">${nullableUnits(row.plannedUrgentQuantity)}</td>
             <td class="boundary-cell"><strong>${escapeHtml(row.supplyStatusCode || '供给状态未知')}</strong><span>${escapeHtml([row.shelfStatusCode, row.stockWarningStatusCode].filter(Boolean).join(' · ') || '预警状态未知')}</span></td>
             <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
+            <td>${rowFocusLink(row, 'advice')}</td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
@@ -3545,6 +4060,7 @@ function renderInventory() {
   );
   return `
     ${sampleNotice()}
+    ${focusEvidencePanel()}
     ${pageIntro(
       'INVENTORY',
       '库存与供给',
@@ -3936,6 +4452,7 @@ function renderOps() {
     : items.length ? `${numberFormatter.format(items.length)} 条待复核` : '暂无可证明事项';
   return `
     ${sampleNotice()}
+    ${focusEvidencePanel()}
     ${pageIntro(
       'CONTROLLED AUTOMATION',
       '运营待办',
@@ -4388,14 +4905,49 @@ async function loadDashboard() {
   render();
 }
 
-function syncRouteFromLocation() {
-  const candidate = String(window.location.hash || '').replace(/^#/, '');
-  const nextRoute = Object.prototype.hasOwnProperty.call(ROUTES, candidate) ? candidate : 'home';
-  if (candidate !== nextRoute) {
-    window.history.replaceState(null, '', `#${nextRoute}`);
+/** Current investigation state in canonical-link shape. */
+function currentHashState() {
+  return {
+    route: state.route,
+    owner: state.owner,
+    store: state.store,
+    range: state.range,
+    query: state.query,
+    quick: quickFilterValue(state.route),
+    focus: state.focus,
+  };
+}
+
+/**
+ * Mirror state into the address bar without navigating.
+ *
+ * `replaceState` keeps the investigation bookmarkable and shareable while
+ * avoiding a hashchange loop, so no reload or re-render cascade occurs.
+ */
+function syncUrlFromState() {
+  if (typeof window === 'undefined' || !window.history?.replaceState) return;
+  const next = serializeHashState(currentHashState());
+  if (window.location.hash !== next) {
+    window.history.replaceState(null, '', next);
   }
-  const routeChanged = state.route !== nextRoute;
-  state.route = nextRoute;
+}
+
+function applyHashState(parsed) {
+  state.route = parsed.route;
+  state.owner = parsed.owner;
+  state.store = parsed.store;
+  state.range = parsed.range;
+  state.query = parsed.query;
+  state.focus = parsed.focus;
+  if (parsed.quick === 'ALL') delete state.quickFilters[parsed.route];
+  else state.quickFilters[parsed.route] = parsed.quick;
+}
+
+function syncRouteFromLocation() {
+  const parsed = parseHashState(window.location.hash, currentHashState());
+  const routeChanged = state.route !== parsed.route;
+  applyHashState(parsed);
+  syncUrlFromState();
   render();
   if (routeChanged && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -4404,6 +4956,7 @@ function syncRouteFromLocation() {
 
 elements.search.addEventListener('input', (event) => {
   state.query = event.currentTarget.value;
+  syncUrlFromState();
   render();
 });
 
@@ -4411,6 +4964,7 @@ elements.scope.addEventListener('change', (event) => {
   const value = String(event.currentTarget.value || 'ALL');
   state.owner = value.startsWith('OWNER:') ? value.slice(6) : 'ALL';
   state.store = value.startsWith('STORE:') ? value.slice(6) : 'ALL';
+  syncUrlFromState();
   render();
 });
 
@@ -4418,17 +4972,30 @@ elements.rangeButtons.forEach((button) => {
   button.addEventListener('click', () => {
     if (!Object.prototype.hasOwnProperty.call(RANGE_META, button.dataset.range)) return;
     state.range = button.dataset.range;
+    syncUrlFromState();
     render();
   });
 });
 
 elements.view.addEventListener('click', (event) => {
+  const clearFocus = event.target.closest?.('[data-clear-focus]');
+  if (clearFocus && elements.view.contains(clearFocus)) {
+    // Clearing a focus keeps the broader store/range investigation intact.
+    event.preventDefault();
+    const nextQuery = queryAfterClearingFocus();
+    state.focus = null;
+    state.query = nextQuery;
+    syncUrlFromState();
+    render();
+    return;
+  }
   const button = event.target.closest?.('[data-quick-route][data-quick-value]');
   if (!button || !elements.view.contains(button)) return;
   const route = String(button.dataset.quickRoute || '');
   const value = String(button.dataset.quickValue || 'ALL');
   if (!Object.prototype.hasOwnProperty.call(ROUTES, route)) return;
   state.quickFilters[route] = value;
+  syncUrlFromState();
   render();
 });
 
@@ -4438,7 +5005,9 @@ elements.clearFilters.addEventListener('click', () => {
   state.store = 'ALL';
   state.range = 'today';
   state.quickFilters = Object.create(null);
+  state.focus = null;
   populateScopeOptions();
+  syncUrlFromState();
   render();
   elements.search.focus();
 });
@@ -4510,9 +5079,8 @@ document.addEventListener('focusout', hideChartTooltip);
 document.addEventListener('scroll', hideChartTooltip, true);
 window.addEventListener('hashchange', syncRouteFromLocation);
 
-const initialHashRoute = String(window.location.hash || '').replace(/^#/, '');
-if (!Object.prototype.hasOwnProperty.call(ROUTES, initialHashRoute)) {
-  window.history.replaceState(null, '', '#home');
-}
+// Normalize whatever arrived in the address bar into the canonical form once, so
+// a hand-edited or stale link becomes shareable without a reload.
+syncUrlFromState();
 render();
 loadDashboard();

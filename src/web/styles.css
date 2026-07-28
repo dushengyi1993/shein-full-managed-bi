@@ -1396,6 +1396,94 @@ body[data-dataset="sample"] .metric-item > strong {
   text-anchor: end;
 }
 
+/* Read-only focused-evidence panel: one located fact, no execution controls. */
+.focus-panel {
+  margin-bottom: 14px;
+  padding: 15px 17px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+.focus-panel-missing {
+  border-color: color-mix(in srgb, var(--warning) 26%, var(--line));
+  border-left-color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.focus-panel h2 {
+  margin: 5px 0 0;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.focus-panel header p {
+  max-width: 88ch;
+  margin: 5px 0 0;
+  color: var(--muted-strong);
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+
+.focus-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 9px 16px;
+  margin: 12px 0 0;
+}
+
+.focus-facts > div {
+  min-width: 0;
+}
+
+.focus-facts dt {
+  color: var(--muted);
+  font-size: 0.63rem;
+  font-weight: 720;
+  letter-spacing: 0.04em;
+}
+
+.focus-facts dd {
+  margin: 3px 0 0;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.focus-clear {
+  margin-top: 12px;
+}
+
+/* The located row stays visually first and identifiable without relying on
+   colour alone: it also carries a left rule and heavier text. */
+.data-table tbody tr.focused-row > td {
+  background: var(--accent-soft);
+  font-weight: 620;
+}
+
+.data-table tbody tr.focused-row > td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.row-focus-link {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .chart-legend {
   margin: 9px 2px 0;
   color: var(--muted);
