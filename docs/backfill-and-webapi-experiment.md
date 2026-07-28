@@ -98,6 +98,13 @@ observes the checkpoint and schema fingerprint the first one just wrote — that
 what makes same-grain schema drift detectable. Bounded concurrency applies only
 across different grains, capped by the plan's `concurrency` value.
 
+An exact failed-plan replay also reads the persisted attempt count for every
+incomplete window. The resumed call continues at the next attempt ordinal instead
+of reusing `a01`; the delegated supply run ID is scoped by both `plan_hash` and
+`window_key`. This keeps retries auditable without colliding with the immutable
+supply-attempt ledger, while a different reviewed plan receives an independent
+attempt namespace for the same business-date window.
+
 ## 5. CLI
 
 - `npm run backfill:plan` — read-only. No database, no adapter, no network.
