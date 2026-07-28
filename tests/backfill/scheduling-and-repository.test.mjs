@@ -254,6 +254,24 @@ test('a window and its forward checkpoint commit in one transaction', async () =
   assert.equal(pool.client.released, true);
 });
 
+test('repository exposes persisted attempt counts for exact plan resume', async () => {
+  const pool = fakePool((text) => {
+    if (text.includes('SELECT w.window_key, w.attempt_count')) {
+      return {
+        rows: [{ window_key: 'a'.repeat(64), attempt_count: '6' }],
+        rowCount: 1,
+      };
+    }
+    return { rows: [], rowCount: 0 };
+  });
+  assert.deepEqual(
+    await createBackfillRepository({ pool }).loadWindowAttemptCounts({
+      planHash: 'f'.repeat(64),
+    }),
+    [{ windowKey: 'a'.repeat(64), attemptCount: 6 }],
+  );
+});
+
 test('a non-forward checkpoint update reports no advance and never retries', async () => {
   const pool = fakePool((text) => {
     if (text.includes('INSERT INTO ops.backfill_window')) {

@@ -35,6 +35,7 @@ function sanitizedCode(value, fallback) {
 const NULL_REPOSITORY = Object.freeze({
   async openRun() { return { backfillRunId: null }; },
   async loadCompletedWindowKeys() { return []; },
+  async loadWindowAttemptCounts() { return []; },
   async loadCheckpoints() { return []; },
   async commitWindowOutcome() { return { persisted: false, checkpointAdvanced: false }; },
   async recordWindowOutcome() { return { persisted: false }; },
@@ -98,6 +99,20 @@ export async function runBackfillPlan({
     isExecute
       ? await repository.loadCompletedWindowKeys({ planHash: plan.planHash })
       : [],
+  );
+  const windowAttemptRows = isExecute
+    && typeof repository.loadWindowAttemptCounts === 'function'
+    ? await repository.loadWindowAttemptCounts({ planHash: plan.planHash })
+    : [];
+  const priorAttemptIndex = new Map(
+    (Array.isArray(windowAttemptRows) ? windowAttemptRows : [])
+      .filter((row) => (
+        typeof row?.windowKey === 'string'
+        && Number.isSafeInteger(row?.attemptCount)
+        && row.attemptCount >= 0
+        && row.attemptCount <= 99
+      ))
+      .map((row) => [row.windowKey, row.attemptCount]),
   );
   const checkpointRows = isExecute
     ? await repository.loadCheckpoints({
@@ -203,14 +218,26 @@ export async function runBackfillPlan({
     }
 
     let attemptCount = 0;
+    const priorAttemptCount = priorAttemptIndex.get(window.windowKey) ?? 0;
     let outcome = null;
     let result = null;
     const maxAttempts = Math.max(1, window.maxAttempts || 1);
     while (attemptCount < maxAttempts) {
       attemptCount += 1;
+      const attemptOrdinal = priorAttemptCount + attemptCount;
+      if (attemptOrdinal > 99) {
+        result = {
+          ok: false,
+          adapterError: true,
+          sanitizedErrorCode: 'BACKFILL_ATTEMPT_LIMIT_REACHED',
+        };
+        outcome = evaluateWindowOutcome({ window, result, checkpoint });
+        break;
+      }
       adapterInvocationCount += 1;
       try {
         result = await adapter.fetchWindow({
+          planHash: plan.planHash,
           storeCode: window.storeCode,
           domain: window.domain,
           windowStart: window.windowStart,
@@ -218,7 +245,7 @@ export async function runBackfillPlan({
           windowKey: window.windowKey,
           maxPages: window.maxPagesPerWindow,
           maxRows: window.maxRowsPerWindow,
-          attempt: attemptCount,
+          attempt: attemptOrdinal,
           checkpoint,
         });
       } catch (error) {

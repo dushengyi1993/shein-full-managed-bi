@@ -9,6 +9,7 @@ import {
 
 const NOW = new Date('2026-07-28T12:34:56.000Z');
 const WINDOW = Object.freeze({
+  planHash: 'f'.repeat(64),
   storeCode: 'DL5477',
   domain: 'purchase-orders',
   windowStart: '2026-07-01',

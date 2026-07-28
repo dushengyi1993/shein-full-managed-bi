@@ -44,7 +44,11 @@ function passingResult(overrides = {}) {
   };
 }
 
-function recordingRepository({ completedWindowKeys = [], checkpoints = [] } = {}) {
+function recordingRepository({
+  completedWindowKeys = [],
+  checkpoints = [],
+  windowAttemptCounts = [],
+} = {}) {
   const calls = { openRun: 0, commits: [], closed: [] };
   return {
     calls,
@@ -53,9 +57,10 @@ function recordingRepository({ completedWindowKeys = [], checkpoints = [] } = {}
       return { backfillRunId: 41, resumed: calls.openRun > 1 };
     },
     async loadCompletedWindowKeys() { return completedWindowKeys; },
+    async loadWindowAttemptCounts() { return windowAttemptCounts; },
     async loadCheckpoints() { return checkpoints; },
-    async commitWindowOutcome({ window, outcome, checkpointState }) {
-      calls.commits.push({ window, outcome, checkpointState });
+    async commitWindowOutcome({ window, outcome, checkpointState, attemptCount }) {
+      calls.commits.push({ window, outcome, checkpointState, attemptCount });
       return {
         persisted: true,
         backfillWindowId: calls.commits.length,
@@ -281,6 +286,40 @@ test('same plan hash replay resumes only incomplete verified windows', async () 
   // Only the resumed window produced a commit; replays create no duplicates.
   assert.equal(repository.calls.commits.length, 1);
   assert.equal(repository.calls.openRun, 1);
+});
+
+test('same plan replay continues the persisted attempt ordinal', async () => {
+  const plan = buildBackfillPlan({
+    ...BASE,
+    storeCodes: ['DL5477'],
+    domains: ['purchase-orders'],
+    from: '2026-07-01',
+    to: '2026-07-01',
+  });
+  const [window] = plan.windows;
+  const seen = [];
+  const repository = recordingRepository({
+    windowAttemptCounts: [{ windowKey: window.windowKey, attemptCount: 3 }],
+  });
+  const result = await runBackfillPlan({
+    plan,
+    mode: BACKFILL_MODES.EXECUTE,
+    approvedPlanHash: plan.planHash,
+    allowedStoreCodes: ['DL5477'],
+    allowedDomains: ['purchase-orders'],
+    repository,
+    adapters: {
+      'openapi.purchase-orders.v1': {
+        async fetchWindow({ planHash, attempt, windowStart }) {
+          seen.push({ planHash, attempt });
+          return passingResult({ businessDates: [windowStart] });
+        },
+      },
+    },
+  });
+  assert.deepEqual(seen, [{ planHash: plan.planHash, attempt: 4 }]);
+  assert.equal(result.counts.succeeded, 1);
+  assert.equal(repository.calls.commits[0].attemptCount, 1);
 });
 
 test('failed and partial windows never advance a checkpoint', async () => {

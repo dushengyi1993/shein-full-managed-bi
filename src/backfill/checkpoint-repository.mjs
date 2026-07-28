@@ -209,6 +209,21 @@ export function createBackfillRepository({ pool } = {}) {
       return result.rows.map((row) => row.window_key);
     },
 
+    async loadWindowAttemptCounts({ planHash }) {
+      const result = await pool.query(
+        `SELECT w.window_key, w.attempt_count
+           FROM ops.backfill_window AS w
+           JOIN ops.backfill_run AS r ON r.backfill_run_id = w.backfill_run_id
+          WHERE r.plan_hash = $1
+            AND r.mode = 'EXECUTE'`,
+        [planHash],
+      );
+      return result.rows.map((row) => ({
+        windowKey: row.window_key,
+        attemptCount: Number(row.attempt_count),
+      }));
+    },
+
     async loadCheckpoints({ storeCodes, domains }) {
       const result = await pool.query(
         `SELECT store_code, domain, adapter_key, last_completed_business_date,

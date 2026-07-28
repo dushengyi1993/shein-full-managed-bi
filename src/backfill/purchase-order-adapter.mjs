@@ -137,14 +137,18 @@ function shanghaiPlanText(isoDate) {
  * unbounded stream of new identifiers. It carries no store code, no operator and
  * no timestamp, so it can never leak scope into a log line.
  */
-export function purchaseOrderBackfillRunId({ windowKey, attempt } = {}) {
+export function purchaseOrderBackfillRunId({ planHash, windowKey, attempt } = {}) {
+  if (typeof planHash !== 'string' || !WINDOW_KEY_PATTERN.test(planHash)) {
+    throw new TypeError('planHash must be the planner 64-hex plan hash');
+  }
   if (typeof windowKey !== 'string' || !WINDOW_KEY_PATTERN.test(windowKey)) {
     throw new TypeError('windowKey must be the planner 64-hex window key');
   }
   if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt > 99) {
     throw new TypeError('attempt must be an integer from 1 to 99');
   }
-  return `bfpo-${windowKey.slice(0, 32)}-a${String(attempt).padStart(2, '0')}`;
+  const scopedKey = canonicalHash({ planHash, windowKey }).slice(0, 32);
+  return `bfpo-${scopedKey}-a${String(attempt).padStart(2, '0')}`;
 }
 
 function isSafeCount(value) {
@@ -235,6 +239,7 @@ export function createPurchaseOrderBackfillAdapter({
   const state = { delegationCount: 0 };
 
   async function fetchWindow({
+    planHash,
     storeCode,
     domain,
     windowStart,
@@ -262,7 +267,7 @@ export function createPurchaseOrderBackfillAdapter({
     }
     let runId;
     try {
-      runId = purchaseOrderBackfillRunId({ windowKey, attempt });
+      runId = purchaseOrderBackfillRunId({ planHash, windowKey, attempt });
     } catch {
       return reject(PURCHASE_ORDER_ADAPTER_REJECT_CODES.ATTEMPT_INVALID);
     }
