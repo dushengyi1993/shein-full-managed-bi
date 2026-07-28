@@ -174,6 +174,22 @@ test('runtime starts only fixed executables and strips secrets from child enviro
     assert.equal(entry.options.env.PATH, '/usr/bin');
   }
   assert.equal(system.spawns[1].options.env.DISPLAY, ':941');
+  assert.equal(
+    system.spawns[1].options.env.HOME,
+    '/srv/shein-fm/webapi/profiles/persistent-dl5477-profile',
+  );
+  assert.equal(
+    system.spawns[1].options.env.XDG_CONFIG_HOME,
+    '/srv/shein-fm/webapi/profiles/persistent-dl5477-profile/.config',
+  );
+  assert.equal(
+    system.spawns[1].options.env.XDG_DATA_HOME,
+    '/srv/shein-fm/webapi/profiles/persistent-dl5477-profile/.local/share',
+  );
+  assert.equal(
+    system.spawns[1].options.env.XDG_CACHE_HOME,
+    '/srv/shein-fm/webapi/profiles/persistent-dl5477-profile/.cache',
+  );
   await session.close();
   assert.equal(system.children.length, 2);
   await runtime.close();

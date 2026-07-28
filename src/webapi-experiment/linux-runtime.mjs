@@ -90,12 +90,20 @@ function defaultSpawn(executable, args, options) {
   return spawnChildProcess(executable, args, options);
 }
 
-function safeChildEnvironment(source, display) {
+function safeChildEnvironment(source, display, homeDirectory = null) {
   const environment = {};
-  for (const key of ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_RUNTIME_DIR']) {
+  for (const key of ['PATH', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_RUNTIME_DIR']) {
     if (typeof source?.[key] === 'string' && source[key] !== '') {
       environment[key] = source[key];
     }
+  }
+  if (homeDirectory) {
+    environment.HOME = homeDirectory;
+    environment.XDG_CONFIG_HOME = `${homeDirectory}/.config`;
+    environment.XDG_DATA_HOME = `${homeDirectory}/.local/share`;
+    environment.XDG_CACHE_HOME = `${homeDirectory}/.cache`;
+  } else if (typeof source?.HOME === 'string' && source.HOME !== '') {
+    environment.HOME = source.HOME;
   }
   if (display) environment.DISPLAY = display;
   return environment;
@@ -208,7 +216,7 @@ export async function createLinuxExperimentRuntime({
 
   const children = new Map();
 
-  async function spawnTracked(command, args, { display } = {}) {
+  async function spawnTracked(command, args, { display, homeDirectory } = {}) {
     const executable = await resolveExecutable(command);
     if (!executable) fail('WEBAPI_RUNTIME_EXECUTABLE_MISSING');
     const child = system.spawn(executable, args, {
@@ -216,7 +224,7 @@ export async function createLinuxExperimentRuntime({
       stdio: 'ignore',
       // Browser/display children never inherit the database URL or any other
       // application secret from the operator environment.
-      env: safeChildEnvironment(system.env, display),
+      env: safeChildEnvironment(system.env, display, homeDirectory),
     });
     if (!child || !Number.isSafeInteger(child.pid)) {
       fail('WEBAPI_RUNTIME_PROCESS_START_FAILED');

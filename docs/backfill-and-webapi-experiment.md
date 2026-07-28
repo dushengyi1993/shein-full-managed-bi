@@ -229,6 +229,8 @@ three yes/no questions (same origin, not a login view, store alias last four dig
 present) and returns booleans plus a text length; no identity value crosses the
 boundary. Cleanup is deterministic and idempotent, signals only the two PIDs it
 started, and is exposed as `close` so the CLI owns signal handling.
+Chrome's `HOME` and XDG write locations are bounded to that same store-owned
+Profile. The runtime never broadens write permission on `/srv/shein-fm`.
 
 ### Two-stage runbook
 
@@ -272,7 +274,9 @@ batch amends `schema.mjs`.
 - the `sheinfm_webapi_login` credential must exist and be reachable as
   `FULL_BI_WEBAPI_DATABASE_URL`, which is read only after execute authorization
   succeeds and is never printed;
-- the explicit gate file must exist on the Linux host.
+- `/srv/shein-fm/runtime/webapi-locks` must be mode `0700`, owned by `sheinfm`;
+- the explicit gate `/srv/shein-fm/runtime/webapi-experiment.enabled` must exist
+  only for the bounded manual execution window.
 
 This batch applies no migration, creates no gate file, ships no systemd unit or
 timer, and performs no real WebAPI call. Manual cloud execution runs later as the

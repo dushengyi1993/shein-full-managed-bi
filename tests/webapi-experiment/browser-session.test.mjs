@@ -88,8 +88,8 @@ function sessionDeps(overrides = {}) {
     commands,
     deps: {
       platform: 'linux',
-      async spawn(command, args) {
-        spawned.push({ command, args });
+      async spawn(command, args, options) {
+        spawned.push({ command, args, options });
         return { pid: 1000 + spawned.length };
       },
       async pathExists() { return true; },
@@ -174,6 +174,10 @@ test('a successful session navigates only to the allow-listed origin and proves 
   assert.match(chromeArgs, /--user-data-dir=\/srv\/shein-fm\/webapi\/profiles\/persistent-dl5477-profile/);
   assert.match(chromeArgs, /--remote-debugging-address=127\.0\.0\.1/);
   assert.match(chromeArgs, new RegExp(`--remote-debugging-port=${STORE_RUNTIME_SLOTS.DL5477.debuggingPort}`));
+  assert.equal(
+    spawned[1].options.homeDirectory,
+    '/srv/shein-fm/webapi/profiles/persistent-dl5477-profile',
+  );
 
   const navigations = commands.filter((entry) => entry.method === 'Page.navigate');
   assert.equal(navigations.length, 1);

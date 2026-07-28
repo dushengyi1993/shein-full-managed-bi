@@ -60,6 +60,7 @@ export const SESSION_STATES = Object.freeze({
 });
 
 export const SESSION_DEFAULT_LIMITS = Object.freeze({
+  displayReadyMs: 500,
   debuggerReadyMs: 25_000,
   debuggerPollMs: 500,
   navigationSettleMs: 6_000,
@@ -238,11 +239,20 @@ export async function openExperimentSession({ storeCode, deps } = {}) {
     if (!displayProcess || !Number.isSafeInteger(displayProcess.pid)) {
       throw new WebApiSessionError(SESSION_REJECT_CODES.DISPLAY_START_FAILED, canonical);
     }
+    // Xvfb returns a process handle before its Unix socket is necessarily ready.
+    // A short bounded settle avoids racing Chrome against display startup.
+    await sleep(resolvedLimits.displayReadyMs);
 
     browserProcess = await spawn(
       'chrome',
       chromeArguments({ profileDirectory, debuggingPort: slot.debuggingPort }),
-      { display: slot.display },
+      {
+        display: slot.display,
+        // Chrome 148 writes crashpad and desktop-integration state below HOME.
+        // Keep those writes inside the canonical, store-owned Profile instead
+        // of widening permissions on the service root.
+        homeDirectory: profileDirectory,
+      },
     );
     if (!browserProcess || !Number.isSafeInteger(browserProcess.pid)) {
       throw new WebApiSessionError(SESSION_REJECT_CODES.BROWSER_START_FAILED, canonical);
