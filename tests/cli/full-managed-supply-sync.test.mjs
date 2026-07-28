@@ -6,6 +6,8 @@ import test from 'node:test';
 import {
   computeSupplyPlan,
   computeSupplyWindows,
+  fetchSupplyDomainWithRetry,
+  isRetryableSupplyFetchError,
   normalizeSupplyDomains,
   parseArgs,
   readActiveFullManagedSkuUniverse,
@@ -137,6 +139,198 @@ function stockResponse(body) {
     }],
   };
 }
+
+test('supply retry policy is limited to transient transport and pagination failures', () => {
+  for (const code of ['NETWORK_ERROR', 'REQUEST_TIMEOUT', 'PAGINATION_COUNT_DRIFT']) {
+    assert.equal(isRetryableSupplyFetchError({ code }), true);
+  }
+  assert.equal(isRetryableSupplyFetchError({
+    code: 'HTTP_ERROR',
+    details: { httpStatus: 429 },
+  }), true);
+  assert.equal(isRetryableSupplyFetchError({
+    code: 'HTTP_ERROR',
+    details: { httpStatus: 503 },
+  }), true);
+  assert.equal(isRetryableSupplyFetchError({
+    code: 'HTTP_ERROR',
+    details: { httpStatus: 403 },
+  }), false);
+  assert.equal(isRetryableSupplyFetchError({
+    code: 'HTTP_ERROR',
+    details: { httpStatus: 600 },
+  }), false);
+  assert.equal(isRetryableSupplyFetchError({ code: 'PLATFORM_ERROR' }), false);
+});
+
+test('bounded retry reports attempts without leaking or swallowing the terminal error', async () => {
+  const delays = [];
+  const terminalError = Object.assign(new Error('still drifting'), {
+    code: 'PAGINATION_COUNT_DRIFT',
+  });
+  const result = await fetchSupplyDomainWithRetry(
+    async () => {
+      throw terminalError;
+    },
+    {
+      sleep: async (delayMs) => delays.push(delayMs),
+      retryDelaysMs: [10, 20],
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, terminalError);
+  assert.equal(result.attemptCount, 3);
+  assert.equal(result.retryCount, 2);
+  assert.deepEqual(delays, [10, 20]);
+});
+
+test('stock-advice restarts the whole domain after count drift and loads only the final sweep', async () => {
+  const delays = [];
+  const loads = [];
+  let fetchCount = 0;
+  const summary = await runSupplySync({
+    config: config(),
+    databaseUrl: 'postgres://fake.invalid/warehouse',
+    stores: 'DL5477',
+    domains: 'stock-advice',
+    now: '2026-07-26T12:34:56Z',
+    runId: 'supply-stock-retry',
+    poolFactory: async () => fakePool(),
+    clientFactory: () => ({}),
+    operations: {
+      ...supplyEvidenceOperations(),
+      async sleep(delayMs) {
+        delays.push(delayMs);
+      },
+      async fetchStockAdvice() {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          throw Object.assign(new Error('advertised count changed during sweep'), {
+            code: 'PAGINATION_COUNT_DRIFT',
+          });
+        }
+        return {
+          advice: [{ skcName: 'SKC-1', skuList: [] }],
+          pages: [{ page: 1, recordCount: 1 }],
+          terminalReason: 'SHORT_PAGE',
+          requestFingerprint: 'e'.repeat(64),
+        };
+      },
+      async loadSnapshot(_pool, input) {
+        loads.push(input);
+        return { stockAdviceCount: input.stockAdvice.advice.length };
+      },
+    },
+  });
+
+  assert.equal(summary.ok, true);
+  assert.equal(fetchCount, 2);
+  assert.deepEqual(delays, [250]);
+  assert.equal(loads.length, 1);
+  assert.equal(loads[0].stockAdvice.advice.length, 1);
+  assert.deepEqual(summary.results[0].domains[0], {
+    domain: 'stock-advice',
+    status: 'loaded',
+    recordCount: 1,
+    pageCount: 1,
+    terminalReason: 'SHORT_PAGE',
+    attemptCount: 2,
+    retryCount: 1,
+  });
+});
+
+test('purchase-orders retries a transient 503 before loading a single complete result', async () => {
+  const delays = [];
+  const loads = [];
+  let fetchCount = 0;
+  const summary = await runSupplySync({
+    config: config(),
+    databaseUrl: 'postgres://fake.invalid/warehouse',
+    stores: 'DL5477',
+    domains: 'purchase-orders',
+    now: '2026-07-26T12:34:56Z',
+    runId: 'supply-purchase-retry',
+    poolFactory: async () => fakePool(),
+    clientFactory: () => ({}),
+    operations: {
+      ...supplyEvidenceOperations(),
+      async sleep(delayMs) {
+        delays.push(delayMs);
+      },
+      async fetchPurchaseOrders() {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          throw Object.assign(new Error('upstream unavailable'), {
+            code: 'HTTP_ERROR',
+            details: { httpStatus: 503 },
+          });
+        }
+        return {
+          orders: [{ purchaseOrderCode: 'PO-1', lines: [] }],
+          pages: [{ page: 1, recordCount: 1 }],
+          terminalReason: 'SHORT_PAGE',
+          requestFingerprint: 'f'.repeat(64),
+          incrementalStrategy: {},
+        };
+      },
+      async loadSnapshot(_pool, input) {
+        loads.push(input);
+        return { purchaseOrderCount: input.purchaseOrders.orders.length };
+      },
+    },
+  });
+
+  assert.equal(summary.ok, true);
+  assert.equal(fetchCount, 2);
+  assert.deepEqual(delays, [250]);
+  assert.equal(loads.length, 1);
+  assert.equal(loads[0].purchaseOrders.orders.length, 1);
+  const purchaseResult = summary.results[0].domains[0];
+  assert.equal(purchaseResult.status, 'loaded');
+  assert.equal(purchaseResult.attemptCount, 2);
+  assert.equal(purchaseResult.retryCount, 1);
+});
+
+test('exhausted stock-advice drift remains a fetch error and is never loaded', async () => {
+  const loads = [];
+  let fetchCount = 0;
+  const summary = await runSupplySync({
+    config: config(),
+    databaseUrl: 'postgres://fake.invalid/warehouse',
+    stores: 'DL5477',
+    domains: 'stock-advice',
+    now: '2026-07-26T12:34:56Z',
+    runId: 'supply-stock-exhausted',
+    poolFactory: async () => fakePool(),
+    clientFactory: () => ({}),
+    operations: {
+      ...supplyEvidenceOperations(),
+      async sleep() {},
+      async fetchStockAdvice() {
+        fetchCount += 1;
+        throw Object.assign(new Error('still changing'), {
+          code: 'PAGINATION_COUNT_DRIFT',
+        });
+      },
+      async loadSnapshot(_pool, input) {
+        loads.push(input);
+        return {};
+      },
+    },
+  });
+
+  assert.equal(summary.ok, false);
+  assert.equal(fetchCount, 3);
+  assert.equal(loads.length, 0);
+  assert.deepEqual(summary.results[0].domains[0], {
+    domain: 'stock-advice',
+    status: 'fetch_error',
+    errorCode: 'PAGINATION_COUNT_DRIFT',
+    attemptCount: 3,
+    retryCount: 2,
+  });
+});
 
 test('CLI arguments and default Shanghai overlap windows are explicit', () => {
   assert.deepEqual(parseArgs([
@@ -841,6 +1035,8 @@ test('domain failure is isolated, secrets are absent and missing inventory stays
     domain: 'stock-advice',
     status: 'fetch_error',
     errorCode: 'PLATFORM_ERROR',
+    attemptCount: 1,
+    retryCount: 0,
   });
   assert.equal(Object.hasOwn(loads[0], 'stockAdvice'), false);
 
@@ -939,6 +1135,8 @@ test('default client refuses real SHEIN calls on Windows before network access',
     domain: 'stock-advice',
     status: 'fetch_error',
     errorCode: 'REAL_OPENAPI_BLOCKED_ON_WINDOWS',
+    attemptCount: 1,
+    retryCount: 0,
   }]);
   assert.doesNotMatch(
     JSON.stringify(summary),

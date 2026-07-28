@@ -331,10 +331,16 @@ export class SheinOpenApiClient {
       clearTimeout(timer);
     }
 
-    const result = {
+    const responseMeta = {
       ok: response.ok,
       status: response.status,
       statusText: response.statusText,
+    };
+    if (responseMeta.ok !== true || !Number.isInteger(responseMeta.status)) {
+      assertSuccessfulOpenApiResponse(responseMeta, signed.path);
+    }
+    const result = {
+      ...responseMeta,
       data: parseBody(text, signed.path),
     };
     assertSuccessfulOpenApiResponse(result, signed.path);
@@ -404,10 +410,16 @@ export class SheinOpenApiClient {
       clearTimeout(timer);
     }
 
-    const result = {
+    const responseMeta = {
       ok: response.ok,
       status: response.status,
       statusText: response.statusText,
+    };
+    if (responseMeta.ok !== true || !Number.isInteger(responseMeta.status)) {
+      assertSuccessfulOpenApiResponse(responseMeta, path);
+    }
+    const result = {
+      ...responseMeta,
       data: parseBody(text, path),
     };
     const data = assertSuccessfulOpenApiResponse(result, path);

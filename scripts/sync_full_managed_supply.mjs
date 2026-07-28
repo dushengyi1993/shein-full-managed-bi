@@ -75,6 +75,8 @@ const ATTEMPT_DOMAIN_MAP = Object.freeze({
   deliveries: Object.freeze({ domain: 'deliveries', subtype: 'ALL' }),
 });
 
+const SUPPLY_FETCH_RETRY_DELAYS_MS = Object.freeze([250, 750]);
+
 const DEFAULT_OPERATIONS = Object.freeze({
   fetchProductCatalog: fetchFullManagedProductCatalog,
   fetchProductDetails: fetchFullManagedProductDetails,
@@ -86,6 +88,7 @@ const DEFAULT_OPERATIONS = Object.freeze({
   recordAttempt: recordFullManagedSupplySyncAttempt,
   readActiveSkuUniverse: readActiveFullManagedSkuUniverse,
   readPendingDeliveryCodes,
+  sleep: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
 });
 
 function nonEmptyFlagValue(argv, index, flag) {
@@ -379,6 +382,58 @@ function selectStores(configStores, requestedValue) {
 function safeErrorCode(error, fallback) {
   const candidate = typeof error?.code === 'string' ? error.code.toUpperCase() : '';
   return /^[A-Z0-9_]{3,80}$/.test(candidate) ? candidate : fallback;
+}
+
+export function isRetryableSupplyFetchError(error) {
+  const code = safeErrorCode(error, '');
+  if (['NETWORK_ERROR', 'REQUEST_TIMEOUT', 'PAGINATION_COUNT_DRIFT'].includes(code)) {
+    return true;
+  }
+  if (code !== 'HTTP_ERROR') return false;
+  const httpStatus = Number(error?.details?.httpStatus);
+  return Number.isInteger(httpStatus)
+    && (httpStatus === 429 || (httpStatus >= 500 && httpStatus <= 599));
+}
+
+export async function fetchSupplyDomainWithRetry(
+  operation,
+  {
+    sleep = DEFAULT_OPERATIONS.sleep,
+    retryDelaysMs = SUPPLY_FETCH_RETRY_DELAYS_MS,
+  } = {},
+) {
+  if (typeof operation !== 'function') throw new TypeError('operation must be a function');
+  if (typeof sleep !== 'function') throw new TypeError('sleep must be a function');
+  if (
+    !Array.isArray(retryDelaysMs)
+    || retryDelaysMs.some((delayMs) => !Number.isSafeInteger(delayMs) || delayMs < 0)
+  ) {
+    throw new TypeError('retryDelaysMs must contain non-negative safe integers');
+  }
+
+  let attemptCount = 0;
+  while (true) {
+    attemptCount += 1;
+    try {
+      return Object.freeze({
+        ok: true,
+        value: await operation(),
+        attemptCount,
+        retryCount: attemptCount - 1,
+      });
+    } catch (error) {
+      const retryCount = attemptCount - 1;
+      if (!isRetryableSupplyFetchError(error) || attemptCount > retryDelaysMs.length) {
+        return Object.freeze({
+          ok: false,
+          error,
+          attemptCount,
+          retryCount,
+        });
+      }
+      await sleep(retryDelaysMs[retryCount]);
+    }
+  }
 }
 
 function attemptWindow(domain, windows) {
@@ -1221,35 +1276,47 @@ async function syncStore({
   }
 
   if (selected.has('stock-advice')) {
-    try {
-      const advice = await operations.fetchStockAdvice(client, {
+    const stockAdviceAttempt = await fetchSupplyDomainWithRetry(
+      () => operations.fetchStockAdvice(client, {
         pageSize: Math.min(config.pageSize, 20),
         fetchedAt: sourceFetchedAt,
-      });
+      }),
+      { sleep: operations.sleep },
+    );
+    if (stockAdviceAttempt.ok) {
+      const advice = stockAdviceAttempt.value;
       primarySnapshot.stockAdvice = advice;
       setDomainResult(storeResult, makeDomainResult('stock-advice', 'fetched', {
         recordCount: countForPrimaryDomain('stock-advice', advice),
         pageCount: advice.pages.length,
         terminalReason: advice.terminalReason,
+        attemptCount: stockAdviceAttempt.attemptCount,
+        retryCount: stockAdviceAttempt.retryCount,
       }));
-    } catch (error) {
+    } else {
       setDomainResult(storeResult, makeDomainResult('stock-advice', 'fetch_error', {
-        errorCode: safeErrorCode(error, 'STOCK_ADVICE_FETCH_ERROR'),
+        errorCode: safeErrorCode(stockAdviceAttempt.error, 'STOCK_ADVICE_FETCH_ERROR'),
+        attemptCount: stockAdviceAttempt.attemptCount,
+        retryCount: stockAdviceAttempt.retryCount,
       }));
     }
   }
 
   if (selected.has('purchase-orders')) {
-    try {
-      const purchaseOrders = await fetchPurchaseOrderPlan(
+    const purchaseOrderAttempt = await fetchSupplyDomainWithRetry(
+      () => fetchPurchaseOrderPlan(
         client,
         operations,
         windows.purchaseOrders,
         {
-        pageSize: Math.min(config.pageSize, 200),
-        fetchedAt: sourceFetchedAt,
+          pageSize: Math.min(config.pageSize, 200),
+          fetchedAt: sourceFetchedAt,
         },
-      );
+      ),
+      { sleep: operations.sleep },
+    );
+    if (purchaseOrderAttempt.ok) {
+      const purchaseOrders = purchaseOrderAttempt.value;
       primarySnapshot.purchaseOrders = purchaseOrders;
       setDomainResult(storeResult, makeDomainResult('purchase-orders', 'fetched', {
         recordCount: countForPrimaryDomain('purchase-orders', purchaseOrders),
@@ -1257,11 +1324,15 @@ async function syncStore({
         terminalReason: purchaseOrders.terminalReason,
         mode: windows.purchaseOrders.mode,
         window: windows.purchaseOrders,
+        attemptCount: purchaseOrderAttempt.attemptCount,
+        retryCount: purchaseOrderAttempt.retryCount,
       }));
-    } catch (error) {
+    } else {
       setDomainResult(storeResult, makeDomainResult('purchase-orders', 'fetch_error', {
-        errorCode: safeErrorCode(error, 'PURCHASE_ORDER_FETCH_ERROR'),
+        errorCode: safeErrorCode(purchaseOrderAttempt.error, 'PURCHASE_ORDER_FETCH_ERROR'),
         window: windows.purchaseOrders,
+        attemptCount: purchaseOrderAttempt.attemptCount,
+        retryCount: purchaseOrderAttempt.retryCount,
       }));
     }
   }

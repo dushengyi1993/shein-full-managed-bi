@@ -93,6 +93,26 @@ test('signs GET query path, sends no body and requires HTTP plus platform succes
   );
 });
 
+test('reports a non-JSON 503 response as a retryable HTTP error before parsing the body', async () => {
+  const client = new SheinOpenApiClient({
+    baseUrl: 'https://fake.test',
+    openKeyId: 'x',
+    secretKey: 'y',
+    allowFakeBaseUrl: true,
+    fetchImpl: async () => new Response('<html>upstream unavailable</html>', {
+      status: 503,
+      statusText: 'Service Unavailable',
+    }),
+  });
+
+  await assert.rejects(
+    () => client.request('/open-api/test'),
+    (error) => error.code === 'HTTP_ERROR'
+      && error.details.httpStatus === 503
+      && !JSON.stringify(error).includes('upstream unavailable'),
+  );
+});
+
 test('timeout remains active while response body is consumed', async () => {
   const client = new SheinOpenApiClient({
     baseUrl: 'https://fake.test',
