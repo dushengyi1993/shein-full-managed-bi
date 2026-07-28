@@ -337,3 +337,16 @@ test('390px layout has explicit page-level overflow guards', async () => {
   assert.match(parity, /@media \(max-width: 1280px\)[\s\S]*?position: static/);
   assert.match(parity, /@media \(max-width: 1280px\)[\s\S]*?\.workspace\.main\s*\{[\s\S]*?margin-left: 0/);
 });
+
+test('desktop partial-quality evidence spans the full content rail without pushing trends below the first screen', async () => {
+  const parity = await read('src/web/home-parity.css');
+
+  assert.match(
+    parity,
+    /@media \(min-width: 1400px\)[\s\S]*?#view > \.truth-strip \+ \.quality-notice\s*\{[^}]*width: 100%/s,
+  );
+  assert.match(
+    parity,
+    /@media \(min-width: 1400px\)[\s\S]*?\.quality-notice span\s*\{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/s,
+  );
+});

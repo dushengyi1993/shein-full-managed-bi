@@ -929,6 +929,17 @@ body {
     gap: 8px;
   }
 
+  #view > .truth-strip + .quality-notice {
+    width: 100%;
+  }
+
+  .quality-notice span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .kpi-six {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
