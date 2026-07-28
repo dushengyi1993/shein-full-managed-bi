@@ -273,6 +273,11 @@ test('keeps health public while redirecting pages and rejecting unauthenticated 
   assert.equal(sales.headers.get('www-authenticate'), 'Session');
   assert.match(await sales.text(), /AUTH_REQUIRED/);
 
+  const inventory = await fetch(`${baseUrl}/api/inventory`);
+  assert.equal(inventory.status, 401);
+  assert.equal(inventory.headers.get('www-authenticate'), 'Session');
+  assert.match(await inventory.text(), /AUTH_REQUIRED/);
+
   const login = await fetch(`${baseUrl}/login`);
   assert.equal(login.status, 200);
   assert.equal(login.headers.get('cache-control'), 'no-store');
@@ -362,6 +367,12 @@ test('logs in with a legacy SHA-256 hash, authorizes APIs, and logs out safely',
   const dashboard = await fetch(`${baseUrl}/api/dashboard`, { headers: { Cookie: cookie } });
   assert.equal(dashboard.status, 200);
   assert.equal((await dashboard.json()).schemaVersion, 4);
+
+  const inventory = await fetch(`${baseUrl}/api/inventory?pageSize=25`, {
+    headers: { Cookie: cookie },
+  });
+  assert.equal(inventory.status, 200);
+  assert.equal((await inventory.json()).readOnly, true);
 
   const crossOriginLogout = await fetch(`${baseUrl}/api/logout`, {
     method: 'POST',

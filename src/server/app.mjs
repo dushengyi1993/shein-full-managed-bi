@@ -13,6 +13,10 @@ import {
   SalesQueryError,
   querySalesDashboard,
 } from './sales-query.mjs';
+import {
+  InventoryQueryError,
+  queryInventoryDashboard,
+} from './inventory-query.mjs';
 import { createDashboardUpdateBroker } from './dashboard-update-stream.mjs';
 import {
   createAuthService,
@@ -438,6 +442,33 @@ export function createRequestHandler(options = {}) {
           error: {
             code: 'SALES_DATA_UNAVAILABLE',
             message: '销量查询暂不可用',
+          },
+        }, method);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/inventory') {
+      try {
+        const dashboard = await loadDashboardData(dataFile);
+        const projected = projectDashboardForUser(dashboard, signedInUser);
+        sendJson(
+          response,
+          200,
+          queryInventoryDashboard(projected, url.searchParams),
+          method,
+        );
+      } catch (error) {
+        if (error instanceof InventoryQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'INVENTORY_DATA_UNAVAILABLE',
+            message: '库存与备货查询暂不可用',
           },
         }, method);
       }

@@ -67,11 +67,32 @@ const FOCUS_DOMAINS = Object.freeze({
 });
 
 const QUICK_FILTER_VALUES = Object.freeze([
-  'ALL', 'HIGH', 'SHORTAGE', 'URGENT', 'ADVICE', 'SYNC',
+  'ALL', 'HIGH', 'SHORTAGE', 'RECONCILIATION', 'URGENT', 'ADVICE', 'WARNING', 'SYNC',
   'PENDING_DELIVERY', 'PENDING_RECEIPT', 'PENDING_STORAGE', 'OVERDUE',
   'GROWING', 'DECLINING', 'UNCOMPARABLE', 'CANONICAL', 'UNMAPPED',
   'WITH_SALES', 'MISSING_SPU',
 ]);
+
+/* Inventory workspace state. Every token is allow-listed here and re-checked
+   before it reaches `/api/inventory`, so a shared link can never widen the
+   server contract. */
+const URL_INVENTORY_VIEWS = Object.freeze(['INVENTORY', 'ADVICE']);
+const URL_INVENTORY_TYPES = Object.freeze(['ALL', 'PI', 'JI', 'VI']);
+const URL_INVENTORY_SORTS = Object.freeze([
+  'PRIORITY',
+  'SHORTAGE_DESC',
+  'USABLE_ASC',
+  'FRESHNESS_DESC',
+]);
+const URL_ADVICE_SORTS = Object.freeze([
+  'PRIORITY',
+  'URGENT_DESC',
+  'ADVICE_DESC',
+  'DAILY_SALES_DESC',
+  'FRESHNESS_DESC',
+]);
+const URL_INVENTORY_PAGE_SIZES = Object.freeze([25, 50, 100]);
+const URL_DEFAULT_INVENTORY_PAGE_SIZE = 25;
 
 const URL_STORE_PATTERN = /^[A-Z0-9]{2,12}$/;
 const URL_OWNER_PATTERN = /^[\p{L}\p{N}._:-]{1,64}$/u;
@@ -91,6 +112,21 @@ function urlSafeText(value, maxLength) {
     .slice(0, maxLength)
     .join('')
     .trim();
+}
+
+/** Unknown tokens fall back to the default instead of reaching the server. */
+function allowListedToken(value, allowed, fallback) {
+  const token = urlSafeText(value, 32).toUpperCase();
+  return allowed.includes(token) ? token : fallback;
+}
+
+/** Page size is a closed set, so an arbitrary number can never be requested. */
+function pageSizeParam(value) {
+  const token = urlSafeText(value, 8);
+  const parsed = /^[1-9][0-9]{0,2}$/.test(token) ? Number(token) : 0;
+  return URL_INVENTORY_PAGE_SIZES.includes(parsed)
+    ? parsed
+    : URL_DEFAULT_INVENTORY_PAGE_SIZE;
 }
 
 function parseScopeToken(value) {
@@ -171,6 +207,25 @@ function parseHashState(rawHash, inherited = {}) {
       salesSort: inherited.salesSort || 'LAST30_DESC',
       productPage: Number.isSafeInteger(inherited.productPage) ? inherited.productPage : 1,
       standardPage: Number.isSafeInteger(inherited.standardPage) ? inherited.standardPage : 1,
+      inventoryView: URL_INVENTORY_VIEWS.includes(inherited.inventoryView)
+        ? inherited.inventoryView
+        : 'INVENTORY',
+      inventoryType: URL_INVENTORY_TYPES.includes(inherited.inventoryType)
+        ? inherited.inventoryType
+        : 'ALL',
+      inventorySort: URL_INVENTORY_SORTS.includes(inherited.inventorySort)
+        ? inherited.inventorySort
+        : 'PRIORITY',
+      adviceSort: URL_ADVICE_SORTS.includes(inherited.adviceSort)
+        ? inherited.adviceSort
+        : 'PRIORITY',
+      // A bare nav hash restarts paging; an inherited page number would point
+      // at a page that the new scope may not have.
+      inventoryPage: 1,
+      advicePage: 1,
+      inventoryPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.inventoryPageSize)
+        ? inherited.inventoryPageSize
+        : URL_DEFAULT_INVENTORY_PAGE_SIZE,
       // Navigating to another surface invalidates a focus that belonged to the
       // previous one.
       focus: null,
@@ -200,6 +255,29 @@ function parseHashState(rawHash, inherited = {}) {
       : 'LAST30_DESC',
     productPage: pageParam('page'),
     standardPage: pageParam('standardPage'),
+    inventoryView: allowListedToken(
+      params.get('view'),
+      URL_INVENTORY_VIEWS,
+      'INVENTORY',
+    ),
+    inventoryType: allowListedToken(
+      params.get('invType'),
+      URL_INVENTORY_TYPES,
+      'ALL',
+    ),
+    inventorySort: allowListedToken(
+      params.get('invSort'),
+      URL_INVENTORY_SORTS,
+      'PRIORITY',
+    ),
+    adviceSort: allowListedToken(
+      params.get('adviceSort'),
+      URL_ADVICE_SORTS,
+      'PRIORITY',
+    ),
+    inventoryPage: pageParam('invPage'),
+    advicePage: pageParam('advicePage'),
+    inventoryPageSize: pageSizeParam(params.get('size')),
     // A focus only applies on the surface that can prove it.
     focus: focus && FOCUS_DOMAINS[focus.domain].route === route ? focus : null,
     canonicalLink: true,
@@ -230,6 +308,28 @@ function serializeHashState(input = {}) {
     if (Number.isSafeInteger(input.standardPage) && input.standardPage > 1) {
       params.set('standardPage', String(Math.min(input.standardPage, 9999)));
     }
+  }
+  if (route === 'inventory') {
+    const view = allowListedToken(input.inventoryView, URL_INVENTORY_VIEWS, 'INVENTORY');
+    if (view !== 'INVENTORY') params.set('view', view);
+    const inventoryType = allowListedToken(input.inventoryType, URL_INVENTORY_TYPES, 'ALL');
+    if (inventoryType !== 'ALL') params.set('invType', inventoryType);
+    const inventorySort = allowListedToken(
+      input.inventorySort,
+      URL_INVENTORY_SORTS,
+      'PRIORITY',
+    );
+    if (inventorySort !== 'PRIORITY') params.set('invSort', inventorySort);
+    const adviceSort = allowListedToken(input.adviceSort, URL_ADVICE_SORTS, 'PRIORITY');
+    if (adviceSort !== 'PRIORITY') params.set('adviceSort', adviceSort);
+    if (Number.isSafeInteger(input.inventoryPage) && input.inventoryPage > 1) {
+      params.set('invPage', String(Math.min(input.inventoryPage, 9999)));
+    }
+    if (Number.isSafeInteger(input.advicePage) && input.advicePage > 1) {
+      params.set('advicePage', String(Math.min(input.advicePage, 9999)));
+    }
+    const pageSize = pageSizeParam(input.inventoryPageSize);
+    if (pageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) params.set('size', String(pageSize));
   }
   const focus = input.focus && FOCUS_DOMAINS[input.focus.domain]?.route === route
     ? serializeFocusToken(input.focus)
@@ -322,6 +422,19 @@ const state = {
     pageSize: 50,
     sort: initialHashState.salesSort || 'LAST30_DESC',
   },
+  inventory: {
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+    view: initialHashState.inventoryView || 'INVENTORY',
+    inventoryType: initialHashState.inventoryType || 'ALL',
+    inventorySort: initialHashState.inventorySort || 'PRIORITY',
+    adviceSort: initialHashState.adviceSort || 'PRIORITY',
+    inventoryPage: initialHashState.inventoryPage || 1,
+    advicePage: initialHashState.advicePage || 1,
+    pageSize: initialHashState.inventoryPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
+  },
   updates: {
     status: 'connecting',
     observedAt: null,
@@ -351,6 +464,7 @@ const elements = {
 
 let procurementLoadTimer = null;
 let salesLoadTimer = null;
+let inventoryLoadTimer = null;
 let dashboardEventSource = null;
 
 function routeFromLocation() {
@@ -2302,6 +2416,383 @@ function salesSortControl() {
       </select>
     </label>`;
 }
+
+/* --- inventory-query:start ---
+   The inventory workspace reads only `/api/inventory`. Filtering, sorting and
+   paging happen on the server, so the browser never truncates a result set and
+   never presents the materialized slice as the warehouse universe. */
+
+function inventoryQuickValue() {
+  const active = quickFilterValue('inventory');
+  return ['HIGH', 'SHORTAGE', 'RECONCILIATION', 'URGENT', 'ADVICE', 'WARNING']
+    .includes(active) ? active : 'ALL';
+}
+
+function inventoryQueryUrl() {
+  const params = new URLSearchParams({
+    owner: state.owner,
+    store: state.store,
+    q: state.query,
+    quick: inventoryQuickValue(),
+    inventoryType: allowListedToken(
+      state.inventory.inventoryType,
+      URL_INVENTORY_TYPES,
+      'ALL',
+    ),
+    inventorySort: allowListedToken(
+      state.inventory.inventorySort,
+      URL_INVENTORY_SORTS,
+      'PRIORITY',
+    ),
+    adviceSort: allowListedToken(state.inventory.adviceSort, URL_ADVICE_SORTS, 'PRIORITY'),
+    inventoryPage: String(state.inventory.inventoryPage),
+    advicePage: String(state.inventory.advicePage),
+    pageSize: String(pageSizeParam(state.inventory.pageSize)),
+  });
+  return `/api/inventory?${params.toString()}`;
+}
+
+async function loadInventory({ resetPages = false } = {}) {
+  if (resetPages) {
+    state.inventory.inventoryPage = 1;
+    state.inventory.advicePage = 1;
+  }
+  if (state.route !== 'inventory') return;
+  const requestSerial = state.inventory.requestSerial + 1;
+  state.inventory.requestSerial = requestSerial;
+  state.inventory.loading = true;
+  state.inventory.error = '';
+  render();
+  try {
+    const result = await fetchJson(inventoryQueryUrl());
+    // A response that lost the race must never replace newer filter state.
+    if (requestSerial !== state.inventory.requestSerial) return;
+    if (
+      !result
+      || result.readOnly !== true
+      || !Array.isArray(result.inventory?.rows)
+      || !Array.isArray(result.advice?.rows)
+      || !Array.isArray(result.inventory?.storeSummaryRows)
+      || !Array.isArray(result.advice?.storeSummaryRows)
+      || !result.overview
+    ) {
+      throw new Error('库存与备货查询结构无效');
+    }
+    state.inventory.data = result;
+  } catch (error) {
+    if (requestSerial !== state.inventory.requestSerial) return;
+    state.inventory.data = null;
+    state.inventory.error = error instanceof Error
+      ? error.message
+      : '库存与备货查询暂不可用';
+  } finally {
+    if (requestSerial === state.inventory.requestSerial) {
+      state.inventory.loading = false;
+      render();
+    }
+  }
+}
+
+function scheduleInventoryLoad({ resetPages = false, delay = 0 } = {}) {
+  if (inventoryLoadTimer !== null) window.clearTimeout(inventoryLoadTimer);
+  // Invalidate any in-flight response now, not when the debounce fires, so an
+  // old scope can never paint under the new URL state.
+  state.inventory.requestSerial += 1;
+  if (resetPages) {
+    state.inventory.inventoryPage = 1;
+    state.inventory.advicePage = 1;
+    state.inventory.data = null;
+    state.inventory.error = '';
+    state.inventory.loading = true;
+  }
+  if (state.route !== 'inventory') return;
+  if (resetPages) render();
+  inventoryLoadTimer = window.setTimeout(() => {
+    inventoryLoadTimer = null;
+    void loadInventory();
+  }, delay);
+}
+
+function inventoryQueryState(kind) {
+  const error = kind === 'error';
+  return `
+    <section class="panel procurement-query-state${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}">
+      <span class="eyebrow">INVENTORY QUERY</span>
+      <h2>${error ? '库存与备货查询暂不可用' : '正在按当前条件查询库存与备货'}</h2>
+      <p>${error
+        ? escapeHtml(state.inventory.error || '请稍后重试。')
+        : '筛选、排序和分页在服务端执行；旧筛选结果不会冒充新结果。'}</p>
+      ${error
+        ? '<button type="button" class="clear-button" data-inventory-retry="1">重新查询</button>'
+        : '<div class="query-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>'}
+    </section>`;
+}
+
+function inventoryPagination(pagination, kind, label, position) {
+  if (!pagination || !isUnit(pagination.page) || !isUnit(pagination.pageSize)) return '';
+  const matched = isUnit(pagination.matchedMaterializedRows)
+    ? pagination.matchedMaterializedRows
+    : 0;
+  const pageCount = isUnit(pagination.pageCount) ? pagination.pageCount : 0;
+  const displayedPage = pageCount === 0 ? 0 : pagination.page;
+  return `
+    <nav class="table-pagination ${position === 'top' ? 'pagination-top' : ''}" aria-label="${escapeHtml(label)}分页（${position === 'top' ? '表格上方' : '表格下方'}）">
+      <p>已物化范围命中 ${numberFormatter.format(matched)} 条 · 第 ${numberFormatter.format(displayedPage)} / ${numberFormatter.format(pageCount)} 页</p>
+      <div>
+        <button type="button" data-inventory-page-kind="${escapeHtml(kind)}" data-inventory-page="${Math.max(1, pagination.page - 1)}" ${pagination.hasPrevious ? '' : 'disabled'}>上一页</button>
+        <button type="button" data-inventory-page-kind="${escapeHtml(kind)}" data-inventory-page="${pagination.page + 1}" ${pagination.hasNext ? '' : 'disabled'}>下一页</button>
+      </div>
+    </nav>`;
+}
+
+function inventoryViewTabs(queryData) {
+  const active = state.inventory.view;
+  const inventoryMatched = isUnit(queryData?.inventory?.pagination?.matchedMaterializedRows)
+    ? queryData.inventory.pagination.matchedMaterializedRows
+    : 0;
+  const adviceMatched = isUnit(queryData?.advice?.pagination?.matchedMaterializedRows)
+    ? queryData.advice.pagination.matchedMaterializedRows
+    : 0;
+  const tabs = [
+    ['INVENTORY', '库存风险', inventoryMatched],
+    ['ADVICE', '备货建议', adviceMatched],
+  ];
+  return `
+    <div class="segmented-tabs" role="tablist" aria-label="库存与备货工作台视图">
+      ${tabs.map(([value, label, matched]) => `
+        <button type="button" role="tab" id="inventory-tab-${escapeHtml(value)}" data-inventory-view="${escapeHtml(value)}" class="${active === value ? 'active' : ''}" aria-selected="${active === value ? 'true' : 'false'}" aria-controls="inventory-workspace-table">
+          <strong>${escapeHtml(label)}</strong>
+          <small>命中 ${numberFormatter.format(matched)} 条</small>
+        </button>`).join('')}
+    </div>`;
+}
+
+function inventorySelect(kind, label, options, current) {
+  return `
+    <label class="sales-sort-control">
+      <span>${escapeHtml(label)}</span>
+      <select data-inventory-select="${escapeHtml(kind)}">
+        ${options.map(([value, text]) => `<option value="${escapeHtml(String(value))}" ${String(current) === String(value) ? 'selected' : ''}>${escapeHtml(text)}</option>`).join('')}
+      </select>
+    </label>`;
+}
+
+/** Turn one nullable server metric into an honest card value and note. */
+function inventoryMetricCard(label, metric, unit, { decimal = false } = {}) {
+  const source = metric && typeof metric === 'object' ? metric : {};
+  const total = decimal
+    ? (typeof source.total === 'number' && Number.isFinite(source.total) ? source.total : null)
+    : (isUnit(source.total) ? source.total : null);
+  const knownSum = decimal
+    ? (typeof source.knownSum === 'number' && Number.isFinite(source.knownSum)
+        ? source.knownSum
+        : null)
+    : (isUnit(source.knownSum) ? source.knownSum : null);
+  const rowCount = isUnit(source.rowCount) ? source.rowCount : 0;
+  const unknownCount = isUnit(source.unknownCount) ? source.unknownCount : 0;
+  const format = (value) => (decimal
+    ? nullableDecimal(value)
+    : numberFormatter.format(value));
+  if (rowCount === 0) {
+    return {
+      label,
+      value: '无命中行',
+      note: '当前筛选没有命中已物化风险行；这不代表业务数量为 0',
+      tone: 'partial',
+    };
+  }
+  if (total !== null) {
+    return {
+      label,
+      value: `${format(total)} ${unit}`,
+      note: `${numberFormatter.format(rowCount)} 行全部已知；受影响店铺 ${numberFormatter.format(isUnit(source.affectedStoreCount) ? source.affectedStoreCount : 0)} 家`,
+      tone: 'available',
+    };
+  }
+  return {
+    label,
+    value: knownSum === null ? '未知' : `≥ ${format(knownSum)} ${unit}`,
+    note: `${numberFormatter.format(unknownCount)} / ${numberFormatter.format(rowCount)} 行未知，拒绝补零合计`,
+    tone: 'partial',
+  };
+}
+
+function inventorySummaryCards(queryData) {
+  const overview = queryData.overview;
+  const inventoryView = state.inventory.view === 'INVENTORY';
+  const reconciliation = overview.reconciliation || {};
+  const freshness = queryData.source?.latestSourceFetchedAt;
+  const primary = inventoryView
+    ? inventoryMetricCard('当前范围缺货数量', overview.shortage, '件')
+    : inventoryMetricCard('平台建议下单量', overview.advised, '件');
+  const secondary = inventoryView
+    ? inventoryMetricCard('当前范围可用库存', overview.usable, '件')
+    : inventoryMetricCard('平台计划急采量', overview.urgent, '件');
+  const attention = inventoryView
+    ? {
+        label: '库存对账待复核',
+        value: `${numberFormatter.format(isUnit(reconciliation.rowCount) ? reconciliation.rowCount : 0)} 行`,
+        note: `涉及 ${numberFormatter.format(isUnit(reconciliation.affectedStoreCount) ? reconciliation.affectedStoreCount : 0)} 家店铺；对账状态保留平台原值`,
+        tone: (isUnit(reconciliation.rowCount) && reconciliation.rowCount > 0) ? 'partial' : 'available',
+      }
+    : {
+        label: '平台预警 SKU',
+        value: `${numberFormatter.format(isUnit(overview.warningRowCount) ? overview.warningRowCount : 0)} 行`,
+        note: '仅统计平台明确标记为预警的行；未知预警状态不计入',
+        tone: (isUnit(overview.warningRowCount) && overview.warningRowCount > 0) ? 'partial' : 'available',
+      };
+  return operationSummaryCards([
+    primary,
+    secondary,
+    attention,
+    {
+      label: '最新来源快照',
+      value: freshness ? formatDateTime(freshness) : '未知',
+      note: '来源抓取时间，不冒充库存业务时点',
+      tone: freshness ? 'available' : 'partial',
+    },
+  ]);
+}
+
+/** Truthful source line: materialized rows are never called a warehouse total. */
+function inventorySourceLine(queryData) {
+  const inventoryView = state.inventory.view === 'INVENTORY';
+  const source = inventoryView ? queryData.inventory.source : queryData.advice.source;
+  const pagination = inventoryView
+    ? queryData.inventory.pagination
+    : queryData.advice.pagination;
+  const matched = isUnit(pagination?.matchedMaterializedRows)
+    ? pagination.matchedMaterializedRows
+    : 0;
+  const returned = isUnit(source?.returned) ? source.returned : null;
+  const total = isUnit(source?.total) ? source.total : null;
+  const parts = [
+    `已物化范围命中 ${numberFormatter.format(matched)} 条`,
+    returned === null || total === null
+      ? '源物化数量未知'
+      : `源物化 ${numberFormatter.format(returned)} / ${numberFormatter.format(total)} 条`,
+    source?.truncated === true ? '源结果已截断，非仓库全量' : '源物化未截断',
+    `业务日期 ${escapeHtml(String(queryData.source?.businessDate || '未知'))}`,
+  ];
+  return parts.join(' · ');
+}
+
+function inventoryRiskQueryTable(rows) {
+  if (!rows.length) {
+    return emptyEvidence(
+      '当前筛选没有库存风险 SKU',
+      '服务端在已物化范围内没有命中缺货或库存对账风险；这不代表所有库存类型和店铺都已完整覆盖。',
+    );
+  }
+  const visible = orderRowsForFocus(rows, 'inventory');
+  return `
+    <div class="table-wrap">
+      <table class="data-table operational-table inventory-table" id="inventory-workspace-table" role="tabpanel" aria-labelledby="inventory-tab-INVENTORY">
+        <caption class="sr-only">当前筛选命中的已物化库存风险行</caption>
+        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / SKU</th><th scope="col">商品</th><th scope="col">库存类型</th><th scope="col" class="number-column">库存</th><th scope="col" class="number-column">可用</th><th scope="col" class="number-column">在途</th><th scope="col" class="number-column">缺货</th><th scope="col">对账状态</th><th scope="col">证据时间</th><th scope="col">定位</th></tr></thead>
+        <tbody>${visible.map((row) => `
+          <tr class="${isFocusedRow(row, 'inventory') ? 'focused-row' : ''}">
+            <td>${severityBadge(row.severity)}</td>
+            <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.skuCode || 'SKU 待确认')}</span></td>
+            <td class="entity-column"><strong>${escapeHtml(row.skcName || row.spuName || '商品待确认')}</strong><span>${escapeHtml(row.spuName || '')}</span></td>
+            <td><span class="row-status partial">${escapeHtml(row.inventoryTypeCode || '类型未知')}</span></td>
+            <td class="number-column">${nullableUnits(row.totalInventory)}</td>
+            <td class="number-column">${nullableUnits(row.usableInventory)}</td>
+            <td class="number-column">${nullableUnits(row.transitQuantity)}</td>
+            <td class="number-column">${nullableUnits(row.shortageQuantity)}</td>
+            <td><span class="row-status ${sourceStatusTone(row.reconciliationStatus)}">${escapeHtml(row.reconciliationStatus || '未知')}</span></td>
+            <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
+            <td>${rowFocusLink(row, 'inventory')}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <p class="table-note">当前页显示 ${numberFormatter.format(visible.length)} 条，排序与分页由服务端决定。PI、JI、VI 保持平台库存类型原值，不相互混算；“—”表示未知，不表示 0。</p>`;
+}
+
+function stockAdviceQueryTable(rows) {
+  if (!rows.length) {
+    return emptyEvidence(
+      '当前筛选没有备货建议 SKU',
+      '服务端在已物化范围内没有命中急采、建议备货或平台预警；未知字段不会补成 0。',
+    );
+  }
+  const visible = orderRowsForFocus(rows, 'advice');
+  return `
+    <div class="table-wrap">
+      <table class="data-table operational-table advice-table" id="inventory-workspace-table" role="tabpanel" aria-labelledby="inventory-tab-ADVICE">
+        <caption class="sr-only">当前筛选命中的已物化备货建议行</caption>
+        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / SKU</th><th scope="col">商品 / 货号</th><th scope="col" class="number-column">预测日销</th><th scope="col">待下单 / 待交付 / 待上架 / 在途</th><th scope="col" class="number-column">库存</th><th scope="col" class="number-column">建议</th><th scope="col" class="number-column">已下单</th><th scope="col" class="number-column">急采</th><th scope="col">供给状态</th><th scope="col">证据时间</th><th scope="col">定位</th></tr></thead>
+        <tbody>${visible.map((row) => `
+          <tr class="${isFocusedRow(row, 'advice') ? 'focused-row' : ''}">
+            <td>${severityBadge(row.severity)}</td>
+            <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.skuCode || 'SKU 待确认')}</span></td>
+            <td class="entity-column"><strong>${escapeHtml(row.skcName || row.spuName || '商品待确认')}</strong><span>${escapeHtml(row.supplierCode || '')}</span></td>
+            <td class="number-column">${nullableDecimal(row.predictedDailySales)}</td>
+            <td class="boundary-cell">${escapeHtml([
+              nullableUnits(row.pendingOrderQuantity),
+              nullableUnits(row.pendingDeliveryQuantity),
+              nullableUnits(row.pendingShelfQuantity),
+              nullableUnits(row.transitQuantity),
+            ].join(' / '))}</td>
+            <td class="number-column">${nullableUnits(row.stockQuantity)}</td>
+            <td class="number-column">${nullableUnits(row.advisedOrderQuantity)}</td>
+            <td class="number-column">${nullableUnits(row.placedOrderQuantity)}</td>
+            <td class="number-column">${nullableUnits(row.plannedUrgentQuantity)}</td>
+            <td class="boundary-cell"><strong>${escapeHtml(row.supplyStatusCode || '供给状态未知')}</strong><span>${escapeHtml([row.shelfStatusCode, row.stockWarningStatusCode].filter(Boolean).join(' · ') || '预警状态未知')}</span></td>
+            <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
+            <td>${rowFocusLink(row, 'advice')}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <p class="table-note">当前页显示 ${numberFormatter.format(visible.length)} 条。平台预测、建议和急采都是只读事实，不等于已执行的采购动作，也不会自动生成采购单。</p>`;
+}
+
+/** Compact secondary overview: store-level rows already scoped by the server. */
+function inventoryStoreSummary(queryData) {
+  const inventoryView = state.inventory.view === 'INVENTORY';
+  const rows = inventoryView
+    ? queryData.inventory.storeSummaryRows
+    : queryData.advice.storeSummaryRows;
+  if (!rows.length) {
+    return emptyEvidence(
+      inventoryView ? '当前筛选没有店铺级库存快照' : '当前筛选没有店铺级备货建议快照',
+      '空行不等于业务 0；调整负责人、店铺或搜索条件后重试。',
+    );
+  }
+  const header = inventoryView
+    ? '<th scope="col">店铺 / 类型</th><th scope="col" class="number-column">SKU 数</th><th scope="col" class="number-column">库存数量</th><th scope="col" class="number-column">可用库存</th><th scope="col" class="number-column">缺货 SKU</th><th scope="col">缺货覆盖</th><th scope="col">来源快照</th>'
+    : '<th scope="col">店铺</th><th scope="col" class="number-column">SKU 总数</th><th scope="col" class="number-column">建议 SKU</th><th scope="col" class="number-column">建议下单量</th><th scope="col" class="number-column">计划紧急量</th><th scope="col">下单量覆盖</th><th scope="col">来源快照</th>';
+  const body = rows.map((row) => (inventoryView
+    ? `
+          <tr>
+            <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml([row.storeCode, row.inventoryTypeCode].filter(Boolean).join(' · ') || '库存类型未知')}</span></td>
+            <td class="number-column ${isUnit(row.skuCount) ? '' : 'missing-value'}">${nullableUnits(row.skuCount)}</td>
+            <td class="number-column ${isUnit(row.inventoryQuantity) ? '' : 'missing-value'}">${nullableUnits(row.inventoryQuantity)}</td>
+            <td class="number-column ${isUnit(row.usableInventory) ? '' : 'missing-value'}">${nullableUnits(row.usableInventory)}</td>
+            <td class="number-column ${isUnit(row.shortageSkuCount) ? '' : 'missing-value'}">${nullableUnits(row.shortageSkuCount)}</td>
+            <td class="boundary-cell">${escapeHtml(fieldCoverageLabel(row.shortageCoverage, [['knownSkuCount', 'totalSkuCount', 'SKU']]))}</td>
+            <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
+          </tr>`
+    : `
+          <tr>
+            <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.storeCode || '店铺编码未知')}</span></td>
+            <td class="number-column ${isUnit(row.totalSkuCount) ? '' : 'missing-value'}">${nullableUnits(row.totalSkuCount)}</td>
+            <td class="number-column ${isUnit(row.advisedSkuCount) ? '' : 'missing-value'}">${nullableUnits(row.advisedSkuCount)}</td>
+            <td class="number-column ${isUnit(row.advisedOrderQuantity) ? '' : 'missing-value'}">${nullableUnits(row.advisedOrderQuantity)}</td>
+            <td class="number-column ${isUnit(row.plannedUrgentQuantity) ? '' : 'missing-value'}">${nullableUnits(row.plannedUrgentQuantity)}</td>
+            <td class="boundary-cell">${escapeHtml(fieldCoverageLabel(row.advisedOrderCoverage, [['knownSkuCount', 'totalSkuCount', 'SKU']]))}</td>
+            <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
+          </tr>`)).join('');
+  return `
+    <div class="table-wrap">
+      <table class="data-table operational-table store-summary-table">
+        <thead><tr>${header}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+    <p class="table-note">店铺级第二层总览，共 ${numberFormatter.format(rows.length)} 行；库存、可用、在途、缺货和建议是不同口径。“—”表示未知并同时展示覆盖率；明确 0 才展示为 0。</p>`;
+}
+/* --- inventory-query:end --- */
 
 function rowAttentionStage(row, kind) {
   if (row?.attentionLabel) return row.attentionLabel;
@@ -4299,180 +4790,34 @@ function renderFulfilment() {
     })}`;
 }
 
-function inventoryRiskTable(rows, hasEvidence) {
-  if (!rows.length) {
-    return emptyEvidence(
-      hasEvidence ? '当前筛选没有库存风险 SKU' : 'SKU 级库存风险待接入',
-      hasEvidence
-        ? '当前筛选没有命中缺货或库存对账风险；不代表所有库存类型和店铺都已完整覆盖。'
-        : '先使用下方店铺级库存汇总；SKU 风险契约接入后可直接查看缺货数量、可用库存和在途。',
-    );
-  }
-  const visible = orderRowsForFocus([...rows].sort((left, right) => (
-    comparePriority(left, right)
-    || (isUnit(right.shortageQuantity) ? right.shortageQuantity : -1)
-      - (isUnit(left.shortageQuantity) ? left.shortageQuantity : -1)
-  )), 'inventory').slice(0, 100);
-  return `
-    <div class="table-wrap">
-      <table class="data-table operational-table inventory-table">
-        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / SKU</th><th scope="col">商品</th><th scope="col">库存类型</th><th scope="col" class="number-column">库存</th><th scope="col" class="number-column">可用</th><th scope="col" class="number-column">在途</th><th scope="col" class="number-column">缺货</th><th scope="col">对账状态</th><th scope="col">证据时间</th><th scope="col">定位</th></tr></thead>
-        <tbody>${visible.map((row) => `
-          <tr class="${isFocusedRow(row, 'inventory') ? 'focused-row' : ''}">
-            <td>${severityBadge(row.severity)}</td>
-            <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.skuCode || 'SKU 待确认')}</span></td>
-            <td class="entity-column"><strong>${escapeHtml(row.skcName || row.spuName || '商品待确认')}</strong><span>${escapeHtml(row.spuName || '')}</span></td>
-            <td><span class="row-status partial">${escapeHtml(row.inventoryTypeCode || '类型未知')}</span></td>
-            <td class="number-column">${nullableUnits(row.totalInventoryQuantity ?? row.totalInventory)}</td>
-            <td class="number-column">${nullableUnits(row.usableInventory)}</td>
-            <td class="number-column">${nullableUnits(row.transitQuantity)}</td>
-            <td class="number-column">${nullableUnits(row.shortageQuantity)}</td>
-            <td><span class="row-status ${sourceStatusTone(row.reconciliationStatus)}">${escapeHtml(row.reconciliationStatus || '未知')}</span></td>
-            <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
-            <td>${rowFocusLink(row, 'inventory')}</td>
-          </tr>`).join('')}</tbody>
-      </table>
-    </div>
-    <p class="table-note">SKU 风险按优先级和缺货影响排序；显示 ${numberFormatter.format(visible.length)} / ${numberFormatter.format(rows.length)} 条。PI、JI、VI 保持平台库存类型原值，不相互混算。</p>`;
-}
-
-function stockAdviceRiskTable(rows, hasEvidence) {
-  if (!rows.length) {
-    return emptyEvidence(
-      hasEvidence ? '当前筛选没有备货风险 SKU' : 'SKU 级备货风险待接入',
-      hasEvidence
-        ? '当前筛选没有命中急采、建议备货或平台预警；未知字段不会补成 0。'
-        : '先使用下方店铺级建议汇总；SKU 风险契约接入后可联看预测日销、待供给链路和建议量。',
-    );
-  }
-  const visible = orderRowsForFocus([...rows].sort((left, right) => (
-    comparePriority(left, right)
-    || (isUnit(right.plannedUrgentQuantity) ? right.plannedUrgentQuantity : -1)
-      - (isUnit(left.plannedUrgentQuantity) ? left.plannedUrgentQuantity : -1)
-    || (isUnit(right.advisedOrderQuantity) ? right.advisedOrderQuantity : -1)
-      - (isUnit(left.advisedOrderQuantity) ? left.advisedOrderQuantity : -1)
-  )), 'advice').slice(0, 100);
-  return `
-    <div class="table-wrap">
-      <table class="data-table operational-table advice-table">
-        <thead><tr><th scope="col">优先级</th><th scope="col">店铺 / SKU</th><th scope="col">商品 / 货号</th><th scope="col" class="number-column">预测日销</th><th scope="col">待下单 / 待交付 / 待上架 / 在途</th><th scope="col" class="number-column">库存</th><th scope="col" class="number-column">建议</th><th scope="col" class="number-column">已下单</th><th scope="col" class="number-column">急采</th><th scope="col">供给状态</th><th scope="col">证据时间</th><th scope="col">定位</th></tr></thead>
-        <tbody>${visible.map((row) => `
-          <tr class="${isFocusedRow(row, 'advice') ? 'focused-row' : ''}">
-            <td>${severityBadge(row.severity)}</td>
-            <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.skuCode || 'SKU 待确认')}</span></td>
-            <td class="entity-column"><strong>${escapeHtml(row.skcName || row.spuName || '商品待确认')}</strong><span>${escapeHtml(row.supplierCode || '')}</span></td>
-            <td class="number-column">${nullableDecimal(row.predictedDailySales)}</td>
-            <td class="boundary-cell">${escapeHtml([
-              nullableUnits(row.pendingOrderQuantity),
-              nullableUnits(row.pendingDeliveryQuantity),
-              nullableUnits(row.pendingShelfQuantity),
-              nullableUnits(row.transitQuantity),
-            ].join(' / '))}</td>
-            <td class="number-column">${nullableUnits(row.stockQuantity)}</td>
-            <td class="number-column">${nullableUnits(row.advisedOrderQuantity)}</td>
-            <td class="number-column">${nullableUnits(row.placedOrderQuantity)}</td>
-            <td class="number-column">${nullableUnits(row.plannedUrgentQuantity)}</td>
-            <td class="boundary-cell"><strong>${escapeHtml(row.supplyStatusCode || '供给状态未知')}</strong><span>${escapeHtml([row.shelfStatusCode, row.stockWarningStatusCode].filter(Boolean).join(' · ') || '预警状态未知')}</span></td>
-            <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
-            <td>${rowFocusLink(row, 'advice')}</td>
-          </tr>`).join('')}</tbody>
-      </table>
-    </div>
-    <p class="table-note">平台预测、建议和急采均为只读事实；显示 ${numberFormatter.format(visible.length)} / ${numberFormatter.format(rows.length)} 条，不会自动生成采购动作。</p>`;
-}
-
-function inventoryTable(rows) {
-  if (!rows.length) {
-    return emptyEvidence(
-      '当前筛选没有库存快照行',
-      '这不代表库存为 0；请调整负责人、店铺或搜索条件。',
-    );
-  }
-  return `
-    <div class="table-wrap">
-      <table class="data-table operational-table inventory-table">
-        <thead><tr><th scope="col">店铺 / 类型</th><th scope="col" class="number-column">SKU 数</th><th scope="col" class="number-column">库存数量</th><th scope="col" class="number-column">可用库存</th><th scope="col" class="number-column">在途数量</th><th scope="col">在途覆盖</th><th scope="col" class="number-column">缺货 SKU</th><th scope="col" class="number-column">缺货数量</th><th scope="col">缺货覆盖</th><th scope="col" class="number-column">对账差异</th><th scope="col">来源快照</th></tr></thead>
-        <tbody>${rows.map((row) => `
-          <tr>
-            <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml([row.storeCode, row.inventoryTypeCode].filter(Boolean).join(' · ') || '库存类型未知')}</span></td>
-            <td class="number-column ${isUnit(row.skuCount) ? '' : 'missing-value'}">${nullableUnits(row.skuCount)}</td>
-            <td class="number-column ${isUnit(row.inventoryQuantity) ? '' : 'missing-value'}">${nullableUnits(row.inventoryQuantity)}</td>
-            <td class="number-column ${isUnit(row.usableInventory) ? '' : 'missing-value'}">${nullableUnits(row.usableInventory)}</td>
-            <td class="number-column ${isUnit(row.transitQuantity) ? '' : 'missing-value'}">${nullableUnits(row.transitQuantity)}</td>
-            <td class="boundary-cell">${escapeHtml(fieldCoverageLabel(row.transitCoverage, [['knownSkuCount', 'totalSkuCount', 'SKU']]))}</td>
-            <td class="number-column ${isUnit(row.shortageSkuCount) ? '' : 'missing-value'}">${nullableUnits(row.shortageSkuCount)}</td>
-            <td class="number-column ${isUnit(row.shortageQuantity) ? '' : 'missing-value'}">${nullableUnits(row.shortageQuantity)}</td>
-            <td class="boundary-cell">${escapeHtml(fieldCoverageLabel(row.shortageCoverage, [['knownSkuCount', 'totalSkuCount', 'SKU']]))}</td>
-            <td class="number-column ${isUnit(row.reconciliationMismatchCount) ? '' : 'missing-value'}">${nullableUnits(row.reconciliationMismatchCount)}</td>
-            <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
-          </tr>`).join('')}</tbody>
-      </table>
-    </div>
-    <p class="table-note">库存、可用、在途和缺货是不同口径。“—”表示未知并同时展示覆盖率；明确 0 才展示为 0。</p>`;
-}
-
-function stockAdviceTable(rows) {
-  if (!rows.length) {
-    return emptyEvidence(
-      '当前筛选没有备货建议行',
-      '没有建议快照不等于建议补货量为 0；不会根据销量自行推导平台建议。',
-    );
-  }
-  return `
-    <div class="table-wrap">
-      <table class="data-table operational-table advice-table">
-        <thead><tr><th scope="col">店铺</th><th scope="col" class="number-column">SKU 总数</th><th scope="col" class="number-column">建议 SKU</th><th scope="col" class="number-column">建议下单量</th><th scope="col">下单量覆盖</th><th scope="col" class="number-column">计划紧急量</th><th scope="col">紧急量覆盖</th><th scope="col" class="number-column">预警 SKU</th><th scope="col">预警覆盖</th><th scope="col">来源快照</th></tr></thead>
-        <tbody>${rows.map((row) => `
-          <tr>
-            <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.storeCode || '店铺编码未知')}</span></td>
-            <td class="number-column ${isUnit(row.totalSkuCount) ? '' : 'missing-value'}">${nullableUnits(row.totalSkuCount)}</td>
-            <td class="number-column ${isUnit(row.advisedSkuCount) ? '' : 'missing-value'}">${nullableUnits(row.advisedSkuCount)}</td>
-            <td class="number-column ${isUnit(row.advisedOrderQuantity) ? '' : 'missing-value'}">${nullableUnits(row.advisedOrderQuantity)}</td>
-            <td class="boundary-cell">${escapeHtml(fieldCoverageLabel(row.advisedOrderCoverage, [['knownSkuCount', 'totalSkuCount', 'SKU']]))}</td>
-            <td class="number-column ${isUnit(row.plannedUrgentQuantity) ? '' : 'missing-value'}">${nullableUnits(row.plannedUrgentQuantity)}</td>
-            <td class="boundary-cell">${escapeHtml(fieldCoverageLabel(row.plannedUrgentCoverage, [['knownSkuCount', 'totalSkuCount', 'SKU']]))}</td>
-            <td class="number-column ${isUnit(row.warningSkuCount) ? '' : 'missing-value'}">${nullableUnits(row.warningSkuCount)}</td>
-            <td class="boundary-cell">${escapeHtml(fieldCoverageLabel(row.warningCoverage, [['knownSkuCount', 'totalSkuCount', 'SKU']]))}</td>
-            <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
-          </tr>`).join('')}</tbody>
-      </table>
-    </div>
-    <p class="table-note">备货建议是平台只读事实，不是系统自动生成的采购动作；所有写入和提交能力保持关闭。</p>`;
-}
-
 function renderInventory() {
-  const supply = supplyDomain();
-  const allInventory = domainRows(supply, 'inventory');
-  const allAdvice = domainRows(supply, 'stockAdvice');
-  const inventoryRows = scopedOperationRows(allInventory);
-  const adviceRows = scopedOperationRows(allAdvice);
-  const inventoryRiskAvailable = attentionEvidence('inventoryRisks');
-  const adviceRiskAvailable = attentionEvidence('stockAdviceRisks');
-  const allInventoryRisks = scopedOperationRows(attentionRows('inventoryRisks'));
-  const allAdviceRisks = scopedOperationRows(attentionRows('stockAdviceRisks'));
-  const inventoryRisks = allInventoryRisks.filter((row) => matchesQuickFilter(row, 'inventory'));
-  const adviceRisks = allAdviceRisks.filter((row) => matchesQuickFilter(row, 'inventory'));
-  const connected = domainConnectionState(
-    supply,
-    ['inventoryRisks', 'stockAdviceRisks', 'inventory', 'stockAdvice'],
-    ['inventory', 'stockAdvice'],
-  ) === 'available';
-  const factLabel = allInventory.length || allAdvice.length
-    ? '真实快照已接入'
-    : connected ? '接口覆盖完整 · 当前窗口无事实行' : '尚未完成可信接入';
-  const totalInventory = completeNullableSum(inventoryRows, 'inventoryQuantity');
-  const totalShortage = completeCoveredNullableSum(
-    inventoryRows,
-    'shortageQuantity',
-    'shortageCoverage',
-    [['knownSkuCount', 'totalSkuCount', 'SKU']],
-  );
-  const totalAdvice = completeCoveredNullableSum(
-    adviceRows,
-    'advisedOrderQuantity',
-    'advisedOrderCoverage',
-    [['knownSkuCount', 'totalSkuCount', 'SKU']],
-  );
+  if (state.inventory.loading && !state.inventory.data) {
+    return `${sampleNotice()}${focusEvidencePanel()}${inventoryQueryState('loading')}`;
+  }
+  if (state.inventory.error && !state.inventory.data) {
+    return `${sampleNotice()}${focusEvidencePanel()}${inventoryQueryState('error')}`;
+  }
+  const queryData = state.inventory.data;
+  if (!queryData) return inventoryQueryState('loading');
+  const inventoryView = state.inventory.view === 'INVENTORY';
+  const activeList = inventoryView ? queryData.inventory : queryData.advice;
+  const pagination = activeList.pagination;
+  const paginationKind = inventoryView ? 'inventory' : 'advice';
+  const paginationLabel = inventoryView ? '库存风险' : '备货建议';
+  const quickOptions = inventoryView
+    ? [
+        ['ALL', '全部风险'],
+        ['HIGH', '高优先'],
+        ['SHORTAGE', '缺货'],
+        ['RECONCILIATION', '对账差异'],
+      ]
+    : [
+        ['ALL', '全部建议'],
+        ['HIGH', '高优先'],
+        ['URGENT', '急采'],
+        ['ADVICE', '建议备货'],
+        ['WARNING', '平台预警'],
+      ];
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
@@ -4480,98 +4825,71 @@ function renderInventory() {
       'INVENTORY',
       '库存与供给',
       '库存、缺货需求、待交付、在途与已入库数量分开表达；销量只能作为供给速度参考。',
-      `<span>供给事实</span><strong>${escapeHtml(factLabel)}</strong><small>${escapeHtml(connected ? `库存 ${inventoryRows.length} 行 · 建议 ${adviceRows.length} 行；空行不等于业务 0` : '未知不等于零库存')}</small>`,
+      `<span>供给事实</span><strong>${escapeHtml(String(queryData.source?.supplyStatus === 'available' ? '真实快照已接入' : '覆盖不完整'))}</strong><small>${escapeHtml(inventorySourceLine(queryData))}</small>`,
     )}
-    <section class="table-section">
+    ${inventorySummaryCards(queryData)}
+    <section class="table-section inventory-workspace">
       ${panelHeading(
-        'SKU RISK SCREENING',
-        'SKU 风险与备货筛查',
-        `${inventoryRiskAvailable ? metaCountLabel('inventoryRisks', allInventoryRisks) : '库存风险待接入'} · ${adviceRiskAvailable ? metaCountLabel('stockAdviceRisks', allAdviceRisks) : '备货风险待接入'}`,
+        'SUPPLY RISK WORKSPACE',
+        '库存风险与备货工作台',
+        `服务端筛选、排序与分页 · ${inventorySourceLine(queryData)}`,
       )}
-      ${quickFilterBar('inventory', '快速筛查', [
-        ['ALL', '全部风险'],
-        ['HIGH', '高优先'],
-        ['SHORTAGE', '缺货'],
-        ['URGENT', '急采'],
-        ['ADVICE', '建议备货'],
-      ])}
-      <section class="table-section">
-        ${panelHeading('INVENTORY RISKS', '缺货与库存对账', inventoryRiskAvailable ? 'SKU 级事实优先' : '兼容旧店铺汇总')}
-        ${inventoryRiskTable(inventoryRisks, inventoryRiskAvailable)}
-      </section>
-      <section class="table-section">
-        ${panelHeading('STOCK ADVICE RISKS', '急采与备货建议', adviceRiskAvailable ? 'SKU 级事实优先' : '兼容旧店铺汇总')}
-        ${stockAdviceRiskTable(adviceRisks, adviceRiskAvailable)}
-      </section>
-    </section>
-    ${connected ? `
-      ${operationSummaryCards([
-        {
-          label: '当前范围库存数量',
-          value: totalInventory === null ? '未知' : `${numberFormatter.format(totalInventory)} 件`,
-          note: totalInventory === null ? '至少一行库存数量未知，拒绝补零合计' : '全部可见库存行数量明确',
-          tone: totalInventory === null ? 'partial' : 'available',
-        },
-        {
-          label: '当前范围缺货数量',
-          value: totalShortage === null ? '未知' : `${numberFormatter.format(totalShortage)} 件`,
-          note: totalShortage === null ? '缺货覆盖不完整，不能当 0' : '全部可见缺货行数量明确',
-          tone: totalShortage === null ? 'partial' : 'available',
-        },
-        {
-          label: '平台建议下单量',
-          value: totalAdvice === null ? '未知' : `${numberFormatter.format(totalAdvice)} 件`,
-          note: totalAdvice === null ? '建议覆盖不完整，不能自动推导' : '只读建议合计，不代表已下单',
-          tone: totalAdvice === null ? 'partial' : 'available',
-        },
-        {
-          label: '最新来源快照',
-          value: latestTimestamp([...inventoryRows, ...adviceRows]) ? formatDateTime(latestTimestamp([...inventoryRows, ...adviceRows])) : '未知',
-          note: '来源抓取时间，不冒充库存业务时点',
-        },
-      ])}
-      <section class="table-section">
-        ${panelHeading('INVENTORY SNAPSHOT', '店铺×库存类型汇总', `${operationScopeNote(inventoryRows, '库存')} · 第二层总览`)}
-        ${inventoryTable(inventoryRows)}
-      </section>
-      <section class="table-section">
-        ${panelHeading('STOCK ADVICE', '店铺级平台备货建议汇总', `${operationScopeNote(adviceRows, '备货建议')} · 第二层总览`)}
-        ${stockAdviceTable(adviceRows)}
-      </section>
-      <div class="split-grid">
-        <section class="panel">
-          ${panelHeading('SALES VELOCITY', '销量速度信号', RANGE_META[state.range].label)}
-          ${demandSignal('inventory')}
-        </section>
-        <section class="panel condition-panel">
-          ${panelHeading('READ-ONLY BOUNDARY', '只读能力边界', '供给事实可读，库存写操作仍关闭')}
-          <ul class="condition-list">
-            <li><strong>库存事实</strong><span>实际、可用、在途与缺货按来源字段分开</span></li>
-            <li><strong>未知值</strong><span>以 null 和覆盖率表达，不参与合计</span></li>
-            <li><strong>建议事实</strong><span>平台备货建议不自动转换成采购或库存写入</span></li>
-            <li><strong>执行能力</strong><span>任何提交按钮和写接口仍保持禁用</span></li>
-          </ul>
-        </section>
-      </div>` : `
-      <div class="split-grid">
-        <section class="panel">
-          ${panelHeading('SALES VELOCITY', '销量速度信号', RANGE_META[state.range].label)}
-          ${demandSignal('inventory')}
-        </section>
-        <section class="panel condition-panel">
-          ${panelHeading('INVENTORY GATE', '库存接入条件', '读权限和写权限分开验证')}
-          <ul class="condition-list">
-            <li><strong>库存查询探针</strong><span>店铺、仓库、SKU、库存类型和快照时间</span></li>
-            <li><strong>口径核对</strong><span>实际、可用、锁定、在途数量不能混用</span></li>
-            <li><strong>商品与仓库映射</strong><span>仓库编码和商品键需要平台回读</span></li>
-            <li><strong>更新能力隔离</strong><span>库存写权限不因读接口成功自动开启</span></li>
-          </ul>
-        </section>
+      ${inventoryViewTabs(queryData)}
+      ${quickFilterBar('inventory', inventoryView ? '库存快速筛查' : '备货快速筛查', quickOptions)}
+      <div class="inventory-controls">
+        ${inventoryView
+          ? inventorySelect('type', '库存类型', [
+              ['ALL', '全部类型'],
+              ['PI', 'PI'],
+              ['JI', 'JI'],
+              ['VI', 'VI'],
+            ], state.inventory.inventoryType)
+          : ''}
+        ${inventoryView
+          ? inventorySelect('inventorySort', '排序', [
+              ['PRIORITY', '优先级'],
+              ['SHORTAGE_DESC', '缺货数量'],
+              ['USABLE_ASC', '可用库存最少'],
+              ['FRESHNESS_DESC', '证据最新'],
+            ], state.inventory.inventorySort)
+          : inventorySelect('adviceSort', '排序', [
+              ['PRIORITY', '优先级'],
+              ['URGENT_DESC', '急采数量'],
+              ['ADVICE_DESC', '建议数量'],
+              ['DAILY_SALES_DESC', '预测日销'],
+              ['FRESHNESS_DESC', '证据最新'],
+            ], state.inventory.adviceSort)}
+        ${inventorySelect('pageSize', '每页', [
+          [25, '25 条'],
+          [50, '50 条'],
+          [100, '100 条'],
+        ], pageSizeParam(state.inventory.pageSize))}
       </div>
-      <section class="wide-empty-section">
-        ${emptyEvidence('暂无库存明细', '当前没有实际库存、可用库存、锁定库存或在途库存事实，因此不展示库存数和可售天数。', '完成库存查询探针、字段对账与入仓后开放明细。')}
-      </section>
-    `}`;
+      ${inventoryPagination(pagination, paginationKind, paginationLabel, 'top')}
+      ${inventoryView
+        ? inventoryRiskQueryTable(queryData.inventory.rows)
+        : stockAdviceQueryTable(queryData.advice.rows)}
+      ${inventoryPagination(pagination, paginationKind, paginationLabel, 'bottom')}
+      ${state.inventory.loading ? '<p class="query-refresh-note" role="status">正在刷新当前库存与备货筛选结果…</p>' : ''}
+      ${activeList.source?.truncated === true ? '<p class="table-note warning-note">当前筛选只覆盖物化到 Dashboard 的风险明细；源结果已截断，命中数不是 SHEIN 仓库全量。</p>' : ''}
+    </section>
+    <section class="table-section inventory-store-summary">
+      ${panelHeading(
+        inventoryView ? 'STORE INVENTORY SUMMARY' : 'STORE ADVICE SUMMARY',
+        inventoryView ? '店铺×库存类型汇总' : '店铺级平台备货建议汇总',
+        '第二层总览 · 服务端已按当前负责人、店铺和搜索筛选',
+      )}
+      ${inventoryStoreSummary(queryData)}
+    </section>
+    <section class="panel condition-panel">
+      ${panelHeading('READ-ONLY BOUNDARY', '只读能力边界', '供给事实可读，库存写操作仍关闭')}
+      <ul class="condition-list">
+        <li><strong>库存事实</strong><span>实际、可用、在途与缺货按来源字段分开</span></li>
+        <li><strong>未知值</strong><span>以 null 和覆盖率表达，不参与合计</span></li>
+        <li><strong>建议事实</strong><span>平台备货建议是只读事实，不等于已执行的采购动作</span></li>
+        <li><strong>执行能力</strong><span>任何提交按钮和写接口仍保持禁用</span></li>
+      </ul>
+    </section>`;
 }
 
 function renderReturns() {
@@ -5343,6 +5661,9 @@ async function loadDashboard() {
   if (state.data && state.route === 'sales') {
     scheduleSalesLoad();
   }
+  if (state.data && state.route === 'inventory') {
+    scheduleInventoryLoad();
+  }
 }
 
 function connectDashboardUpdates() {
@@ -5404,6 +5725,13 @@ function currentHashState() {
     salesSort: state.sales.sort,
     productPage: state.sales.productPage,
     standardPage: state.sales.standardPage,
+    inventoryView: state.inventory.view,
+    inventoryType: state.inventory.inventoryType,
+    inventorySort: state.inventory.inventorySort,
+    adviceSort: state.inventory.adviceSort,
+    inventoryPage: state.inventory.inventoryPage,
+    advicePage: state.inventory.advicePage,
+    inventoryPageSize: state.inventory.pageSize,
   };
 }
 
@@ -5431,6 +5759,13 @@ function applyHashState(parsed) {
   state.sales.sort = parsed.salesSort || 'LAST30_DESC';
   state.sales.productPage = parsed.productPage || 1;
   state.sales.standardPage = parsed.standardPage || 1;
+  state.inventory.view = parsed.inventoryView || 'INVENTORY';
+  state.inventory.inventoryType = parsed.inventoryType || 'ALL';
+  state.inventory.inventorySort = parsed.inventorySort || 'PRIORITY';
+  state.inventory.adviceSort = parsed.adviceSort || 'PRIORITY';
+  state.inventory.inventoryPage = parsed.inventoryPage || 1;
+  state.inventory.advicePage = parsed.advicePage || 1;
+  state.inventory.pageSize = pageSizeParam(parsed.inventoryPageSize);
   if (parsed.quick === 'ALL') delete state.quickFilters[parsed.route];
   else state.quickFilters[parsed.route] = parsed.quick;
 }
@@ -5453,6 +5788,13 @@ function syncRouteFromLocation() {
     state.sales.requestSerial += 1;
     state.sales.loading = false;
   }
+  if (state.route === 'inventory') {
+    scheduleInventoryLoad({ resetPages: routeChanged });
+  } else if (routeChanged) {
+    // Leaving the surface must also drop any in-flight inventory response.
+    state.inventory.requestSerial += 1;
+    state.inventory.loading = false;
+  }
   if (routeChanged && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -5464,6 +5806,7 @@ elements.search.addEventListener('input', (event) => {
   render();
   scheduleProcurementLoad({ resetPage: true, delay: 220 });
   scheduleSalesLoad({ resetPages: true, delay: 220 });
+  scheduleInventoryLoad({ resetPages: true, delay: 220 });
 });
 
 elements.scope.addEventListener('change', (event) => {
@@ -5474,6 +5817,7 @@ elements.scope.addEventListener('change', (event) => {
   render();
   scheduleProcurementLoad({ resetPage: true });
   scheduleSalesLoad({ resetPages: true });
+  scheduleInventoryLoad({ resetPages: true, delay: 120 });
 });
 
 elements.rangeButtons.forEach((button) => {
@@ -5517,6 +5861,47 @@ elements.view.addEventListener('click', (event) => {
     }
     return;
   }
+  const inventoryRetry = event.target.closest?.('[data-inventory-retry]');
+  if (inventoryRetry && elements.view.contains(inventoryRetry)) {
+    void loadInventory();
+    return;
+  }
+  const inventoryView = event.target.closest?.('[data-inventory-view]');
+  if (inventoryView && elements.view.contains(inventoryView)) {
+    const value = String(inventoryView.dataset.inventoryView || '').toUpperCase();
+    if (URL_INVENTORY_VIEWS.includes(value) && value !== state.inventory.view) {
+      const currentQuick = inventoryQuickValue();
+      const nextQuickValues = value === 'INVENTORY'
+        ? ['ALL', 'HIGH', 'SHORTAGE', 'RECONCILIATION']
+        : ['ALL', 'HIGH', 'URGENT', 'ADVICE', 'WARNING'];
+      state.inventory.view = value;
+      const quickNeedsReset = !nextQuickValues.includes(currentQuick);
+      if (quickNeedsReset) delete state.quickFilters.inventory;
+      syncUrlFromState();
+      if (quickNeedsReset) {
+        // A view-specific quick filter must never remain invisibly active after
+        // switching tabs. Reset it and query the unfiltered target view.
+        scheduleInventoryLoad({ resetPages: true });
+      } else {
+        // Both lists arrived under the same applicable filter, so switching
+        // tabs is a local view change and does not need a network request.
+        render();
+      }
+    }
+    return;
+  }
+  const inventoryPage = event.target.closest?.('[data-inventory-page]');
+  if (inventoryPage && elements.view.contains(inventoryPage)) {
+    const nextPage = Number(inventoryPage.dataset.inventoryPage);
+    const kind = inventoryPage.dataset.inventoryPageKind;
+    if (Number.isSafeInteger(nextPage) && nextPage >= 1 && !inventoryPage.disabled) {
+      if (kind === 'advice') state.inventory.advicePage = nextPage;
+      else state.inventory.inventoryPage = nextPage;
+      syncUrlFromState();
+      void loadInventory();
+    }
+    return;
+  }
   const clearFocus = event.target.closest?.('[data-clear-focus]');
   if (clearFocus && elements.view.contains(clearFocus)) {
     // Clearing a focus keeps the broader store/range investigation intact.
@@ -5538,9 +5923,32 @@ elements.view.addEventListener('click', (event) => {
   render();
   if (route === 'procurement') scheduleProcurementLoad({ resetPage: true });
   if (route === 'sales') scheduleSalesLoad({ resetPages: true });
+  if (route === 'inventory') scheduleInventoryLoad({ resetPages: true });
 });
 
 elements.view.addEventListener('change', (event) => {
+  const inventorySelectControl = event.target.closest?.('[data-inventory-select]');
+  if (inventorySelectControl && elements.view.contains(inventorySelectControl)) {
+    const kind = String(inventorySelectControl.dataset.inventorySelect || '');
+    const raw = String(inventorySelectControl.value || '');
+    if (kind === 'type') {
+      const value = allowListedToken(raw, URL_INVENTORY_TYPES, 'ALL');
+      state.inventory.inventoryType = value;
+    } else if (kind === 'inventorySort') {
+      state.inventory.inventorySort = allowListedToken(raw, URL_INVENTORY_SORTS, 'PRIORITY');
+    } else if (kind === 'adviceSort') {
+      state.inventory.adviceSort = allowListedToken(raw, URL_ADVICE_SORTS, 'PRIORITY');
+    } else if (kind === 'pageSize') {
+      state.inventory.pageSize = pageSizeParam(raw);
+    } else {
+      return;
+    }
+    state.inventory.inventoryPage = 1;
+    state.inventory.advicePage = 1;
+    syncUrlFromState();
+    void loadInventory();
+    return;
+  }
   const salesSort = event.target.closest?.('[data-sales-sort]');
   if (!salesSort || !elements.view.contains(salesSort)) return;
   const value = String(salesSort.value || '').toUpperCase();
@@ -5564,6 +5972,7 @@ elements.clearFilters.addEventListener('click', () => {
   render();
   scheduleProcurementLoad({ resetPage: true });
   scheduleSalesLoad({ resetPages: true });
+  scheduleInventoryLoad({ resetPages: true });
   elements.search.focus();
 });
 

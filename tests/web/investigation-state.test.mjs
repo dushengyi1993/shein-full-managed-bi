@@ -123,6 +123,52 @@ test('sales sort and both materialized pages survive a canonical link', async ()
   assert.equal(unsafe.standardPage, 1);
 });
 
+test('inventory workspace state survives a safe canonical link', async () => {
+  const { parseHashState, serializeHashState } = await loadHashStateContract();
+  const href = serializeHashState({
+    route: 'inventory',
+    owner: 'ALL',
+    store: 'DL5477',
+    range: 'today',
+    quick: 'URGENT',
+    inventoryView: 'ADVICE',
+    inventoryType: 'JI',
+    inventorySort: 'USABLE_ASC',
+    adviceSort: 'URGENT_DESC',
+    inventoryPage: 3,
+    advicePage: 2,
+    inventoryPageSize: 50,
+  });
+
+  assert.match(href, /view=ADVICE/);
+  assert.match(href, /invType=JI/);
+  assert.match(href, /invSort=USABLE_ASC/);
+  assert.match(href, /adviceSort=URGENT_DESC/);
+  assert.match(href, /invPage=3/);
+  assert.match(href, /advicePage=2/);
+  assert.match(href, /size=50/);
+  const parsed = parseHashState(href);
+  assert.equal(parsed.inventoryView, 'ADVICE');
+  assert.equal(parsed.inventoryType, 'JI');
+  assert.equal(parsed.inventorySort, 'USABLE_ASC');
+  assert.equal(parsed.adviceSort, 'URGENT_DESC');
+  assert.equal(parsed.inventoryPage, 3);
+  assert.equal(parsed.advicePage, 2);
+  assert.equal(parsed.inventoryPageSize, 50);
+
+  const unsafe = parseHashState(
+    '#inventory?view=DROP&invType=XX&invSort=DROP&adviceSort=DROP'
+      + '&invPage=0&advicePage=10000&size=99',
+  );
+  assert.equal(unsafe.inventoryView, 'INVENTORY');
+  assert.equal(unsafe.inventoryType, 'ALL');
+  assert.equal(unsafe.inventorySort, 'PRIORITY');
+  assert.equal(unsafe.adviceSort, 'PRIORITY');
+  assert.equal(unsafe.inventoryPage, 1);
+  assert.equal(unsafe.advicePage, 1);
+  assert.equal(unsafe.inventoryPageSize, 25);
+});
+
 test('invalid hash input falls back safely and cannot inject markup', async () => {
   const { parseHashState, parseScopeToken, parseFocusToken } = await loadHashStateContract();
 

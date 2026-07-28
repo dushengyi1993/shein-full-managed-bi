@@ -129,6 +129,57 @@ test('sales query rejects duplicates and mutation methods', async () => {
   assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
 });
 
+test('GET /api/inventory is a bounded read-only query surface', async () => {
+  const response = await fetch(
+    `${baseUrl}/api/inventory?owner=ALL&store=ALL&quick=ALL&inventoryType=ALL`
+    + '&inventorySort=PRIORITY&adviceSort=PRIORITY&inventoryPage=1&advicePage=1&pageSize=50',
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.schemaVersion, 1);
+  assert.equal(payload.readOnly, true);
+  assert.equal(payload.query.pageSize, 50);
+  assert.equal(payload.query.inventoryType, 'ALL');
+  assert.ok(Array.isArray(payload.inventory.rows));
+  assert.ok(Array.isArray(payload.advice.rows));
+  assert.ok(Array.isArray(payload.inventory.storeSummaryRows));
+  assert.ok(Array.isArray(payload.advice.storeSummaryRows));
+  assert.equal(payload.inventory.pagination.pageSize, 50);
+  assert.equal(payload.advice.pagination.pageSize, 50);
+  assert.equal(typeof payload.inventory.source.truncated, 'boolean');
+  assert.equal(typeof payload.advice.source.truncated, 'boolean');
+  assert.equal(typeof payload.overview.matchedMaterializedInventoryRows, 'number');
+  assert.ok(Object.hasOwn(payload.overview.shortage, 'knownCount'));
+  assert.ok(Object.hasOwn(payload.overview.shortage, 'unknownCount'));
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+
+  const head = await fetch(`${baseUrl}/api/inventory`, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+});
+
+test('inventory query rejects duplicates, bad bounds and mutation methods', async () => {
+  const duplicate = await fetch(`${baseUrl}/api/inventory?q=a&q=b`);
+  assert.equal(duplicate.status, 400);
+  assert.match(await duplicate.text(), /QUERY_PARAMETER_DUPLICATED/);
+
+  const outOfRange = await fetch(`${baseUrl}/api/inventory?pageSize=101`);
+  assert.equal(outOfRange.status, 400);
+  assert.match(await outOfRange.text(), /QUERY_PARAMETER_OUT_OF_RANGE/);
+
+  const unknownQuick = await fetch(`${baseUrl}/api/inventory?quick=DROP`);
+  assert.equal(unknownQuick.status, 400);
+  assert.match(await unknownQuick.text(), /QUERY_PARAMETER_INVALID/);
+
+  const unknownStore = await fetch(`${baseUrl}/api/inventory?store=ZZ9999`);
+  assert.equal(unknownStore.status, 400);
+  assert.match(await unknownStore.text(), /QUERY_STORE_UNKNOWN/);
+
+  const mutation = await fetch(`${baseUrl}/api/inventory`, { method: 'POST' });
+  assert.equal(mutation.status, 405);
+  assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
+});
+
 test('GET /api/events opens a no-buffer read-only SSE stream', async () => {
   const result = await new Promise((resolve, reject) => {
     const clientRequest = request(
@@ -221,9 +272,9 @@ test('serves the local dashboard and its static assets', async () => {
   assert.match(pageResponse.headers.get('content-type'), /^text\/html/);
   const pageHtml = await pageResponse.text();
   assert.match(pageHtml, /全托运营驾驶舱/);
-  assert.match(pageHtml, /\/app\.js\?v=20260729\.3/);
-  assert.match(pageHtml, /\/styles\.css\?v=20260729\.3/);
-  assert.match(pageHtml, /\/home-parity\.css\?v=20260729\.3/);
+  assert.match(pageHtml, /\/app\.js\?v=20260729\.5/);
+  assert.match(pageHtml, /\/styles\.css\?v=20260729\.5/);
+  assert.match(pageHtml, /\/home-parity\.css\?v=20260729\.5/);
 
   assert.equal(scriptResponse.status, 200);
   assert.match(scriptResponse.headers.get('content-type'), /^text\/javascript/);

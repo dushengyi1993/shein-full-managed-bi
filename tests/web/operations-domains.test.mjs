@@ -210,8 +210,9 @@ test('attention and risk workspaces support explicit quick filters and preserve 
   const filters = functionBody(app, 'matchesQuickFilter');
   const procurement = functionBody(app, 'purchaseOrderAttentionTable');
   const fulfilment = functionBody(app, 'deliveryAttentionTable');
-  const inventory = functionBody(app, 'inventoryRiskTable');
-  const advice = functionBody(app, 'stockAdviceRiskTable');
+  // Inventory and advice rows now come from the server query surface.
+  const inventory = functionBody(app, 'inventoryRiskQueryTable');
+  const advice = functionBody(app, 'stockAdviceQueryTable');
   const radarMetric = functionBody(app, 'riskWindowMetric');
   const metaLabel = functionBody(app, 'metaCountLabel');
 

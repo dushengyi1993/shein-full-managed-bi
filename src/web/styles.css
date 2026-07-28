@@ -636,7 +636,130 @@ a {
   color: var(--warning);
 }
 
+/* Inventory workspace: one focused decision surface. Same warm tokens, flat
+   white surfaces and thin rules as every other panel; no new palette. */
+.segmented-tabs {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  margin: 0.75rem 0 0.35rem;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper-soft);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.segmented-tabs button {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  min-height: 46px;
+  padding: 6px 14px;
+  color: var(--muted-strong);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.segmented-tabs button strong {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.segmented-tabs button small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.segmented-tabs button:hover {
+  color: var(--ink);
+  background: var(--paper-warm);
+}
+
+.segmented-tabs button:active {
+  transform: scale(0.99);
+}
+
+.segmented-tabs button[aria-selected="true"] {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background: var(--paper);
+  /* The active tab is marked by a rule and weight, not colour alone. */
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.segmented-tabs button[aria-selected="true"] small {
+  color: var(--muted-strong);
+}
+
+.inventory-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  margin: 0.35rem 0 0.65rem;
+}
+
+.inventory-controls .sales-sort-control {
+  margin: 0;
+}
+
+.table-pagination.pagination-top {
+  margin-top: 0;
+  padding-top: 0;
+  padding-bottom: 0.8rem;
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.query-skeleton {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.query-skeleton > span {
+  display: block;
+  height: 0.7rem;
+  border-radius: 6px;
+  background: var(--paper-warm);
+}
+
+.query-skeleton > span:nth-child(2) {
+  width: 78%;
+}
+
+.query-skeleton > span:nth-child(3) {
+  width: 54%;
+}
+
+.inventory-store-summary .data-table {
+  font-size: 0.78rem;
+}
+
 @media (max-width: 640px) {
+  .segmented-tabs button {
+    padding: 6px 10px;
+  }
+
+  .inventory-controls {
+    justify-content: stretch;
+  }
+
+  .inventory-controls .sales-sort-control {
+    flex: 1 0 100%;
+    justify-content: space-between;
+  }
+
   .table-pagination {
     align-items: stretch;
     flex-direction: column;
@@ -3466,6 +3589,21 @@ body[data-dataset="sample"] .metric-item > strong {
   .table-section > .range-filter {
     width: 100%;
     margin-bottom: 10px;
+  }
+
+  .segmented-tabs {
+    width: 100%;
+    /* Wide data still scrolls inside .table-wrap; the document itself must not
+       overflow horizontally at 390px. */
+    max-width: 100%;
+  }
+
+  .segmented-tabs button {
+    min-width: max-content;
+  }
+
+  .inventory-controls {
+    gap: 0.45rem;
   }
 
   .table-section > .text-link {
