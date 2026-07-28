@@ -391,6 +391,7 @@ export function isRetryableSupplyFetchError(error) {
     'REQUEST_TIMEOUT',
     'PAGINATION_COUNT_DRIFT',
     'PAGINATION_UNSTABLE_MEMBERSHIP',
+    'CATALOG_SWEEP_UNSTABLE',
   ].includes(code)) {
     return true;
   }
@@ -1064,21 +1065,30 @@ async function fetchAndLoadInventory({
 }) {
   const domain = `inventory:${inventoryType}`;
   let inventory;
-  try {
-    const batches = [];
-    for (const skuBatch of chunks(skuCodes, 100)) {
-      batches.push(await operations.fetchInventory(client, {
-        skuCodeList: skuBatch,
-        invType: inventoryType,
-        fetchedAt: sourceFetchedAt,
-      }));
-    }
-    inventory = mergeInventoryBatches(
-      inventoryType,
-      skuCodes,
-      batches,
-      sourceFetchedAt,
-    );
+  const inventoryAttempt = await fetchSupplyDomainWithRetry(
+    async () => {
+      const batches = [];
+      for (const skuBatch of chunks(skuCodes, 100)) {
+        batches.push(await operations.fetchInventory(client, {
+          skuCodeList: skuBatch,
+          invType: inventoryType,
+          fetchedAt: sourceFetchedAt,
+        }));
+      }
+      return {
+        inventory: mergeInventoryBatches(
+          inventoryType,
+          skuCodes,
+          batches,
+          sourceFetchedAt,
+        ),
+        batchCount: batches.length,
+      };
+    },
+    { sleep: operations.sleep },
+  );
+  if (inventoryAttempt.ok) {
+    inventory = inventoryAttempt.value.inventory;
     setDomainResult(storeResult, makeDomainResult(domain, 'fetched', {
       reasonCode: skuCodes.length === 0
         ? 'AUTHORITATIVE_SKU_UNIVERSE_EMPTY'
@@ -1088,12 +1098,16 @@ async function fetchAndLoadInventory({
       observedCount: inventory.coverage.observedCount,
       missingCount: inventory.coverage.missingCodes.length,
       coverageStatus: inventory.coverage.status,
-      batchCount: batches.length,
+      batchCount: inventoryAttempt.value.batchCount,
+      attemptCount: inventoryAttempt.attemptCount,
+      retryCount: inventoryAttempt.retryCount,
     }));
-  } catch (error) {
+  } else {
     setDomainResult(storeResult, makeDomainResult(domain, 'fetch_error', {
       inventoryType,
-      errorCode: safeErrorCode(error, 'INVENTORY_FETCH_ERROR'),
+      errorCode: safeErrorCode(inventoryAttempt.error, 'INVENTORY_FETCH_ERROR'),
+      attemptCount: inventoryAttempt.attemptCount,
+      retryCount: inventoryAttempt.retryCount,
     }));
     return;
   }
@@ -1116,6 +1130,8 @@ async function fetchAndLoadInventory({
       missingCount: inventory.coverage.missingCodes.length,
       coverageStatus: inventory.coverage.status,
       batchCount: Math.ceil(skuCodes.length / 100),
+      attemptCount: inventoryAttempt.attemptCount,
+      retryCount: inventoryAttempt.retryCount,
     }));
     storeResult.warehouseLoads.push({
       runId: inventoryRunId,
@@ -1134,6 +1150,8 @@ async function fetchAndLoadInventory({
       observedCount: inventory.coverage.observedCount,
       missingCount: inventory.coverage.missingCodes.length,
       coverageStatus: inventory.coverage.status,
+      attemptCount: inventoryAttempt.attemptCount,
+      retryCount: inventoryAttempt.retryCount,
     }));
   }
 }
@@ -1204,10 +1222,14 @@ async function syncStore({
   }
 
   if (needsCatalog) {
-    try {
-      catalog = await operations.fetchProductCatalog(client, {
+    const catalogAttempt = await fetchSupplyDomainWithRetry(
+      () => operations.fetchProductCatalog(client, {
         pageSize: config.pageSize,
-      });
+      }),
+      { sleep: operations.sleep },
+    );
+    if (catalogAttempt.ok) {
+      catalog = catalogAttempt.value;
       catalogSkuCodeList = catalogSkuCodes(catalog);
       const activeSkuSet = new Set(activeSkuUniverse?.skuCodes ?? []);
       const catalogSkuSet = new Set(catalogSkuCodeList);
@@ -1231,6 +1253,8 @@ async function syncStore({
         // sweeps. A difference from number-list is a cross-source scope
         // reconciliation result, not evidence that either source was truncated.
         coverageStatus: 'COMPLETE',
+        attemptCount: catalogAttempt.attemptCount,
+        retryCount: catalogAttempt.retryCount,
         membershipReconciliationStatus: (
           Number.isSafeInteger(catalogMissingSalesMembershipSkuCount)
           && Number.isSafeInteger(catalogOutsideSalesMembershipSkuCount)
@@ -1242,9 +1266,11 @@ async function syncStore({
           ? 'SOURCE_SCOPE_DIFFERENCE'
           : 'MATCHED',
       }));
-    } catch (error) {
+    } else {
       setDomainResult(storeResult, makeDomainResult('product-catalog', 'fetch_error', {
-        errorCode: safeErrorCode(error, 'PRODUCT_CATALOG_FETCH_ERROR'),
+        errorCode: safeErrorCode(catalogAttempt.error, 'PRODUCT_CATALOG_FETCH_ERROR'),
+        attemptCount: catalogAttempt.attemptCount,
+        retryCount: catalogAttempt.retryCount,
       }));
     }
   }
@@ -1257,11 +1283,15 @@ async function syncStore({
         { reasonCode: 'PRODUCT_CATALOG_UNAVAILABLE' },
       ));
     } else {
-      try {
-        const details = await operations.fetchProductDetails(client, {
+      const detailAttempt = await fetchSupplyDomainWithRetry(
+        () => operations.fetchProductDetails(client, {
           skuCodes: catalogSkuCodeList,
           language: 'zh-cn',
-        });
+        }),
+        { sleep: operations.sleep },
+      );
+      if (detailAttempt.ok) {
+        const details = detailAttempt.value;
         primarySnapshot.productDetails = details;
         setDomainResult(storeResult, makeDomainResult('product-details', 'fetched', {
           recordCount: details.details.length,
@@ -1271,10 +1301,14 @@ async function syncStore({
             ? 'COMPLETE'
             : 'PARTIAL',
           batchCount: details.batches.length,
+          attemptCount: detailAttempt.attemptCount,
+          retryCount: detailAttempt.retryCount,
         }));
-      } catch (error) {
+      } else {
         setDomainResult(storeResult, makeDomainResult('product-details', 'fetch_error', {
-          errorCode: safeErrorCode(error, 'PRODUCT_DETAILS_FETCH_ERROR'),
+          errorCode: safeErrorCode(detailAttempt.error, 'PRODUCT_DETAILS_FETCH_ERROR'),
+          attemptCount: detailAttempt.attemptCount,
+          retryCount: detailAttempt.retryCount,
         }));
       }
     }
@@ -1346,18 +1380,22 @@ async function syncStore({
   }
 
   if (selected.has('deliveries')) {
-    try {
-      const deliveries = await fetchDeliveryPlan(
+    const deliveryAttempt = await fetchSupplyDomainWithRetry(
+      () => fetchDeliveryPlan(
         client,
         pool,
         operations,
         store,
         windows.deliveries,
         {
-        pageSize: Math.min(config.pageSize, 200),
-        fetchedAt: sourceFetchedAt,
+          pageSize: Math.min(config.pageSize, 200),
+          fetchedAt: sourceFetchedAt,
         },
-      );
+      ),
+      { sleep: operations.sleep },
+    );
+    if (deliveryAttempt.ok) {
+      const deliveries = deliveryAttempt.value;
       primarySnapshot.deliveries = deliveries;
       setDomainResult(storeResult, makeDomainResult('deliveries', 'fetched', {
         recordCount: countForPrimaryDomain('deliveries', deliveries),
@@ -1367,11 +1405,15 @@ async function syncStore({
         pendingPointLookupCount:
           deliveries.incrementalStrategy.pendingPointLookupCount,
         window: windows.deliveries,
+        attemptCount: deliveryAttempt.attemptCount,
+        retryCount: deliveryAttempt.retryCount,
       }));
-    } catch (error) {
+    } else {
       setDomainResult(storeResult, makeDomainResult('deliveries', 'fetch_error', {
-        errorCode: safeErrorCode(error, 'DELIVERY_FETCH_ERROR'),
+        errorCode: safeErrorCode(deliveryAttempt.error, 'DELIVERY_FETCH_ERROR'),
         window: windows.deliveries,
+        attemptCount: deliveryAttempt.attemptCount,
+        retryCount: deliveryAttempt.retryCount,
       }));
     }
   }

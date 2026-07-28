@@ -297,6 +297,73 @@ test('purchase-orders retries a transient 503 before loading a single complete r
   assert.equal(purchaseResult.retryCount, 1);
 });
 
+test('product-details retries a transient HTTP failure and loads only the complete retry', async () => {
+  const delays = [];
+  const loads = [];
+  let detailFetchCount = 0;
+  const summary = await runSupplySync({
+    config: config(),
+    databaseUrl: 'postgres://fake.invalid/warehouse',
+    stores: 'DL5477',
+    domains: 'products',
+    now: '2026-07-26T12:34:56Z',
+    runId: 'supply-product-detail-retry',
+    poolFactory: async () => fakePool(),
+    clientFactory: () => ({}),
+    operations: {
+      ...supplyEvidenceOperations(),
+      async sleep(delayMs) {
+        delays.push(delayMs);
+      },
+      async fetchProductCatalog() {
+        return {
+          products: [{
+            spuName: 'SPU-1',
+            skcName: 'SKC-1',
+            skuCodes: ['SKU-1'],
+          }],
+          pages: [],
+          terminalReason: 'SHORT_PAGE',
+          catalogFingerprint: 'a'.repeat(64),
+          filters: {},
+        };
+      },
+      async fetchProductDetails() {
+        detailFetchCount += 1;
+        if (detailFetchCount === 1) {
+          throw Object.assign(new Error('temporary product detail failure'), {
+            code: 'HTTP_ERROR',
+            details: { httpStatus: 503 },
+          });
+        }
+        return {
+          details: [{ skuCode: 'SKU-1' }],
+          batches: [{ requestedCount: 1 }],
+        };
+      },
+      async loadSnapshot(_pool, input) {
+        loads.push(input);
+        return {
+          catalogSkuCount: 1,
+          productDetailCount: input.productDetails.details.length,
+        };
+      },
+    },
+  });
+
+  assert.equal(summary.ok, true);
+  assert.equal(detailFetchCount, 2);
+  assert.deepEqual(delays, [250]);
+  assert.equal(loads.length, 1);
+  assert.equal(loads[0].productDetails.details.length, 1);
+  const detailResult = summary.results[0].domains.find(
+    ({ domain }) => domain === 'product-details',
+  );
+  assert.equal(detailResult.status, 'loaded');
+  assert.equal(detailResult.attemptCount, 2);
+  assert.equal(detailResult.retryCount, 1);
+});
+
 test('exhausted stock-advice drift remains a fetch error and is never loaded', async () => {
   const loads = [];
   let fetchCount = 0;
@@ -641,6 +708,8 @@ test('a proven empty sales membership is a complete zero-SKU inventory universe'
     missingCount: 0,
     coverageStatus: 'COMPLETE',
     batchCount: 0,
+    attemptCount: 1,
+    retryCount: 0,
   }]);
   assert.equal(attempts.at(-1).status, 'SUCCEEDED');
   assert.equal(attempts.at(-1).requestedCount, 0);
