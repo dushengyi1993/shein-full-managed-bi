@@ -22,6 +22,27 @@ export const BATCH_RESULT_STATUSES = Object.freeze({
   BLOCKED: 'BLOCKED',
 });
 
+export const MAX_DISCOVERED_META_INDEX_IDS = 500;
+
+const NO_DISCOVERED_IDS = Object.freeze([]);
+
+/**
+ * Technical platform metric ids observed on a catalog endpoint.
+ *
+ * These are opaque integers used to plan a later, human-reviewed metric-detail
+ * stage. A value endpoint always returns an empty list, and no label, caliber or
+ * metric value is ever derived here.
+ */
+function discoveredMetaIndexIdsFor(endpoint, validatedResponse) {
+  if (endpoint.carriesMetricValues !== false) return NO_DISCOVERED_IDS;
+  const ids = [...new Set(
+    (validatedResponse?.rows ?? [])
+      .map((row) => row?.metaIndexId)
+      .filter((value) => Number.isSafeInteger(value) && value > 0),
+  )].sort((left, right) => left - right);
+  return Object.freeze(ids.slice(0, MAX_DISCOVERED_META_INDEX_IDS));
+}
+
 /**
  * Schema-only, dependency-injected WebAPI experiment adapter.
  *
@@ -92,6 +113,7 @@ export function createWebApiExperimentAdapter({
         rejected: Object.freeze([]),
         illegalDecimalCount: 0,
         unknownMetricCount: 0,
+        discoveredMetaIndexIds: NO_DISCOVERED_IDS,
       });
     }
 
@@ -121,6 +143,7 @@ export function createWebApiExperimentAdapter({
         rejected: Object.freeze([]),
         illegalDecimalCount: 0,
         unknownMetricCount: 0,
+        discoveredMetaIndexIds: NO_DISCOVERED_IDS,
       });
     }
 
@@ -144,6 +167,7 @@ export function createWebApiExperimentAdapter({
         rejected: Object.freeze([]),
         illegalDecimalCount: 0,
         unknownMetricCount: 0,
+        discoveredMetaIndexIds: NO_DISCOVERED_IDS,
       });
     }
 
@@ -167,6 +191,7 @@ export function createWebApiExperimentAdapter({
         rejected: Object.freeze([]),
         illegalDecimalCount: 0,
         unknownMetricCount: 0,
+        discoveredMetaIndexIds: NO_DISCOVERED_IDS,
       });
     }
 
@@ -204,6 +229,7 @@ export function createWebApiExperimentAdapter({
         rejected: Object.freeze([]),
         illegalDecimalCount: 0,
         unknownMetricCount: 0,
+        discoveredMetaIndexIds: NO_DISCOVERED_IDS,
       });
     }
 
@@ -223,6 +249,9 @@ export function createWebApiExperimentAdapter({
       rejected: projection.rejected,
       illegalDecimalCount: projection.illegalDecimalCount,
       unknownMetricCount: projection.unknownMetricCount,
+      // Technical ids only, so a reviewed metric-detail stage can be planned
+      // explicitly. Never a label, a caliber or a metric value.
+      discoveredMetaIndexIds: discoveredMetaIndexIdsFor(endpoint, validatedResponse),
     });
   }
 

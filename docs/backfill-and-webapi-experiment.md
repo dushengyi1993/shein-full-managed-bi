@@ -190,10 +190,98 @@ updatable, and no role may delete from the ledgers.
 root-private migration manifest. Values still travel to the container by name
 only.
 
+## 8a. Batch 4: page-context transport and the two-stage runbook
+
+Batch 4 supplies the transport that Batch 2 deliberately left absent. Nothing about
+the experiment boundary changes: observations stay `UNMAPPED`, no metric definition
+is written, and `fact.full_store_realtime_metric_snapshot` still does not exist.
+
+### How the credential stays inside the browser
+
+`src/webapi-experiment/page-transport.mjs` performs the request *in the page* via
+`Runtime.evaluate` with `credentials: 'include'`. The already-authenticated page
+attaches its own session, so this process never reads, exports, serializes or logs
+a cookie, a storage entry or a request header. Node receives only HTTP status, byte
+length and bounded response text. HTTP `401`/`403` and the evidenced HTTP-200
+business status `20302` are both reduced to
+`WEBAPI_TRANSPORT_AUTH_EXPIRED`; any other non-zero top-level `code`/`status`
+is reduced to `WEBAPI_TRANSPORT_BUSINESS_STATUS_FAILED`. Platform messages and
+response bodies never enter the error or CLI output.
+
+`src/webapi-experiment/cdp-client.mjs` reaches exactly four protocol methods —
+`Runtime.enable`, `Runtime.evaluate`, `Page.navigate`, `Page.getNavigationHistory`.
+Every credential-bearing domain is rejected by an allow-list, so a cookie or
+storage dump cannot be requested even by mistake.
+
+### One store, one Profile, one session
+
+`src/webapi-experiment/profile-lock.mjs` takes a global lock and then a
+per-canonical-Profile lock. A stale lock is reclaimed only when the previous owner
+is provably gone; an unparsable record or a throwing liveness probe fails closed.
+Release is owner-checked, so a reclaimed lock belonging to somebody else is never
+deleted. Lock errors carry a sanitized code only — never a path, never a Profile key.
+
+`src/webapi-experiment/browser-session.mjs` checks platform, then the explicit
+gate, the Linux browser dependencies and the Profile directory — all before any
+process is created. Each store owns a deterministic loopback debugging port and
+display. Navigation targets only `WEBAPI_ORIGIN`. The identity proof asks the page
+three yes/no questions (same origin, not a login view, store alias last four digits
+present) and returns booleans plus a text length; no identity value crosses the
+boundary. Cleanup is deterministic and idempotent, signals only the two PIDs it
+started, and is exposed as `close` so the CLI owns signal handling.
+
+### Two-stage runbook
+
+**Stage A — CATALOG.** Only the three endpoints that carry no metric value.
+Proves reachability, response schema hashes and the set of technical
+`metaIndexId`s, which the adapter returns as `discoveredMetaIndexIds`. Batches
+carry `observationCount = 0`. No label, caliber or metric value is produced.
+
+```
+npm run webapi:plan -- --stage=CATALOG --stores=DL5477 \
+  --endpoints=HOME_DATA_OVERVIEW_LIST,HOME_KEY_INDICATOR_TRENDS \
+  --created-by=<operator>
+npm run webapi:run  -- <same flags>            # dry-run, zero side effects
+npm run webapi:run  -- <same flags> --execute \
+  --approved-plan-hash=<hash from the plan> \
+  --allow-stores=DL5477 \
+  --allow-endpoints=HOME_DATA_OVERVIEW_LIST,HOME_KEY_INDICATOR_TRENDS
+```
+
+**Stage B — METRIC_DETAIL.** Only the two value endpoints, and only with
+`--meta-index-ids` a human selected after reviewing Stage A. `templateType` is
+required exactly when a requested endpoint accepts it. Observations are written
+`UNMAPPED` into the migration-0012 experiment relations. Promoting any metric to
+`VERIFIED` remains a separate reviewed evidence process, not a code path.
+
+`--allow-stores` and `--allow-endpoints` must equal the plan scope exactly: a
+subset and a superset are both refused, so an approval can never silently widen.
+
+### If the real envelope does not match
+
+`validateEndpointResponse` accepts a list at `response`, `response.list` or
+`response.data`. If the live response uses another envelope, the run stores a
+`FAILED` batch plus the response schema hash and a sanitized code. That is the
+intended outcome: the schema is **not** broadened and no response meaning is
+guessed. A human reads the hash, captures the shape under review, and a later
+batch amends `schema.mjs`.
+
+### Deployment prerequisites (not applied by this batch)
+
+- migration 0012 must already be applied;
+- the `sheinfm_webapi_login` credential must exist and be reachable as
+  `FULL_BI_WEBAPI_DATABASE_URL`, which is read only after execute authorization
+  succeeds and is never printed;
+- the explicit gate file must exist on the Linux host.
+
+This batch applies no migration, creates no gate file, ships no systemd unit or
+timer, and performs no real WebAPI call. Manual cloud execution runs later as the
+existing Profile owner under Codex control.
+
 ## 9. Deliberately deferred
 
 - No verified backfill adapter is wired into the runner.
-- No WebAPI transport, session HTTP client or systemd unit.
+- No WebAPI systemd unit or timer; execution remains a bounded manual run.
 - No `fact.full_store_realtime_metric_snapshot`.
 - No metric definition rows, so no metric is `VERIFIED`.
 - No production gate file, no enabled timer, no migration applied.

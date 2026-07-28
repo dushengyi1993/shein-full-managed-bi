@@ -242,6 +242,63 @@ test('a real Profile launch fails closed before any process could be created', (
   assert.equal(allowed.profileKey, 'persistent-mz2406-profile');
 });
 
+test('a catalog probe exposes technical metric ids only, sorted and bounded', async () => {
+  const adapter = createWebApiExperimentAdapter({
+    storeCode: 'DL5477',
+    transport: async () => ({
+      httpStatus: 200,
+      // Deliberately unsorted. Duplicate ids remain a contract error upstream.
+      body: { list: [{ metaIndexId: 353 }, { metaIndexId: 60 }] },
+    }),
+  });
+  const result = await adapter.probeEndpoint('HOME_DATA_OVERVIEW_LIST');
+  assert.deepEqual(result.discoveredMetaIndexIds, [60, 353]);
+  assert.ok(Object.isFrozen(result.discoveredMetaIndexIds));
+  // No value, label or currency travels with the ids.
+  assert.equal(result.observations.length, 0);
+  assert.doesNotMatch(JSON.stringify(result.batch), /"metaIndexId"|"label"/i);
+});
+
+test('a value endpoint and a permission endpoint expose no discovered ids', async () => {
+  const detail = createWebApiExperimentAdapter({
+    storeCode: 'MZ2406',
+    transport: async () => ({
+      httpStatus: 200,
+      body: { list: [{ metaIndexId: 70, code: 'GSP000016', count: '12.34' }] },
+    }),
+  });
+  const detailResult = await detail.probeEndpoint(
+    'HOME_DATA_OVERVIEW_DETAIL',
+    { metaIndexIds: [70] },
+  );
+  // A metric endpoint must not double as a discovery source.
+  assert.deepEqual(detailResult.discoveredMetaIndexIds, []);
+  assert.equal(detailResult.observations.length, 1);
+  assert.equal(detailResult.observations[0].semanticStatus, SEMANTIC_STATUSES.UNMAPPED);
+
+  const permission = createWebApiExperimentAdapter({
+    storeCode: 'DL5477',
+    transport: async () => ({ httpStatus: 200, body: { requestUri: '/x', systemCode: 'GSP' } }),
+  });
+  const permissionResult = await permission.probeEndpoint('HOME_KEY_INDICATOR_TRENDS');
+  assert.deepEqual(permissionResult.discoveredMetaIndexIds, []);
+});
+
+test('a rejected envelope stores a FAILED batch with a schema hash and no discovered ids', async () => {
+  const adapter = createWebApiExperimentAdapter({
+    storeCode: 'DL5477',
+    // The evidenced GMP envelope shape is not assumed here: an unexpected body
+    // must fail closed rather than be reinterpreted.
+    transport: async () => ({ httpStatus: 200, body: { code: '0', msg: 'ok', info: { meta: {} } } }),
+  });
+  const result = await adapter.probeEndpoint('HOME_DATA_OVERVIEW_LIST');
+  assert.equal(result.batch.resultStatus, 'FAILED');
+  assert.match(result.batch.responseSchemaHash, /^[0-9a-f]{64}$/);
+  assert.match(result.batch.sanitizedErrorCode, /^[A-Z][A-Z0-9_]+$/);
+  assert.deepEqual(result.discoveredMetaIndexIds, []);
+  assert.equal(result.observations.length, 0);
+});
+
 test('the experiment layer never writes a formal fact, mart or dashboard value', async () => {
   const sources = await Promise.all([
     'src/webapi-experiment/adapter.mjs',

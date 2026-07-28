@@ -330,6 +330,52 @@ test('a rejected row stores a sanitized reason and no raw payload', async () => 
   assert.ok(!insert.values.includes('12.30'));
 });
 
+test('session health binds the validated session state in its own column', async () => {
+  const pool = fakePool(() => ({ rows: [], rowCount: 1 }));
+  const result = await createWebApiExperimentRepository({ pool }).recordSessionHealth({
+    storeCode: 'DL5477',
+    profileKey: 'persistent-dl5477-profile',
+    observedAt: OBSERVED_AT,
+    sessionState: 'ACTIVE',
+    lastSuccessAt: OBSERVED_AT,
+    responseSchemaHash: 'a'.repeat(64),
+    latencyMs: 1200,
+    consecutiveFailureCount: 0,
+    sanitizedErrorCode: null,
+  });
+  assert.deepEqual(result, { recorded: true });
+
+  const insert = pool.statements.find((item) => item.text.includes('ops.webapi_session_health'));
+  // Nine declared columns, nine placeholders and nine bound values must agree,
+  // with the session state in position 4.
+  assert.equal((insert.text.match(/\$\d+/g) || []).length, 9);
+  assert.equal(insert.values.length, 9);
+  assert.equal(insert.values[3], 'ACTIVE');
+  assert.equal(insert.values[0], 'DL5477');
+  assert.equal(insert.values[1], 'persistent-dl5477-profile');
+  assert.equal(insert.values[7], 0);
+  assert.equal(insert.values[8], null);
+  assert.equal(pool.statements[1].text, 'SET LOCAL ROLE sheinfm_webapi_loader');
+});
+
+test('session health refuses an unknown state or a non-canonical store pair', async () => {
+  const pool = fakePool(() => ({ rows: [], rowCount: 1 }));
+  const repository = createWebApiExperimentRepository({ pool });
+  await assert.rejects(() => repository.recordSessionHealth({
+    storeCode: 'DL5477',
+    profileKey: 'persistent-dl5477-profile',
+    observedAt: OBSERVED_AT,
+    sessionState: 'HEALTHY',
+  }), TypeError);
+  await assert.rejects(() => repository.recordSessionHealth({
+    storeCode: 'DL5477',
+    profileKey: 'persistent-mz2406-profile',
+    observedAt: OBSERVED_AT,
+    sessionState: 'ACTIVE',
+  }), (error) => error.code === 'WEBAPI_REPOSITORY_INPUT_INVALID');
+  assert.deepEqual(pool.statements, []);
+});
+
 test('the repository requires a pool that can open a transaction', () => {
   assert.throws(() => createWebApiExperimentRepository({}), TypeError);
   assert.throws(

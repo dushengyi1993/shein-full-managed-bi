@@ -442,6 +442,9 @@ export function createWebApiExperimentRepository({ pool } = {}) {
           storeCode,
           health.profileKey,
           observedAt,
+          // The validated session state belongs to $4; omitting it shifted every
+          // later bind and made the first real health append fail.
+          sessionState,
           health.lastSuccessAt ? isoInstant(health.lastSuccessAt, 'lastSuccessAt') : null,
           health.responseSchemaHash ?? null,
           latencyMs,
