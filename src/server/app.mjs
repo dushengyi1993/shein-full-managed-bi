@@ -9,6 +9,10 @@ import {
   ProcurementQueryError,
   queryProcurementDashboard,
 } from './procurement-query.mjs';
+import {
+  SalesQueryError,
+  querySalesDashboard,
+} from './sales-query.mjs';
 import { createDashboardUpdateBroker } from './dashboard-update-stream.mjs';
 import {
   createAuthService,
@@ -407,6 +411,33 @@ export function createRequestHandler(options = {}) {
           error: {
             code: 'PROCUREMENT_DATA_UNAVAILABLE',
             message: '采购单查询暂不可用',
+          },
+        }, method);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/sales') {
+      try {
+        const dashboard = await loadDashboardData(dataFile);
+        const projected = projectDashboardForUser(dashboard, signedInUser);
+        sendJson(
+          response,
+          200,
+          querySalesDashboard(projected, url.searchParams),
+          method,
+        );
+      } catch (error) {
+        if (error instanceof SalesQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'SALES_DATA_UNAVAILABLE',
+            message: '销量查询暂不可用',
           },
         }, method);
       }

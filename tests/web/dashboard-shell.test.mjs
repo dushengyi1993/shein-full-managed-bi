@@ -141,7 +141,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.2`));
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.3`));
   }
   assert.doesNotMatch(html, /v=20260728\.[123]/);
   for (const sheet of [styles, parityStyles]) {
@@ -174,4 +174,24 @@ test('procurement uses an independent server query and authenticated snapshot up
   assert.match(app, /快照自动更新/);
   assert.doesNotMatch(app, /实时采购|采购实时/);
   assert.match(styles, /\.table-pagination\s*\{/);
+});
+
+test('sales uses a server query and home exposes a compact operating pulse', async () => {
+  const [app, styles] = await Promise.all([
+    read('src/web/app.js'),
+    read('src/web/styles.css'),
+  ]);
+  assert.match(app, /\/api\/sales\?/);
+  assert.match(app, /function loadSales\(/);
+  assert.match(app, /function scheduleSalesLoad\(/);
+  assert.match(app, /matchedMaterializedProductCount/);
+  assert.match(app, /data-sales-page-kind/);
+  assert.match(app, /data-sales-sort/);
+  assert.match(app, /源结果已截断/);
+  assert.match(app, /function homeBusinessPulse\(/);
+  assert.match(app, /OPERATING PULSE/);
+  assert.match(app, /今日经营简报/);
+  assert.match(app, /近 7 日日均/);
+  assert.match(styles, /\.business-pulse-grid\s*\{/);
+  assert.match(styles, /\.sales-sort-control\s*\{/);
 });

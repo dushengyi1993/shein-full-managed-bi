@@ -97,6 +97,32 @@ test('a direct load restores DL5477, last7Days and the global query', async () =
   assert.equal(unicode.focus?.code, 'GLOBAL-PRODUCT:保温杯 01');
 });
 
+test('sales sort and both materialized pages survive a canonical link', async () => {
+  const { parseHashState, serializeHashState } = await loadHashStateContract();
+  const href = serializeHashState({
+    route: 'sales',
+    owner: 'ALL',
+    store: 'DL5477',
+    range: 'last30Days',
+    quick: 'DECLINING',
+    salesSort: 'MOMENTUM_ASC',
+    productPage: 3,
+    standardPage: 2,
+  });
+  assert.match(href, /sort=MOMENTUM_ASC/);
+  assert.match(href, /page=3/);
+  assert.match(href, /standardPage=2/);
+  const parsed = parseHashState(href);
+  assert.equal(parsed.salesSort, 'MOMENTUM_ASC');
+  assert.equal(parsed.productPage, 3);
+  assert.equal(parsed.standardPage, 2);
+
+  const unsafe = parseHashState('#sales?sort=DROP&page=0&standardPage=99999');
+  assert.equal(unsafe.salesSort, 'LAST30_DESC');
+  assert.equal(unsafe.productPage, 1);
+  assert.equal(unsafe.standardPage, 1);
+});
+
 test('invalid hash input falls back safely and cannot inject markup', async () => {
   const { parseHashState, parseScopeToken, parseFocusToken } = await loadHashStateContract();
 

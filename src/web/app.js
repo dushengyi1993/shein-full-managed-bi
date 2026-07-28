@@ -48,6 +48,13 @@ const URL_RANGE_KEYS = Object.freeze(['today', 'yesterday', 'last7Days', 'last30
 
 const URL_DEFAULT_ROUTE = 'home';
 const URL_DEFAULT_RANGE = 'today';
+const URL_SALES_SORTS = Object.freeze([
+  'LAST30_DESC',
+  'LAST7_DESC',
+  'TODAY_DESC',
+  'MOMENTUM_DESC',
+  'MOMENTUM_ASC',
+]);
 
 /** Focus domains map one alert or row to the surface that can prove it. */
 const FOCUS_DOMAINS = Object.freeze({
@@ -161,6 +168,9 @@ function parseHashState(rawHash, inherited = {}) {
       range: URL_RANGE_KEYS.includes(inherited.range) ? inherited.range : URL_DEFAULT_RANGE,
       query: urlSafeText(inherited.query, URL_QUERY_MAX),
       quick: 'ALL',
+      salesSort: inherited.salesSort || 'LAST30_DESC',
+      productPage: Number.isSafeInteger(inherited.productPage) ? inherited.productPage : 1,
+      standardPage: Number.isSafeInteger(inherited.standardPage) ? inherited.standardPage : 1,
       // Navigating to another surface invalidates a focus that belonged to the
       // previous one.
       focus: null,
@@ -173,6 +183,11 @@ function parseHashState(rawHash, inherited = {}) {
   const rangeToken = urlSafeText(params.get('range'), 20);
   const quickToken = urlSafeText(params.get('quick'), 32).toUpperCase();
   const focus = parseFocusToken(params.get('focus'));
+  const salesSortToken = urlSafeText(params.get('sort'), 32).toUpperCase();
+  const pageParam = (name) => {
+    const value = params.get(name);
+    return /^[1-9][0-9]{0,3}$/.test(String(value ?? '')) ? Number(value) : 1;
+  };
   return {
     route,
     owner: scope.owner,
@@ -180,6 +195,11 @@ function parseHashState(rawHash, inherited = {}) {
     range: URL_RANGE_KEYS.includes(rangeToken) ? rangeToken : URL_DEFAULT_RANGE,
     query: urlSafeText(params.get('q'), URL_QUERY_MAX),
     quick: QUICK_FILTER_VALUES.includes(quickToken) ? quickToken : 'ALL',
+    salesSort: URL_SALES_SORTS.includes(salesSortToken)
+      ? salesSortToken
+      : 'LAST30_DESC',
+    productPage: pageParam('page'),
+    standardPage: pageParam('standardPage'),
     // A focus only applies on the surface that can prove it.
     focus: focus && FOCUS_DOMAINS[focus.domain].route === route ? focus : null,
     canonicalLink: true,
@@ -199,6 +219,18 @@ function serializeHashState(input = {}) {
   if (query !== '') params.set('q', query);
   const quick = urlSafeText(input.quick, 32).toUpperCase();
   if (QUICK_FILTER_VALUES.includes(quick) && quick !== 'ALL') params.set('quick', quick);
+  if (route === 'sales') {
+    const salesSort = urlSafeText(input.salesSort, 32).toUpperCase();
+    if (URL_SALES_SORTS.includes(salesSort) && salesSort !== 'LAST30_DESC') {
+      params.set('sort', salesSort);
+    }
+    if (Number.isSafeInteger(input.productPage) && input.productPage > 1) {
+      params.set('page', String(Math.min(input.productPage, 9999)));
+    }
+    if (Number.isSafeInteger(input.standardPage) && input.standardPage > 1) {
+      params.set('standardPage', String(Math.min(input.standardPage, 9999)));
+    }
+  }
   const focus = input.focus && FOCUS_DOMAINS[input.focus.domain]?.route === route
     ? serializeFocusToken(input.focus)
     : '';
@@ -280,6 +312,16 @@ const state = {
     pageSize: 25,
     sort: 'PRIORITY',
   },
+  sales: {
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+    productPage: initialHashState.productPage || 1,
+    standardPage: initialHashState.standardPage || 1,
+    pageSize: 50,
+    sort: initialHashState.salesSort || 'LAST30_DESC',
+  },
   updates: {
     status: 'connecting',
     observedAt: null,
@@ -308,6 +350,7 @@ const elements = {
 };
 
 let procurementLoadTimer = null;
+let salesLoadTimer = null;
 let dashboardEventSource = null;
 
 function routeFromLocation() {
@@ -2139,6 +2182,127 @@ function procurementPagination(queryData) {
     </nav>`;
 }
 
+function salesQueryUrl() {
+  const quick = quickFilterValue('sales');
+  const identity = ['CANONICAL', 'UNMAPPED'].includes(quick) ? quick : 'ALL';
+  const momentum = ['GROWING', 'DECLINING', 'UNCOMPARABLE'].includes(quick)
+    ? quick
+    : 'ALL';
+  const params = new URLSearchParams({
+    owner: state.owner,
+    store: state.store,
+    q: state.query,
+    identity,
+    momentum,
+    sort: state.sales.sort,
+    productPage: String(state.sales.productPage),
+    standardPage: String(state.sales.standardPage),
+    pageSize: String(state.sales.pageSize),
+  });
+  return `/api/sales?${params.toString()}`;
+}
+
+async function loadSales({ resetPages = false } = {}) {
+  if (resetPages) {
+    state.sales.productPage = 1;
+    state.sales.standardPage = 1;
+  }
+  if (state.route !== 'sales') return;
+  const requestSerial = state.sales.requestSerial + 1;
+  state.sales.requestSerial = requestSerial;
+  state.sales.loading = true;
+  state.sales.error = '';
+  render();
+  try {
+    const result = await fetchJson(salesQueryUrl());
+    if (requestSerial !== state.sales.requestSerial) return;
+    if (
+      !result
+      || result.readOnly !== true
+      || !Array.isArray(result.stores?.rows)
+      || !Array.isArray(result.products?.rows)
+      || !Array.isArray(result.standardProducts?.rows)
+    ) {
+      throw new Error('销量查询结构无效');
+    }
+    state.sales.data = result;
+  } catch (error) {
+    if (requestSerial !== state.sales.requestSerial) return;
+    state.sales.data = null;
+    state.sales.error = error instanceof Error ? error.message : '销量查询暂不可用';
+  } finally {
+    if (requestSerial === state.sales.requestSerial) {
+      state.sales.loading = false;
+      render();
+    }
+  }
+}
+
+function scheduleSalesLoad({ resetPages = false, delay = 0 } = {}) {
+  if (salesLoadTimer !== null) window.clearTimeout(salesLoadTimer);
+  state.sales.requestSerial += 1;
+  if (resetPages) {
+    state.sales.productPage = 1;
+    state.sales.standardPage = 1;
+    state.sales.data = null;
+    state.sales.error = '';
+    state.sales.loading = true;
+  }
+  if (state.route !== 'sales') return;
+  if (resetPages) render();
+  salesLoadTimer = window.setTimeout(() => {
+    salesLoadTimer = null;
+    void loadSales();
+  }, delay);
+}
+
+function salesQueryState(kind) {
+  const error = kind === 'error';
+  return `
+    <section class="panel procurement-query-state${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}">
+      <span class="eyebrow">SALES QUERY</span>
+      <h2>${error ? '销量独立查询暂不可用' : '正在按当前条件查询销量'}</h2>
+      <p>${error
+        ? escapeHtml(state.sales.error || '请稍后重试。')
+        : '商品筛选、排序和分页在服务端执行；旧筛选结果不会冒充新结果。'}</p>
+      ${error ? '<button type="button" class="clear-button" data-sales-retry="1">重新查询</button>' : ''}
+    </section>`;
+}
+
+function salesPagination(pagination, kind, label) {
+  if (!pagination || !isUnit(pagination.page) || !isUnit(pagination.pageSize)) return '';
+  const matched = isUnit(pagination.matchedMaterializedRows)
+    ? pagination.matchedMaterializedRows
+    : 0;
+  const pageCount = isUnit(pagination.pageCount) ? pagination.pageCount : 0;
+  const displayedPage = pageCount === 0 ? 0 : pagination.page;
+  return `
+    <nav class="table-pagination" aria-label="${escapeHtml(label)}分页">
+      <p>已物化范围命中 ${numberFormatter.format(matched)} 条 · 第 ${numberFormatter.format(displayedPage)} / ${numberFormatter.format(pageCount)} 页</p>
+      <div>
+        <button type="button" data-sales-page-kind="${escapeHtml(kind)}" data-sales-page="${Math.max(1, pagination.page - 1)}" ${pagination.hasPrevious ? '' : 'disabled'}>上一页</button>
+        <button type="button" data-sales-page-kind="${escapeHtml(kind)}" data-sales-page="${pagination.page + 1}" ${pagination.hasNext ? '' : 'disabled'}>下一页</button>
+      </div>
+    </nav>`;
+}
+
+function salesSortControl() {
+  const options = [
+    ['LAST30_DESC', '近 30 日销量'],
+    ['LAST7_DESC', '近 7 日销量'],
+    ['TODAY_DESC', '今日销量'],
+    ['MOMENTUM_DESC', '增长动量'],
+    ['MOMENTUM_ASC', '下降动量'],
+  ];
+  return `
+    <label class="sales-sort-control">
+      <span>排序</span>
+      <select data-sales-sort>
+        ${options.map(([value, label]) => `<option value="${value}" ${state.sales.sort === value ? 'selected' : ''}>${label}</option>`).join('')}
+      </select>
+    </label>`;
+}
+
 function rowAttentionStage(row, kind) {
   if (row?.attentionLabel) return row.attentionLabel;
   if (kind === 'procurement') {
@@ -3227,6 +3391,85 @@ function homeSectionHeading(title, description, tight = false) {
     </div>`;
 }
 
+function homePulseHref(route, quick = 'ALL', focus = null) {
+  return serializeHashState({
+    route,
+    owner: state.owner,
+    store: state.store,
+    range: state.range,
+    query: state.query,
+    quick,
+    focus,
+    salesSort: state.sales.sort,
+    productPage: 1,
+    standardPage: 1,
+  });
+}
+
+function homeBusinessPulse() {
+  const scope = scopedUnits();
+  const salesSignal = comparableDailySignal({ unitsSold: scope.units });
+  const purchaseRows = scopedOperationRows(attentionRows('purchaseOrderAttention'));
+  const deliveryRows = scopedOperationRows(attentionRows('deliveryAttention'));
+  const inventoryRows = scopedOperationRows(attentionRows('inventoryRisks'));
+  const shortageRows = inventoryRows.filter(
+    (row) => isUnit(row.shortageQuantity) && row.shortageQuantity > 0,
+  );
+  const stores = storeRowsForView();
+  const products = skuRowsForView();
+  const leadingStore = stores[0] || null;
+  const leadingProduct = products[0] || null;
+  const quality = qualityState();
+  const momentumValue = salesSignal.comparable === false
+    ? '不可比'
+    : salesSignal.label;
+  const momentumNote = salesSignal.recent === null
+    ? '近 7 日或此前 23 日缺少完整销量窗口'
+    : `近 7 日日均 ${formatDailyAverage(salesSignal.recent)} 件 · 此前 23 日日均 ${formatDailyAverage(salesSignal.previous)} 件`;
+  const attentionCount = purchaseRows.length + deliveryRows.length;
+  const topEntity = leadingStore || leadingProduct;
+  const topEntityValue = leadingStore
+    ? (leadingStore.name || leadingStore.code)
+    : leadingProduct ? productCode(leadingProduct, isCanonicalProduct(leadingProduct)) : '暂无';
+  const topEntityNote = leadingStore
+    ? `${RANGE_META[state.range].label} ${formatUnits(leadingStore.unitsSold?.[state.range])} 件 · ${ownerNameForStore(leadingStore) || '负责人未分配'}`
+    : leadingProduct
+      ? `${RANGE_META[state.range].label} ${formatUnits(leadingProduct.unitsSold?.[state.range])} 件`
+      : '当前范围没有可排行的店铺或货号';
+  return `
+    <section class="business-pulse" aria-label="经营脉搏">
+      <div class="business-pulse-head">
+        <div>
+          <span class="eyebrow">OPERATING PULSE</span>
+          <h2>今日经营简报</h2>
+        </div>
+        <p>只列需要判断和下钻的信号；金额、消费者订单和未知值不参与推导。</p>
+      </div>
+      <div class="business-pulse-grid">
+        <a href="${escapeHtml(homePulseHref('sales', salesSignal.tone === 'blocked' ? 'DECLINING' : 'ALL'))}" class="pulse-card">
+          <span>销量动量</span>
+          <strong>${escapeHtml(momentumValue)}</strong>
+          <small>${escapeHtml(momentumNote)}</small>
+        </a>
+        <a href="${escapeHtml(homePulseHref('inventory', shortageRows.length ? 'SHORTAGE' : 'ALL'))}" class="pulse-card">
+          <span>供给与履约关注</span>
+          <strong>${numberFormatter.format(shortageRows.length)} 个缺货风险</strong>
+          <small>采购 / 交付关注 ${numberFormatter.format(attentionCount)} 条；只统计当前物化范围</small>
+        </a>
+        <a href="${escapeHtml(homePulseHref(leadingStore ? 'sales' : 'products'))}" class="pulse-card">
+          <span>优先下钻</span>
+          <strong>${escapeHtml(topEntityValue)}</strong>
+          <small>${escapeHtml(topEntityNote)}</small>
+        </a>
+        <a href="${escapeHtml(homePulseHref('system'))}" class="pulse-card ${quality.status === 'healthy' ? '' : 'attention'}">
+          <span>数据完整性</span>
+          <strong>${escapeHtml(quality.label)}</strong>
+          <small>${escapeHtml(quality.reason || '查看当前销量、供应链和同步覆盖')}</small>
+        </a>
+      </div>
+    </section>`;
+}
+
 function renderHome() {
   const coverage = identityCoverage();
   const storeRows = storeRowsForView();
@@ -3245,6 +3488,7 @@ function renderHome() {
     ${homeTruthStrip()}
     ${sampleNotice()}
     ${dataQualityNotice()}
+    ${homeBusinessPulse()}
     ${homeSectionHeading(
       '销售数据矩阵',
       '只使用当前可信 OpenAPI 数量事实：今日、昨日、近 7 日、近 30 日。金额位置显示来源状态，不显示估算值。',
@@ -3381,7 +3625,7 @@ function matchesSalesProductFilter(item) {
   return true;
 }
 
-function salesTable(kind, rowsOverride = null) {
+function salesTable(kind, rowsOverride = null, pagination = null) {
   const isStore = kind === 'store';
   const isStandard = kind === 'standard';
   const rows = rowsOverride || (isStore ? storeRowsForTable() : skuRowsForTable());
@@ -3389,7 +3633,7 @@ function salesTable(kind, rowsOverride = null) {
     isStore ? '店铺销量表暂无可用行' : isStandard ? '标准商品销量表暂无可用行' : '商品销量表暂无可用行',
     dimensionBoundary(kind),
   );
-  const visibleRows = isStore ? rows : rows.slice(0, 100);
+  const visibleRows = rows;
 
   return `
     <div class="table-wrap">
@@ -3435,15 +3679,32 @@ function salesTable(kind, rowsOverride = null) {
         </tbody>
       </table>
     </div>
-    <p class="table-note">* 破折号表示该窗口未接入或不完整，不表示销量为 0。日均变化使用“近 7 日日均”对比“此前 23 日日均”；低基数增长不展示夸张百分比。当前显示 ${numberFormatter.format(visibleRows.length)} / ${numberFormatter.format(rows.length)} 条${!isStore && rows.length > visibleRows.length ? '，商品排行最多展示前 100 条' : ''}；店内商品身份不会跨店按裸 SKU 合并。</p>`;
+    <p class="table-note">* 破折号表示该窗口未接入或不完整，不表示销量为 0。日均变化使用“近 7 日日均”对比“此前 23 日日均”；低基数增长不展示夸张百分比。当前页显示 ${numberFormatter.format(visibleRows.length)} 条${pagination && isUnit(pagination.matchedMaterializedRows) ? `，已物化范围命中 ${numberFormatter.format(pagination.matchedMaterializedRows)} 条` : ''}；店内商品身份不会跨店按裸 SKU 合并。</p>`;
 }
 
 function renderSales() {
+  if (state.sales.loading && !state.sales.data) {
+    return `${sampleNotice()}${focusEvidencePanel()}${salesQueryState('loading')}`;
+  }
+  if (state.sales.error && !state.sales.data) {
+    return `${sampleNotice()}${focusEvidencePanel()}${salesQueryState('error')}`;
+  }
+  const queryData = state.sales.data;
+  if (!queryData) return salesQueryState('loading');
   const scope = scopedUnits();
   const focusValue = scope.units[state.range];
   const coverage = identityCoverage();
-  const productRows = skuRowsForTable().filter(matchesSalesProductFilter);
-  const standardRows = standardProductRowsForTable().filter(matchesSalesProductFilter);
+  const productRows = queryData.products.rows;
+  const standardRows = queryData.standardProducts.rows;
+  const storeRows = queryData.stores.rows;
+  const sourceMeta = queryData.source?.materializedRankings || {};
+  const storeSkuMeta = sourceMeta.storeSku || {};
+  const productMeta = sourceMeta.product || {};
+  const sourceBoundary = [
+    `服务端筛选命中 ${numberFormatter.format(queryData.summary?.matchedMaterializedProductCount || 0)} 条`,
+    `店内商品物化 ${numberFormatter.format(storeSkuMeta.returned || 0)} / ${numberFormatter.format(storeSkuMeta.total || 0)}`,
+    storeSkuMeta.truncated === true ? '源结果已截断' : '源物化未截断',
+  ].join(' · ');
   return `
     ${sampleNotice()}
     ${pageIntro(
@@ -3462,11 +3723,11 @@ function renderSales() {
       ${sourceChip()}
     </section>
     <section class="table-section">
-      ${panelHeading('STORE DETAIL', '完整店铺销量表', '当前筛选可用的全部店铺行')}
-      ${salesTable('store')}
+      ${panelHeading('STORE DETAIL', '店铺销量表', `服务端当前筛选命中 ${numberFormatter.format(queryData.summary?.matchedMaterializedStoreCount || 0)} 家`)}
+      ${salesTable('store', storeRows)}
     </section>
     <section class="table-section">
-      ${panelHeading('PRODUCT DETAIL', productIdentityLabel(), `完整商品口径 · ${coverage.label} · 未归并商品保持店内隔离 · 当前最多显示前 100 条`)}
+      ${panelHeading('PRODUCT DETAIL', productIdentityLabel(), `完整商品口径规则（非全量行声明） · ${sourceBoundary} · ${coverage.label} · 未归并商品保持店内隔离`)}
       ${quickFilterBar('sales', '商品快速筛查', [
         ['ALL', '全部商品'],
         ['GROWING', '增长 ≥10%'],
@@ -3475,11 +3736,16 @@ function renderSales() {
         ['CANONICAL', '标准身份'],
         ['UNMAPPED', '待归并'],
       ])}
-      ${salesTable('sku', productRows)}
+      ${salesSortControl()}
+      ${salesTable('sku', productRows, queryData.products.pagination)}
+      ${salesPagination(queryData.products.pagination, 'product', '商品销量')}
+      ${state.sales.loading ? '<p class="query-refresh-note" role="status">正在刷新当前销量筛选结果…</p>' : ''}
+      ${storeSkuMeta.truncated === true ? '<p class="table-note warning-note">当前筛选只覆盖物化到 Dashboard 的店内商品排行；源结果已截断，命中数不是仓库全量商品数量。</p>' : ''}
     </section>
     <section class="table-section">
-      ${panelHeading('STANDARD PRODUCT DETAIL', '标准商品排行', `${coverage.confirmed}/${coverage.total} 个目录 SKU 已确认；该表是独立身份视图，不替代完整商品排行`)}
-      ${salesTable('standard', standardRows)}
+      ${panelHeading('STANDARD PRODUCT DETAIL', '标准商品排行', `${coverage.confirmed}/${coverage.total} 个目录 SKU 已确认；源物化 ${numberFormatter.format(productMeta.returned || 0)} / ${numberFormatter.format(productMeta.total || 0)}`)}
+      ${salesTable('standard', standardRows, queryData.standardProducts.pagination)}
+      ${salesPagination(queryData.standardProducts.pagination, 'standard', '标准商品销量')}
     </section>`;
 }
 
@@ -5074,6 +5340,9 @@ async function loadDashboard() {
   if (state.data && state.route === 'procurement') {
     scheduleProcurementLoad();
   }
+  if (state.data && state.route === 'sales') {
+    scheduleSalesLoad();
+  }
 }
 
 function connectDashboardUpdates() {
@@ -5132,6 +5401,9 @@ function currentHashState() {
     query: state.query,
     quick: quickFilterValue(state.route),
     focus: state.focus,
+    salesSort: state.sales.sort,
+    productPage: state.sales.productPage,
+    standardPage: state.sales.standardPage,
   };
 }
 
@@ -5156,6 +5428,9 @@ function applyHashState(parsed) {
   state.range = parsed.range;
   state.query = parsed.query;
   state.focus = parsed.focus;
+  state.sales.sort = parsed.salesSort || 'LAST30_DESC';
+  state.sales.productPage = parsed.productPage || 1;
+  state.sales.standardPage = parsed.standardPage || 1;
   if (parsed.quick === 'ALL') delete state.quickFilters[parsed.route];
   else state.quickFilters[parsed.route] = parsed.quick;
 }
@@ -5172,6 +5447,12 @@ function syncRouteFromLocation() {
     state.procurement.requestSerial += 1;
     state.procurement.loading = false;
   }
+  if (state.route === 'sales') {
+    scheduleSalesLoad({ resetPages: routeChanged });
+  } else if (routeChanged) {
+    state.sales.requestSerial += 1;
+    state.sales.loading = false;
+  }
   if (routeChanged && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -5182,6 +5463,7 @@ elements.search.addEventListener('input', (event) => {
   syncUrlFromState();
   render();
   scheduleProcurementLoad({ resetPage: true, delay: 220 });
+  scheduleSalesLoad({ resetPages: true, delay: 220 });
 });
 
 elements.scope.addEventListener('change', (event) => {
@@ -5191,6 +5473,7 @@ elements.scope.addEventListener('change', (event) => {
   syncUrlFromState();
   render();
   scheduleProcurementLoad({ resetPage: true });
+  scheduleSalesLoad({ resetPages: true });
 });
 
 elements.rangeButtons.forEach((button) => {
@@ -5203,6 +5486,23 @@ elements.rangeButtons.forEach((button) => {
 });
 
 elements.view.addEventListener('click', (event) => {
+  const salesRetry = event.target.closest?.('[data-sales-retry]');
+  if (salesRetry && elements.view.contains(salesRetry)) {
+    void loadSales();
+    return;
+  }
+  const salesPage = event.target.closest?.('[data-sales-page]');
+  if (salesPage && elements.view.contains(salesPage)) {
+    const nextPage = Number(salesPage.dataset.salesPage);
+    const kind = salesPage.dataset.salesPageKind;
+    if (Number.isSafeInteger(nextPage) && nextPage >= 1 && !salesPage.disabled) {
+      if (kind === 'standard') state.sales.standardPage = nextPage;
+      else state.sales.productPage = nextPage;
+      syncUrlFromState();
+      void loadSales();
+    }
+    return;
+  }
   const procurementRetry = event.target.closest?.('[data-procurement-retry]');
   if (procurementRetry && elements.view.contains(procurementRetry)) {
     void loadProcurement();
@@ -5237,6 +5537,19 @@ elements.view.addEventListener('click', (event) => {
   syncUrlFromState();
   render();
   if (route === 'procurement') scheduleProcurementLoad({ resetPage: true });
+  if (route === 'sales') scheduleSalesLoad({ resetPages: true });
+});
+
+elements.view.addEventListener('change', (event) => {
+  const salesSort = event.target.closest?.('[data-sales-sort]');
+  if (!salesSort || !elements.view.contains(salesSort)) return;
+  const value = String(salesSort.value || '').toUpperCase();
+  if (!URL_SALES_SORTS.includes(value)) return;
+  state.sales.sort = value;
+  state.sales.productPage = 1;
+  state.sales.standardPage = 1;
+  syncUrlFromState();
+  void loadSales();
 });
 
 elements.clearFilters.addEventListener('click', () => {
@@ -5250,6 +5563,7 @@ elements.clearFilters.addEventListener('click', () => {
   syncUrlFromState();
   render();
   scheduleProcurementLoad({ resetPage: true });
+  scheduleSalesLoad({ resetPages: true });
   elements.search.focus();
 });
 
@@ -5321,6 +5635,7 @@ document.addEventListener('scroll', hideChartTooltip, true);
 window.addEventListener('hashchange', syncRouteFromLocation);
 window.addEventListener('beforeunload', () => {
   if (procurementLoadTimer !== null) window.clearTimeout(procurementLoadTimer);
+  if (salesLoadTimer !== null) window.clearTimeout(salesLoadTimer);
   dashboardEventSource?.close();
 });
 

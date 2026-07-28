@@ -105,6 +105,30 @@ test('procurement query rejects duplicates and mutation methods', async () => {
   assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
 });
 
+test('GET /api/sales is a bounded read-only query surface', async () => {
+  const response = await fetch(
+    `${baseUrl}/api/sales?owner=ALL&store=ALL&identity=ALL&momentum=ALL&sort=LAST30_DESC&productPage=1&standardPage=1&pageSize=25`,
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.readOnly, true);
+  assert.ok(Array.isArray(payload.stores.rows));
+  assert.ok(Array.isArray(payload.products.rows));
+  assert.ok(Array.isArray(payload.standardProducts.rows));
+  assert.equal(payload.products.pagination.pageSize, 25);
+  assert.ok(payload.source.materializedRankings.storeSku);
+});
+
+test('sales query rejects duplicates and mutation methods', async () => {
+  const duplicate = await fetch(`${baseUrl}/api/sales?q=a&q=b`);
+  assert.equal(duplicate.status, 400);
+  assert.match(await duplicate.text(), /QUERY_PARAMETER_DUPLICATED/);
+
+  const mutation = await fetch(`${baseUrl}/api/sales`, { method: 'POST' });
+  assert.equal(mutation.status, 405);
+  assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
+});
+
 test('GET /api/events opens a no-buffer read-only SSE stream', async () => {
   const result = await new Promise((resolve, reject) => {
     const clientRequest = request(
@@ -197,9 +221,9 @@ test('serves the local dashboard and its static assets', async () => {
   assert.match(pageResponse.headers.get('content-type'), /^text\/html/);
   const pageHtml = await pageResponse.text();
   assert.match(pageHtml, /全托运营驾驶舱/);
-  assert.match(pageHtml, /\/app\.js\?v=20260729\.2/);
-  assert.match(pageHtml, /\/styles\.css\?v=20260729\.2/);
-  assert.match(pageHtml, /\/home-parity\.css\?v=20260729\.2/);
+  assert.match(pageHtml, /\/app\.js\?v=20260729\.3/);
+  assert.match(pageHtml, /\/styles\.css\?v=20260729\.3/);
+  assert.match(pageHtml, /\/home-parity\.css\?v=20260729\.3/);
 
   assert.equal(scriptResponse.status, 200);
   assert.match(scriptResponse.headers.get('content-type'), /^text\/javascript/);
