@@ -61,7 +61,12 @@ BEGIN
         'raw.webapi_fetch_batch',
         'raw.webapi_metric_observation',
         'dim.webapi_metric_definition',
-        'ops.webapi_session_health'
+        'ops.webapi_session_health',
+        'raw.webapi_home_fetch_audit',
+        'fact.full_home_store_daily',
+        'fact.full_home_region_daily',
+        'fact.full_home_product_daily',
+        'fact.full_product_price_observation'
     ]
     LOOP
         IF to_regclass(required_name) IS NULL THEN
