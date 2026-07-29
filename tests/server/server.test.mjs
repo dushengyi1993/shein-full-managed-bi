@@ -252,6 +252,88 @@ test('product query rejects duplicates, bad bounds and mutation methods', async 
   }
 });
 
+test('GET /api/fulfilment is a bounded read-only delivery query surface', async () => {
+  const response = await fetch(
+    `${baseUrl}/api/fulfilment?owner=ALL&store=ALL&milestone=ALL&quick=ALL`
+    + '&sort=PRIORITY&page=1&pageSize=50',
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.schemaVersion, 1);
+  assert.equal(payload.readOnly, true);
+  assert.equal(payload.query.pageSize, 50);
+  assert.equal(payload.query.milestone, 'ALL');
+  assert.equal(payload.query.sort, 'PRIORITY');
+  assert.ok(Array.isArray(payload.attention.rows));
+  assert.ok(Array.isArray(payload.milestoneOverview));
+  assert.equal(payload.attention.pagination.pageSize, 50);
+  assert.equal(typeof payload.attention.source.truncated, 'boolean');
+  // Delivery count and delivery quantity stay separate units.
+  assert.ok(Object.hasOwn(payload.summary.snapshotDeliveryCount, 'unknownCount'));
+  assert.ok(Object.hasOwn(payload.summary.snapshotDeliveryQuantity, 'unknownCount'));
+  assert.ok(Object.hasOwn(payload.summary, 'expectedReceiptKnownCount'));
+  // No funnel or completion rate is ever derived.
+  assert.doesNotMatch(JSON.stringify(payload.summary), /rate|percent|conversion|funnel/i);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+
+  const head = await fetch(`${baseUrl}/api/fulfilment`, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+  assert.equal(head.headers.get('cache-control'), 'no-store');
+});
+
+test('fulfilment query rejects duplicates, bad bounds and mutation methods', async () => {
+  const duplicate = await fetch(`${baseUrl}/api/fulfilment?q=a&q=b`);
+  assert.equal(duplicate.status, 400);
+  assert.match(await duplicate.text(), /QUERY_PARAMETER_DUPLICATED/);
+
+  // Page size is a closed set: an in-range number is still rejected.
+  const badPageSize = await fetch(`${baseUrl}/api/fulfilment?pageSize=30`);
+  assert.equal(badPageSize.status, 400);
+  assert.match(await badPageSize.text(), /QUERY_PARAMETER_OUT_OF_RANGE/);
+
+  const unknownQuick = await fetch(`${baseUrl}/api/fulfilment?quick=RECEIVED`);
+  assert.equal(unknownQuick.status, 400);
+  assert.match(await unknownQuick.text(), /QUERY_PARAMETER_INVALID/);
+
+  const unknownSort = await fetch(`${baseUrl}/api/fulfilment?sort=DROP`);
+  assert.equal(unknownSort.status, 400);
+  assert.match(await unknownSort.text(), /QUERY_PARAMETER_INVALID/);
+
+  const outOfRange = await fetch(`${baseUrl}/api/fulfilment?page=0`);
+  assert.equal(outOfRange.status, 400);
+  assert.match(await outOfRange.text(), /QUERY_PARAMETER_INVALID|QUERY_PARAMETER_OUT_OF_RANGE/);
+
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const mutation = await fetch(`${baseUrl}/api/fulfilment`, { method });
+    assert.equal(mutation.status, 405, method);
+    assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
+  }
+});
+
+test('procurement exposes exact page sizes, explicit quick filters and a compact status summary', async () => {
+  const response = await fetch(`${baseUrl}/api/procurement?pageSize=100&quick=DEFECTIVE`);
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.query.pageSize, 100);
+  assert.equal(payload.query.quick, 'DEFECTIVE');
+  assert.deepEqual(payload.filters.pageSizes, [25, 50, 100]);
+  assert.deepEqual(payload.filters.quick, [
+    'ALL', 'HIGH', 'OVERDUE', 'PENDING_DELIVERY',
+    'PENDING_RECEIPT', 'PENDING_STORAGE', 'DEFECTIVE',
+  ]);
+  // The compact overview is one row per status, never one row per store.
+  assert.ok(Array.isArray(payload.statusOverview));
+  assert.ok(payload.statusOverview.length <= payload.statusRows.length);
+  assert.ok(Object.hasOwn(payload.summary.quantityStages, 'defective'));
+  assert.match(payload.summary.attentionScopeLabel, /不是转化漏斗/);
+  assert.doesNotMatch(JSON.stringify(payload.summary), /rate|percent|conversion|funnel/i);
+
+  const badPageSize = await fetch(`${baseUrl}/api/procurement?pageSize=2`);
+  assert.equal(badPageSize.status, 400);
+  assert.match(await badPageSize.text(), /QUERY_PARAMETER_OUT_OF_RANGE/);
+});
+
 test('GET /api/events opens a no-buffer read-only SSE stream', async () => {
   const result = await new Promise((resolve, reject) => {
     const clientRequest = request(
@@ -344,9 +426,9 @@ test('serves the local dashboard and its static assets', async () => {
   assert.match(pageResponse.headers.get('content-type'), /^text\/html/);
   const pageHtml = await pageResponse.text();
   assert.match(pageHtml, /全托运营驾驶舱/);
-  assert.match(pageHtml, /\/app\.js\?v=20260729\.7/);
-  assert.match(pageHtml, /\/styles\.css\?v=20260729\.7/);
-  assert.match(pageHtml, /\/home-parity\.css\?v=20260729\.7/);
+  assert.match(pageHtml, /\/app\.js\?v=20260729\.8/);
+  assert.match(pageHtml, /\/styles\.css\?v=20260729\.8/);
+  assert.match(pageHtml, /\/home-parity\.css\?v=20260729\.8/);
 
   assert.equal(scriptResponse.status, 200);
   assert.match(scriptResponse.headers.get('content-type'), /^text\/javascript/);

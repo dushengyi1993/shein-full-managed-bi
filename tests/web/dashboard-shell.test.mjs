@@ -149,7 +149,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.7`));
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.8`));
   }
   assert.doesNotMatch(html, /v=20260728\.[123]/);
   for (const sheet of [styles, parityStyles]) {
@@ -175,7 +175,9 @@ test('procurement uses an independent server query and authenticated snapshot up
   assert.match(app, /\/api\/procurement\?/);
   assert.match(app, /function loadProcurement\(/);
   assert.match(app, /matchedMaterializedAttentionCount/);
-  assert.match(app, /源数据已截断/);
+  // Truncation stays explicit; the workspace now names the source scope too.
+  assert.match(app, /源明细已截断/);
+  assert.match(app, /源结果已截断，非仓库全量/);
   assert.match(app, /data-procurement-page/);
   assert.match(app, /new EventSource\('\/api\/events'\)/);
   assert.match(app, /dashboard-updated/);

@@ -66,9 +66,16 @@ const FOCUS_DOMAINS = Object.freeze({
   ops: { route: 'ops', label: '运营提醒' },
 });
 
+/* Every route-specific quick value must appear here. A value missing from this
+   allow-list is silently dropped by `serializeHashState` and then reloaded as
+   `ALL` by `parseHashState`, so the shared link would lose the filter. */
 const QUICK_FILTER_VALUES = Object.freeze([
   'ALL', 'HIGH', 'SHORTAGE', 'RECONCILIATION', 'URGENT', 'ADVICE', 'WARNING', 'SYNC',
   'PENDING_DELIVERY', 'PENDING_RECEIPT', 'PENDING_STORAGE', 'OVERDUE',
+  // Procurement attention semantics.
+  'DEFECTIVE',
+  // Fulfilment milestone semantics.
+  'CREATED', 'PICKUP_RESERVED', 'IN_TRANSIT',
   'GROWING', 'DECLINING', 'UNCOMPARABLE', 'CANONICAL', 'UNMAPPED',
   'WITH_SALES', 'MISSING_SPU',
 ]);
@@ -106,6 +113,22 @@ const URL_PRODUCT_SORTS = Object.freeze([
   'STORE_ASC',
 ]);
 
+/* Procurement and fulfilment workspace state. Each token is allow-listed here
+   and re-checked before it reaches `/api/procurement` or `/api/fulfilment`, so
+   a shared link can never widen the server contract. */
+const URL_PROCUREMENT_SORTS = Object.freeze([
+  'PRIORITY',
+  'LATEST',
+  'DELIVERY_DEADLINE',
+]);
+const URL_FULFILMENT_SORTS = Object.freeze([
+  'PRIORITY',
+  'LATEST',
+  'EXPECTED_RECEIPT',
+]);
+/** Mirrors the `MILESTONE_PATTERN`/`STATUS_PATTERN` guards on the server. */
+const URL_OPERATION_CODE_PATTERN = /^[\p{L}\p{N}._:-]{1,80}$/u;
+
 const URL_STORE_PATTERN = /^[A-Z0-9]{2,12}$/;
 const URL_OWNER_PATTERN = /^[\p{L}\p{N}._:-]{1,64}$/u;
 const URL_CODE_PATTERN = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}<>"'`\\]{1,120}$/u;
@@ -139,6 +162,23 @@ function pageSizeParam(value) {
   return URL_INVENTORY_PAGE_SIZES.includes(parsed)
     ? parsed
     : URL_DEFAULT_INVENTORY_PAGE_SIZE;
+}
+
+/**
+ * A platform status or milestone code is an open vocabulary, so it cannot be
+ * allow-listed by value. It is instead bounded by the same pattern the server
+ * enforces; anything else degrades to `ALL` rather than reaching the endpoint.
+ */
+function operationCodeParam(value) {
+  // Validate the raw trimmed token, never a sanitized one. Running this through
+  // the generic text sanitizer first would strip angle brackets and hand
+  // back `SCRIPT`, silently turning hostile input into a different but valid
+  // platform code. The pattern already bounds length and rejects controls,
+  // markup and whitespace, so anything failing it degrades to `ALL`.
+  const raw = String(value ?? '').trim();
+  if (raw === '') return 'ALL';
+  if (!URL_OPERATION_CODE_PATTERN.test(raw)) return 'ALL';
+  return raw.toUpperCase();
 }
 
 function parseScopeToken(value) {
@@ -249,6 +289,28 @@ function parseHashState(rawHash, inherited = {}) {
       productPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.productPageSize)
         ? inherited.productPageSize
         : URL_DEFAULT_INVENTORY_PAGE_SIZE,
+      procurementStatus: URL_OPERATION_CODE_PATTERN.test(String(inherited.procurementStatus ?? ''))
+        ? inherited.procurementStatus
+        : 'ALL',
+      procurementSort: URL_PROCUREMENT_SORTS.includes(inherited.procurementSort)
+        ? inherited.procurementSort
+        : 'PRIORITY',
+      // A bare nav hash restarts paging; an inherited page could point past the
+      // end of the new scope.
+      procurementPage: 1,
+      procurementPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.procurementPageSize)
+        ? inherited.procurementPageSize
+        : URL_DEFAULT_INVENTORY_PAGE_SIZE,
+      fulfilmentMilestone: URL_OPERATION_CODE_PATTERN.test(
+        String(inherited.fulfilmentMilestone ?? ''),
+      ) ? inherited.fulfilmentMilestone : 'ALL',
+      fulfilmentSort: URL_FULFILMENT_SORTS.includes(inherited.fulfilmentSort)
+        ? inherited.fulfilmentSort
+        : 'PRIORITY',
+      fulfilmentPage: 1,
+      fulfilmentPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.fulfilmentPageSize)
+        ? inherited.fulfilmentPageSize
+        : URL_DEFAULT_INVENTORY_PAGE_SIZE,
       // Navigating to another surface invalidates a focus that belonged to the
       // previous one.
       focus: null,
@@ -266,6 +328,22 @@ function parseHashState(rawHash, inherited = {}) {
     const value = params.get(name);
     return /^[1-9][0-9]{0,3}$/.test(String(value ?? '')) ? Number(value) : 1;
   };
+  /* `size` and `view` are shared parameter names across workspaces, and
+     `serializeHashState` only ever writes them for the active route. Parsing
+     them unconditionally let a `#procurement?size=50` link contaminate the
+     inherited fulfilment page size, which then survived a later bare
+     `#fulfilment` navigation. Each shared parameter now binds to its own route
+     and every other route keeps its inherited or default value. */
+  const routePageSize = (routeKey, inheritedValue) => {
+    if (route === routeKey) return pageSizeParam(params.get('size'));
+    return URL_INVENTORY_PAGE_SIZES.includes(inheritedValue)
+      ? inheritedValue
+      : URL_DEFAULT_INVENTORY_PAGE_SIZE;
+  };
+  const routeView = (routeKey, allowed, fallback, inheritedValue) => {
+    if (route === routeKey) return allowListedToken(params.get('view'), allowed, fallback);
+    return allowed.includes(inheritedValue) ? inheritedValue : fallback;
+  };
   return {
     route,
     owner: scope.owner,
@@ -278,10 +356,11 @@ function parseHashState(rawHash, inherited = {}) {
       : 'LAST30_DESC',
     productPage: pageParam('page'),
     standardPage: pageParam('standardPage'),
-    inventoryView: allowListedToken(
-      params.get('view'),
+    inventoryView: routeView(
+      'inventory',
       URL_INVENTORY_VIEWS,
       'INVENTORY',
+      inherited.inventoryView,
     ),
     inventoryType: allowListedToken(
       params.get('invType'),
@@ -300,12 +379,28 @@ function parseHashState(rawHash, inherited = {}) {
     ),
     inventoryPage: pageParam('invPage'),
     advicePage: pageParam('advicePage'),
-    inventoryPageSize: pageSizeParam(params.get('size')),
-    productView: allowListedToken(params.get('view'), URL_PRODUCT_VIEWS, 'PENDING'),
+    inventoryPageSize: routePageSize('inventory', inherited.inventoryPageSize),
+    productView: routeView('products', URL_PRODUCT_VIEWS, 'PENDING', inherited.productView),
     productSort: allowListedToken(params.get('prodSort'), URL_PRODUCT_SORTS, 'IMPACT_DESC'),
     productPendingPage: pageParam('pendingPage'),
     productCanonicalPage: pageParam('canonicalPage'),
-    productPageSize: pageSizeParam(params.get('size')),
+    productPageSize: routePageSize('products', inherited.productPageSize),
+    procurementStatus: operationCodeParam(params.get('status')),
+    procurementSort: allowListedToken(
+      params.get('poSort'),
+      URL_PROCUREMENT_SORTS,
+      'PRIORITY',
+    ),
+    procurementPage: pageParam('poPage'),
+    procurementPageSize: routePageSize('procurement', inherited.procurementPageSize),
+    fulfilmentMilestone: operationCodeParam(params.get('milestone')),
+    fulfilmentSort: allowListedToken(
+      params.get('dnSort'),
+      URL_FULFILMENT_SORTS,
+      'PRIORITY',
+    ),
+    fulfilmentPage: pageParam('dnPage'),
+    fulfilmentPageSize: routePageSize('fulfilment', inherited.fulfilmentPageSize),
     // A focus only applies on the surface that can prove it.
     focus: focus && FOCUS_DOMAINS[focus.domain].route === route ? focus : null,
     canonicalLink: true,
@@ -374,6 +469,28 @@ function serializeHashState(input = {}) {
     if (productPageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) {
       params.set('size', String(productPageSize));
     }
+  }
+  if (route === 'procurement') {
+    const status = operationCodeParam(input.procurementStatus);
+    if (status !== 'ALL') params.set('status', status);
+    const poSort = allowListedToken(input.procurementSort, URL_PROCUREMENT_SORTS, 'PRIORITY');
+    if (poSort !== 'PRIORITY') params.set('poSort', poSort);
+    if (Number.isSafeInteger(input.procurementPage) && input.procurementPage > 1) {
+      params.set('poPage', String(Math.min(input.procurementPage, 9999)));
+    }
+    const poPageSize = pageSizeParam(input.procurementPageSize);
+    if (poPageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) params.set('size', String(poPageSize));
+  }
+  if (route === 'fulfilment') {
+    const milestone = operationCodeParam(input.fulfilmentMilestone);
+    if (milestone !== 'ALL') params.set('milestone', milestone);
+    const dnSort = allowListedToken(input.fulfilmentSort, URL_FULFILMENT_SORTS, 'PRIORITY');
+    if (dnSort !== 'PRIORITY') params.set('dnSort', dnSort);
+    if (Number.isSafeInteger(input.fulfilmentPage) && input.fulfilmentPage > 1) {
+      params.set('dnPage', String(Math.min(input.fulfilmentPage, 9999)));
+    }
+    const dnPageSize = pageSizeParam(input.fulfilmentPageSize);
+    if (dnPageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) params.set('size', String(dnPageSize));
   }
   const focus = input.focus && FOCUS_DOMAINS[input.focus.domain]?.route === route
     ? serializeFocusToken(input.focus)
@@ -452,9 +569,20 @@ const state = {
     loading: false,
     error: '',
     requestSerial: 0,
-    page: 1,
-    pageSize: 25,
-    sort: 'PRIORITY',
+    status: initialHashState.procurementStatus || 'ALL',
+    sort: initialHashState.procurementSort || 'PRIORITY',
+    page: initialHashState.procurementPage || 1,
+    pageSize: initialHashState.procurementPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
+  },
+  fulfilment: {
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+    milestone: initialHashState.fulfilmentMilestone || 'ALL',
+    sort: initialHashState.fulfilmentSort || 'PRIORITY',
+    page: initialHashState.fulfilmentPage || 1,
+    pageSize: initialHashState.fulfilmentPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
   },
   sales: {
     data: null,
@@ -521,6 +649,7 @@ let procurementLoadTimer = null;
 let salesLoadTimer = null;
 let inventoryLoadTimer = null;
 let productLoadTimer = null;
+let fulfilmentLoadTimer = null;
 let dashboardEventSource = null;
 
 function routeFromLocation() {
@@ -2244,15 +2373,24 @@ function quickFilterBar(route, label, options) {
     </div>`;
 }
 
+function procurementQuickValue() {
+  const active = quickFilterValue('procurement');
+  return [
+    'HIGH', 'OVERDUE', 'PENDING_DELIVERY',
+    'PENDING_RECEIPT', 'PENDING_STORAGE', 'DEFECTIVE',
+  ].includes(active) ? active : 'ALL';
+}
+
 function procurementQueryUrl() {
   const params = new URLSearchParams({
     owner: state.owner,
     store: state.store,
     q: state.query,
-    quick: quickFilterValue('procurement'),
-    sort: state.procurement.sort,
+    status: operationCodeParam(state.procurement.status),
+    quick: procurementQuickValue(),
+    sort: allowListedToken(state.procurement.sort, URL_PROCUREMENT_SORTS, 'PRIORITY'),
     page: String(state.procurement.page),
-    pageSize: String(state.procurement.pageSize),
+    pageSize: String(pageSizeParam(state.procurement.pageSize)),
   });
   return `/api/procurement?${params.toString()}`;
 }
@@ -2330,7 +2468,7 @@ function procurementErrorState() {
     </section>`;
 }
 
-function procurementPagination(queryData) {
+function procurementPagination(queryData, position = 'bottom') {
   const pagination = queryData?.attention?.pagination;
   if (!pagination || !isUnit(pagination.page) || !isUnit(pagination.pageSize)) return '';
   const matched = isUnit(pagination.matchedMaterializedRows)
@@ -2339,7 +2477,7 @@ function procurementPagination(queryData) {
   const pageCount = isUnit(pagination.pageCount) ? pagination.pageCount : 0;
   const displayedPage = pageCount === 0 ? 0 : pagination.page;
   return `
-    <nav class="table-pagination" aria-label="采购单关注清单分页">
+    <nav class="table-pagination ${position === 'top' ? 'pagination-top' : ''}" aria-label="采购单关注清单分页（${position === 'top' ? '表格上方' : '表格下方'}）">
       <p>已物化范围命中 ${numberFormatter.format(matched)} 条 · 第 ${numberFormatter.format(displayedPage)} / ${numberFormatter.format(pageCount)} 页</p>
       <div>
         <button type="button" data-procurement-page="${Math.max(1, pagination.page - 1)}" ${pagination.hasPrevious ? '' : 'disabled'}>上一页</button>
@@ -2347,6 +2485,183 @@ function procurementPagination(queryData) {
       </div>
     </nav>`;
 }
+
+/* --- fulfilment-query:start ---
+   The fulfilment workspace reads only `/api/fulfilment`. Filtering, sorting and
+   paging happen on the server, so the browser never filters the whole Dashboard
+   snapshot and never presents the materialized slice as the SHEIN universe. */
+
+function fulfilmentQuickValue() {
+  const active = quickFilterValue('fulfilment');
+  return ['HIGH', 'CREATED', 'PICKUP_RESERVED', 'IN_TRANSIT', 'PENDING_RECEIPT']
+    .includes(active) ? active : 'ALL';
+}
+
+function fulfilmentQueryUrl() {
+  const params = new URLSearchParams({
+    owner: state.owner,
+    store: state.store,
+    q: state.query,
+    milestone: operationCodeParam(state.fulfilment.milestone),
+    quick: fulfilmentQuickValue(),
+    sort: allowListedToken(state.fulfilment.sort, URL_FULFILMENT_SORTS, 'PRIORITY'),
+    page: String(state.fulfilment.page),
+    pageSize: String(pageSizeParam(state.fulfilment.pageSize)),
+  });
+  return `/api/fulfilment?${params.toString()}`;
+}
+
+async function loadFulfilment({ resetPage = false } = {}) {
+  if (resetPage) state.fulfilment.page = 1;
+  if (state.route !== 'fulfilment') return;
+  const requestSerial = state.fulfilment.requestSerial + 1;
+  state.fulfilment.requestSerial = requestSerial;
+  state.fulfilment.loading = true;
+  state.fulfilment.error = '';
+  render();
+  try {
+    const result = await fetchJson(fulfilmentQueryUrl());
+    // A response that lost the race must never replace newer filter state.
+    if (requestSerial !== state.fulfilment.requestSerial) return;
+    if (
+      !result
+      || result.readOnly !== true
+      || !Array.isArray(result.attention?.rows)
+      || !Array.isArray(result.milestoneOverview)
+      || !result.summary
+      || !result.source
+    ) {
+      throw new Error('交付入仓查询结构无效');
+    }
+    state.fulfilment.data = result;
+  } catch (error) {
+    if (requestSerial !== state.fulfilment.requestSerial) return;
+    state.fulfilment.data = null;
+    state.fulfilment.error = error instanceof Error
+      ? error.message
+      : '交付入仓查询暂不可用';
+  } finally {
+    if (requestSerial === state.fulfilment.requestSerial) {
+      state.fulfilment.loading = false;
+      render();
+    }
+  }
+}
+
+function scheduleFulfilmentLoad({ resetPage = false, delay = 0 } = {}) {
+  if (fulfilmentLoadTimer !== null) window.clearTimeout(fulfilmentLoadTimer);
+  // Invalidate any in-flight response now, not when the debounce fires, so an
+  // old scope can never paint under the new URL state.
+  state.fulfilment.requestSerial += 1;
+  if (resetPage) {
+    state.fulfilment.page = 1;
+    state.fulfilment.data = null;
+    state.fulfilment.error = '';
+    state.fulfilment.loading = true;
+  }
+  if (state.route !== 'fulfilment') return;
+  if (resetPage) render();
+  fulfilmentLoadTimer = window.setTimeout(() => {
+    fulfilmentLoadTimer = null;
+    void loadFulfilment();
+  }, delay);
+}
+
+function fulfilmentQueryState(kind) {
+  const error = kind === 'error';
+  return `
+    <section class="panel procurement-query-state${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}">
+      <span class="eyebrow">FULFILMENT QUERY</span>
+      <h2>${error ? '交付入仓查询暂不可用' : '正在按当前条件查询交付单'}</h2>
+      <p>${error
+        ? escapeHtml(state.fulfilment.error || '请稍后重试。')
+        : '筛选、排序和分页在服务端执行；旧筛选结果不会冒充新结果。'}</p>
+      ${error
+        ? '<button type="button" class="clear-button" data-fulfilment-retry="1">重新查询</button>'
+        : '<div class="query-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>'}
+    </section>`;
+}
+
+function fulfilmentPagination(pagination, position) {
+  if (!pagination || !isUnit(pagination.page) || !isUnit(pagination.pageSize)) return '';
+  const matched = isUnit(pagination.matchedMaterializedRows)
+    ? pagination.matchedMaterializedRows
+    : 0;
+  const pageCount = isUnit(pagination.pageCount) ? pagination.pageCount : 0;
+  const displayedPage = pageCount === 0 ? 0 : pagination.page;
+  return `
+    <nav class="table-pagination ${position === 'top' ? 'pagination-top' : ''}" aria-label="交付单关注清单分页（${position === 'top' ? '表格上方' : '表格下方'}）">
+      <p>已物化范围命中 ${numberFormatter.format(matched)} 条 · 第 ${numberFormatter.format(displayedPage)} / ${numberFormatter.format(pageCount)} 页</p>
+      <div>
+        <button type="button" data-fulfilment-page="${Math.max(1, pagination.page - 1)}" ${pagination.hasPrevious ? '' : 'disabled'}>上一页</button>
+        <button type="button" data-fulfilment-page="${pagination.page + 1}" ${pagination.hasNext ? '' : 'disabled'}>下一页</button>
+      </div>
+    </nav>`;
+}
+
+/** Shared select control for the operational filter bars. */
+function operationSelect(kind, label, options, current) {
+  return `
+    <label class="sales-sort-control">
+      <span>${escapeHtml(label)}</span>
+      <select data-operation-select="${escapeHtml(kind)}">
+        ${options.map(([value, text]) => `<option value="${escapeHtml(String(value))}" ${String(current) === String(value) ? 'selected' : ''}>${escapeHtml(text)}</option>`).join('')}
+      </select>
+    </label>`;
+}
+
+/** Search and reset act on the shared global query used by every endpoint. */
+function operationSearchControls(kind) {
+  return `
+    <div class="operation-search" role="group" aria-label="工作台搜索">
+      <button type="button" class="clear-button" data-operation-search="${escapeHtml(kind)}">搜索当前条件</button>
+      <button type="button" class="clear-button" data-operation-reset="${escapeHtml(kind)}">重置筛选</button>
+    </div>`;
+}
+
+/** Truthful coverage line: 23/24 with the in-progress store named explicitly. */
+function operationCoverageLine(source) {
+  const coverage = productRecord(source?.coverage);
+  const meta = productRecord(source?.materializedAttention);
+  const succeeded = isUnit(coverage.succeededStores) ? coverage.succeededStores : null;
+  const total = isUnit(coverage.totalStores) ? coverage.totalStores : null;
+  const inProgress = Array.isArray(coverage.inProgressStoreCodes)
+    ? coverage.inProgressStoreCodes
+    : [];
+  return [
+    succeeded === null || total === null
+      ? '店铺覆盖未知'
+      : `店铺覆盖 ${numberFormatter.format(succeeded)} / ${numberFormatter.format(total)}`,
+    inProgress.length ? `进行中 ${inProgress.join('、')}` : '无进行中店铺',
+    isUnit(coverage.failedStores) ? `失败 ${numberFormatter.format(coverage.failedStores)}` : '失败数未知',
+    isUnit(coverage.staleStores) ? `过期 ${numberFormatter.format(coverage.staleStores)}` : '过期数未知',
+    coverage.watermarkStart && coverage.watermarkEnd
+      ? `水位 ${sourceTime(coverage.watermarkStart)} → ${sourceTime(coverage.watermarkEnd)}`
+      : '水位区间未知',
+    isUnit(meta.returned) && isUnit(meta.total)
+      ? `源物化 ${numberFormatter.format(meta.returned)} / ${numberFormatter.format(meta.total)} 条`
+      : '源物化数量未知',
+    meta.truncated === true ? '源结果已截断，非仓库全量' : '源物化未截断',
+  ].join(' · ');
+}
+
+/** Render one nullable quantity metric without turning unknown into zero. */
+function stageMetricValue(metric, unit) {
+  const source = productRecord(metric);
+  if (isUnit(source.total)) return `${numberFormatter.format(source.total)} ${unit}`;
+  if (isUnit(source.knownSum)) return `≥ ${numberFormatter.format(source.knownSum)} ${unit}`;
+  return '未知';
+}
+
+function stageMetricNote(metric) {
+  const source = productRecord(metric);
+  const rowCount = isUnit(source.rowCount) ? source.rowCount : 0;
+  const unknownCount = isUnit(source.unknownCount) ? source.unknownCount : 0;
+  if (rowCount === 0) return '当前筛选没有命中已物化行；不代表业务数量为 0';
+  if (unknownCount === 0) return `${numberFormatter.format(rowCount)} 行数量全部已知`;
+  return `${numberFormatter.format(unknownCount)} / ${numberFormatter.format(rowCount)} 行未知，拒绝补零合计`;
+}
+/* --- fulfilment-query:end --- */
 
 function salesQueryUrl() {
   const quick = quickFilterValue('sales');
@@ -5036,8 +5351,10 @@ function purchaseOrderAttentionTable(rows, hasEvidence) {
         : '先使用下方店铺×状态汇总判断范围；单据级契约接入后可按采购单号、要求时间和数量下钻。',
     );
   }
-  const visible = orderRowsForFocus([...rows].sort(comparePriority), 'procurement')
-    .slice(0, 100);
+  // Preserve the server order. Re-sorting here would silently override the
+  // chosen LATEST or DELIVERY_DEADLINE sort on every paginated page. Focus-first
+  // ordering is the only permitted reordering.
+  const visible = orderRowsForFocus(rows, 'procurement');
   return `
     <div class="table-wrap">
       <table class="data-table operational-table">
@@ -5061,30 +5378,7 @@ function purchaseOrderAttentionTable(rows, hasEvidence) {
           </tr>`).join('')}</tbody>
       </table>
     </div>
-    <p class="table-note">清单优先展示逾期、待交付、待收货和待入库单据；数量链路未知时保留“—”。显示 ${numberFormatter.format(visible.length)} / ${numberFormatter.format(rows.length)} 条。</p>`;
-}
-
-function procurementTable(rows) {
-  if (!rows.length) {
-    return emptyEvidence(
-      '当前筛选没有采购单状态行',
-      '这只表示当前负责人、店铺或搜索条件没有命中；不把空结果解释为 0 张采购单。',
-    );
-  }
-  return `
-    <div class="table-wrap">
-      <table class="data-table operational-table">
-        <thead><tr><th scope="col">店铺</th><th scope="col">采购单状态</th><th scope="col" class="number-column">采购单数</th><th scope="col">来源快照</th></tr></thead>
-        <tbody>${rows.map((row) => `
-          <tr>
-            <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.storeCode || '店铺编码未知')}</span></td>
-            <td><span class="row-status ${sourceStatusTone(row.statusCode || row.statusName)}">${escapeHtml(row.statusName || row.statusCode || '状态未知')}</span></td>
-            <td class="number-column ${isUnit(row.orderCount) ? '' : 'missing-value'}">${nullableUnits(row.orderCount)}</td>
-            <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
-          </tr>`).join('')}</tbody>
-      </table>
-    </div>
-    <p class="table-note">“—”表示平台字段未知或当前快照未覆盖，不表示采购单数为 0；只有明确返回的 0 才展示为 0。</p>`;
+    <p class="table-note">当前页显示 ${numberFormatter.format(visible.length)} 条，排序与分页由服务端决定，页面不再按优先级重排当前页。数量链路未知时保留“—”，不补 0。</p>`;
 }
 
 function renderProcurement() {
@@ -5096,32 +5390,21 @@ function renderProcurement() {
   }
   const queryData = state.procurement.data;
   if (!queryData) return procurementLoadingState();
-  const rows = queryData.statusRows;
   const attention = queryData.attention.rows;
-  const sourceMeta = queryData.source?.materializedAttention || {};
+  const sourceMeta = productRecord(queryData.source?.materializedAttention);
   const attentionAvailable = sourceMeta.available === true
     || attention.length > 0
     || sourceMeta.truncated === true;
-  const totalOrders = queryData.summary?.orderCount ?? null;
-  const statusCount = queryData.summary?.statusCount ?? 0;
-  const connected = queryData.source?.supplyStatus === 'available'
-    || queryData.source?.coverage?.status === 'complete'
-    || queryData.source?.coverage?.status === 'partial';
-  const connectedLabel = rows.length
-    ? '真实状态已接入'
-    : connected ? '接口已有覆盖 · 当前筛选无事实行' : '尚未完成可信接入';
-  const sourceTotal = isUnit(sourceMeta.total) ? sourceMeta.total : null;
-  const sourceReturned = isUnit(sourceMeta.returned) ? sourceMeta.returned : null;
-  const matchedMaterialized = isUnit(queryData.summary?.matchedMaterializedAttentionCount)
-    ? queryData.summary.matchedMaterializedAttentionCount
-    : attention.length;
-  const queryCoverageLabel = [
-    `服务端筛选命中 ${numberFormatter.format(matchedMaterialized)} 条`,
-    sourceReturned === null || sourceTotal === null
-      ? '物化范围未知'
-      : `源物化 ${numberFormatter.format(sourceReturned)} / ${numberFormatter.format(sourceTotal)} 条`,
-    sourceMeta.truncated === true ? '源数据已截断' : '源物化未截断',
-  ].join(' · ');
+  const summary = productRecord(queryData.summary);
+  const stages = productRecord(summary.quantityStages);
+  const overview = Array.isArray(queryData.statusOverview) ? queryData.statusOverview : [];
+  const totalOrders = isUnit(summary.orderCount) ? summary.orderCount : null;
+  const coverageLine = operationCoverageLine(queryData.source);
+  const statusOptions = [
+    ['ALL', '全部状态'],
+    ...(Array.isArray(queryData.filters?.statuses) ? queryData.filters.statuses : [])
+      .map((row) => [row.code, row.name || row.code]),
+  ];
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
@@ -5129,13 +5412,88 @@ function renderProcurement() {
       'PURCHASE ORDERS',
       '采购单中心',
       '采购单是 SHEIN 向商家下达的供货单据，不是消费者订单；销量只作为需求参照。',
-      `<span>采购单事实</span><strong>${escapeHtml(connectedLabel)}</strong><small>${escapeHtml(connected ? operationScopeNote(rows, '采购单状态') : '不展示订单数或伪造状态')}</small>`,
+      `<span>采购单证据</span><strong>${escapeHtml(`已物化范围命中 ${numberFormatter.format(isUnit(summary.matchedMaterializedAttentionCount) ? summary.matchedMaterializedAttentionCount : 0)} 条`)}</strong><small>${escapeHtml(coverageLine)}</small>`,
     )}
+    ${operationSummaryCards([
+      {
+        label: '当前范围采购单',
+        value: totalOrders === null ? '未知' : `${numberFormatter.format(totalOrders)} 张`,
+        note: totalOrders === null
+          ? '存在数量未知的状态行，拒绝补零后合计；单据张数与下方数量口径不同'
+          : '来自状态快照的单据张数，与阶段数量是两个口径',
+        tone: totalOrders === null ? 'partial' : 'available',
+      },
+      {
+        // The field is the receipt stage quantity, so the label says 收货数量.
+        // Calling it 待入库 would imply a pending remainder the data never states.
+        label: '收货数量',
+        value: stageMetricValue(stages.receipt, '件'),
+        note: stageMetricNote(stages.receipt),
+        tone: 'partial',
+      },
+      {
+        label: '残次数量',
+        value: stageMetricValue(stages.defective, '件'),
+        note: stageMetricNote(stages.defective),
+        tone: 'partial',
+      },
+      {
+        label: '最新来源快照',
+        value: summary.latestSourceFetchedAt
+          ? formatDateTime(summary.latestSourceFetchedAt)
+          : '未知',
+        note: '接口抓取时间，不冒充采购单业务时间',
+        tone: summary.latestSourceFetchedAt ? 'available' : 'partial',
+      },
+    ])}
     <section class="table-section">
       ${panelHeading(
+        'ATTENTION QUANTITY SNAPSHOT',
+        '关注范围阶段数量快照',
+        escapeHtml(String(summary.attentionScopeLabel || '当前已物化关注范围的阶段数量，不是转化漏斗')),
+      )}
+      <div class="stage-snapshot">
+        ${[
+          ['订购', stages.order],
+          ['交付', stages.delivery],
+          ['收货', stages.receipt],
+          ['入库', stages.storage],
+          ['残次', stages.defective],
+        ].map(([label, metric]) => `
+          <article class="stage-cell">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(stageMetricValue(metric, '件'))}</strong>
+            <small>${escapeHtml(stageMetricNote(metric))}</small>
+          </article>`).join('')}
+      </div>
+      <p class="table-note">这五个数量属于同一批已物化关注单据的不同阶段字段，彼此独立，不构成转化漏斗，也不据此推导完成率或百分比。</p>
+    </section>
+    <section class="table-section">
+      ${panelHeading(
+        'STATUS OVERVIEW',
+        '采购单状态紧凑总览',
+        `按平台状态聚合 ${numberFormatter.format(overview.length)} 类 · 不逐店铺展开`,
+      )}
+      ${overview.length ? `
+        <div class="table-wrap">
+          <table class="data-table operational-table">
+            <thead><tr><th scope="col">平台状态</th><th scope="col" class="number-column">采购单数</th><th scope="col" class="number-column">覆盖店铺</th></tr></thead>
+            <tbody>${overview.map((row) => `
+              <tr>
+                <td class="entity-column"><strong>${escapeHtml(row.statusName || row.statusCode)}</strong><span>${escapeHtml(row.statusCode)}</span></td>
+                <td class="number-column ${isUnit(row.orderCount) ? '' : 'missing-value'}">${nullableUnits(row.orderCount)}</td>
+                <td class="number-column">${nullableUnits(row.storeCount)}</td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>
+        <p class="table-note">任一店铺数量未知时该状态合计保持“—”，绝不补零；这里只做范围判断，具体行动看下方关注队列。</p>`
+        : emptyEvidence('当前筛选没有采购单状态行', '这不代表没有采购单；请调整负责人、店铺、状态或搜索条件。')}
+    </section>
+    <section class="table-section inventory-workspace">
+      ${panelHeading(
         'PURCHASE ATTENTION',
-        '采购单关注清单',
-        attentionAvailable ? `${queryCoverageLabel} · 单据级事实优先` : '单据级事实待接入',
+        '采购单关注队列',
+        attentionAvailable ? `${coverageLine} · 单据级事实优先` : '单据级事实待接入',
       )}
       ${quickFilterBar('procurement', '快速筛查', [
         ['ALL', '全部关注'],
@@ -5144,77 +5502,35 @@ function renderProcurement() {
         ['PENDING_DELIVERY', '待交付'],
         ['PENDING_RECEIPT', '待收货'],
         ['PENDING_STORAGE', '待入库'],
+        ['DEFECTIVE', '存在残次'],
       ])}
+      <div class="operation-controls">
+        ${operationSelect('procurementStatus', '平台状态', statusOptions, state.procurement.status)}
+        ${operationSelect('procurementSort', '排序', [
+          ['PRIORITY', '优先级'],
+          ['LATEST', '证据最新'],
+          ['DELIVERY_DEADLINE', '要求交付时间'],
+        ], state.procurement.sort)}
+        ${operationSelect('procurementPageSize', '每页', [
+          [25, '25 条'], [50, '50 条'], [100, '100 条'],
+        ], pageSizeParam(state.procurement.pageSize))}
+        ${operationSearchControls('procurement')}
+      </div>
+      ${procurementPagination(queryData, 'top')}
       ${purchaseOrderAttentionTable(attention, attentionAvailable)}
-      ${procurementPagination(queryData)}
+      ${procurementPagination(queryData, 'bottom')}
       ${state.procurement.loading ? '<p class="query-refresh-note" role="status">正在刷新当前筛选结果…</p>' : ''}
       ${sourceMeta.truncated === true ? '<p class="table-note warning-note">当前接口只筛选物化到页面的单据级关注记录；源明细已截断，因此筛选结果不是仓库全量采购单数量。</p>' : ''}
     </section>
-    ${connected ? `
-      ${operationSummaryCards([
-        {
-          label: '当前范围采购单',
-          value: totalOrders === null ? '未知' : `${numberFormatter.format(totalOrders)} 张`,
-          note: totalOrders === null ? '存在数量未知的状态行，拒绝补零后合计' : '各状态明确数量的完整合计',
-          tone: totalOrders === null ? 'partial' : 'available',
-        },
-        {
-          label: '状态种类',
-          value: statusCount ? `${numberFormatter.format(statusCount)} 类` : '未知',
-          note: '按平台状态码去重，不推导业务完成率',
-        },
-        {
-          label: '店铺覆盖',
-          value: isUnit(queryData.summary?.storeCount)
-            ? `${numberFormatter.format(queryData.summary.storeCount)} 家`
-            : '未知',
-          note: '按服务端当前筛选命中的状态行与物化关注行去重',
-        },
-        {
-          label: '最新来源快照',
-          value: queryData.summary?.latestSourceFetchedAt
-            ? formatDateTime(queryData.summary.latestSourceFetchedAt)
-            : '未知',
-          note: '展示源接口抓取时间，不冒充采购单业务时间',
-        },
-      ])}
-      <section class="table-section">
-        ${panelHeading('PURCHASE ORDER STATUS', '店铺×采购单状态汇总', '第二层总览；数量未知保留为空，具体行动以下方单据关注清单为准')}
-        ${procurementTable(rows)}
-      </section>
-      <div class="split-grid">
-        <section class="panel">
-          ${panelHeading('DEMAND SIGNAL', '销量需求信号', RANGE_META[state.range].label)}
-          ${demandSignal('procurement')}
-        </section>
-        <section class="panel condition-panel">
-          ${panelHeading('DATA BOUNDARY', '采购单数据边界', '事实接入不等于写能力开放')}
-          <ul class="condition-list">
-            <li><strong>单据口径</strong><span>SHEIN 向商家下达的采购单，不是消费者订单</span></li>
-            <li><strong>数量口径</strong><span>采购、交付、收货和入库数量保持独立</span></li>
-            <li><strong>来源时间</strong><span>接口快照时间与平台业务时间分开保存</span></li>
-            <li><strong>写操作</strong><span>当前页面与服务仍为只读，不提交任何采购单动作</span></li>
-          </ul>
-        </section>
-      </div>` : `
-      <div class="split-grid">
-        <section class="panel">
-          ${panelHeading('DEMAND SIGNAL', '销量需求信号', RANGE_META[state.range].label)}
-          ${demandSignal('procurement')}
-        </section>
-        <section class="panel condition-panel">
-          ${panelHeading('PURCHASE ORDER GATE', '采购单接入条件', '主动增量、Webhook 与日终补漏共同取证')}
-          <ul class="condition-list">
-            <li><strong>采购单列表与详情</strong><span>采购单号、类型、状态、仓库、平台业务时间</span></li>
-            <li><strong>数量链路</strong><span>采购、交付、收货、入库、残次数量分别保存</span></li>
-            <li><strong>商品键</strong><span>SKC、SKU、supplierCode、supplierSku 与店铺身份对账</span></li>
-            <li><strong>增量与补漏</strong><span>更新时间增量、采购单事件、日终全量对账</span></li>
-          </ul>
-        </section>
-      </div>
-      <section class="wide-empty-section">
-        ${emptyEvidence('采购单事实未接入', '当前没有采购单列表、状态或采购数量事实；不会把销量排行换算成采购单或待交付数量。', '接入后展示急采、备货、JIT母子单、状态与数量进度。')}
-      </section>`}`;
+    <section class="panel condition-panel">
+      ${panelHeading('DATA BOUNDARY', '采购单数据边界', '事实接入不等于写能力开放')}
+      <ul class="condition-list">
+        <li><strong>单据口径</strong><span>SHEIN 向商家下达的采购单，不是消费者订单</span></li>
+        <li><strong>数量口径</strong><span>采购、交付、收货、入库与残次数量保持独立，不相加也不算比率</span></li>
+        <li><strong>来源时间</strong><span>接口快照时间与平台业务时间分开保存</span></li>
+        <li><strong>写操作</strong><span>当前页面与服务仍为只读，不提交任何采购单动作</span></li>
+      </ul>
+    </section>`;
 }
 
 function deliveryAttentionTable(rows, hasEvidence) {
@@ -5226,8 +5542,10 @@ function deliveryAttentionTable(rows, hasEvidence) {
         : '先使用下方店铺×里程碑汇总；单据级契约接入后可按交付单号、预计收货和物流状态下钻。',
     );
   }
-  const visible = orderRowsForFocus([...rows].sort(comparePriority), 'fulfilment')
-    .slice(0, 100);
+  // Preserve the server order. Re-sorting here would silently override the
+  // chosen LATEST or EXPECTED_RECEIPT sort on every paginated page. Focus-first
+  // ordering is the only permitted reordering.
+  const visible = orderRowsForFocus(rows, 'fulfilment');
   return `
     <div class="table-wrap">
       <table class="data-table operational-table">
@@ -5246,56 +5564,34 @@ function deliveryAttentionTable(rows, hasEvidence) {
           </tr>`).join('')}</tbody>
       </table>
     </div>
-    <p class="table-note">按优先级展示待揽收、运输中、待收货和超时关注单据。显示 ${numberFormatter.format(visible.length)} / ${numberFormatter.format(rows.length)} 条。</p>`;
-}
-
-function fulfilmentTable(rows) {
-  if (!rows.length) {
-    return emptyEvidence(
-      '当前筛选没有交付里程碑行',
-      '这不代表没有发货或入仓；请调整负责人、店铺或搜索条件。',
-    );
-  }
-  return `
-    <div class="table-wrap">
-      <table class="data-table operational-table">
-        <thead><tr><th scope="col">店铺</th><th scope="col">履约里程碑</th><th scope="col" class="number-column">交付单数</th><th scope="col" class="number-column">交付数量</th><th scope="col">数量覆盖</th><th scope="col">来源快照</th></tr></thead>
-        <tbody>${rows.map((row) => `
-          <tr>
-            <td class="entity-column"><strong>${escapeHtml(row.storeName || row.storeCode || '店铺待确认')}</strong><span>${escapeHtml(row.storeCode || '店铺编码未知')}</span></td>
-            <td><span class="row-status ${sourceStatusTone(row.milestoneCode)}">${escapeHtml(row.milestoneCode || '里程碑未知')}</span></td>
-            <td class="number-column ${isUnit(row.deliveryCount) ? '' : 'missing-value'}">${nullableUnits(row.deliveryCount)}</td>
-            <td class="number-column ${isUnit(row.deliveryQuantity) ? '' : 'missing-value'}">${nullableUnits(row.deliveryQuantity)}</td>
-            <td class="boundary-cell">${escapeHtml(fieldCoverageLabel(row.deliveryQuantityCoverage, [['knownLineCount', 'totalLineCount', '行']]))}</td>
-            <td class="boundary-cell">${escapeHtml(sourceTime(row.latestSourceFetchedAt))}</td>
-          </tr>`).join('')}</tbody>
-      </table>
-    </div>
-    <p class="table-note">交付单数与交付数量是两个口径。数量为“—”时同时展示已知行覆盖率，绝不按 0 参与合计。</p>`;
+    <p class="table-note">当前页显示 ${numberFormatter.format(visible.length)} 条，排序与分页由服务端决定，页面不再按优先级重排当前页。预计收货时间缺失时保持未知，不用其他时间冒充。</p>`;
 }
 
 function renderFulfilment() {
-  const supply = supplyDomain();
-  const allRows = domainRows(supply, 'deliveryMilestones');
-  const rows = scopedOperationRows(allRows);
-  const attentionAvailable = attentionEvidence('deliveryAttention', 'deliveries');
-  const allAttention = scopedOperationRows(attentionRows('deliveryAttention'));
-  const attention = allAttention.filter((row) => matchesQuickFilter(row, 'fulfilment', 'fulfilment'));
-  const connected = domainConnectionState(
-    supply,
-    ['deliveryAttention', 'deliveryMilestones'],
-    ['deliveries'],
-  ) === 'available';
-  const connectionLabel = allRows.length
-    ? '真实里程碑已接入'
-    : connected ? '接口覆盖完整 · 当前窗口无事实行' : '尚未完成可信接入';
-  const deliveryCount = completeNullableSum(rows, 'deliveryCount');
-  const deliveryQuantity = completeCoveredNullableSum(
-    rows,
-    'deliveryQuantity',
-    'deliveryQuantityCoverage',
-    [['knownLineCount', 'totalLineCount', '行']],
-  );
+  if (state.fulfilment.loading && !state.fulfilment.data) {
+    return `${sampleNotice()}${focusEvidencePanel()}${fulfilmentQueryState('loading')}`;
+  }
+  if (state.fulfilment.error && !state.fulfilment.data) {
+    return `${sampleNotice()}${focusEvidencePanel()}${fulfilmentQueryState('error')}`;
+  }
+  const queryData = state.fulfilment.data;
+  if (!queryData) return fulfilmentQueryState('loading');
+  const attention = queryData.attention.rows;
+  const sourceMeta = productRecord(queryData.attention.source);
+  const attentionAvailable = sourceMeta.available === true
+    || attention.length > 0
+    || sourceMeta.truncated === true;
+  const summary = productRecord(queryData.summary);
+  const overview = Array.isArray(queryData.milestoneOverview) ? queryData.milestoneOverview : [];
+  const coverageLine = operationCoverageLine(queryData.source);
+  const expectedKnown = isUnit(summary.expectedReceiptKnownCount)
+    ? summary.expectedReceiptKnownCount
+    : 0;
+  const milestoneOptions = [
+    ['ALL', '全部里程碑'],
+    ...(Array.isArray(queryData.filters?.milestones) ? queryData.filters.milestones : [])
+      .map((row) => [row.code, row.name || row.code]),
+  ];
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
@@ -5303,60 +5599,109 @@ function renderFulfilment() {
       'DELIVERY & INBOUND',
       '交付与入仓',
       '跟踪发货、物流预报、送达、收货、查验、入库和残次节点；每个节点只认平台单据事实。',
-      `<span>交付事实</span><strong>${escapeHtml(connectionLabel)}</strong><small>${escapeHtml(connected ? operationScopeNote(rows, '交付里程碑') : '未知不等于未发货')}</small>`,
+      `<span>交付证据</span><strong>${escapeHtml(`已物化范围命中 ${numberFormatter.format(isUnit(summary.matchedMaterializedAttentionCount) ? summary.matchedMaterializedAttentionCount : 0)} 条`)}</strong><small>${escapeHtml(coverageLine)}</small>`,
     )}
+    ${operationSummaryCards([
+      {
+        label: '快照交付单数',
+        value: stageMetricValue(summary.snapshotDeliveryCount, '单'),
+        note: `${stageMetricNote(summary.snapshotDeliveryCount)}；交付单数与交付数量单位不同，不可相加`,
+        tone: 'partial',
+      },
+      {
+        label: '快照交付数量',
+        value: stageMetricValue(summary.snapshotDeliveryQuantity, '件'),
+        note: stageMetricNote(summary.snapshotDeliveryQuantity),
+        tone: 'partial',
+      },
+      {
+        label: '关注范围交付数量',
+        value: stageMetricValue(summary.attentionDeliveryQuantity, '件'),
+        note: `${stageMetricNote(summary.attentionDeliveryQuantity)}；仅统计未收货的关注单据`,
+        tone: 'partial',
+      },
+      {
+        label: '预计收货时间已知',
+        value: `${numberFormatter.format(expectedKnown)} 条`,
+        note: expectedKnown === 0
+          ? '当前来源没有提供预计收货时间，保持未知，不用其他时间冒充'
+          : '仅统计来源明确给出预计收货时间的单据',
+        tone: expectedKnown === 0 ? 'partial' : 'available',
+      },
+    ])}
     <section class="table-section">
-      ${panelHeading('DELIVERY ATTENTION', '交付入仓关注清单', attentionAvailable ? `${metaCountLabel('deliveries', allAttention)} · 单据级事实优先` : '兼容旧契约 · 单据级事实待接入')}
+      ${panelHeading(
+        'MILESTONE SNAPSHOT',
+        '交付里程碑紧凑总览',
+        // This overview is the whole scoped milestone snapshot, including
+        // RECEIVED, so it must not borrow the attention-scope caption: the
+        // attention queue below only holds unreceived deliveries.
+        '当前交付里程碑快照（含已收货）· 交付单数与交付数量单位不同，不可相加 · 不是转化漏斗',
+      )}
+      ${overview.length ? `
+        <div class="table-wrap">
+          <table class="data-table operational-table">
+            <thead><tr><th scope="col">履约里程碑</th><th scope="col" class="number-column">交付单数</th><th scope="col" class="number-column">交付数量</th><th scope="col" class="number-column">覆盖店铺</th></tr></thead>
+            <tbody>${overview.map((row) => `
+              <tr>
+                <td><span class="row-status ${sourceStatusTone(row.milestoneCode)}">${escapeHtml(row.milestoneCode)}</span></td>
+                <td class="number-column ${isUnit(row.deliveryCount) ? '' : 'missing-value'}">${nullableUnits(row.deliveryCount)}</td>
+                <td class="number-column ${isUnit(row.deliveryQuantity) ? '' : 'missing-value'}">${nullableUnits(row.deliveryQuantity)}</td>
+                <td class="number-column">${nullableUnits(row.storeCount)}</td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>
+        <p class="table-note">里程碑是单据当前所处阶段，不是转化漏斗，也不据此推导履约率或准时率。交付单数与交付数量各自独立判空，任一店铺未知即保持“—”。</p>`
+        : emptyEvidence(
+          '当前筛选没有交付里程碑行',
+          // A covered domain with no rows is a different fact from a domain that
+          // was never integrated, so the two are never collapsed into one label.
+          `${['complete', 'partial'].includes(String(productRecord(queryData.source?.coverage).status || ''))
+            ? '接口覆盖完整 · 当前窗口无事实行'
+            : '尚未完成可信接入'}；这不代表没有发货或入仓，请调整负责人、店铺、里程碑或搜索条件。`,
+        )}
+    </section>
+    <section class="table-section inventory-workspace">
+      ${panelHeading(
+        'DELIVERY ATTENTION',
+        '交付入仓关注队列',
+        attentionAvailable ? `${coverageLine} · 单据级事实优先` : '单据级事实待接入',
+      )}
       ${quickFilterBar('fulfilment', '快速筛查', [
         ['ALL', '全部关注'],
         ['HIGH', '高优先'],
-        ['OVERDUE', '超时'],
-        ['PENDING_RECEIPT', '运输中 / 待收货'],
+        ['CREATED', '已创建待预约'],
+        ['PICKUP_RESERVED', '已预约待揽收'],
+        ['IN_TRANSIT', '运输中'],
+        ['PENDING_RECEIPT', '全部待收货'],
       ])}
+      <div class="operation-controls">
+        ${operationSelect('fulfilmentMilestone', '履约里程碑', milestoneOptions, state.fulfilment.milestone)}
+        ${operationSelect('fulfilmentSort', '排序', [
+          ['PRIORITY', '优先级'],
+          ['LATEST', '证据最新'],
+          ['EXPECTED_RECEIPT', '预计收货时间'],
+        ], state.fulfilment.sort)}
+        ${operationSelect('fulfilmentPageSize', '每页', [
+          [25, '25 条'], [50, '50 条'], [100, '100 条'],
+        ], pageSizeParam(state.fulfilment.pageSize))}
+        ${operationSearchControls('fulfilment')}
+      </div>
+      ${fulfilmentPagination(queryData.attention.pagination, 'top')}
       ${deliveryAttentionTable(attention, attentionAvailable)}
+      ${fulfilmentPagination(queryData.attention.pagination, 'bottom')}
+      ${state.fulfilment.loading ? '<p class="query-refresh-note" role="status">正在刷新当前交付筛选结果…</p>' : ''}
+      ${sourceMeta.truncated === true ? '<p class="table-note warning-note">当前接口只筛选物化到页面的单据级关注记录；源明细已截断，因此筛选结果不是仓库全量交付单数量。</p>' : ''}
     </section>
-    ${connected ? `
-      ${operationSummaryCards([
-        {
-          label: '里程碑计数合计',
-          value: deliveryCount === null ? '未知' : `${numberFormatter.format(deliveryCount)} 次`,
-          note: deliveryCount === null ? '存在交付单数未知的行' : '按里程碑状态行合计',
-          tone: deliveryCount === null ? 'partial' : 'available',
-        },
-        {
-          label: '当前范围交付数量',
-          value: deliveryQuantity === null ? '未知' : `${numberFormatter.format(deliveryQuantity)} 件`,
-          note: deliveryQuantity === null ? '至少一行数量未覆盖，拒绝补零合计' : '全部行数量明确',
-          tone: deliveryQuantity === null ? 'partial' : 'available',
-        },
-        {
-          label: '里程碑种类',
-          value: rows.length ? `${new Set(rows.map((row) => row.milestoneCode).filter(Boolean)).size} 类` : '当前筛选无行',
-          note: operationScopeNote(rows, '交付里程碑'),
-        },
-        {
-          label: '最新来源快照',
-          value: latestTimestamp(rows) ? formatDateTime(latestTimestamp(rows)) : '未知',
-          note: '来源抓取时间与物流节点业务时间分开',
-        },
-      ])}
-      <section class="table-section">
-        ${panelHeading('FULFILMENT MILESTONES', '店铺×交付里程碑汇总', '第二层总览；交付数量按行显示覆盖率，未知不等于 0')}
-        ${fulfilmentTable(rows)}
-      </section>` : integrationGate({
-      kicker: 'FULFILMENT DATA',
-      title: '交付与入仓接入条件',
-      description: '采购数量、交付数量、收货数量和入库数量不能混成一个“完成量”。',
-      evidence: [
-        '回读发货单、包裹、物流预报和平台业务状态',
-        '分别保存分配、交付、送达、收货、查验与入库时间',
-        '逐行对账交付、收货、入库、残次与退回数量',
-        '按采购单号、发货单号和包裹号建立可追溯关联',
-        'Webhook 只做变化通知，Worker 补查详情并由定时任务补漏',
-      ],
-      boundary: '当前没有真实发货单、物流、收货、查验或入库事实，因此不展示履约率、准时率和异常数。',
-      futureFields: '采购单、发货单、包裹、仓库、节点时间、各阶段数量、异常原因',
-    })}`;
+    <section class="panel condition-panel">
+      ${panelHeading('DATA BOUNDARY', '交付入仓数据边界', '事实接入不等于写能力开放')}
+      <ul class="condition-list">
+        <li><strong>单位口径</strong><span>交付单数与交付数量是两个单位，不相加也不算比率</span></li>
+        <li><strong>预计收货</strong><span>来源缺失时保持未知，不用预约或揽收时间冒充</span></li>
+        <li><strong>里程碑</strong><span>只表示单据当前阶段，不构成转化漏斗或履约率</span></li>
+        <li><strong>写操作</strong><span>当前页面与服务仍为只读，不提交任何交付动作</span></li>
+      </ul>
+    </section>`;
 }
 
 function renderInventory() {
@@ -6236,6 +6581,9 @@ async function loadDashboard() {
   if (state.data && state.route === 'products') {
     scheduleProductLoad();
   }
+  if (state.data && state.route === 'fulfilment') {
+    scheduleFulfilmentLoad();
+  }
 }
 
 function connectDashboardUpdates() {
@@ -6309,6 +6657,14 @@ function currentHashState() {
     productPendingPage: state.products.pendingPage,
     productCanonicalPage: state.products.canonicalPage,
     productPageSize: state.products.pageSize,
+    procurementStatus: state.procurement.status,
+    procurementSort: state.procurement.sort,
+    procurementPage: state.procurement.page,
+    procurementPageSize: state.procurement.pageSize,
+    fulfilmentMilestone: state.fulfilment.milestone,
+    fulfilmentSort: state.fulfilment.sort,
+    fulfilmentPage: state.fulfilment.page,
+    fulfilmentPageSize: state.fulfilment.pageSize,
   };
 }
 
@@ -6348,6 +6704,14 @@ function applyHashState(parsed) {
   state.products.pendingPage = parsed.productPendingPage || 1;
   state.products.canonicalPage = parsed.productCanonicalPage || 1;
   state.products.pageSize = pageSizeParam(parsed.productPageSize);
+  state.procurement.status = operationCodeParam(parsed.procurementStatus);
+  state.procurement.sort = parsed.procurementSort || 'PRIORITY';
+  state.procurement.page = parsed.procurementPage || 1;
+  state.procurement.pageSize = pageSizeParam(parsed.procurementPageSize);
+  state.fulfilment.milestone = operationCodeParam(parsed.fulfilmentMilestone);
+  state.fulfilment.sort = parsed.fulfilmentSort || 'PRIORITY';
+  state.fulfilment.page = parsed.fulfilmentPage || 1;
+  state.fulfilment.pageSize = pageSizeParam(parsed.fulfilmentPageSize);
   if (parsed.quick === 'ALL') delete state.quickFilters[parsed.route];
   else state.quickFilters[parsed.route] = parsed.quick;
 }
@@ -6383,6 +6747,13 @@ function syncRouteFromLocation() {
     state.products.requestSerial += 1;
     state.products.loading = false;
   }
+  if (state.route === 'fulfilment') {
+    scheduleFulfilmentLoad({ resetPage: routeChanged });
+  } else if (routeChanged) {
+    // Leaving the surface must also drop any in-flight fulfilment response.
+    state.fulfilment.requestSerial += 1;
+    state.fulfilment.loading = false;
+  }
   if (routeChanged && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -6396,6 +6767,7 @@ elements.search.addEventListener('input', (event) => {
   scheduleSalesLoad({ resetPages: true, delay: 220 });
   scheduleInventoryLoad({ resetPages: true, delay: 220 });
   scheduleProductLoad({ resetPages: true, delay: 220 });
+  scheduleFulfilmentLoad({ resetPage: true, delay: 220 });
 });
 
 elements.scope.addEventListener('change', (event) => {
@@ -6408,6 +6780,7 @@ elements.scope.addEventListener('change', (event) => {
   scheduleSalesLoad({ resetPages: true });
   scheduleInventoryLoad({ resetPages: true, delay: 120 });
   scheduleProductLoad({ resetPages: true, delay: 120 });
+  scheduleFulfilmentLoad({ resetPage: true, delay: 120 });
 });
 
 elements.rangeButtons.forEach((button) => {
@@ -6444,11 +6817,63 @@ elements.view.addEventListener('click', (event) => {
     void loadProcurement();
     return;
   }
+  const fulfilmentRetry = event.target.closest?.('[data-fulfilment-retry]');
+  if (fulfilmentRetry && elements.view.contains(fulfilmentRetry)) {
+    void loadFulfilment();
+    return;
+  }
+  const fulfilmentPage = event.target.closest?.('[data-fulfilment-page]');
+  if (fulfilmentPage && elements.view.contains(fulfilmentPage)) {
+    const nextPage = Number(fulfilmentPage.dataset.fulfilmentPage);
+    if (Number.isSafeInteger(nextPage) && nextPage >= 1 && !fulfilmentPage.disabled) {
+      state.fulfilment.page = nextPage;
+      syncUrlFromState();
+      void loadFulfilment();
+    }
+    return;
+  }
+  const operationSearch = event.target.closest?.('[data-operation-search]');
+  if (operationSearch && elements.view.contains(operationSearch)) {
+    // The endpoint already reads the shared global query, so an explicit search
+    // just re-runs the active workspace from page 1.
+    const kind = String(operationSearch.dataset.operationSearch || '');
+    syncUrlFromState();
+    if (kind === 'procurement') scheduleProcurementLoad({ resetPage: true });
+    if (kind === 'fulfilment') scheduleFulfilmentLoad({ resetPage: true });
+    return;
+  }
+  const operationReset = event.target.closest?.('[data-operation-reset]');
+  if (operationReset && elements.view.contains(operationReset)) {
+    const kind = String(operationReset.dataset.operationReset || '');
+    // Resetting clears the shared text input as well, so the visible control,
+    // the hash and the request all agree.
+    state.query = '';
+    if (elements.search) elements.search.value = '';
+    delete state.quickFilters[kind];
+    if (kind === 'procurement') {
+      state.procurement.status = 'ALL';
+      state.procurement.sort = 'PRIORITY';
+      state.procurement.pageSize = URL_DEFAULT_INVENTORY_PAGE_SIZE;
+      syncUrlFromState();
+      scheduleProcurementLoad({ resetPage: true });
+    }
+    if (kind === 'fulfilment') {
+      state.fulfilment.milestone = 'ALL';
+      state.fulfilment.sort = 'PRIORITY';
+      state.fulfilment.pageSize = URL_DEFAULT_INVENTORY_PAGE_SIZE;
+      syncUrlFromState();
+      scheduleFulfilmentLoad({ resetPage: true });
+    }
+    return;
+  }
   const procurementPage = event.target.closest?.('[data-procurement-page]');
   if (procurementPage && elements.view.contains(procurementPage)) {
     const nextPage = Number(procurementPage.dataset.procurementPage);
     if (Number.isSafeInteger(nextPage) && nextPage >= 1 && !procurementPage.disabled) {
       state.procurement.page = nextPage;
+      // Mirror the page into the URL before fetching so a shared link and the
+      // rendered page can never disagree.
+      syncUrlFromState();
       void loadProcurement();
     }
     return;
@@ -6558,6 +6983,7 @@ elements.view.addEventListener('click', (event) => {
   if (route === 'sales') scheduleSalesLoad({ resetPages: true });
   if (route === 'inventory') scheduleInventoryLoad({ resetPages: true });
   if (route === 'products') scheduleProductLoad({ resetPages: true });
+  if (route === 'fulfilment') scheduleFulfilmentLoad({ resetPage: true });
 });
 
 elements.view.addEventListener('change', (event) => {
@@ -6581,6 +7007,32 @@ elements.view.addEventListener('change', (event) => {
     state.inventory.advicePage = 1;
     syncUrlFromState();
     void loadInventory();
+    return;
+  }
+  const operationSelectControl = event.target.closest?.('[data-operation-select]');
+  if (operationSelectControl && elements.view.contains(operationSelectControl)) {
+    const kind = String(operationSelectControl.dataset.operationSelect || '');
+    const raw = String(operationSelectControl.value || '');
+    if (kind === 'procurementStatus') {
+      state.procurement.status = operationCodeParam(raw);
+    } else if (kind === 'procurementSort') {
+      state.procurement.sort = allowListedToken(raw, URL_PROCUREMENT_SORTS, 'PRIORITY');
+    } else if (kind === 'procurementPageSize') {
+      state.procurement.pageSize = pageSizeParam(raw);
+    } else if (kind === 'fulfilmentMilestone') {
+      state.fulfilment.milestone = operationCodeParam(raw);
+    } else if (kind === 'fulfilmentSort') {
+      state.fulfilment.sort = allowListedToken(raw, URL_FULFILMENT_SORTS, 'PRIORITY');
+    } else if (kind === 'fulfilmentPageSize') {
+      state.fulfilment.pageSize = pageSizeParam(raw);
+    } else {
+      return;
+    }
+    // Any filter change restarts paging so page 2 of an old filter can never be
+    // requested against the new one.
+    syncUrlFromState();
+    if (kind.startsWith('procurement')) scheduleProcurementLoad({ resetPage: true });
+    else scheduleFulfilmentLoad({ resetPage: true });
     return;
   }
   const productSelectControl = event.target.closest?.('[data-product-select]');
@@ -6625,6 +7077,7 @@ elements.clearFilters.addEventListener('click', () => {
   scheduleSalesLoad({ resetPages: true });
   scheduleInventoryLoad({ resetPages: true });
   scheduleProductLoad({ resetPages: true });
+  scheduleFulfilmentLoad({ resetPage: true });
   elements.search.focus();
 });
 

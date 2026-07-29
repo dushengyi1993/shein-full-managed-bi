@@ -326,15 +326,19 @@ test('focused rows are ordered first, marked, and reachable by keyboard', async 
   assert.match(source, /function orderRowsForFocus\(/);
   assert.match(source, /function isFocusedRow\(/);
   assert.match(source, /function rowFocusLink\(/);
-  // Every drilldown surface orders and marks its focused row.
+  // Every drilldown surface orders and marks its focused row. Each table now
+  // passes the server-ordered page straight through, so focus-first ordering is
+  // the only reordering applied; the old `[...rows].sort(...)` copy would have
+  // overridden the operator's chosen server sort.
   for (const domain of ['inventory', 'advice', 'procurement', 'fulfilment']) {
     assert.ok(
-      source.includes(`orderRowsForFocus([...rows]`) && source.includes(`'${domain}'`),
+      source.includes(`orderRowsForFocus(rows, '${domain}')`),
       domain,
     );
     assert.ok(source.includes(`isFocusedRow(row, '${domain}')`), domain);
     assert.ok(source.includes(`rowFocusLink(row, '${domain}')`), domain);
   }
+  assert.doesNotMatch(source, /orderRowsForFocus\(\[\.\.\.rows\]/);
   assert.ok(source.includes("isFocusedRow(item, 'product')"));
   assert.ok(source.includes("rowFocusLink(item, 'product')"));
   // Anchors are natively keyboard reachable and name their target for readers.

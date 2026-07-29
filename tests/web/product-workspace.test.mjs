@@ -102,11 +102,14 @@ test('workspace URL state round-trips through allow-listed hash parameters', asy
   );
 
   // Parsing is allow-listed; an unknown token falls back to the default.
-  assert.match(parse, /productView: allowListedToken\(params\.get\('view'\), URL_PRODUCT_VIEWS, 'PENDING'\)/);
   assert.match(parse, /productSort: allowListedToken\(params\.get\('prodSort'\), URL_PRODUCT_SORTS, 'IMPACT_DESC'\)/);
   assert.match(parse, /productPendingPage: pageParam\('pendingPage'\)/);
   assert.match(parse, /productCanonicalPage: pageParam\('canonicalPage'\)/);
-  assert.match(parse, /productPageSize: pageSizeParam\(params\.get\('size'\)\)/);
+  // `view` and `size` are shared parameter names, so each binds to the active
+  // route only; inventory must never inherit a products tab or page size.
+  assert.match(parse, /productView: routeView\('products', URL_PRODUCT_VIEWS, 'PENDING', inherited\.productView\)/);
+  assert.match(parse, /productPageSize: routePageSize\('products', inherited\.productPageSize\)/);
+  assert.match(parse, /if \(route === routeKey\) return allowListedToken\(params\.get\('view'\), allowed, fallback\)/);
 
   // Serialization omits defaults, bounds pages and only runs on this route.
   assert.match(serialize, /if \(route === 'products'\) \{/);
@@ -245,10 +248,10 @@ test('the workspace exposes no mutation control', async () => {
   }
 });
 
-test('static assets are versioned together at 20260729.7', async () => {
+test('static assets are versioned together at 20260729.8', async () => {
   const html = await read('src/web/index.html');
   for (const asset of ['app.js', 'styles.css', 'home-parity.css', 'favicon.svg']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.7`), asset);
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.8`), asset);
   }
-  assert.doesNotMatch(html, /\?v=20260729\.6/);
+  assert.doesNotMatch(html, /\?v=20260729\.7/);
 });

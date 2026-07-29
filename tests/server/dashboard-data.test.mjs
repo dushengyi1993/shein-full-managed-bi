@@ -954,3 +954,48 @@ test('malformed pipeline relationships degrade to null and partial, never invent
   // A stage that lost its count downgrades the whole aggregate to partial.
   assert.equal(pipeline.status, 'partial');
 });
+
+test('purchase attention normalization matches the 500-row materialization cap', () => {
+  const attentionRow = (index) => ({
+    storeCode: 'DL5477',
+    storeName: 'DL5477',
+    orderNo: `PO-${String(index).padStart(4, '0')}`,
+    attentionCode: 'OPEN_PURCHASE_ORDER',
+    attentionLabel: '采购单待交付',
+    severity: 'medium',
+    orderQuantity: 1,
+  });
+  const dashboard = normalizeDashboardData({
+    updatedAt: '2026-07-29T00:00:00.000Z',
+    supply: {
+      status: 'available',
+      purchaseOrderAttention: Array.from({ length: 620 }, (unused, index) => attentionRow(index)),
+      attentionMeta: {
+        purchaseOrders: { available: true, total: 620, returned: 500, truncated: true },
+      },
+    },
+  });
+
+  // Production currently materializes 352 attention rows. A 200-row normalizer
+  // cap would silently re-truncate the snapshot after the materializer already
+  // wrote the full set, so the whole 500-row cap increase would have no effect.
+  assert.equal(dashboard.supply.purchaseOrderAttention.length, 500);
+  assert.ok(dashboard.supply.purchaseOrderAttention.length > 352);
+  // Above the cap the truncation stays honest rather than claiming completeness.
+  assert.equal(dashboard.supply.attentionMeta.purchaseOrders.truncated, true);
+  assert.equal(dashboard.supply.attentionMeta.purchaseOrders.total, 620);
+
+  // The full current attention set survives normalization untouched.
+  const exact = normalizeDashboardData({
+    updatedAt: '2026-07-29T00:00:00.000Z',
+    supply: {
+      status: 'available',
+      purchaseOrderAttention: Array.from({ length: 352 }, (unused, index) => attentionRow(index)),
+      attentionMeta: {
+        purchaseOrders: { available: true, total: 352, returned: 352, truncated: false },
+      },
+    },
+  });
+  assert.equal(exact.supply.purchaseOrderAttention.length, 352);
+  assert.equal(exact.supply.attentionMeta.purchaseOrders.truncated, false);
+});

@@ -446,7 +446,7 @@ export const SUPPLY_DASHBOARD_SQL = Object.freeze({
       COALESCE(requested_delivery_at, requested_receipt_at) ASC NULLS LAST,
       store_code,
       order_no
-    LIMIT 200`,
+    LIMIT 500`,
   deliveryAttention: `
     WITH line_totals AS (
       SELECT
@@ -3176,7 +3176,10 @@ export async function readFullManagedSupplyDashboard(client, { storeIds = null }
     inventoryRisks,
     stockAdviceRisks,
     attentionMeta: Object.freeze({
-      purchaseOrders: resultMeta(purchaseOrderAttentionResult.rows, 200),
+      // The purchase attention cap is 500 so the whole current attention set
+      // (352 rows in production) materializes. Above 500 `resultMeta` still
+      // reports honest truncation instead of pretending the page is complete.
+      purchaseOrders: resultMeta(purchaseOrderAttentionResult.rows, 500),
       deliveries: resultMeta(deliveryAttentionResult.rows, 200),
       inventoryRisks: resultMeta(inventoryRisksResult.rows, 500),
       stockAdviceRisks: resultMeta(stockAdviceRisksResult.rows, 500),

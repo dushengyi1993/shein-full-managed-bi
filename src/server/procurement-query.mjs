@@ -10,7 +10,25 @@ const QUICK_FILTERS = Object.freeze([
   'PENDING_DELIVERY',
   'PENDING_RECEIPT',
   'PENDING_STORAGE',
+  'DEFECTIVE',
 ]);
+
+/**
+ * Explicit attention-code semantics.
+ *
+ * Substring matching was wrong: `PENDING_RECEIPT` also matched
+ * `RECEIVED_PENDING_STORAGE`, and `OVERDUE` silently swallowed unrelated codes.
+ * Each quick filter now names the exact codes the materializer emits.
+ */
+const QUICK_ATTENTION_CODES = Object.freeze({
+  OVERDUE: Object.freeze(['DELIVERY_OVERDUE', 'RECEIPT_OVERDUE']),
+  PENDING_DELIVERY: Object.freeze(['OPEN_PURCHASE_ORDER', 'DELIVERY_OVERDUE']),
+  PENDING_RECEIPT: Object.freeze(['DELIVERED_PENDING_RECEIPT', 'RECEIPT_OVERDUE']),
+  PENDING_STORAGE: Object.freeze(['RECEIVED_PENDING_STORAGE']),
+  DEFECTIVE: Object.freeze(['DEFECTIVE_QUANTITY']),
+});
+
+const PAGE_SIZES = Object.freeze([25, 50, 100]);
 
 const SORTS = Object.freeze([
   'PRIORITY',
@@ -67,8 +85,90 @@ function integerParam(params, name, { fallback, minimum, maximum }) {
   return parsed;
 }
 
+/** Page size is a closed set, so no caller can request an unbounded page. */
+function pageSizeParam(params) {
+  const value = textParam(params, 'pageSize', { maximum: 8, fallback: '25' });
+  if (!INTEGER_PATTERN.test(value)) fail('QUERY_PARAMETER_INVALID', '参数 pageSize 必须是整数');
+  const parsed = Number(value);
+  if (!PAGE_SIZES.includes(parsed)) {
+    fail('QUERY_PARAMETER_OUT_OF_RANGE', '参数 pageSize 只能是 25、50 或 100');
+  }
+  return parsed;
+}
+
 function record(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function isUnit(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+/**
+ * Sum one quantity field across the matched attention rows.
+ *
+ * These are stage quantities on the current materialized attention scope, not a
+ * conversion funnel: an unknown value keeps the total unknown instead of being
+ * silently treated as zero, and no ratio is ever derived from them.
+ */
+function stageQuantity(inputRows, field) {
+  const known = inputRows.filter((row) => isUnit(row[field]));
+  const knownSum = known.reduce((total, row) => total + row[field], 0);
+  return {
+    knownSum: known.length === 0 ? null : knownSum,
+    total: inputRows.length > 0 && known.length === inputRows.length ? knownSum : null,
+    knownCount: known.length,
+    unknownCount: inputRows.length - known.length,
+    rowCount: inputRows.length,
+  };
+}
+
+/** Aggregate the scoped status rows by status, never dumping every store row. */
+function statusOverview(statusRows) {
+  const byStatus = new Map();
+  for (const row of statusRows) {
+    const code = String(row.statusCode ?? '');
+    if (code === '') continue;
+    const current = byStatus.get(code) ?? {
+      statusCode: code,
+      statusName: row.statusName || code,
+      storeCount: 0,
+      orderCount: 0,
+      orderCountKnown: true,
+    };
+    current.storeCount += 1;
+    if (isUnit(row.orderCount)) current.orderCount += row.orderCount;
+    else current.orderCountKnown = false;
+    byStatus.set(code, current);
+  }
+  return [...byStatus.values()]
+    .map((row) => ({
+      statusCode: row.statusCode,
+      statusName: row.statusName,
+      storeCount: row.storeCount,
+      // A single unknown store keeps the status total unknown.
+      orderCount: row.orderCountKnown ? row.orderCount : null,
+    }))
+    .sort((left, right) => (
+      (isUnit(right.orderCount) ? right.orderCount : -1)
+      - (isUnit(left.orderCount) ? left.orderCount : -1)
+      || compareText(left.statusName, right.statusName)
+    ));
+}
+
+/** Count the matched attention rows per explicit attention code. */
+function attentionCodeCounts(inputRows) {
+  const counts = new Map();
+  for (const row of inputRows) {
+    const code = String(row.attentionCode ?? '').toUpperCase();
+    if (code === '') continue;
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  }
+  return [...counts]
+    .sort(([leftCode, leftCount], [rightCode, rightCount]) => (
+      rightCount - leftCount || compareText(leftCode, rightCode)
+    ))
+    .map(([code, count]) => ({ code, count }));
 }
 
 function rows(value) {
@@ -99,7 +199,13 @@ function matchesQuickFilter(row, quick) {
   const severity = String(row.severity ?? '').toLowerCase();
   const attentionCode = String(row.attentionCode ?? '').toUpperCase();
   if (quick === 'HIGH') return severity === 'critical' || severity === 'high';
-  return attentionCode.includes(quick);
+  if (quick === 'DEFECTIVE') {
+    // A defective quantity is a fact on the row, so it counts even when the
+    // materializer chose a higher-priority attention code for the same order.
+    return QUICK_ATTENTION_CODES.DEFECTIVE.includes(attentionCode)
+      || (Number.isSafeInteger(row.defectiveQuantity) && row.defectiveQuantity > 0);
+  }
+  return (QUICK_ATTENTION_CODES[quick] ?? []).includes(attentionCode);
 }
 
 function comparableInstant(value, fallback) {
@@ -231,7 +337,7 @@ export function queryProcurementDashboard(dashboardValue, paramsValue = new URLS
   const quick = enumParam(params, 'quick', QUICK_FILTERS, 'ALL');
   const sort = enumParam(params, 'sort', SORTS, 'PRIORITY');
   const page = integerParam(params, 'page', { fallback: 1, minimum: 1, maximum: 10_000 });
-  const pageSize = integerParam(params, 'pageSize', { fallback: 25, minimum: 1, maximum: 100 });
+  const pageSize = pageSizeParam(params);
   const ownerStores = ownerStoreSet(dashboard, owner);
 
   const supply = record(dashboard.supply);
@@ -291,6 +397,8 @@ export function queryProcurementDashboard(dashboardValue, paramsValue = new URLS
     summary: Object.freeze({
       matchedMaterializedAttentionCount: matchedAttentionRows.length,
       matchedStatusRowCount: scopedStatusRows.length,
+      // Order count comes from the status snapshot; the stage quantities below
+      // come from the attention rows. They are deliberately separate scopes.
       orderCount: completeOrderCount(scopedStatusRows),
       statusCount: new Set(scopedStatusRows.map((row) => row.statusCode).filter(Boolean)).size,
       storeCount: new Set([
@@ -298,7 +406,20 @@ export function queryProcurementDashboard(dashboardValue, paramsValue = new URLS
         ...matchedAttentionRows.map((row) => row.storeCode),
       ].filter(Boolean)).size,
       latestSourceFetchedAt: latestInstant([...scopedStatusRows, ...matchedAttentionRows]),
+      // Stage quantities over the current materialized attention scope only.
+      // This is not a conversion funnel and carries no derived percentage.
+      attentionScopeLabel: '当前已物化关注范围的阶段数量，不是转化漏斗',
+      quantityStages: Object.freeze({
+        order: Object.freeze(stageQuantity(matchedAttentionRows, 'orderQuantity')),
+        delivery: Object.freeze(stageQuantity(matchedAttentionRows, 'deliveryQuantity')),
+        receipt: Object.freeze(stageQuantity(matchedAttentionRows, 'receiptQuantity')),
+        storage: Object.freeze(stageQuantity(matchedAttentionRows, 'storageQuantity')),
+        defective: Object.freeze(stageQuantity(matchedAttentionRows, 'defectiveQuantity')),
+      }),
+      attentionCodes: Object.freeze(attentionCodeCounts(matchedAttentionRows)),
     }),
+    // Compact aggregate: one row per status, not one row per store and status.
+    statusOverview: Object.freeze(statusOverview(scopedStatusRows)),
     filters: Object.freeze({
       owners: Object.freeze(rows(dashboard.owners).map((item) => ({
         key: item.key,
@@ -309,6 +430,7 @@ export function queryProcurementDashboard(dashboardValue, paramsValue = new URLS
       statuses: Object.freeze(statuses),
       quick: QUICK_FILTERS,
       sorts: SORTS,
+      pageSizes: PAGE_SIZES,
     }),
     statusRows: Object.freeze(scopedStatusRows),
     attention: Object.freeze({

@@ -21,6 +21,10 @@ import {
   ProductQueryError,
   queryProductDashboard,
 } from './product-query.mjs';
+import {
+  FulfilmentQueryError,
+  queryFulfilmentDashboard,
+} from './fulfilment-query.mjs';
 import { createDashboardUpdateBroker } from './dashboard-update-stream.mjs';
 import {
   createAuthService,
@@ -500,6 +504,33 @@ export function createRequestHandler(options = {}) {
           error: {
             code: 'PRODUCT_DATA_UNAVAILABLE',
             message: '商品身份查询暂不可用',
+          },
+        }, method);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/fulfilment') {
+      try {
+        const dashboard = await loadDashboardData(dataFile);
+        const projected = projectDashboardForUser(dashboard, signedInUser);
+        sendJson(
+          response,
+          200,
+          queryFulfilmentDashboard(projected, url.searchParams),
+          method,
+        );
+      } catch (error) {
+        if (error instanceof FulfilmentQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'FULFILMENT_DATA_UNAVAILABLE',
+            message: '交付入仓查询暂不可用',
           },
         }, method);
       }

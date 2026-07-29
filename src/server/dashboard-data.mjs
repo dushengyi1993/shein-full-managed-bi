@@ -655,10 +655,13 @@ function normalizeSupply(value) {
   const purchaseOrderAttentionSource = Array.isArray(source.purchaseOrderAttention)
     ? source.purchaseOrderAttention
     : [];
+  // Matches the 500-row purchase attention materialization cap. A lower cap
+  // here would silently re-truncate the snapshot after the materializer already
+  // wrote the full attention set.
   const purchaseOrderAttention = purchaseOrderAttentionSource
     .map(normalizePurchaseOrderAttention)
     .filter(Boolean)
-    .slice(0, 200);
+    .slice(0, 500);
   const deliveryAttentionSource = Array.isArray(source.deliveryAttention)
     ? source.deliveryAttention
     : [];

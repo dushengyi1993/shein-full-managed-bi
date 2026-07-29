@@ -755,6 +755,105 @@ a {
   margin: 0;
 }
 
+/* Operational filter bar for the procurement and fulfilment workspaces. Dense
+   by intent: business controls first, no decorative treatment. */
+.operation-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  margin: 0.35rem 0 0.65rem;
+}
+
+.operation-controls .sales-sort-control {
+  margin: 0;
+}
+
+.operation-search {
+  display: flex;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.operation-search .clear-button {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.75rem;
+}
+
+/* Stage quantities sit side by side so they read as independent fields rather
+   than as a funnel with an implied direction. */
+.stage-snapshot {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.stage-cell {
+  display: grid;
+  gap: 0.2rem;
+  align-content: start;
+  min-width: 0;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-soft);
+}
+
+.stage-cell span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.stage-cell strong {
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.stage-cell small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1100px) {
+  .stage-snapshot {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  /* The document must not overflow at 390px; wide tables scroll inside their
+     own .table-wrap instead. */
+  .stage-snapshot {
+    grid-template-columns: 1fr;
+  }
+
+  .operation-controls {
+    justify-content: stretch;
+  }
+
+  .operation-controls .sales-sort-control {
+    flex: 1 0 100%;
+    justify-content: space-between;
+  }
+
+  .operation-search {
+    flex: 1 0 100%;
+  }
+
+  .operation-search .clear-button {
+    flex: 1;
+  }
+}
+
 .table-pagination.pagination-top {
   margin-top: 0;
   padding-top: 0;
