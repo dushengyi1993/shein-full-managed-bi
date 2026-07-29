@@ -78,6 +78,7 @@ BEGIN
         'fact.full_product_price_observation',
         'fact.full_home_finance_daily',
         'fact.full_home_product_finance_daily',
+        'fact.full_home_finance_detail_observation',
         'ops.full_home_finance_sync_window'
     ]
     LOOP
@@ -469,7 +470,8 @@ GRANT SELECT, INSERT ON fact.full_product_price_observation
 TO sheinfm_sales_loader;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
     fact.full_home_finance_daily,
-    fact.full_home_product_finance_daily
+    fact.full_home_product_finance_daily,
+    fact.full_home_finance_detail_observation
 TO sheinfm_sales_loader;
 GRANT SELECT, INSERT, UPDATE ON ops.full_home_finance_sync_window
 TO sheinfm_sales_loader;

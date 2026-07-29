@@ -24,10 +24,23 @@ test('runtime roles isolate finance writes from WebAPI and expose read-only fact
     readFile(new URL('db/verify/9999_runtime_role_reconcile.sql', projectRoot), 'utf8'),
   ]);
   assert.match(migration, /GRANT SELECT, INSERT, UPDATE, DELETE ON\s+fact\.full_home_finance_daily,/s);
-  assert.match(migration, /fact\.full_home_product_finance_daily\s+TO sheinfm_sales_loader/s);
+  assert.match(migration, /fact\.full_home_product_finance_daily,[\s\S]*fact\.full_home_finance_detail_observation\s+TO sheinfm_sales_loader/s);
   assert.match(migration, /GRANT SELECT, INSERT, UPDATE ON ops\.full_home_finance_sync_window/);
   assert.match(migration, /fact\.full_home_finance_daily,[\s\S]*fact\.full_home_product_finance_daily,[\s\S]*TO sheinfm_materializer_ro, sheinfm_app/);
   assert.match(verify, /WebAPI experiment loader retained % on %/);
   assert.match(verify, /'fact\.full_home_finance_daily'/);
   assert.match(verify, /'ops\.full_home_finance_sync_window'/);
+});
+
+test('finance detail migration deduplicates overlapping report windows without storing raw ids', async () => {
+  const sql = await readFile(
+    new URL('db/migrations/0016_full_home_finance_detail_observation.sql', projectRoot),
+    'utf8',
+  );
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS fact\.full_home_finance_detail_observation/);
+  assert.match(sql, /UNIQUE \(store_code, report_order_no_hash, detail_row_key_hash\)/);
+  assert.match(sql, /report_generated_date date NOT NULL/);
+  assert.match(sql, /business_date date NOT NULL/);
+  assert.match(sql, /daily homepage facts are rebuilt from this deduplicated source/);
+  assert.doesNotMatch(sql, /\breport_order_no text\b|\bdetail_row_id text\b/);
 });

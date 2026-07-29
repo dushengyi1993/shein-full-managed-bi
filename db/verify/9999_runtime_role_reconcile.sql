@@ -71,6 +71,7 @@ BEGIN
         'fact.full_product_price_observation',
         'fact.full_home_finance_daily',
         'fact.full_home_product_finance_daily',
+        'fact.full_home_finance_detail_observation',
         'ops.full_home_finance_sync_window'
     ]
     LOOP
@@ -501,6 +502,8 @@ BEGIN
     ) OR NOT has_table_privilege(
         'sheinfm_sales_login', 'fact.full_home_product_finance_daily', 'DELETE'
     ) OR NOT has_table_privilege(
+        'sheinfm_sales_login', 'fact.full_home_finance_detail_observation', 'DELETE'
+    ) OR NOT has_table_privilege(
         'sheinfm_sales_login', 'ops.full_home_finance_sync_window', 'UPDATE'
     ) OR has_table_privilege(
         'sheinfm_sales_login', 'ops.full_home_finance_sync_window', 'DELETE'
@@ -798,6 +801,7 @@ BEGIN
         'fact.full_sku_sales_snapshot',
         'fact.full_home_finance_daily',
         'fact.full_home_product_finance_daily',
+        'fact.full_home_finance_detail_observation',
         'fact.inventory_snapshot',
         'fact.purchase_order',
         'fact.delivery',

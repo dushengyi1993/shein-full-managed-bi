@@ -13,81 +13,6 @@ function count(number) {
   return number;
 }
 
-function aggregate({ storeCode, reports, details }) {
-  const reportCounts = new Map();
-  for (const report of reports) {
-    const date = report.addTime.slice(0, 10);
-    const grain = key([date, report.currency]);
-    reportCounts.set(grain, (reportCounts.get(grain) ?? 0) + 1);
-  }
-  const daily = new Map();
-  const products = new Map();
-  for (const row of details) {
-    const dailyKey = key([row.businessDate, row.currency]);
-    const current = daily.get(dailyKey) ?? {
-      storeCode,
-      businessDate: row.businessDate,
-      currency: row.currency,
-      incomeAmount: 0,
-      expenseAmount: 0,
-      goodsCount: 0,
-      reportCount: reportCounts.get(dailyKey) ?? 0,
-    };
-    if (row.direction === 'IN') {
-      current.incomeAmount += row.amount;
-      current.goodsCount += row.goodsCount;
-    } else {
-      current.expenseAmount += row.amount;
-    }
-    daily.set(dailyKey, current);
-
-    if (!row.productKey) continue;
-    const productKey = key([
-      row.businessDate,
-      row.currency,
-      row.productKey,
-    ]);
-    const product = products.get(productKey) ?? {
-      storeCode,
-      businessDate: row.businessDate,
-      currency: row.currency,
-      productKey: row.productKey,
-      platformSkuId: row.platformSkuId,
-      platformSkcId: row.platformSkcId,
-      supplierSku: row.supplierSku,
-      incomeAmount: 0,
-      expenseAmount: 0,
-      goodsCount: 0,
-      latestUnitPrice: null,
-      priceObservedAt: null,
-    };
-    if (row.direction === 'IN') {
-      product.incomeAmount += row.amount;
-      product.goodsCount += row.goodsCount;
-    } else {
-      product.expenseAmount += row.amount;
-    }
-    if (
-      row.unitPrice !== null
-      && (
-        product.priceObservedAt === null
-        || row.observedBusinessAt >= product.priceObservedAt
-      )
-    ) {
-      product.latestUnitPrice = row.unitPrice;
-      product.priceObservedAt = row.observedBusinessAt;
-    }
-    products.set(productKey, product);
-  }
-  for (const row of daily.values()) {
-    row.netAmount = row.incomeAmount - row.expenseAmount;
-  }
-  for (const row of products.values()) {
-    row.netAmount = row.incomeAmount - row.expenseAmount;
-  }
-  return { daily: [...daily.values()], products: [...products.values()] };
-}
-
 export function createFinanceHomeRepository({ pool } = {}) {
   if (!pool || typeof pool.connect !== 'function') {
     throw new TypeError('pool is required');
@@ -147,74 +72,168 @@ export function createFinanceHomeRepository({ pool } = {}) {
       observedAt,
       completedAt,
     }) {
-      const projection = aggregate({ storeCode, reports, details });
+      const reportGeneratedDates = new Map(
+        reports.map((report) => [
+          report.reportOrderNoHash,
+          report.addTime.slice(0, 10),
+        ]),
+      );
+      for (const row of details) {
+        if (!reportGeneratedDates.has(row.reportOrderNoHash)) {
+          throw new TypeError('finance detail references an unknown report');
+        }
+      }
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         await client.query('SET LOCAL ROLE sheinfm_sales_loader');
-        await client.query(
-          `DELETE FROM fact.full_home_product_finance_daily
-           WHERE store_code = $1 AND business_date BETWEEN $2::date AND $3::date`,
+        const existingDates = await client.query(
+          `SELECT DISTINCT business_date::text AS business_date
+           FROM fact.full_home_finance_detail_observation
+           WHERE store_code = $1
+             AND report_generated_date BETWEEN $2::date AND $3::date`,
           [storeCode, startDate, endDate],
         );
+        const affectedDates = [...new Set([
+          ...existingDates.rows.map((row) => row.business_date),
+          ...details.map((row) => row.businessDate),
+        ])].sort();
         await client.query(
-          `DELETE FROM fact.full_home_finance_daily
-           WHERE store_code = $1 AND business_date BETWEEN $2::date AND $3::date`,
+          `DELETE FROM fact.full_home_finance_detail_observation
+           WHERE store_code = $1
+             AND report_generated_date BETWEEN $2::date AND $3::date`,
           [storeCode, startDate, endDate],
         );
-        for (const row of projection.daily) {
+
+        for (const row of details) {
+          const observationKey = crypto.createHash('sha256')
+            .update(key([storeCode, row.reportOrderNoHash, row.detailRowKeyHash]))
+            .digest('hex');
           await client.query(
-            `INSERT INTO fact.full_home_finance_daily (
-               store_code, business_date, currency, income_amount,
-               expense_amount, net_amount, goods_count, report_count,
-               observed_at, updated_at
+            `INSERT INTO fact.full_home_finance_detail_observation (
+               observation_key, store_code, report_order_no_hash,
+               detail_row_key_hash, report_generated_date, business_date,
+               currency, direction, amount, goods_count, product_key,
+               platform_sku_id, platform_skc_id, supplier_sku, unit_price,
+               source_business_at, observed_at, updated_at
              ) VALUES (
-               $1, $2::date, $3, $4::numeric, $5::numeric, $6::numeric,
-               $7, $8, $9::timestamptz, clock_timestamp()
-             )`,
+               $1, $2, $3, $4, $5::date, $6::date, $7, $8,
+               $9::numeric, $10, $11, $12, $13, $14, $15::numeric,
+               $16::timestamptz, $17::timestamptz, clock_timestamp()
+             )
+             ON CONFLICT (observation_key) DO UPDATE SET
+               report_generated_date = EXCLUDED.report_generated_date,
+               business_date = EXCLUDED.business_date,
+               currency = EXCLUDED.currency,
+               direction = EXCLUDED.direction,
+               amount = EXCLUDED.amount,
+               goods_count = EXCLUDED.goods_count,
+               product_key = EXCLUDED.product_key,
+               platform_sku_id = EXCLUDED.platform_sku_id,
+               platform_skc_id = EXCLUDED.platform_skc_id,
+               supplier_sku = EXCLUDED.supplier_sku,
+               unit_price = EXCLUDED.unit_price,
+               source_business_at = EXCLUDED.source_business_at,
+               observed_at = EXCLUDED.observed_at,
+               updated_at = clock_timestamp()`,
             [
-              row.storeCode,
+              observationKey,
+              storeCode,
+              row.reportOrderNoHash,
+              row.detailRowKeyHash,
+              reportGeneratedDates.get(row.reportOrderNoHash),
               row.businessDate,
               row.currency,
-              amount(row.incomeAmount),
-              amount(row.expenseAmount),
-              amount(row.netAmount),
+              row.direction,
+              amount(row.amount),
               count(row.goodsCount),
-              count(row.reportCount),
+              row.productKey,
+              row.platformSkuId,
+              row.platformSkcId,
+              row.supplierSku,
+              row.unitPrice,
+              row.observedBusinessAt,
               observedAt,
             ],
           );
         }
-        for (const row of projection.products) {
+
+        let financeDailyRows = 0;
+        let productFinanceRows = 0;
+        if (affectedDates.length > 0) {
           await client.query(
+            `DELETE FROM fact.full_home_product_finance_daily
+             WHERE store_code = $1
+               AND business_date = ANY($2::date[])`,
+            [storeCode, affectedDates],
+          );
+          await client.query(
+            `DELETE FROM fact.full_home_finance_daily
+             WHERE store_code = $1
+               AND business_date = ANY($2::date[])`,
+            [storeCode, affectedDates],
+          );
+          const dailyResult = await client.query(
+            `INSERT INTO fact.full_home_finance_daily (
+               store_code, business_date, currency, income_amount,
+               expense_amount, net_amount, goods_count, report_count,
+               observed_at, updated_at
+             )
+             SELECT
+               store_code,
+               business_date,
+               currency,
+               SUM(CASE WHEN direction = 'IN' THEN amount ELSE 0 END),
+               SUM(CASE WHEN direction = 'OUT' THEN amount ELSE 0 END),
+               SUM(CASE WHEN direction = 'IN' THEN amount ELSE -amount END),
+               SUM(CASE WHEN direction = 'IN' THEN goods_count ELSE 0 END),
+               COUNT(DISTINCT report_order_no_hash),
+               MAX(observed_at),
+               clock_timestamp()
+             FROM fact.full_home_finance_detail_observation
+             WHERE store_code = $1
+               AND business_date = ANY($2::date[])
+             GROUP BY store_code, business_date, currency`,
+            [storeCode, affectedDates],
+          );
+          const productResult = await client.query(
             `INSERT INTO fact.full_home_product_finance_daily (
                store_code, business_date, currency, product_key,
                platform_sku_id, platform_skc_id, supplier_sku,
                income_amount, expense_amount, net_amount, goods_count,
                latest_unit_price, price_observed_at, observed_at, updated_at
-             ) VALUES (
-               $1, $2::date, $3, $4, $5, $6, $7,
-               $8::numeric, $9::numeric, $10::numeric, $11,
-               $12::numeric, $13::timestamptz, $14::timestamptz,
+             )
+             SELECT
+               store_code,
+               business_date,
+               currency,
+               product_key,
+               MAX(platform_sku_id),
+               MAX(platform_skc_id),
+               MAX(supplier_sku),
+               SUM(CASE WHEN direction = 'IN' THEN amount ELSE 0 END),
+               SUM(CASE WHEN direction = 'OUT' THEN amount ELSE 0 END),
+               SUM(CASE WHEN direction = 'IN' THEN amount ELSE -amount END),
+               SUM(CASE WHEN direction = 'IN' THEN goods_count ELSE 0 END),
+               (ARRAY_AGG(
+                  unit_price
+                  ORDER BY source_business_at DESC, observation_key DESC
+                ) FILTER (WHERE unit_price IS NOT NULL))[1],
+               (ARRAY_AGG(
+                  source_business_at
+                  ORDER BY source_business_at DESC, observation_key DESC
+                ) FILTER (WHERE unit_price IS NOT NULL))[1],
+               MAX(observed_at),
                clock_timestamp()
-             )`,
-            [
-              row.storeCode,
-              row.businessDate,
-              row.currency,
-              row.productKey,
-              row.platformSkuId,
-              row.platformSkcId,
-              row.supplierSku,
-              amount(row.incomeAmount),
-              amount(row.expenseAmount),
-              amount(row.netAmount),
-              count(row.goodsCount),
-              row.latestUnitPrice,
-              row.priceObservedAt,
-              observedAt,
-            ],
+             FROM fact.full_home_finance_detail_observation
+             WHERE store_code = $1
+               AND business_date = ANY($2::date[])
+               AND product_key IS NOT NULL
+             GROUP BY store_code, business_date, currency, product_key`,
+            [storeCode, affectedDates],
           );
+          financeDailyRows = dailyResult.rowCount ?? 0;
+          productFinanceRows = productResult.rowCount ?? 0;
         }
         for (const row of details) {
           if (row.unitPrice === null || !row.productKey) continue;
@@ -279,8 +298,8 @@ export function createFinanceHomeRepository({ pool } = {}) {
         );
         await client.query('COMMIT');
         return {
-          financeDailyRows: projection.daily.length,
-          productFinanceRows: projection.products.length,
+          financeDailyRows,
+          productFinanceRows,
           priceObservations: details.filter(
             ({ unitPrice, productKey }) => unitPrice !== null && productKey,
           ).length,
