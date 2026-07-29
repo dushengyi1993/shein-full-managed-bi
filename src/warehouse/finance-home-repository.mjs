@@ -83,6 +83,31 @@ export function createFinanceHomeRepository({ pool } = {}) {
           throw new TypeError('finance detail references an unknown report');
         }
       }
+      const detailObservations = details.map((row) => {
+        const observationKey = crypto.createHash('sha256')
+          .update(key([storeCode, row.reportOrderNoHash, row.detailRowKeyHash]))
+          .digest('hex');
+        return {
+          observation_key: observationKey,
+          store_code: storeCode,
+          report_order_no_hash: row.reportOrderNoHash,
+          detail_row_key_hash: row.detailRowKeyHash,
+          report_generated_date: reportGeneratedDates.get(row.reportOrderNoHash),
+          business_date: row.businessDate,
+          currency: row.currency,
+          direction: row.direction,
+          amount: amount(row.amount),
+          goods_count: count(row.goodsCount),
+          product_key: row.productKey,
+          platform_sku_id: row.platformSkuId,
+          platform_skc_id: row.platformSkcId,
+          supplier_sku: row.supplierSku,
+          unit_price: row.unitPrice,
+          source_business_at: row.observedBusinessAt,
+          observed_at: observedAt,
+          second_order_type: row.secondOrderType,
+        };
+      });
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -105,10 +130,7 @@ export function createFinanceHomeRepository({ pool } = {}) {
           [storeCode, startDate, endDate],
         );
 
-        for (const row of details) {
-          const observationKey = crypto.createHash('sha256')
-            .update(key([storeCode, row.reportOrderNoHash, row.detailRowKeyHash]))
-            .digest('hex');
+        if (detailObservations.length > 0) {
           await client.query(
             `INSERT INTO fact.full_home_finance_detail_observation (
                observation_key, store_code, report_order_no_hash,
@@ -116,10 +138,32 @@ export function createFinanceHomeRepository({ pool } = {}) {
                currency, direction, amount, goods_count, product_key,
                platform_sku_id, platform_skc_id, supplier_sku, unit_price,
                source_business_at, observed_at, updated_at
-             ) VALUES (
-               $1, $2, $3, $4, $5::date, $6::date, $7, $8,
-               $9::numeric, $10, $11, $12, $13, $14, $15::numeric,
-               $16::timestamptz, $17::timestamptz, clock_timestamp()
+             )
+             SELECT
+               x.observation_key, x.store_code, x.report_order_no_hash,
+               x.detail_row_key_hash, x.report_generated_date,
+               x.business_date, x.currency, x.direction, x.amount,
+               x.goods_count, x.product_key, x.platform_sku_id,
+               x.platform_skc_id, x.supplier_sku, x.unit_price,
+               x.source_business_at, x.observed_at, clock_timestamp()
+             FROM jsonb_to_recordset($1::jsonb) AS x(
+               observation_key character(64),
+               store_code text,
+               report_order_no_hash character(64),
+               detail_row_key_hash character(64),
+               report_generated_date date,
+               business_date date,
+               currency character(3),
+               direction text,
+               amount numeric,
+               goods_count bigint,
+               product_key text,
+               platform_sku_id text,
+               platform_skc_id text,
+               supplier_sku text,
+               unit_price numeric,
+               source_business_at timestamptz,
+               observed_at timestamptz
              )
              ON CONFLICT (observation_key) DO UPDATE SET
                report_generated_date = EXCLUDED.report_generated_date,
@@ -136,25 +180,7 @@ export function createFinanceHomeRepository({ pool } = {}) {
                source_business_at = EXCLUDED.source_business_at,
                observed_at = EXCLUDED.observed_at,
                updated_at = clock_timestamp()`,
-            [
-              observationKey,
-              storeCode,
-              row.reportOrderNoHash,
-              row.detailRowKeyHash,
-              reportGeneratedDates.get(row.reportOrderNoHash),
-              row.businessDate,
-              row.currency,
-              row.direction,
-              amount(row.amount),
-              count(row.goodsCount),
-              row.productKey,
-              row.platformSkuId,
-              row.platformSkcId,
-              row.supplierSku,
-              row.unitPrice,
-              row.observedBusinessAt,
-              observedAt,
-            ],
+            [JSON.stringify(detailObservations)],
           );
         }
 
@@ -235,38 +261,43 @@ export function createFinanceHomeRepository({ pool } = {}) {
           financeDailyRows = dailyResult.rowCount ?? 0;
           productFinanceRows = productResult.rowCount ?? 0;
         }
-        for (const row of details) {
-          if (row.unitPrice === null || !row.productKey) continue;
-          const observationKey = crypto.createHash('sha256')
-            .update(key([storeCode, row.reportOrderNoHash, row.detailRowKeyHash]))
-            .digest('hex');
+        const priceObservations = detailObservations.filter(
+          ({ unit_price: unitPrice, product_key: productKey }) => (
+            unitPrice !== null && productKey
+          ),
+        );
+        if (priceObservations.length > 0) {
           await client.query(
             `INSERT INTO fact.full_product_price_observation (
                observation_key, store_code, report_order_no_hash,
                detail_row_key_hash, platform_sku_id, supplier_sku,
                supplier_code, unit_price, amount, goods_count, currency,
                direction, second_order_type, source_business_at, observed_at
-             ) VALUES (
-               $1, $2, $3, $4, $5, $6, NULL, $7::numeric, $8::numeric,
-               $9, $10, $11, $12, $13::timestamptz, $14::timestamptz
+             )
+             SELECT
+               x.observation_key, x.store_code, x.report_order_no_hash,
+               x.detail_row_key_hash, x.platform_sku_id, x.supplier_sku,
+               NULL, x.unit_price, x.amount, x.goods_count, x.currency,
+               x.direction, x.second_order_type, x.source_business_at,
+               x.observed_at
+             FROM jsonb_to_recordset($1::jsonb) AS x(
+               observation_key character(64),
+               store_code text,
+               report_order_no_hash character(64),
+               detail_row_key_hash character(64),
+               platform_sku_id text,
+               supplier_sku text,
+               unit_price numeric,
+               amount numeric,
+               goods_count bigint,
+               currency character(3),
+               direction text,
+               second_order_type text,
+               source_business_at timestamptz,
+               observed_at timestamptz
              )
              ON CONFLICT (observation_key) DO NOTHING`,
-            [
-              observationKey,
-              storeCode,
-              row.reportOrderNoHash,
-              row.detailRowKeyHash,
-              row.platformSkuId,
-              row.supplierSku,
-              row.unitPrice,
-              amount(row.amount),
-              count(row.goodsCount),
-              row.currency,
-              row.direction,
-              row.secondOrderType,
-              row.observedBusinessAt,
-              observedAt,
-            ],
+            [JSON.stringify(priceObservations)],
           );
         }
         await client.query(

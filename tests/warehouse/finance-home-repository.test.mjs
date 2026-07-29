@@ -74,13 +74,14 @@ test('finance repository replaces only its bounded derived window and hashes pri
   const observationInsert = calls.find(
     ({ sql }) => /INSERT INTO fact\.full_home_finance_detail_observation/.test(sql),
   );
-  assert.equal(observationInsert.params[0].length, 64);
-  assert.equal(observationInsert.params[4], '2026-07-28');
+  const observationPayload = JSON.parse(observationInsert.params[0]);
+  assert.equal(observationPayload[0].observation_key.length, 64);
+  assert.equal(observationPayload[0].report_generated_date, '2026-07-28');
   assert.ok(calls.some(
     ({ sql }) => /FROM fact\.full_home_finance_detail_observation[\s\S]*GROUP BY store_code, business_date, currency/.test(sql),
   ));
   const price = calls.find(({ sql }) => /INSERT INTO fact\.full_product_price_observation/.test(sql));
-  assert.equal(price.params[0].length, 64);
+  assert.equal(JSON.parse(price.params[0])[0].observation_key.length, 64);
   assert.doesNotMatch(JSON.stringify(calls), /REPORT-SECRET|DETAIL-SECRET/);
   assert.equal(calls.at(-1).sql, 'COMMIT');
 });
