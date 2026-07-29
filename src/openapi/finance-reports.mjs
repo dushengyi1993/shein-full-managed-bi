@@ -205,6 +205,7 @@ export async function fetchFinanceWindow(client, {
   detailPageSize = 200,
   maxReports = 20_000,
   maxDetails = 2_000_000,
+  detailConcurrency = 4,
 } = {}) {
   const [window] = financeWindows({ startDate, endDate });
   if (!window || window.startDate !== startDate || window.endDate !== endDate) {
@@ -231,9 +232,12 @@ export async function fetchFinanceWindow(client, {
     if (mapped.reports.length === 0) fail('PAGINATION_EMPTY_GAP', 'finance report pagination stopped early');
   }
 
-  const details = [];
-  for (const report of reports) {
-    if (report.salesTotal === 0) continue;
+  if (!Number.isSafeInteger(detailConcurrency) || detailConcurrency < 1 || detailConcurrency > 8) {
+    fail('FINANCE_CONCURRENCY_INVALID', 'detail concurrency must be between 1 and 8');
+  }
+  const fetchReportDetails = async (report) => {
+    if (report.salesTotal === 0) return [];
+    const reportDetails = [];
     let query;
     let received = 0;
     for (;;) {
@@ -248,9 +252,11 @@ export async function fetchFinanceWindow(client, {
       const mapped = mapFinanceSalesDetailResponse(response, {
         reportOrderNoHash: report.reportOrderNoHash,
       });
-      details.push(...mapped.rows);
+      reportDetails.push(...mapped.rows);
       received += mapped.rows.length;
-      if (details.length > maxDetails) fail('FINANCE_DETAIL_LIMIT', 'finance detail limit exceeded');
+      if (reportDetails.length > maxDetails) {
+        fail('FINANCE_DETAIL_LIMIT', 'finance detail limit exceeded');
+      }
       if (!mapped.nextQuery) {
         if (received !== mapped.count) {
           fail('PAGINATION_COUNT_MISMATCH', 'finance detail count did not match');
@@ -262,6 +268,21 @@ export async function fetchFinanceWindow(client, {
       }
       query = mapped.nextQuery;
     }
+    return reportDetails;
+  };
+  const detailsByReport = new Array(reports.length);
+  let nextReport = 0;
+  const workerCount = Math.min(detailConcurrency, reports.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextReport < reports.length) {
+      const index = nextReport;
+      nextReport += 1;
+      detailsByReport[index] = await fetchReportDetails(reports[index]);
+    }
+  }));
+  const details = detailsByReport.flat();
+  if (details.length > maxDetails) {
+    fail('FINANCE_DETAIL_LIMIT', 'finance detail limit exceeded');
   }
   return { reports, details };
 }
