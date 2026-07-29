@@ -3606,7 +3606,6 @@ body[data-dataset="sample"] .metric-item > strong {
       "clear status";
     padding: 10px 0;
     gap: 6px;
-    backdrop-filter: none;
   }
 
   .mobile-title {

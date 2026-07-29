@@ -57,7 +57,7 @@ test('full-managed primary navigation follows the sales-first semi-managed inter
   assert.match(styles, /@media \(max-width: 620px\)/);
 });
 
-test('home shell keeps the decision flow, sales matrix, trends, ranking tables and operating alerts', async () => {
+test('home shell keeps the verdict band, KPI matrix, trends, ranking tables and footnote', async () => {
   const [html, app, parityStyles] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
@@ -71,33 +71,20 @@ test('home shell keeps the decision flow, sales matrix, trends, ranking tables a
   assert.match(app, /yesterday: \{ label: '昨日'/);
   assert.match(app, /last7Days: \{ label: '近 7 日'/);
   assert.match(app, /last30Days: \{ label: '近 30 日'/);
-  assert.match(app, /销量规模/);
-  assert.match(app, /销售动能/);
-  assert.match(app, /店铺经营/);
-  assert.match(app, /商品与归并/);
-  assert.match(app, /数据健康/);
-  assert.match(app, /财务与结算/);
+  assert.match(app, /首屏经营结论/);
+  assert.match(app, /销量 KPI 数据矩阵/);
   assert.match(app, /日销量趋势/);
   assert.match(app, /月销量趋势/);
   assert.match(app, /店铺经营排行/);
-  assert.match(app, /货号经营排行/);
-  assert.match(app, /function metricMatrix\(/);
+  assert.match(app, /货号 \/ 商品经营排行/);
+  assert.match(app, /function homeHeader\(\)/);
+  assert.match(app, /function homeTodayVerdict\(/);
+  assert.match(app, /function homeMomentumVerdict\(/);
+  assert.match(app, /function homeKpis\(\)/);
   assert.match(app, /function homeStoreRankingTable\(/);
   assert.match(app, /function homeProductRankingTable\(/);
-  assert.match(app, /function homeHeader\(\)/);
-  assert.match(app, /function homeTruthStrip\(\)/);
-  assert.match(app, /class="home-topbar"/);
-  assert.match(app, /class="kpi-six sales-matrix"/);
-  assert.match(app, /class="trend-stack home-trend-stack"/);
-  assert.match(app, /class="rank-grid rank-tables"/);
-  assert.match(app, /renderOperationalPriorities\(\{ home: true \}\)/);
-  assert.match(parityStyles, /\.kpi-six\s*\{/);
-  assert.match(parityStyles, /\.metric-matrix\s*\{/);
-  assert.match(parityStyles, /\.trend-stack\s*\{/);
-  assert.match(parityStyles, /\.rank-grid\s*\{/);
-  assert.match(parityStyles, /\.kpi-six \.matrix-span-2\s*\{/);
-  assert.match(parityStyles, /\.metric-matrix-scroll\s*\{/);
-  assert.match(parityStyles, /\.rank-identity\.canonical\s*\{/);
+  assert.match(app, /function homeFootnote\(\)/);
+  assert.match(app, /function homeMagnitudeCell\(/);
   assert.match(app, /function monthlyTrendRows\(\)/);
   assert.match(app, /OWNER:\$\{owner\.key\}/);
   assert.match(app, /STORE:\$\{store\.code\}/);
@@ -105,7 +92,25 @@ test('home shell keeps the decision flow, sales matrix, trends, ranking tables a
   assert.match(app, /合法为 0/);
   assert.match(app, /数据已过期/);
   assert.match(app, /数据未接入/);
-  assert.match(app, /不使用抓取时间冒充业务日期/);
+  assert.match(app, /class="home-topbar home-verdict"/);
+  assert.match(app, /class="home-kpi-table"/);
+  assert.match(app, /class="trend-stack home-trend-stack"/);
+  assert.match(app, /class="home-footnote"/);
+  assert.match(parityStyles, /\.home-kpi-table\s*\{/);
+  assert.match(parityStyles, /\.metric-matrix-scroll\s*\{/);
+  assert.match(parityStyles, /\.trend-stack\s*\{/);
+  assert.match(parityStyles, /\.rank-meter\s*\{/);
+  assert.match(parityStyles, /\.rank-identity\.canonical\s*\{/);
+  assert.match(parityStyles, /\.home-footnote\s*\{/);
+
+  // The retired home noise stays defined for other routes but leaves renderHome.
+  const homeStart = app.indexOf('function renderHome()');
+  const homeEnd = app.indexOf('\nfunction ', homeStart + 1);
+  const home = app.slice(homeStart, homeEnd);
+  assert.doesNotMatch(home, /homeBusinessPulse|supplyRadar|renderOperationalPriorities/);
+  assert.match(app, /function homeBusinessPulse\(/);
+  assert.match(app, /function supplyRadar\(/);
+  assert.match(app, /\$\{renderOperationalPriorities\(\)\}/);
 });
 
 test('full-managed shell keeps unsupported consumer metrics out of the KPI and ranking functions', async () => {
@@ -149,7 +154,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.8`));
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.10`));
   }
   assert.doesNotMatch(html, /v=20260728\.[123]/);
   for (const sheet of [styles, parityStyles]) {
@@ -162,7 +167,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.match(styles, /--ink: #1a1916/);
   assert.match(styles, /--line: #e8e6e1/);
   assert.match(styles, /--accent: #2d6a4f/);
-  assert.match(parityStyles, /\.overview-matrix-card\s*\{[^}]*border: 1px solid var\(--line\)[^}]*border-radius: 12px/s);
+  assert.match(parityStyles, /\.home-kpi-table\s*\{[^}]*border-collapse: separate[^}]*border-spacing: 0/s);
 });
 
 test('procurement uses an independent server query and authenticated snapshot update stream', async () => {
@@ -186,7 +191,7 @@ test('procurement uses an independent server query and authenticated snapshot up
   assert.match(styles, /\.table-pagination\s*\{/);
 });
 
-test('sales uses a server query and home exposes a compact operating pulse', async () => {
+test('sales uses a server query and the operating pulse helper stays available off home', async () => {
   const [app, styles] = await Promise.all([
     read('src/web/app.js'),
     read('src/web/styles.css'),

@@ -337,56 +337,139 @@ body {
   margin: 0;
 }
 
-/* ---------- Sales data matrix ---------- */
+/* ---------- First-screen verdict band ---------- */
 
-.kpi-six {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+.home-verdict .verdict-primary {
+  max-width: 92ch;
+  margin: 7px 0 0;
+  color: var(--ink);
+  font-size: clamp(15px, 1.12vw, 18px);
+  font-weight: 680;
+  line-height: 1.42;
+  letter-spacing: -0.018em;
+}
+
+.home-verdict .verdict-secondary {
+  max-width: 92ch;
+  margin: 3px 0 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ---------- Sales KPI matrix: one dense table, not a card grid ---------- */
+
+.home-kpi {
   margin-bottom: 14px;
 }
 
-.kpi-six .matrix-span-2 {
-  grid-column: span 2;
-}
-
-.overview-matrix-card {
-  position: relative;
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  padding: 13px;
-  overflow: hidden;
-  text-align: left;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--paper);
-  box-shadow: var(--shadow);
-}
-
-.matrix-card-head {
+.home-block-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: 10px;
-  margin-bottom: 9px;
+  margin: 2px 2px 8px;
 }
 
-.matrix-card-head h4 {
+.home-block-head h2 {
+  flex: 0 0 auto;
   margin: 0;
-  font-size: 13.5px;
+  font-size: 15px;
   line-height: 1.2;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
+}
+
+.home-block-head p {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.matrix-card-head .sub {
-  min-width: 0;
-  margin: 0;
+.home-kpi-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--paper);
+}
+
+.home-kpi-table th,
+.home-kpi-table td {
+  padding: 7px 12px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.home-kpi-table tbody tr:last-child th,
+.home-kpi-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.home-kpi-table thead th {
+  color: var(--muted);
+  background: var(--paper-soft);
+  font-size: 10.5px;
+  font-weight: 780;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.home-kpi-table thead th.num {
+  text-align: right;
+}
+
+/* First column stays visible while the matrix scrolls horizontally. */
+.home-kpi-table thead th:first-child,
+.home-kpi-table tbody th[scope="row"] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  border-right: 1px solid var(--line);
+}
+
+.home-kpi-table thead th:first-child {
+  z-index: 2;
+  background: var(--paper-soft);
+}
+
+.home-kpi-table tbody th[scope="row"] {
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.home-kpi-table .num {
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.home-kpi-table .num small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 540;
+  letter-spacing: 0;
+}
+
+.home-kpi-table .note {
+  max-width: 40ch;
   color: var(--muted);
   font-size: 10.5px;
-  line-height: 1.35;
-  text-align: right;
+  font-weight: 400;
+  line-height: 1.5;
 }
 
 .metric-matrix-scroll {
@@ -398,112 +481,6 @@ body {
   background: var(--paper-soft);
   scrollbar-width: thin;
   scrollbar-color: var(--line2) transparent;
-}
-
-.metric-matrix {
-  width: 100%;
-  min-width: 268px;
-  border-collapse: separate;
-  border-spacing: 0;
-  table-layout: fixed;
-}
-
-.metric-matrix.cols-3 {
-  min-width: 268px;
-}
-
-.metric-matrix.cols-4 {
-  min-width: 384px;
-}
-
-.metric-matrix th,
-.metric-matrix td {
-  min-width: 0;
-  padding: 7px 6px;
-  vertical-align: middle;
-  border-right: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  text-align: center;
-  overflow-wrap: anywhere;
-}
-
-.metric-matrix th:last-child,
-.metric-matrix td:last-child {
-  border-right: 0;
-}
-
-.metric-matrix tbody tr:last-child th,
-.metric-matrix tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.metric-matrix thead th {
-  height: 30px;
-  color: var(--muted);
-  background: var(--paper-soft);
-  font-size: 10.5px;
-  font-weight: 780;
-  letter-spacing: 0.03em;
-  white-space: nowrap;
-}
-
-.metric-matrix tbody th {
-  height: 44px;
-  color: var(--ink);
-  background: var(--paper-soft);
-  font-size: 11.5px;
-  font-weight: 760;
-  letter-spacing: -0.005em;
-  text-align: left;
-  padding-left: 9px;
-}
-
-.metric-matrix tbody td {
-  color: var(--ink);
-  background: var(--paper);
-  font-size: 14px;
-  font-weight: 760;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.015em;
-}
-
-.metric-matrix.cols-3 thead th:first-child {
-  width: 28%;
-}
-
-.metric-matrix.cols-4 thead th:first-child {
-  width: 22%;
-}
-
-.metric-main-value {
-  display: block;
-  line-height: 1.2;
-}
-
-.metric-main-value.pending {
-  color: var(--warning);
-}
-
-.metric-main-value.blocked {
-  color: var(--danger);
-}
-
-.metric-main-value.complete {
-  color: var(--success);
-}
-
-.metric-main-value.unknown {
-  color: var(--muted);
-}
-
-.metric-subvalue {
-  display: block;
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 640;
-  line-height: 1.3;
-  letter-spacing: 0;
 }
 
 .matrix-footnote {
@@ -592,121 +569,40 @@ body {
 
 /* ---------- Rankings ---------- */
 
-.rank-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
 .rank-panel {
   padding: 14px;
 }
 
-/* The two operational ranking tables stack full width: eight columns cannot
+/* The two operational ranking sections stack full width: the tables cannot
    stay readable side by side, and each table scrolls inside .table-wrap rather
    than widening the document. */
-.rank-tables {
-  grid-template-columns: 1fr;
+.home-rank-section {
+  margin-top: 12px;
 }
 
-.rank-tables .table-note {
+.rank-panel .table-note {
   margin: 8px 0 0;
   font-size: 11px;
   line-height: 1.5;
 }
 
-.rank-list {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+/* Row body acts as the in-place scope filter link. */
+.rank-entity {
+  display: block;
+  margin: -2px -6px;
+  padding: 2px 6px;
+  color: inherit;
+  border-radius: 6px;
+  text-decoration: none;
 }
 
-.rank-item {
-  position: relative;
-  display: grid;
-  width: 100%;
-  min-height: 56px;
-  grid-template-columns: 26px minmax(0, 1fr) minmax(104px, auto);
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  overflow: hidden;
-  color: var(--ink);
-  text-align: left;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--paper);
+.rank-entity:hover strong,
+.rank-entity:focus-visible strong {
+  color: var(--accent-dark);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-.rank-item::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 0;
-  content: "";
-  pointer-events: none;
-  background: var(--accent);
-  opacity: 0.06;
-}
-
-.rank-item.rank-fill-1::before { width: 10%; }
-.rank-item.rank-fill-2::before { width: 20%; }
-.rank-item.rank-fill-3::before { width: 30%; }
-.rank-item.rank-fill-4::before { width: 40%; }
-.rank-item.rank-fill-5::before { width: 50%; }
-.rank-item.rank-fill-6::before { width: 60%; }
-.rank-item.rank-fill-7::before { width: 70%; }
-.rank-item.rank-fill-8::before { width: 80%; }
-.rank-item.rank-fill-9::before { width: 90%; }
-.rank-item.rank-fill-10::before { width: 100%; }
-
-.rank-item:hover {
-  border-color: var(--line2);
-  box-shadow: 0 1px 3px rgba(26, 25, 22, 0.05);
-}
-
-.rank-item > * {
-  position: relative;
-  z-index: 1;
-}
-
-.rank-no {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  color: var(--muted-strong);
-  border-radius: 999px;
-  background: var(--paper-warm);
-  font-size: 11px;
-  font-weight: 720;
-  font-variant-numeric: tabular-nums;
-}
-
-.rank-main {
-  min-width: 0;
-}
-
-.rank-title-line {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.rank-name {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 12.5px;
-  font-weight: 760;
-  letter-spacing: -0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rank-owner,
 .rank-identity {
   display: inline-flex;
   align-items: center;
@@ -717,11 +613,6 @@ body {
   font-weight: 720;
   line-height: 1.5;
   white-space: nowrap;
-}
-
-.rank-owner {
-  color: var(--muted-strong);
-  background: var(--paper-warm);
 }
 
 .rank-identity.canonical {
@@ -736,55 +627,105 @@ body {
   background: var(--warning-soft);
 }
 
-.rank-meta {
+/* Magnitude bar: a single restrained fill on a warm track. Widths come only
+   from the 1–20 tier classes below; no inline styles, no gradient. */
+.meter-cell {
+  min-width: 92px;
+}
+
+.rank-meter {
   display: block;
-  margin-top: 3px;
+  width: 100%;
+  height: 6px;
   overflow: hidden;
-  color: var(--muted);
-  font-size: 10.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  border-radius: 3px;
+  background: var(--paper-warm);
 }
 
-.rank-meta .meta-part {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 3px;
-}
-
-.rank-meta .meta-part b {
-  color: var(--muted-strong);
-  font-size: 11px;
-  font-weight: 760;
-  font-variant-numeric: tabular-nums;
-}
-
-.rank-meta .meta-sep {
-  display: inline-block;
-  margin: 0 6px;
-  color: var(--line2);
-  font-style: normal;
-}
-
-.rank-value {
-  font-size: 13px;
-  font-weight: 780;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.rank-value small {
+.rank-meter-fill {
   display: block;
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 10.5px;
-  font-weight: 500;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.rank-meter-t1 { width: 5%; }
+.rank-meter-t2 { width: 10%; }
+.rank-meter-t3 { width: 15%; }
+.rank-meter-t4 { width: 20%; }
+.rank-meter-t5 { width: 25%; }
+.rank-meter-t6 { width: 30%; }
+.rank-meter-t7 { width: 35%; }
+.rank-meter-t8 { width: 40%; }
+.rank-meter-t9 { width: 45%; }
+.rank-meter-t10 { width: 50%; }
+.rank-meter-t11 { width: 55%; }
+.rank-meter-t12 { width: 60%; }
+.rank-meter-t13 { width: 65%; }
+.rank-meter-t14 { width: 70%; }
+.rank-meter-t15 { width: 75%; }
+.rank-meter-t16 { width: 80%; }
+.rank-meter-t17 { width: 85%; }
+.rank-meter-t18 { width: 90%; }
+.rank-meter-t19 { width: 95%; }
+.rank-meter-t20 { width: 100%; }
+
+.rank-meter-empty {
+  border: 1px dashed var(--line2);
+  background: transparent;
+}
+
+/* The active window column is the primary value; highlighted with a wash. */
+.home-rank-table .current-window {
+  background: var(--accent-soft);
 }
 
 .rank-panel .text-link {
   display: inline-flex;
-  margin-top: 10px;
+  min-height: 44px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+/* ---------- Caliber footnote and workspace entries ---------- */
+
+.home-footnote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 22px;
+  margin: 18px 2px 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.home-footnote p {
+  max-width: 104ch;
+  margin: 0;
+}
+
+.home-footnote-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.home-footnote-links a {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  color: var(--accent-dark);
+  font-weight: 640;
+  text-decoration: none;
+}
+
+.home-footnote-links a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* ---------- 1280px: rail turns into a top bar; nav must not cover content ---------- */
@@ -876,7 +817,8 @@ body {
   }
 }
 
-/* ---------- 1400px and up: four matrix columns keep the trend start on screen ---------- */
+/* ---------- 1400px and up: compact chrome keeps verdict, the full KPI
+   matrix and the daily trend title inside the first screen ---------- */
 
 @media (min-width: 1400px) {
   .workspace.main {
@@ -908,18 +850,13 @@ body {
 
   .home-topbar {
     gap: 12px 20px;
-    margin-bottom: 7px;
-    padding-top: 2px;
-    padding-bottom: 8px;
-  }
-
-  .truth-strip {
     margin-bottom: 8px;
+    padding-top: 2px;
+    padding-bottom: 9px;
   }
 
-  .truth-strip article {
-    min-height: 60px;
-    padding: 7px 11px 8px;
+  .home-verdict .verdict-primary {
+    font-size: 14px;
   }
 
   .dataset-notice,
@@ -942,10 +879,6 @@ body {
     gap: 8px;
   }
 
-  #view > .truth-strip + .quality-notice {
-    width: 100%;
-  }
-
   .quality-notice span {
     min-width: 0;
     overflow: hidden;
@@ -953,63 +886,30 @@ body {
     white-space: nowrap;
   }
 
-  .kpi-six {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px;
-    margin-bottom: 8px;
+  .home-kpi {
+    margin-bottom: 10px;
   }
 
-  .overview-matrix-card {
-    padding: 9px 10px;
-  }
-
-  .matrix-card-head {
-    gap: 6px;
+  .home-block-head {
     margin-bottom: 6px;
   }
 
-  .matrix-card-head .sub {
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 1;
-    line-height: 1.2;
+  .home-kpi-table th,
+  .home-kpi-table td {
+    padding: 5px 10px;
   }
 
-  .metric-matrix th,
-  .metric-matrix td {
-    padding: 4px 5px;
-  }
-
-  .metric-matrix thead th {
-    height: 24px;
-    font-size: 9.5px;
-  }
-
-  .metric-matrix tbody th {
-    height: 34px;
-    padding-left: 7px;
-    font-size: 10.5px;
-  }
-
-  .metric-matrix tbody td {
-    font-size: 12.5px;
-  }
-
-  .metric-subvalue {
-    margin-top: 1px;
-    font-size: 9px;
-    line-height: 1.15;
+  .home-kpi-table .num {
+    font-size: 13.5px;
   }
 
   .matrix-footnote {
-    display: -webkit-box;
     margin-top: 5px;
     overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
     font-size: 9.5px;
     line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .head {
@@ -1042,32 +942,14 @@ body {
   }
 }
 
-@media (max-width: 1100px) {
-  .rank-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
 @media (max-width: 900px) {
-  .kpi-six {
-    grid-template-columns: 1fr;
-  }
-
-  .kpi-six .matrix-span-2 {
-    grid-column: span 1;
-  }
-
-  .matrix-card-head {
+  .home-block-head {
     display: block;
   }
 
-  .matrix-card-head h4 {
-    white-space: normal;
-  }
-
-  .matrix-card-head .sub {
+  .home-block-head p {
     margin-top: 3px;
-    text-align: left;
+    white-space: normal;
   }
 }
 
@@ -1142,23 +1024,44 @@ body {
 
   .bar,
   .home-filter-bar {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
-      "search"
-      "scope"
-      "range"
-      "actions";
-    gap: 7px;
-    padding: 7px;
+      "search search"
+      "scope range-summary"
+      "range-presets actions";
+    gap: 6px;
+    padding: 6px;
     border-radius: 10px;
+  }
+
+  .home-filter-bar .search-field {
+    grid-area: search;
+  }
+
+  .home-filter-bar .scope-field {
+    grid-area: scope;
+  }
+
+  .home-filter-bar .range-dock,
+  .home-filter-bar .range-toolbar,
+  .home-filter-bar .range-toolbar-main {
+    display: contents;
+  }
+
+  .home-filter-bar .range-button {
+    grid-area: range-summary;
+  }
+
+  .home-filter-bar .range-preset-strip {
+    grid-area: range-presets;
+  }
+
+  .home-filter-bar .command-actions {
+    grid-area: actions;
   }
 
   .field.filter-field {
     min-height: 44px;
-  }
-
-  .range-toolbar-main {
-    grid-template-columns: 1fr;
   }
 
   .range-button {
@@ -1171,8 +1074,13 @@ body {
   }
 
   .command-actions {
-    min-height: 38px;
-    justify-content: flex-start;
+    min-height: 44px;
+    justify-content: stretch;
+  }
+
+  .command-actions .clear-button {
+    width: 100%;
+    min-height: 44px;
   }
 
   .home-topbar {
@@ -1202,22 +1110,17 @@ body {
     overflow-wrap: anywhere;
   }
 
-  .overview-matrix-card,
   .panel {
     border-radius: 10px;
   }
 
-  .overview-matrix-card {
-    padding: 11px;
+  .home-kpi-table th,
+  .home-kpi-table td {
+    padding: 6px 9px;
   }
 
-  .metric-matrix tbody th {
-    height: 42px;
-    font-size: 11px;
-  }
-
-  .metric-matrix tbody td {
-    font-size: 12.5px;
+  .home-kpi-table .num {
+    font-size: 13px;
   }
 
   .head {
@@ -1233,26 +1136,12 @@ body {
     padding: 12px;
   }
 
-  .rank-item {
-    min-height: 66px;
-    grid-template-columns: 24px minmax(0, 1fr);
+  .home-footnote {
+    display: block;
   }
 
-  .rank-value {
-    grid-column: 2;
-    text-align: left;
-  }
-
-  .rank-meta {
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    white-space: normal;
-  }
-
-  .rank-meta .meta-sep {
-    margin: 0 4px;
+  .home-footnote-links {
+    margin-top: 6px;
   }
 }
 
@@ -1276,14 +1165,8 @@ body {
 
   .home-topbar,
   .home-topbar-facts,
-  .kpi-six,
-  .rank-grid,
   .trend-stack {
     grid-template-columns: 1fr;
-  }
-
-  .kpi-six .matrix-span-2 {
-    grid-column: span 1;
   }
 
   .metric-matrix-scroll {
@@ -1292,37 +1175,40 @@ body {
     overscroll-behavior-inline: contain;
   }
 
-  .metric-matrix,
-  .metric-matrix.cols-3,
-  .metric-matrix.cols-4 {
-    min-width: 300px;
+  /* The dense KPI matrix scrolls inside its own container with the first
+     column pinned; it never widens the page. */
+  .home-kpi-table {
+    min-width: 560px;
   }
 
-  .overview-matrix-card,
   .panel,
-  .rank-item,
-  .truth-strip {
+  .home-kpi,
+  .home-footnote {
     max-width: 100%;
     min-width: 0;
   }
 
-  .rank-name,
-  .rank-meta,
+  .verdict-primary,
+  .verdict-secondary,
+  .rank-entity strong,
+  .rank-entity span,
   .matrix-footnote,
   .chart-legend,
   .head p,
   .home-topbar p,
-  .rank-tables .table-note,
+  .rank-panel .table-note,
+  .home-kpi-table .note,
+  .home-footnote p,
   .pulse-card .pulse-why,
   .pulse-card small {
     overflow-wrap: anywhere;
     white-space: normal;
   }
 
-  /* Eight columns cannot fit 390px; the table scrolls inside its own wrapper
-     while the document keeps its width. */
+  /* The wide ranking tables scroll inside their own wrapper while the
+     document keeps its width. */
   .home-rank-table {
-    min-width: 640px;
+    min-width: 680px;
   }
 
   .home-trend-stack .trend-chart {
@@ -1340,7 +1226,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .primary-nav a,
-  .rank-item,
+  .rank-entity,
   .chart-hit {
     transition: none;
   }

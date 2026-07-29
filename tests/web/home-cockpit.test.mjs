@@ -16,23 +16,27 @@ function functionBody(source, functionName) {
   return source.slice(start, nextFunction === -1 ? source.length : nextFunction);
 }
 
-test('home renders a compact head with scope, fact time and dataset state', async () => {
+test('home opens with one editorial verdict band: conclusions left, scope and fact time right', async () => {
   const [app, styles] = await Promise.all([
     read('src/web/app.js'),
     read('src/web/styles.css'),
   ]);
   const header = functionBody(app, 'homeHeader');
-  const strip = functionBody(app, 'homeTruthStrip');
-  const home = functionBody(app, 'renderHome');
+  const today = functionBody(app, 'homeTodayVerdict');
+  const momentum = functionBody(app, 'homeMomentumVerdict');
 
-  // The head is a dense operating bar, not a landing-page hero.
+  // The band is a horizontal editorial strip, not a card grid.
   assert.match(styles, /\.home-topbar\s*\{/);
-  assert.match(styles, /\.home-topbar h1\s*\{[^}]*font-size: clamp\(1\.32rem/s);
-  assert.match(styles, /\.home-topbar-facts\s*\{/);
-
-  assert.match(header, /<header class="home-topbar">/);
+  assert.match(header, /<header class="home-topbar home-verdict" aria-label="首屏经营结论">/);
   assert.match(header, /<h1>全托经营驾驶舱<\/h1>/);
-  assert.match(header, /当前范围 \$\{filterSummary\(\)\}/);
+  assert.match(header, /class="verdict-primary"/);
+  assert.match(header, /class="verdict-secondary"/);
+  assert.match(header, /homeTodayVerdict\(units\)/);
+  assert.match(header, /homeMomentumVerdict\(units\)/);
+  assert.doesNotMatch(header, /business-pulse-grid|pulse-card|overview-matrix-card/);
+
+  // Right context: scope, business date, generation time and honest flags.
+  assert.match(header, /<dt>当前范围<\/dt>/);
   assert.match(header, /<dt>主要事实业务日<\/dt>/);
   assert.match(header, /<dt>数据生成时间<\/dt>/);
   assert.match(header, /<dt>数据状态<\/dt>/);
@@ -41,163 +45,98 @@ test('home renders a compact head with scope, fact time and dataset state', asyn
   assert.match(header, /empty: 'empty · 暂无快照'/);
   assert.match(header, /'unknown · 状态待确认'/);
   assert.match(header, /'partial · 部分覆盖'/);
-  // A compact operating head, not a marketing hero.
-  assert.doesNotMatch(header, /page-intro|hero/);
 
-  assert.match(strip, /'业务日期'/);
-  assert.match(strip, /'店铺覆盖'/);
-  assert.match(strip, /'数据质量'/);
-  assert.match(strip, /'当前窗口'/);
-  assert.match(strip, /不使用抓取时间冒充业务日期/);
-  assert.match(strip, /窗口口径独立取数，不跨业务日混算/);
-
-  // Page order: head, truth strip, decision summary, matrix, supply radar,
-  // trends, ranking tables, alerts.
-  const order = [
-    'homeHeader()',
-    'homeTruthStrip()',
-    'homeBusinessPulse()',
-    '销售数据矩阵',
-    'homeKpis()',
-    'supplyRadar()',
-    '趋势',
-    'trendCoverageBanner()',
-    '日销量趋势',
-    '月销量趋势',
-    '排行榜',
-    'homeStoreRankingTable(storeRows)',
-    'homeProductRankingTable(productRows)',
-    'renderOperationalPriorities({ home: true })',
-  ].map((marker) => home.indexOf(marker));
-  assert.ok(order.every((index) => index !== -1), '每个首页区块都必须存在');
-  assert.deepEqual(order, [...order].sort((left, right) => left - right));
-});
-
-test('decision summary states each signal, why it matters and a scope-preserving drilldown', async () => {
-  const app = await read('src/web/app.js');
-  const pulse = functionBody(app, 'homeBusinessPulse');
-  const today = functionBody(app, 'pulseTodaySignal');
-  const momentum = functionBody(app, 'pulseMomentumSignal');
-  const supply = functionBody(app, 'pulseSupplySignal');
-  const trust = functionBody(app, 'pulseTrustSignal');
-  const card = functionBody(app, 'pulseCard');
-
-  // Four concrete decisions, in order, each rendered through one card helper.
-  for (const signal of [
-    'pulseTodaySignal(units)',
-    'pulseMomentumSignal(units)',
-    'pulseSupplySignal()',
-    'pulseTrustSignal()',
-  ]) {
-    assert.ok(pulse.includes(signal), signal);
-  }
-  assert.match(card, /signal\.why/);
-  assert.match(card, /signal\.evidence/);
-  assert.match(card, /signal\.linkLabel/);
-
-  // Today is never presented as a finished day.
-  assert.match(today, /今日 vs 昨日/);
-  assert.match(today, /今日仍在累计/);
-  assert.match(today, /今日为当日累计，非完整自然日/);
-  assert.match(today, /不能当作 0 判断经营节奏/);
-  assert.match(today, /缺完整昨日窗口/);
+  // Main conclusion: today vs yesterday, in natural language, never a fake 0%.
   assert.match(today, /isUnit\(today\)/);
   assert.match(today, /isUnit\(yesterday\)/);
+  assert.match(today, /不能当作 0 判断经营节奏/);
+  assert.match(today, /昨日窗口缺失，不做增降结论/);
+  assert.match(today, /与昨日持平/);
+  assert.match(today, /今日仍在累计，并非完整自然日/);
+  assert.doesNotMatch(today, /[¥€]|\bGMV\b|订单数|利润/i);
 
-  // Momentum only exists where the two rolling windows are comparable.
-  assert.match(momentum, /近 7 日日均 vs 此前 23 日日均/);
+  // Secondary conclusion: the only comparable momentum, or an honest refusal.
   assert.match(momentum, /comparableDailySignal\(\{ unitsSold: units \}\)/);
   assert.match(momentum, /signal\.recent === null/);
-  assert.match(momentum, /'不可比'/);
-  assert.match(momentum, /滚动窗口不是历史时间序列/);
+  assert.match(momentum, /日均动量不可比/);
   assert.match(momentum, /formatDailyAverage\(signal\.recent\)/);
   assert.match(momentum, /formatDailyAverage\(signal\.previous\)/);
+  assert.match(momentum, /不按百分比解读/);
 
-  // Supply urgency uses current shortage, urgent, purchase and delivery facts
-  // together with honest returned/total coverage.
-  assert.match(supply, /attentionRows\('inventoryRisks'\)/);
-  assert.match(supply, /attentionRows\('stockAdviceRisks'\)/);
-  assert.match(supply, /attentionRows\('purchaseOrderAttention'\)/);
-  assert.match(supply, /attentionRows\('deliveryAttention'\)/);
-  assert.match(supply, /riskWindowMetric\(shortageRows, 'inventoryRisks', 'shortageQuantity'\)/);
-  assert.match(supply, /riskWindowMetric\(urgentRows, 'stockAdviceRisks', 'plannedUrgentQuantity'\)/);
-  assert.match(supply, /仅统计已物化明细，未命中不等于无风险/);
-  assert.match(supply, /shortageMetric\.note/);
-
-  // Trust names same-day coverage, mixed dates, quarantine and identity.
-  assert.match(trust, /coverage\.coveredStores/);
-  assert.match(trust, /coverage\.totalStores/);
-  assert.match(trust, /当日覆盖 \$\{numberFormatter\.format\(covered\)\} \/ \$\{numberFormatter\.format\(total\)\} 家店/);
-  assert.match(trust, /coverage\.mixedStatisticsDateStores/);
-  assert.match(trust, /coverage\.quarantinedRows/);
-  assert.match(trust, /identityCoverage\(\)/);
-  assert.match(trust, /标准身份 \$\{numberFormatter\.format\(identity\.confirmed\)\}/);
-  assert.match(trust, /businessDate\(\)/);
-
-  // Every card keeps the current scope and adds no amount or consumer metric.
-  for (const body of [today, momentum, supply, trust]) {
-    assert.match(body, /homePulseHref\(/);
-    assert.doesNotMatch(body, /[¥€]|\bSAR\b|\bRMB\b|\bGMV\b|订单数|利润|转化率|支付人数/i);
-  }
+  // The verdict numbers ignore the search box like every other KPI.
+  assert.match(header, /scopedUnits\(\{ ignoreQuery: true \}\)/);
 });
 
-test('limited day-grain history is stated exactly and never padded into a full series', async () => {
+test('home assembles the fixed A→F order and no longer mounts the retired home noise', async () => {
   const app = await read('src/web/app.js');
-  const history = functionBody(app, 'trendHistoryState');
-  const notice = functionBody(app, 'trendHistoryNotice');
-  const banner = functionBody(app, 'trendCoverageBanner');
+  const home = functionBody(app, 'renderHome');
 
-  // Coverage is counted from real dated rows only.
-  assert.match(history, /trendSourceRows\(\)/);
-  assert.match(history, /\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//);
-  assert.match(history, /days: dates\.length/);
-  assert.match(history, /completeMonths/);
-  assert.match(history, /partialMonths/);
-  assert.doesNotMatch(history, /last7Days|last30Days/);
+  const order = [
+    'homeHeader()',
+    'homeKpis()',
+    '日销量趋势',
+    '月销量趋势',
+    '店铺经营排行',
+    'homeStoreRankingTable(storeRows)',
+    '货号 / 商品经营排行',
+    'homeProductRankingTable(productRows)',
+    'homeFootnote()',
+  ].map((marker) => home.indexOf(marker));
+  assert.ok(order.every((index) => index !== -1), '首页 A→F 区块都必须存在');
+  assert.deepEqual(order, [...order].sort((left, right) => left - right));
 
-  assert.match(notice, /当前真实日粒度历史只有/);
-  assert.match(notice, /不代表 30 个完整日或任何完整自然月/);
+  // The noise is gone from the assembly but the functions stay for other routes.
+  assert.doesNotMatch(home, /homeBusinessPulse|supplyRadar|renderOperationalPriorities/);
+  assert.doesNotMatch(home, /homeTruthStrip|trendCoverageBanner|homeSectionHeading/);
+  assert.match(app, /function homeBusinessPulse\(/);
+  assert.match(app, /function supplyRadar\(/);
+  assert.match(app, /function renderOperationalPriorities\(/);
 
-  // The banner is a visible block, not a footnote, and refuses to fabricate.
-  assert.match(banner, /class="quality-notice/);
-  assert.match(banner, /trend-coverage-banner/);
-  assert.match(banner, /日粒度历史尚未建立/);
-  assert.match(banner, /不会被当作历史时间序列补线/);
-  assert.match(banner, /缺失的业务日和月份不会被补线或补零/);
-  assert.match(banner, /少于当前窗口请求的/);
-  assert.match(banner, /目前没有任何完整自然月/);
-  // A product search must not show a global trend as if it were product-scoped.
-  assert.match(banner, /货号搜索生效时不展示全局走势，避免把全局趋势冒充商品趋势/);
+  // The trend panels follow the owner/store scope and name a global fallback.
+  assert.match(home, /trendScopeLabel\(\)/);
+  const scopeLabel = functionBody(app, 'trendScopeLabel');
+  assert.match(scopeLabel, /无按店日粒度序列，回退全局趋势/);
+  assert.match(scopeLabel, /全部店铺汇总/);
+  assert.match(scopeLabel, /按店日粒度序列/);
+
+  // One compact caliber footnote with the workspace entries closes the page.
+  const footnote = functionBody(app, 'homeFootnote');
+  assert.match(footnote, /class="home-footnote"/);
+  assert.match(footnote, /aria-label="其他业务页面入口"/);
+  assert.match(footnote, /homePulseHref\('sales'\)/);
+  assert.match(footnote, /homePulseHref\('products'\)/);
+  assert.match(footnote, /#inventory/);
+  assert.match(footnote, /#ops/);
+  assert.match(footnote, /#system/);
 });
 
-test('sales matrix compares today, yesterday, last 7 and last 30 days with coverage and comparable change', async () => {
-  const app = await read('src/web/app.js');
+test('KPI matrix is one dense real table with legal comparisons only', async () => {
+  const [app, parity] = await Promise.all([
+    read('src/web/app.js'),
+    read('src/web/home-parity.css'),
+  ]);
   const kpis = functionBody(app, 'homeKpis');
-  const coverage = functionBody(app, 'windowFactCoverage');
   const change = functionBody(app, 'windowChange');
-  const sourceNote = functionBody(app, 'factSourceNote');
+  const coverage = functionBody(app, 'windowFactCoverage');
 
-  assert.match(app, /const WINDOW_KEYS = Object\.freeze\(\['today', 'yesterday', 'last7Days', 'last30Days'\]\)/);
-  assert.match(app, /today: \{ label: '今日', note: '当日累计', days: 1 \}/);
-  assert.match(app, /last7Days: \{ label: '近 7 日', note: '预聚合滚动窗口', days: 7 \}/);
-  assert.match(app, /last30Days: \{ label: '近 30 日', note: '预聚合滚动窗口', days: 30 \}/);
-
-  assert.match(kpis, /class="kpi-six sales-matrix" aria-label="销售数据矩阵"/);
-  assert.match(kpis, /\['数量口径', \.\.\.windowLabels\]/);
-  assert.match(kpis, /label: '销量'/);
-  assert.match(kpis, /label: '本窗口日均'/);
-  assert.match(kpis, /label: '覆盖 店铺 \/ 货号'/);
-  assert.match(kpis, /label: '可比变化'/);
+  // One table: four windows as columns, measures as rows, one note column.
+  assert.match(kpis, /<section class="home-kpi" aria-label="销量 KPI 数据矩阵">/);
+  assert.match(kpis, /class="metric-matrix-scroll home-kpi-scroll"/);
+  assert.match(kpis, /class="home-kpi-table"/);
+  assert.equal((kpis.match(/<table/g) || []).length, 1);
+  assert.match(kpis, /<th scope="col" class="note-column">口径说明<\/th>/);
+  for (const rowLabel of ['销量', '日均销量', '可比变化', '店铺 / 货号覆盖']) {
+    assert.match(kpis, new RegExp(`<th scope="row">${rowLabel.replace('/', '\\/')}<\\/th>`), rowLabel);
+  }
+  assert.match(kpis, /WINDOW_KEYS\.map\(\(key\) => `<th scope="col" class="num">/);
+  assert.match(kpis, /formatUnits\(units\[key\]\)/);
   assert.match(kpis, /formatAverage\(units\[key\], RANGE_META\[key\]\.days\)/);
-  assert.match(kpis, /windowFactCoverage\(key\)/);
+  assert.match(kpis, /windowFactCoverage\(key, \{ ignoreQuery: true \}\)/);
   assert.match(kpis, /windowChange\(key, units\)/);
+  assert.match(kpis, /factSourceNote\('缺失窗口保持 —，不补零也不估算'\)/);
 
-  // Coverage counts only entities that actually carry a fact for that window.
-  assert.match(coverage, /isUnit\(item\?\.unitsSold\?\.\[windowKey\]\)/);
-  assert.match(coverage, /storeTotal/);
-  assert.match(coverage, /productTotal/);
-
-  // Change is computed only where the two windows share a caliber.
+  // Change only exists where a same-caliber baseline exists; elsewhere —.
+  assert.match(kpis, /change\.label === '不可比' \? '—' : escapeHtml\(change\.label\)/);
   assert.match(change, /缺完整昨日窗口/);
   assert.match(change, /对昨日 · 今日仍在累计/);
   assert.match(change, /priorTwentyThreeDays\(units\)/);
@@ -209,45 +148,57 @@ test('sales matrix compares today, yesterday, last 7 and last 30 days with cover
     '缺可比基线的窗口必须显示不可比，不得编造变化率',
   );
 
-  // Every matrix block stamps source and freshness.
-  assert.match(sourceNote, /来源 \$\{datasetStatus\(\) === 'sample'/);
-  assert.match(sourceNote, /数据生成 \$\{formatDateTime\(state\.data\?\.updatedAt\)\}/);
-  assert.match(sourceNote, /业务日 \$\{businessDate\(\) \|\| '待确认'\}/);
-  assert.ok((kpis.match(/factSourceNote\(/g) || []).length >= 5, '每张矩阵卡都要带来源与新鲜度');
+  // Coverage counts only entities that actually carry a fact for that window.
+  assert.match(coverage, /isUnit\(item\?\.unitsSold\?\.\[windowKey\]\)/);
+  assert.match(coverage, /scopedProductRanking\(\{ ignoreQuery \}\)/);
+  assert.match(coverage, /storeTotal/);
+  assert.match(coverage, /productTotal/);
+
+  // The dense table scrolls horizontally with a pinned first column.
+  assert.match(parity, /\.home-kpi-table\s*\{[^}]*min-width: 760px/s);
+  assert.match(parity, /\.home-kpi-table tbody th\[scope="row"\]\s*\{[^}]*position: sticky[^}]*left: 0/s);
+  assert.match(parity, /\.home-kpi-table \.num\s*\{[^}]*font-variant-numeric: tabular-nums[^}]*text-align: right/s);
 });
 
-test('unsupported amount and consumer metrics never render as numbers', async () => {
+test('unsupported amount, traffic and order metrics live only in the single caliber footnote', async () => {
   const app = await read('src/web/app.js');
   const kpis = functionBody(app, 'homeKpis');
-  const finance = kpis.slice(kpis.indexOf("'财务与结算'"));
+  const footnote = functionBody(app, 'homeFootnote');
+  const home = functionBody(app, 'renderHome');
 
-  assert.notEqual(kpis.indexOf("'财务与结算'"), -1);
-  assert.match(finance, /实时金额 · WebAPI 来源验证中；结算金额 · 财务 OpenAPI 待接入/);
-  assert.match(finance, /label: '实时金额'/);
-  assert.match(finance, /label: '结算金额'/);
-  assert.match(finance, /label: '流量与支付人数'/);
-  assert.match(finance, /'WebAPI 来源验证中'/);
-  assert.match(finance, /'财务 OpenAPI 待接入'/);
-  assert.match(finance, /'不由销量推导'/);
-  assert.match(finance, /没有可信金额事实前，这里不显示任何金额数字、0 或百分比。/);
-  assert.ok((finance.match(/'未接入'/g) || []).length >= 3, '金额与消费者指标一律显示未接入');
+  // No finance or consumer block anywhere in the home assembly.
+  assert.doesNotMatch(kpis, /财务与结算|实时金额|结算金额|流量与支付人数/);
+  assert.doesNotMatch(home, /财务与结算/);
+  assert.doesNotMatch(kpis, /[¥€]|\bSAR\b|\bRMB\b|\bGMV\b|订单数|转化率|支付人数/i);
 
-  // No currency, no derived figure, no fake zero in the amount block.
-  assert.doesNotMatch(finance, /[¥$€]|SAR|RMB|元|GMV/i);
-  assert.doesNotMatch(finance, /metricValue\('\d/);
-  assert.doesNotMatch(finance, /formatUnits|formatAverage|formatDelta|numberFormatter\.format/);
-  assert.doesNotMatch(finance, /metricValue\('0'|: 0\b/);
+  // Exactly one footnote sentence states the boundary.
+  assert.match(footnote, /财务与结算、流量、订单等指标尚未接入，不由销量推导金额/);
+  assert.match(footnote, /未知为 —，合法零为 0，缺失不补零、不插值/);
+  assert.doesNotMatch(footnote, /\d+%|metricValue|formatUnits/);
 });
 
-test('daily trend uses real day-grain points and the month trend refuses fabricated totals', async () => {
+test('daily trend uses real day-grain points and names the real window length', async () => {
   const app = await read('src/web/app.js');
   const daily = functionBody(app, 'renderTrendChart');
-  const monthRows = functionBody(app, 'monthlyTrendRows');
-  const monthly = functionBody(app, 'renderMonthlyTrendChart');
-  const monthCoverage = functionBody(app, 'monthlyCoverageLabel');
+  const windowLabel = functionBody(app, 'trendWindowLabel');
+  const rowsForRange = functionBody(app, 'trendRowsForRange');
   const emptyMessage = functionBody(app, 'trendEmptyMessage');
 
-  // Daily: real points only, explicit empty state, readable axes and hover.
+  // The four ranges have real branches: 7 recent day-grain points for the
+  // short windows, up to 30 for the 30-day request — never padded, never the
+  // four pre-aggregated window values plotted as a series.
+  assert.match(rowsForRange, /state\.range === 'last30Days'/);
+  assert.match(rowsForRange, /rows\.slice\(-30\)/);
+  assert.match(rowsForRange, /rows\.slice\(-7\)/);
+  assert.doesNotMatch(rowsForRange, /unitsSold\.last7Days|scopedUnits/);
+
+  // Titles state the actual day count instead of promising 7 or 30 days.
+  assert.match(windowLabel, /最近 30 个业务日/);
+  assert.match(windowLabel, /请求最近 30 日 · 实际 \$\{numberFormatter\.format\(rows\.length\)\} 个业务日/);
+  assert.match(windowLabel, /最近 7 个业务日/);
+  assert.match(windowLabel, /不足 7 日，缺口不补零/);
+
+  // Real points only, explicit empty state, readable axes and hover.
   assert.match(daily, /const rows = trendRowsForRange\(\)/);
   assert.match(daily, /rows\.length < 2 \|\| rows\.some\(\(row\) => !isUnit\(row\.unitsSold\)\)/);
   assert.match(daily, /emptyEvidence\('销量趋势暂不可画', trendEmptyMessage\(\)\)/);
@@ -259,14 +210,26 @@ test('daily trend uses real day-grain points and the month trend refuses fabrica
   assert.match(daily, />件</);
   assert.match(emptyMessage, /不足两个日粒度点，暂时无法形成趋势/);
   assert.match(emptyMessage, /API 尚未提供可用的日粒度销量序列/);
+});
 
-  // Month: grouped from day-grain facts only, never from the rolling windows.
+test('monthly trend aggregates day-grain facts and refuses a single fake bar', async () => {
+  const app = await read('src/web/app.js');
+  const monthRows = functionBody(app, 'monthlyTrendRows');
+  const monthly = functionBody(app, 'renderMonthlyTrendChart');
+  const monthCoverage = functionBody(app, 'monthlyCoverageLabel');
+
+  // Grouped from day-grain facts only, never from the rolling windows.
   assert.match(monthRows, /row\.date\.slice\(0, 7\)/);
   assert.match(monthRows, /calendarDays/);
   assert.match(monthRows, /complete: calendarDays !== null && row\.days\.size >= calendarDays/);
   assert.match(monthRows, /\.slice\(-12\)/);
   assert.doesNotMatch(monthRows, /last7Days|last30Days|scopedUnits/);
+
+  // Fewer than two usable months is an explicit empty state, not one fake bar.
+  assert.match(monthly, /rows\.length < 2/);
   assert.match(monthly, /emptyEvidence\(/);
+  assert.match(monthly, /需要至少两个月，当前只有一个部分月；不会画一根假柱冒充月趋势/);
+  assert.match(monthly, /缺少第二个可比月份/);
   assert.match(monthly, /不会把四个窗口累计值伪造成月趋势/);
   assert.match(monthly, /class="chart-bar\$\{bar\.complete \? '' : ' partial'\}"/);
   assert.match(monthly, /部分覆盖 · 不代表整月合计/);
@@ -276,29 +239,105 @@ test('daily trend uses real day-grain points and the month trend refuses fabrica
   assert.match(monthCoverage, /暂无可归月的日粒度事实/);
 });
 
-test('ranking tables show all four windows, comparable momentum and honest boundaries', async () => {
+test('search narrows only rankings and never blanks trends, KPI or store scope', async () => {
   const app = await read('src/web/app.js');
+  const trendSource = functionBody(app, 'trendSourceRows');
+  const scopedTrend = functionBody(app, 'scopedTrendSeries');
+  const kpis = functionBody(app, 'homeKpis');
+  const scoped = functionBody(app, 'scopedUnits');
+  const storeRows = functionBody(app, 'homeStoreRows');
+  const productRows = functionBody(app, 'homeProductRows');
+  const emptyStore = functionBody(app, 'homeRankingEmptyMessage');
+
+  // The trend source has no query branch at all.
+  assert.doesNotMatch(trendSource, /normalizedQuery/);
+  assert.match(trendSource, /state\.data\?\.salesTrend/);
+  assert.match(trendSource, /scopedTrendSeries\(\)/);
+  assert.match(trendSource, /scopedRows\.length \? scopedRows : globalRows/);
+  assert.match(scopedTrend, /state\.data\?\.salesTrendByStore/);
+  assert.match(scopedTrend, /storeCodes\.has\(String\(row\?\.storeCode \|\| ''\)\)/);
+  assert.doesNotMatch(app, /store\.salesTrend|owner\??\.salesTrend/);
+
+  // KPI and verdict explicitly ignore the query; other pages keep the default.
+  assert.match(scoped, /function scopedUnits\(\{ ignoreQuery = false \} = \{\}\)/);
+  assert.match(scoped, /const query = ignoreQuery \? '' : normalizedQuery\(\)/);
+  assert.match(kpis, /scopedUnits\(\{ ignoreQuery: true \}\)/);
+  assert.match(kpis, /windowFactCoverage\(key, \{ ignoreQuery: true \}\)/);
+
+  // The store ranking haystack covers store code, store name and owner name.
+  assert.match(storeRows, /normalizedQuery\(\)/);
+  assert.match(storeRows, /\[store\.code, store\.name, ownerNameForStore\(store\)\]/);
+  assert.match(storeRows, /haystack\.includes\(query\)/);
+
+  // The product ranking haystack covers product ids, names, store and owner.
+  assert.match(productRows, /item\.skc/);
+  assert.match(productRows, /item\.sku/);
+  assert.match(productRows, /item\.standardProductName/);
+  assert.match(productRows, /ownerNameForStoreCode\(item\?\.storeCode\)/);
+  assert.match(productRows, /scopedProductRanking\(\{ ignoreQuery: true \}\)/);
+
+  // No match is an explicit empty state that names the unaffected blocks.
+  assert.match(emptyStore, /未命中店铺编码、店铺名称或负责人/);
+  assert.match(emptyStore, /未命中货号、商品名或所属店铺/);
+  assert.match(emptyStore, /趋势、KPI 与店铺范围不受搜索影响/);
+});
+
+test('ranking tables show four windows, tiered magnitude and scope-preserving drilldown', async () => {
+  const [app, parity] = await Promise.all([
+    read('src/web/app.js'),
+    read('src/web/home-parity.css'),
+  ]);
   const storeTable = functionBody(app, 'homeStoreRankingTable');
   const productTable = functionBody(app, 'homeProductRankingTable');
   const windowCells = functionBody(app, 'homeWindowCells');
+  const meterCell = functionBody(app, 'homeMagnitudeCell');
   const momentumCell = functionBody(app, 'homeMomentumCell');
   const qualityCell = functionBody(app, 'homeStoreQualityCell');
   const ranked = functionBody(app, 'homeRankedRows');
+  const rankingWindow = functionBody(app, 'homeRankingWindow');
+  const storeDrill = functionBody(app, 'homeStoreDrilldownHref');
+  const productDrill = functionBody(app, 'homeProductDrilldownHref');
   const rankMeta = functionBody(app, 'rankingCoverageNote');
   const home = functionBody(app, 'renderHome');
 
-  // The four quantity windows are columns, sourced from WINDOW_KEYS only.
+  // The four quantity windows are columns, sourced from WINDOW_KEYS only,
+  // and the active window is visibly the primary value.
   assert.match(windowCells, /WINDOW_KEYS/);
   assert.match(windowCells, /formatUnits\(item\?\.unitsSold\?\.\[key\]\)/);
+  assert.match(windowCells, /current-window/);
   assert.doesNotMatch(windowCells, /\|\| 0|\?\? 0/);
   for (const table of [storeTable, productTable]) {
-    assert.match(table, /WINDOW_KEYS\.map\(\(key\) => `<th scope="col" class="number-column">\$\{escapeHtml\(RANGE_META\[key\]\.label\)\}<\/th>`\)/);
     assert.match(table, /homeWindowCells\(item\)/);
+    assert.match(table, /homeMagnitudeCell\(item, maximum\)/);
     assert.match(table, /homeMomentumCell\(item\)/);
+    assert.match(table, /<th scope="col">量级<\/th>/);
     assert.match(table, /<th scope="col">可比动量<\/th>/);
     assert.match(table, /homeRankedRows\(rows\)/);
     assert.match(table, /emptyEvidence\(/);
+    assert.match(table, /查看明细 →/);
   }
+
+  // Bounded top list; unknown windows never enter the ordering.
+  assert.match(ranked, /isUnit\(item\?\.unitsSold\?\.\[windowKey\]\)/);
+  assert.match(ranked, /windowKey = homeRankingWindow\(\)\.key/);
+  assert.match(ranked, /slice\(0, HOME_RANK_LIMIT\)/);
+  assert.match(rankingWindow, /state\.range === 'yesterday'/);
+  assert.match(rankingWindow, /scopedProductRanking\(\{ ignoreQuery: true \}\)/);
+  assert.match(rankingWindow, /key: state\.range === 'yesterday' && !yesterdayAvailable \? 'today' : state\.range/);
+  assert.match(app, /const HOME_RANK_LIMIT = 8/);
+
+  // Magnitude bars exist only as CSS tier classes 1–20 — no inline styles.
+  assert.match(app, /const HOME_METER_TIERS = 20/);
+  assert.match(meterCell, /rank-meter-t\$\{tier\}/);
+  assert.match(meterCell, /aria-label="当前窗口量级 \$\{tier\} \/ \$\{HOME_METER_TIERS\} 档"/);
+  assert.match(meterCell, /rank-meter-empty/);
+  assert.doesNotMatch(meterCell, /style=/);
+  assert.match(parity, /\.rank-meter-t1 \{\s*width: 5%;\s*\}/);
+  assert.match(parity, /\.rank-meter-t10 \{\s*width: 50%;\s*\}/);
+  assert.match(parity, /\.rank-meter-t20 \{\s*width: 100%;\s*\}/);
+  assert.equal((parity.match(/\.rank-meter-t\d+ \{/g) || []).length, 20);
+  assert.match(parity, /\.rank-meter-fill\s*\{[^}]*background: var\(--accent\)/s);
+  assert.doesNotMatch(parity, /rank-meter-fill\s*\{[^}]*gradient/s);
 
   // Momentum is the only comparable trend signal and names its two averages.
   assert.match(momentumCell, /comparableDailySignal\(item\)/);
@@ -307,23 +346,15 @@ test('ranking tables show all four windows, comparable momentum and honest bound
   assert.match(momentumCell, /formatDailyAverage\(signal\.recent\)/);
   assert.match(momentumCell, /formatDailyAverage\(signal\.previous\)/);
 
-  // Unknown windows never enter the ordering and the list stays bounded.
-  assert.match(ranked, /isUnit\(item\?\.unitsSold\?\.\[windowKey\]\)/);
-  assert.match(ranked, /slice\(0, HOME_RANK_LIMIT\)/);
-  assert.match(app, /const HOME_RANK_LIMIT = 8/);
-
-  // Store rows carry the owner inline plus data quality and coverage.
+  // Store rows carry the owner inline; a missing owner is —, never guessed.
   assert.match(storeTable, /<th scope="col">店铺 \/ 负责人<\/th>/);
-  assert.match(storeTable, /<th scope="col">数据质量 \/ 覆盖<\/th>/);
-  assert.match(storeTable, /ownerNameForStore\(item\)/);
-  assert.match(storeTable, /负责人 \$\{ownerNameForStore\(item\) \|\| '待分配'\}/);
+  assert.match(storeTable, /负责人 \$\{ownerNameForStore\(item\) \|\| '—'\}/);
+  assert.doesNotMatch(storeTable, /待分配/);
   assert.match(storeTable, /homeStoreQualityCell\(item\)/);
-  assert.match(storeTable, /homeStoreDrilldownHref\(item\)/);
   assert.match(qualityCell, /legal_zero: '合法零销量'/);
   assert.match(qualityCell, /partial: '部分覆盖'/);
   assert.match(qualityCell, /unavailable: '未接入'/);
   assert.match(qualityCell, /'覆盖待确认'/);
-  assert.match(qualityCell, /业务日 \$\{businessDay\}/);
 
   // Product rows separate canonical identity from store-local identity.
   assert.match(productTable, /<th scope="col">身份边界<\/th>/);
@@ -331,27 +362,36 @@ test('ranking tables show all four windows, comparable momentum and honest bound
   assert.match(productTable, /class="rank-identity \$\{canonical \? 'canonical' : 'local'\}"/);
   assert.match(productTable, /canonical \? '标准商品' : '店内身份'/);
   assert.match(productTable, /跨店 \$\{numberFormatter\.format\(item\.storeCount\)\} 店可合计/);
-  assert.match(productTable, /'跨店标准商品'/);
   assert.match(productTable, /店铺 \$\{item\.storeCode\} 内身份，禁止跨店合并/);
   assert.match(productTable, /'店内身份待确认'/);
-  assert.match(productTable, /productCode\(item, canonical\)/);
-  assert.match(productTable, /homeProductDrilldownHref\(item\)/);
   assert.doesNotMatch(productTable, /aggregateCanonicalProducts/);
 
-  // Both tables sit on home with server coverage and truncation disclosed.
+  // Row body narrows the hash scope in place; drilldown preserves owner,
+  // store, range and query — owner is never reset to ALL.
+  assert.match(storeTable, /class="rank-entity" href="\$\{escapeHtml\(homeStoreScopeHref\(item\)\)\}"/);
+  assert.match(productTable, /class="rank-entity" href="\$\{escapeHtml\(homeProductScopeHref\(item\)\)\}"/);
+  for (const drill of [storeDrill, productDrill]) {
+    assert.match(drill, /owner: state\.owner/);
+    assert.match(drill, /range: state\.range/);
+    assert.match(drill, /query: state\.query/);
+    assert.doesNotMatch(drill, /owner: 'ALL'/);
+  }
+  assert.match(storeDrill, /route: 'sales'/);
+  assert.match(productDrill, /route: 'products'/);
+  assert.match(productDrill, /store: state\.store/);
+  assert.doesNotMatch(productDrill, /URL_STORE_PATTERN|selectedStore\(\) \?/);
+
+  // Server coverage and truncation stay disclosed next to both tables.
   assert.match(rankMeta, /rankingMeta\?\.\[kind\]/);
   assert.match(rankMeta, /服务端返回范围待确认/);
   assert.match(rankMeta, /已截断，未命中不代表没有销量/);
-  assert.match(home, /homeStoreRankingTable\(storeRows\)/);
-  assert.match(home, /homeProductRankingTable\(productRows\)/);
   assert.match(home, /rankingCoverageNote\('store'\)/);
   assert.match(home, /rankingCoverageNote\(productRankingKey\)/);
-  assert.match(home, /标准商品与店铺本地 SKU 分别标记，未归并商品不会伪装成跨店标准商品/);
-  assert.match(home, /不把滚动窗口当作历史时间序列/);
   assert.match(home, /命中数不是 SHEIN 仓库全量货号数/);
-  // Home only shows a bounded top list and links to the full workspaces.
-  assert.match(home, /查看完整店铺销量工作台 →/);
-  assert.match(home, /查看完整商品身份与排行 →/);
+  assert.match(home, /homeRankingWindowNote\(\)/);
+  assert.match(app, /行级昨日销量未提供，排行按今日口径展示/);
+  assert.match(home, /查看明细 · 完整店铺销量工作台 →/);
+  assert.match(home, /查看明细 · 完整商品身份与排行 →/);
 });
 
 test('owner scope lives inside the single store selector with no separate owner control', async () => {
@@ -369,12 +409,40 @@ test('owner scope lives inside the single store selector with no separate owner 
   assert.match(scopeOptions, /createElement\('optgroup'\)/);
   assert.match(scopeOptions, /ownerGroup\.label = '负责人分组'/);
   assert.match(scopeOptions, /option\.value = `OWNER:\$\{owner\.key\}`/);
+  assert.match(scopeOptions, /负责人 · \$\{owner\.name\}（\$\{owner\.storeCodes\.length\} 家店）/);
   assert.match(scopeOptions, /storeGroup\.label = '单个店铺（含负责人）'/);
   assert.match(scopeOptions, /const ownerName = ownerNameForStore\(store\)/);
 
   // Owner only narrows the visible scope; it is not a read-permission gate.
   assert.match(app, /负责人只影响查看范围，不表达读权限限制/);
   assert.doesNotMatch(app, /canSeeTechnicalGlobal|role === 'admin'/);
+});
+
+test('limited day-grain history is stated exactly and never padded into a full series', async () => {
+  const app = await read('src/web/app.js');
+  const history = functionBody(app, 'trendHistoryState');
+  const notice = functionBody(app, 'trendHistoryNotice');
+  const banner = functionBody(app, 'trendCoverageBanner');
+  const home = functionBody(app, 'renderHome');
+
+  // Coverage is counted from real dated rows only.
+  assert.match(history, /trendSourceRows\(\)/);
+  assert.match(history, /\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//);
+  assert.match(history, /days: dates\.length/);
+  assert.match(history, /completeMonths/);
+  assert.match(history, /partialMonths/);
+  assert.doesNotMatch(history, /last7Days|last30Days/);
+
+  assert.match(notice, /当前真实日粒度历史只有/);
+  assert.match(notice, /不代表 30 个完整日或任何完整自然月/);
+
+  // The exact history sentence rides on the daily chart legend.
+  assert.match(home, /trendHistoryNotice\(\)/);
+
+  // The banner helper stays available for callers outside home.
+  assert.match(banner, /class="quality-notice/);
+  assert.match(banner, /日粒度历史尚未建立/);
+  assert.match(banner, /缺失的业务日和月份不会被补线或补零/);
 });
 
 test('operating alerts expose source, scope, severity, freshness and a read-only drill-down', async () => {
@@ -456,6 +524,23 @@ test('truthfulness vocabulary separates real zero, unknown, not-integrated, part
   assert.match(app, /function formatUnits\(value\)[\s\S]*isUnit\(value\) \? numberFormatter\.format\(value\) : '—'/);
 });
 
+test('markup and styles carry no inline style, no gradient and no backdrop-filter', async () => {
+  const [html, app, styles, parity] = await Promise.all([
+    read('src/web/index.html'),
+    read('src/web/app.js'),
+    read('src/web/styles.css'),
+    read('src/web/home-parity.css'),
+  ]);
+
+  assert.doesNotMatch(html, /style="/);
+  assert.doesNotMatch(app, /style="/);
+  for (const sheet of [styles, parity]) {
+    assert.doesNotMatch(sheet, /gradient\(/);
+    assert.doesNotMatch(sheet, /backdrop-filter/);
+  }
+  assert.match(parity, /prefers-reduced-motion/);
+});
+
 test('390px layout has explicit page-level overflow guards', async () => {
   const [styles, parity] = await Promise.all([
     read('src/web/styles.css'),
@@ -470,30 +555,49 @@ test('390px layout has explicit page-level overflow guards', async () => {
   const mobile = parity.slice(mobileIndex);
   assert.match(mobile, /\.workspace\.main\s*\{[^}]*max-width: 100%[^}]*overflow-x: clip/s);
   assert.match(mobile, /#view,\s*\n\s*#view > \*\s*\{[^}]*max-width: 100%/s);
-  assert.match(mobile, /\.kpi-six,[\s\S]*grid-template-columns: 1fr;/);
-  assert.match(mobile, /\.kpi-six \.matrix-span-2\s*\{\s*grid-column: span 1;/);
   assert.match(mobile, /\.metric-matrix-scroll\s*\{[^}]*overflow-x: auto;[^}]*overscroll-behavior-inline: contain/s);
   assert.match(mobile, /overflow-wrap: anywhere/);
 
   // Wide blocks scroll inside their own container instead of widening the page.
   assert.match(parity, /\.metric-matrix-scroll\s*\{[^}]*max-width: 100%[^}]*overflow-x: auto/s);
   assert.match(styles, /\.table-wrap\s*\{[^}]*max-width:\s*100%[^}]*overflow:\s*auto/s);
+  assert.match(mobile, /\.home-kpi-table\s*\{[^}]*min-width: 560px/s);
+  assert.match(mobile, /\.home-rank-table\s*\{[^}]*min-width: 680px/s);
+  assert.match(mobile, /\.verdict-primary,[\s\S]*?white-space: normal/);
 
-  // 1440 keeps four matrix columns; 1024 turns the rail into a top bar.
-  assert.match(parity, /@media \(min-width: 1400px\)[\s\S]*?\.kpi-six\s*\{[\s\S]*?repeat\(4, minmax\(0, 1fr\)\)/);
+  // The mobile command bar is three compact rows, not four stacked controls.
+  const compactIndex = parity.indexOf('@media (max-width: 720px)');
+  const compact = parity.slice(compactIndex, mobileIndex);
+  assert.match(compact, /"search search"\s*"scope range-summary"\s*"range-presets actions"/);
+  assert.match(compact, /\.home-filter-bar \.range-dock,[\s\S]*?display: contents/);
+  assert.match(compact, /\.home-filter-bar \.range-button\s*\{[^}]*grid-area: range-summary/s);
+  assert.match(compact, /\.home-filter-bar \.range-preset-strip\s*\{[^}]*grid-area: range-presets/s);
+
+  // 1400 keeps the first screen compact; 1280 turns the rail into a top bar.
+  assert.match(parity, /@media \(min-width: 1400px\)[\s\S]*?\.home-kpi-table th,[\s\S]*?padding: 5px 10px/);
   assert.match(parity, /@media \(max-width: 1280px\)[\s\S]*?position: static/);
   assert.match(parity, /@media \(max-width: 1280px\)[\s\S]*?\.workspace\.main\s*\{[\s\S]*?margin-left: 0/);
 });
 
-test('desktop partial-quality evidence spans the full content rail without pushing trends below the first screen', async () => {
-  const parity = await read('src/web/home-parity.css');
+test('1440px first screen keeps the verdict, the full matrix and the daily trend title compact', async () => {
+  const [app, parity] = await Promise.all([
+    read('src/web/app.js'),
+    read('src/web/home-parity.css'),
+  ]);
+  const home = functionBody(app, 'renderHome');
 
-  assert.match(
-    parity,
-    /@media \(min-width: 1400px\)[\s\S]*?#view > \.truth-strip \+ \.quality-notice\s*\{[^}]*width: 100%/s,
-  );
-  assert.match(
-    parity,
-    /@media \(min-width: 1400px\)[\s\S]*?\.quality-notice span\s*\{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/s,
-  );
+  // Nothing but the verdict band, the KPI matrix and the trend stack leads
+  // the page, so the daily trend title lands inside a 1440×900 first screen.
+  const firstScreen = ['homeHeader()', 'homeKpis()', '日销量趋势']
+    .map((marker) => home.indexOf(marker));
+  assert.ok(firstScreen.every((index) => index !== -1));
+  assert.deepEqual(firstScreen, [...firstScreen].sort((left, right) => left - right));
+  assert.ok(home.indexOf('日销量趋势') < home.indexOf('月销量趋势'));
+
+  const desktopIndex = parity.indexOf('@media (min-width: 1400px)');
+  assert.notEqual(desktopIndex, -1);
+  const desktop = parity.slice(desktopIndex, parity.indexOf('@media', desktopIndex + 1));
+  assert.match(desktop, /\.home-topbar\s*\{[^}]*margin-bottom: 8px[^}]*padding-bottom: 9px/s);
+  assert.match(desktop, /\.home-kpi\s*\{[^}]*margin-bottom: 10px/s);
+  assert.match(desktop, /\.home-kpi-table th,[\s\S]*?padding: 5px 10px/);
 });
