@@ -76,3 +76,47 @@ test('older databases expose an unavailable contract before migration 0014', asy
   assert.deepEqual(result.storeDaily, []);
   assert.equal(result.coverage.latestDate, null);
 });
+
+test('materializes signed finance facts without relabeling ledger dates as order dates', async () => {
+  const client = {
+    async query(sql) {
+      if (sql.includes('to_regclass')) {
+        return {
+          rows: [{
+            has_store_daily: true,
+            has_product_daily: true,
+            has_region_daily: true,
+            has_finance_daily: true,
+            has_product_finance_daily: true,
+          }],
+        };
+      }
+      if (sql.includes('FROM fact.full_home_store_daily')) return { rows: [] };
+      if (sql.includes('FROM fact.full_home_product_daily')) return { rows: [] };
+      if (sql.includes('FROM fact.full_home_region_daily')) return { rows: [] };
+      if (sql.includes('FROM fact.full_home_finance_daily')) {
+        return { rows: [{
+          store_code: 'MZ2406',
+          business_date: '2026-07-28',
+          currency: 'SAR',
+          income_amount: '80.50',
+          expense_amount: '100.00',
+          net_amount: '-19.50',
+          goods_count: '2',
+          report_count: '1',
+          observed_at: '2026-07-29T08:00:00.000Z',
+        }] };
+      }
+      if (sql.includes('FROM fact.full_home_product_finance_daily')) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {},
+  };
+  const result = await readFullHomeHistory({ async connect() { return client; } });
+
+  assert.equal(result.status, 'available');
+  assert.equal(result.financeDaily[0].netAmount, -19.5);
+  assert.equal(result.financeDaily[0].basis, 'REPORT_GENERATED_DATE');
+  assert.equal(result.coverage.earliestDate, '2026-07-28');
+  assert.equal(result.coverage.storeCount, 1);
+});

@@ -148,6 +148,18 @@ test('whitelists full-managed homepage history while preserving unavailable metr
         estimatedDealAmount: null,
         estimationBasis: 'UNAVAILABLE',
       }],
+      financeDaily: [{
+        storeCode: 'dl5477',
+        date: '2026-07-29',
+        currency: 'sar',
+        incomeAmount: '88.25',
+        expenseAmount: '100.00',
+        netAmount: '-11.75',
+        goodsCount: 4,
+        reportCount: 1,
+        basis: 'REPORT_GENERATED_DATE',
+        reportOrderNo: 'must-not-leak',
+      }],
     },
   });
 
@@ -156,8 +168,11 @@ test('whitelists full-managed homepage history while preserving unavailable metr
   assert.equal(dashboard.home.storeDaily[0].netDealAmount, null);
   assert.equal(dashboard.home.storeDaily[0].exposureBasis, 'BRAND_SUMMED');
   assert.equal(dashboard.home.productDaily[0].estimatedDealAmount, null);
+  assert.equal(dashboard.home.financeDaily[0].currency, 'SAR');
+  assert.equal(dashboard.home.financeDaily[0].netAmount, -11.75);
+  assert.equal(dashboard.home.financeDaily[0].basis, 'REPORT_GENERATED_DATE');
   assert.equal(dashboard.home.coverage.storeDailyRows, 1);
-  assert.doesNotMatch(JSON.stringify(dashboard.home), /secret|drop-me/);
+  assert.doesNotMatch(JSON.stringify(dashboard.home), /secret|drop-me|reportOrderNo/);
 });
 
 test('uses FULL_BI_DATA_FILE when no function argument is supplied', async () => {

@@ -16,6 +16,8 @@ BEGIN
         'raw.openapi_fetch_batch',
         'dim.full_sku',
         'fact.full_sku_sales_snapshot',
+        'fact.full_home_finance_daily',
+        'fact.full_home_product_finance_daily',
         'mart.full_store_sales_latest',
         'mart.full_product_sales_latest',
         'ops.permission_probe',
@@ -66,7 +68,10 @@ BEGIN
         'fact.full_home_store_daily',
         'fact.full_home_region_daily',
         'fact.full_home_product_daily',
-        'fact.full_product_price_observation'
+        'fact.full_product_price_observation',
+        'fact.full_home_finance_daily',
+        'fact.full_home_product_finance_daily',
+        'ops.full_home_finance_sync_window'
     ]
     LOOP
         IF to_regclass(required_name) IS NULL THEN
@@ -416,6 +421,8 @@ BEGIN
         'dim.canonical_variant',
         'dim.full_sku_canonical_assignment',
         'fact.full_sku_sales_snapshot',
+        'fact.full_home_finance_daily',
+        'fact.full_home_product_finance_daily',
         'fact.purchase_order',
         'fact.purchase_order_line',
         'fact.delivery',
@@ -489,6 +496,14 @@ BEGIN
     -- ledgers. Permission-probe readback is required for idempotency.
     IF NOT has_table_privilege(
         'sheinfm_sales_login', 'fact.full_sku_sales_snapshot', 'INSERT'
+    ) OR NOT has_table_privilege(
+        'sheinfm_sales_login', 'fact.full_home_finance_daily', 'DELETE'
+    ) OR NOT has_table_privilege(
+        'sheinfm_sales_login', 'fact.full_home_product_finance_daily', 'DELETE'
+    ) OR NOT has_table_privilege(
+        'sheinfm_sales_login', 'ops.full_home_finance_sync_window', 'UPDATE'
+    ) OR has_table_privilege(
+        'sheinfm_sales_login', 'ops.full_home_finance_sync_window', 'DELETE'
     ) OR NOT has_table_privilege(
         'sheinfm_sales_login', 'ops.permission_probe', 'SELECT'
     ) OR NOT has_table_privilege(
@@ -781,6 +796,8 @@ BEGIN
     -- credential-bearing webhook receipts and the backfill plane.
     FOREACH required_name IN ARRAY ARRAY[
         'fact.full_sku_sales_snapshot',
+        'fact.full_home_finance_daily',
+        'fact.full_home_product_finance_daily',
         'fact.inventory_snapshot',
         'fact.purchase_order',
         'fact.delivery',
@@ -793,6 +810,7 @@ BEGIN
         'ops.webhook_job',
         'ops.operational_event',
         'ops.sales_business_watermark',
+        'ops.full_home_finance_sync_window',
         'ops.employee_principal',
         'ops.employee_store_assignment',
         'ops.backfill_run',

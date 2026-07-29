@@ -60,6 +60,12 @@ function optionalNonNegativeDecimal(value) {
   return parsed;
 }
 
+function optionalDecimal(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function isoInstant(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = value instanceof Date ? new Date(value.getTime()) : new Date(value);
@@ -1224,6 +1230,56 @@ function normalizeHomeRegionDaily(item) {
   };
 }
 
+function normalizeHomeFinanceDaily(item) {
+  const source = record(item);
+  const storeCode = text(source.storeCode, '', 24).toUpperCase();
+  const date = isoDate(source.date);
+  const currency = text(source.currency, '', 3).toUpperCase();
+  if (!storeCode || !date || !/^[A-Z]{3}$/.test(currency)) return null;
+  return {
+    storeCode,
+    date,
+    currency,
+    incomeAmount: optionalNonNegativeDecimal(source.incomeAmount),
+    expenseAmount: optionalNonNegativeDecimal(source.expenseAmount),
+    netAmount: optionalDecimal(source.netAmount),
+    goodsCount: optionalNonNegativeInteger(source.goodsCount),
+    reportCount: optionalNonNegativeInteger(source.reportCount),
+    observedAt: isoInstant(source.observedAt),
+    basis: source.basis === 'REPORT_GENERATED_DATE'
+      ? 'REPORT_GENERATED_DATE'
+      : null,
+  };
+}
+
+function normalizeHomeProductFinanceDaily(item) {
+  const source = record(item);
+  const storeCode = text(source.storeCode, '', 24).toUpperCase();
+  const date = isoDate(source.date);
+  const currency = text(source.currency, '', 3).toUpperCase();
+  const productKey = text(source.productKey, '', 160);
+  if (!storeCode || !date || !productKey || !/^[A-Z]{3}$/.test(currency)) return null;
+  return {
+    storeCode,
+    date,
+    currency,
+    productKey,
+    platformSkuId: text(source.platformSkuId, '', 160) || null,
+    platformSkcId: text(source.platformSkcId, '', 160) || null,
+    supplierSku: text(source.supplierSku, '', 160) || null,
+    incomeAmount: optionalNonNegativeDecimal(source.incomeAmount),
+    expenseAmount: optionalNonNegativeDecimal(source.expenseAmount),
+    netAmount: optionalDecimal(source.netAmount),
+    goodsCount: optionalNonNegativeInteger(source.goodsCount),
+    latestUnitPrice: optionalNonNegativeDecimal(source.latestUnitPrice),
+    priceObservedAt: isoInstant(source.priceObservedAt),
+    observedAt: isoInstant(source.observedAt),
+    basis: source.basis === 'REPORT_GENERATED_DATE'
+      ? 'REPORT_GENERATED_DATE'
+      : null,
+  };
+}
+
 function normalizeHome(value) {
   const source = record(value);
   const storeDaily = Array.isArray(source.storeDaily)
@@ -1235,6 +1291,12 @@ function normalizeHome(value) {
   const regionDaily = Array.isArray(source.regionDaily)
     ? source.regionDaily.map(normalizeHomeRegionDaily).filter(Boolean)
     : [];
+  const financeDaily = Array.isArray(source.financeDaily)
+    ? source.financeDaily.map(normalizeHomeFinanceDaily).filter(Boolean)
+    : [];
+  const productFinanceDaily = Array.isArray(source.productFinanceDaily)
+    ? source.productFinanceDaily.map(normalizeHomeProductFinanceDaily).filter(Boolean)
+    : [];
   const coverage = record(source.coverage);
   return {
     status: ['available', 'empty', 'unavailable'].includes(source.status)
@@ -1243,6 +1305,8 @@ function normalizeHome(value) {
     storeDaily,
     productDaily,
     regionDaily,
+    financeDaily,
+    productFinanceDaily,
     coverage: {
       earliestDate: isoDate(coverage.earliestDate),
       latestDate: isoDate(coverage.latestDate),
@@ -1250,6 +1314,8 @@ function normalizeHome(value) {
       storeDailyRows: storeDaily.length,
       productDailyRows: productDaily.length,
       regionDailyRows: regionDaily.length,
+      financeDailyRows: financeDaily.length,
+      productFinanceDailyRows: productFinanceDaily.length,
       latestObservedAt: isoInstant(coverage.latestObservedAt),
     },
   };

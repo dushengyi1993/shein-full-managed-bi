@@ -75,7 +75,10 @@ BEGIN
         'fact.full_home_store_daily',
         'fact.full_home_region_daily',
         'fact.full_home_product_daily',
-        'fact.full_product_price_observation'
+        'fact.full_product_price_observation',
+        'fact.full_home_finance_daily',
+        'fact.full_home_product_finance_daily',
+        'ops.full_home_finance_sync_window'
     ]
     LOOP
         IF to_regclass(relation_name) IS NULL THEN
@@ -409,6 +412,8 @@ GRANT SELECT ON
     fact.full_home_region_daily,
     fact.full_home_product_daily,
     fact.full_product_price_observation,
+    fact.full_home_finance_daily,
+    fact.full_home_product_finance_daily,
     raw.openapi_fetch_batch,
     -- Identity pipeline aggregates only. The dashboard counts sealed evidence
     -- sets, candidates and decisions; it never reads raw.identifier_observation
@@ -461,6 +466,12 @@ TO sheinfm_sales_loader;
 -- homepage product amount. The sales loader can append/read evidence but can
 -- never alter or delete it.
 GRANT SELECT, INSERT ON fact.full_product_price_observation
+TO sheinfm_sales_loader;
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+    fact.full_home_finance_daily,
+    fact.full_home_product_finance_daily
+TO sheinfm_sales_loader;
+GRANT SELECT, INSERT, UPDATE ON ops.full_home_finance_sync_window
 TO sheinfm_sales_loader;
 GRANT SELECT ON fact.full_home_product_daily
 TO sheinfm_sales_loader;

@@ -111,6 +111,15 @@ function pgDecimal(value, location) {
   return number;
 }
 
+function pgSignedDecimal(value, location) {
+  if (value === null || value === undefined) return null;
+  const number = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(number)) {
+    throw new TypeError(`${location} is not a decimal`);
+  }
+  return number;
+}
+
 const UNAVAILABLE_PRODUCT_IDENTITY_PIPELINE = Object.freeze({
   status: 'unavailable',
   basis: 'schema_unavailable',
@@ -1317,6 +1326,8 @@ const UNAVAILABLE_FULL_HOME_HISTORY = Object.freeze({
   storeDaily: Object.freeze([]),
   productDaily: Object.freeze([]),
   regionDaily: Object.freeze([]),
+  financeDaily: Object.freeze([]),
+  productFinanceDaily: Object.freeze([]),
   coverage: Object.freeze({
     earliestDate: null,
     latestDate: null,
@@ -1324,6 +1335,8 @@ const UNAVAILABLE_FULL_HOME_HISTORY = Object.freeze({
     storeDailyRows: 0,
     productDailyRows: 0,
     regionDailyRows: 0,
+    financeDailyRows: 0,
+    productFinanceDailyRows: 0,
     latestObservedAt: null,
   }),
 });
@@ -1342,7 +1355,10 @@ export async function readFullHomeHistory(pool) {
       SELECT
         to_regclass('fact.full_home_store_daily') IS NOT NULL AS has_store_daily,
         to_regclass('fact.full_home_product_daily') IS NOT NULL AS has_product_daily,
-        to_regclass('fact.full_home_region_daily') IS NOT NULL AS has_region_daily`);
+        to_regclass('fact.full_home_region_daily') IS NOT NULL AS has_region_daily,
+        to_regclass('fact.full_home_finance_daily') IS NOT NULL AS has_finance_daily,
+        to_regclass('fact.full_home_product_finance_daily') IS NOT NULL
+          AS has_product_finance_daily`);
     const schema = schemaResult.rows[0] ?? {};
     if (
       schema.has_store_daily !== true
@@ -1382,6 +1398,27 @@ export async function readFullHomeHistory(pool) {
         ORDER BY business_date, store_code,
                  sales_quantity DESC NULLS LAST, region_key`),
     ]);
+    const hasFinance = (
+      schema.has_finance_daily === true
+      && schema.has_product_finance_daily === true
+    );
+    const [financeResult, productFinanceResult] = hasFinance
+      ? await Promise.all([
+          client.query(`
+            SELECT store_code, to_char(business_date, 'YYYY-MM-DD') AS business_date,
+                   currency, income_amount, expense_amount, net_amount,
+                   goods_count, report_count, observed_at
+            FROM fact.full_home_finance_daily
+            ORDER BY business_date, store_code, currency`),
+          client.query(`
+            SELECT store_code, to_char(business_date, 'YYYY-MM-DD') AS business_date,
+                   currency, product_key, platform_sku_id, platform_skc_id,
+                   supplier_sku, income_amount, expense_amount, net_amount,
+                   goods_count, latest_unit_price, price_observed_at, observed_at
+            FROM fact.full_home_product_finance_daily
+            ORDER BY business_date, store_code, currency, product_key`),
+        ])
+      : [{ rows: [] }, { rows: [] }];
 
     const storeDaily = storeResult.rows.map((row, index) => ({
       storeCode: row.store_code,
@@ -1483,23 +1520,94 @@ export async function readFullHomeHistory(pool) {
       sourceUpdatedAt: pgInstant(row.source_updated_at),
       observedAt: pgInstant(row.observed_at),
     }));
-    const allDates = storeDaily.map(({ date }) => date).filter(Boolean).sort();
-    const observed = [...storeDaily, ...productDaily, ...regionDaily]
+    const financeDaily = financeResult.rows.map((row, index) => ({
+      storeCode: row.store_code,
+      date: pgDate(row.business_date),
+      currency: row.currency,
+      incomeAmount: pgDecimal(
+        row.income_amount,
+        `home.financeDaily[${index}].incomeAmount`,
+      ),
+      expenseAmount: pgDecimal(
+        row.expense_amount,
+        `home.financeDaily[${index}].expenseAmount`,
+      ),
+      netAmount: pgSignedDecimal(
+        row.net_amount,
+        `home.financeDaily[${index}].netAmount`,
+      ),
+      goodsCount: pgCount(row.goods_count, `home.financeDaily[${index}].goodsCount`),
+      reportCount: pgCount(
+        row.report_count,
+        `home.financeDaily[${index}].reportCount`,
+      ),
+      observedAt: pgInstant(row.observed_at),
+      basis: 'REPORT_GENERATED_DATE',
+    }));
+    const productFinanceDaily = productFinanceResult.rows.map((row, index) => ({
+      storeCode: row.store_code,
+      date: pgDate(row.business_date),
+      currency: row.currency,
+      productKey: row.product_key,
+      platformSkuId: row.platform_sku_id ?? null,
+      platformSkcId: row.platform_skc_id ?? null,
+      supplierSku: row.supplier_sku ?? null,
+      incomeAmount: pgDecimal(
+        row.income_amount,
+        `home.productFinanceDaily[${index}].incomeAmount`,
+      ),
+      expenseAmount: pgDecimal(
+        row.expense_amount,
+        `home.productFinanceDaily[${index}].expenseAmount`,
+      ),
+      netAmount: pgSignedDecimal(
+        row.net_amount,
+        `home.productFinanceDaily[${index}].netAmount`,
+      ),
+      goodsCount: pgCount(
+        row.goods_count,
+        `home.productFinanceDaily[${index}].goodsCount`,
+      ),
+      latestUnitPrice: pgDecimal(
+        row.latest_unit_price,
+        `home.productFinanceDaily[${index}].latestUnitPrice`,
+      ),
+      priceObservedAt: pgInstant(row.price_observed_at),
+      observedAt: pgInstant(row.observed_at),
+      basis: 'REPORT_GENERATED_DATE',
+    }));
+    const allDates = [...storeDaily, ...financeDaily]
+      .map(({ date }) => date)
+      .filter(Boolean)
+      .sort();
+    const observed = [
+      ...storeDaily,
+      ...productDaily,
+      ...regionDaily,
+      ...financeDaily,
+      ...productFinanceDaily,
+    ]
       .map(({ observedAt }) => observedAt)
       .filter(Boolean)
       .sort();
     return {
-      status: storeDaily.length > 0 ? 'available' : 'empty',
+      status: storeDaily.length > 0 || financeDaily.length > 0 ? 'available' : 'empty',
       storeDaily,
       productDaily,
       regionDaily,
+      financeDaily,
+      productFinanceDaily,
       coverage: {
         earliestDate: allDates[0] ?? null,
         latestDate: allDates.at(-1) ?? null,
-        storeCount: new Set(storeDaily.map(({ storeCode }) => storeCode)).size,
+        storeCount: new Set(
+          [...storeDaily, ...financeDaily].map(({ storeCode }) => storeCode),
+        ).size,
         storeDailyRows: storeDaily.length,
         productDailyRows: productDaily.length,
         regionDailyRows: regionDaily.length,
+        financeDailyRows: financeDaily.length,
+        productFinanceDailyRows: productFinanceDaily.length,
         latestObservedAt: observed.at(-1) ?? null,
       },
     };

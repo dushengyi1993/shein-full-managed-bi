@@ -23,6 +23,7 @@
     "sync:sales": "node scripts/sync_full_managed_sales.mjs",
     "sync:supply": "node scripts/sync_full_managed_supply.mjs",
     "sync:home-history": "node scripts/sync_full_managed_home_history.mjs",
+    "sync:home-finance": "node scripts/sync_full_managed_home_finance.mjs",
     "sync:product-identity-evidence": "node scripts/sync_full_managed_product_identity_evidence.mjs",
     "resolve:product-identity": "node scripts/resolve_full_managed_product_identity.mjs",
     "start:webhook": "node scripts/serve_full_managed_webhook.mjs",

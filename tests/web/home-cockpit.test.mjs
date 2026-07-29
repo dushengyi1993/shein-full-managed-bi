@@ -83,7 +83,9 @@ test('home assembles header, KPI tables, vertical trends and rankings in order',
 
   assert.doesNotMatch(home, /homeBusinessPulse|supplyRadar|renderOperationalPriorities/);
   assert.doesNotMatch(home, /homeTruthStrip|trendCoverageBanner|homeSectionHeading/);
-  assert.match(home, /货号金额为“销量 × 最新财务报表单价”的估算值/);
+  assert.match(home, /缺失金额时回退为 OpenAPI 财务报账收入\/净额/);
+  assert.match(home, /不等同消费者下单日 GMV/);
+  assert.match(home, /“销量 × 最新财务单价”得到会单独标记估算/);
   const trends = functionBody(app, 'renderHistoryTrends');
   assert.ok(trends.indexOf("'日趋势'") < trends.indexOf("'月趋势'"));
   assert.match(trends, /home-history-trends/);
