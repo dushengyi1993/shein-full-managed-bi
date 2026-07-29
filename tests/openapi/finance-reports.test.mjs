@@ -62,6 +62,32 @@ test('finance response mapper hashes report identifiers and keeps signed directi
   assert.doesNotMatch(JSON.stringify(details), /DETAIL-SECRET/);
 });
 
+test('finance mapper accepts the platform null-list sentinel only for a proven zero count', () => {
+  assert.deepEqual(mapFinanceReportListResponse(response({
+    count: 0,
+    reportOrderInfos: null,
+  }), { page: 1, pageSize: 200 }), {
+    count: 0,
+    reports: [],
+  });
+  assert.throws(
+    () => mapFinanceReportListResponse(response({
+      count: 1,
+      reportOrderInfos: null,
+    }), { page: 1, pageSize: 200 }),
+    /reportOrderInfos must be an array/,
+  );
+  assert.deepEqual(mapFinanceSalesDetailResponse(response({
+    count: 0,
+    query: null,
+    reportSalesDetails: null,
+  }), { reportOrderNoHash: 'a'.repeat(64) }), {
+    count: 0,
+    nextQuery: null,
+    rows: [],
+  });
+});
+
 test('finance fetch follows report pages and detail cursors without widening the window', async () => {
   const calls = [];
   const client = {

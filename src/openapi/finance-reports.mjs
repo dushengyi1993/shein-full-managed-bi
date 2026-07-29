@@ -114,10 +114,13 @@ export function financeWindows({
 export function mapFinanceReportListResponse(response, { page, pageSize } = {}) {
   const info = successfulInfo(response, FINANCE_REPORT_LIST_PATH);
   const count = integer(info.count, 'response.info.count');
-  if (!Array.isArray(info.reportOrderInfos)) {
+  const reportOrderInfos = count === 0 && info.reportOrderInfos == null
+    ? []
+    : info.reportOrderInfos;
+  if (!Array.isArray(reportOrderInfos)) {
     fail('INVALID_RESPONSE_SHAPE', 'response.info.reportOrderInfos must be an array');
   }
-  const reports = info.reportOrderInfos.map((input, index) => {
+  const reports = reportOrderInfos.map((input, index) => {
     const row = record(input, `response.info.reportOrderInfos[${index}]`);
     const reportOrderNo = optionalText(row.reportOrderNo);
     if (!reportOrderNo) fail('INVALID_RESPONSE_SHAPE', 'reportOrderNo is required');
@@ -148,10 +151,13 @@ export function mapFinanceSalesDetailResponse(response, {
   }
   const info = successfulInfo(response, FINANCE_REPORT_SALES_DETAIL_PATH);
   const count = integer(info.count, 'response.info.count');
-  if (!Array.isArray(info.reportSalesDetails)) {
+  const reportSalesDetails = count === 0 && info.reportSalesDetails == null
+    ? []
+    : info.reportSalesDetails;
+  if (!Array.isArray(reportSalesDetails)) {
     fail('INVALID_RESPONSE_SHAPE', 'response.info.reportSalesDetails must be an array');
   }
-  const rows = info.reportSalesDetails.map((input, index) => {
+  const rows = reportSalesDetails.map((input, index) => {
     const row = record(input, `response.info.reportSalesDetails[${index}]`);
     const id = optionalText(row.id);
     if (!id) fail('INVALID_RESPONSE_SHAPE', 'finance detail id is required');
