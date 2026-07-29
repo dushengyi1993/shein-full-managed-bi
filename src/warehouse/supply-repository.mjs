@@ -1614,15 +1614,20 @@ async function insertReconciliation(client, {
   reconciliation,
 }) {
   for (const check of reconciliation.checks) {
+    /* The reconciliation key identifies current state, so it must be stable for
+       the same grain across syncs. Including `sourceFetchedAt` here made every
+       batch mint a new key, which turned an upsert into an append and grew
+       ops.reconciliation_result to 3,007,452 rows for only 93,702 real grains.
+       The payload fingerprint still carries the observation time, so provenance
+       and change detection are unaffected. */
     const keyInput = {
       domain: 'INVENTORY',
       skuCode,
       inventoryType,
       metric: check.metric,
-      sourceFetchedAt,
     };
     const key = payloadFingerprint(keyInput);
-    const fingerprint = payloadFingerprint({ ...keyInput, ...check });
+    const fingerprint = payloadFingerprint({ ...keyInput, sourceFetchedAt, ...check });
     await client.query(
       `INSERT INTO ops.reconciliation_result (
          store_id, reconciliation_key, domain_code, entity_key, metric_code,
@@ -1635,7 +1640,13 @@ async function insertReconciliation(client, {
          $9, $10::jsonb, $11,
          $12, $13
        )
-       ON CONFLICT (store_id, reconciliation_key) DO UPDATE SET
+       /* Conflict on the stable grain, not on reconciliation_key. Rows that
+          survived the 0013 compaction still carry a legacy time-derived key, so
+          conflicting on the key would miss them, attempt an insert and violate
+          uq_ops_reconciliation_result_grain. Updating reconciliation_key here
+          also migrates each surviving row to the stable key on first resync. */
+       ON CONFLICT (store_id, domain_code, entity_key, metric_code) DO UPDATE SET
+         reconciliation_key = EXCLUDED.reconciliation_key,
          status_code = EXCLUDED.status_code,
          aggregate_quantity = EXCLUDED.aggregate_quantity,
          detail_quantity = EXCLUDED.detail_quantity,
@@ -1662,6 +1673,50 @@ async function insertReconciliation(client, {
         fetchBatchId,
         fingerprint,
         sourceFetchedAt,
+      ],
+    );
+
+    /* Bounded per-day detail: one row per grain per UTC day, never one row per
+       sync. A later sync on the same day overwrites the day's row, so the
+       partition stays proportional to the number of grains. Partitions are
+       pre-created by ops.ensure_reconciliation_partitions, so a missing
+       partition fails the sync closed rather than silently dropping evidence. */
+    await client.query(
+      `INSERT INTO ops.reconciliation_daily_detail (
+         store_id, observed_on, domain_code, entity_key, metric_code,
+         status_code, aggregate_quantity, detail_quantity, difference_quantity,
+         explanation, source_fetch_batch_id, payload_fingerprint, source_fetched_at
+       ) VALUES (
+         $1, ($2::timestamptz AT TIME ZONE 'UTC')::date, 'INVENTORY', $3, $4,
+         $5, $6, $7, $8,
+         $9, $10, $11, $2
+       )
+       ON CONFLICT (observed_on, store_id, domain_code, entity_key, metric_code)
+       DO UPDATE SET
+         status_code = EXCLUDED.status_code,
+         aggregate_quantity = EXCLUDED.aggregate_quantity,
+         detail_quantity = EXCLUDED.detail_quantity,
+         difference_quantity = EXCLUDED.difference_quantity,
+         explanation = EXCLUDED.explanation,
+         source_fetch_batch_id = EXCLUDED.source_fetch_batch_id,
+         payload_fingerprint = EXCLUDED.payload_fingerprint,
+         source_fetched_at = EXCLUDED.source_fetched_at
+       WHERE EXCLUDED.source_fetched_at
+         >= ops.reconciliation_daily_detail.source_fetched_at`,
+      [
+        storeId,
+        sourceFetchedAt,
+        `${inventoryType}:${skuCode}`,
+        check.metric,
+        check.status,
+        check.aggregate,
+        check.warehouseSum,
+        check.aggregate === null || check.warehouseSum === null
+          ? null
+          : check.aggregate - check.warehouseSum,
+        reconciliation.explanation,
+        fetchBatchId,
+        fingerprint,
       ],
     );
   }

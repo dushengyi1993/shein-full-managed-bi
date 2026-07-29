@@ -257,3 +257,52 @@ docker exec shein-fm-db pg_isready -U sheinfm -d shein_fm
 6. 修复后重新走临时库、迁移、逐域探针与回读。
 
 边缘配置回滚使用部署前保存在 `/srv/shein-fm/backups/edge-*` 的精确副本，并在 reload 前重新验证。删除任何门禁或旧 release 前必须先精确解析目标路径。
+
+## 11. 磁盘与历史治理
+
+完整规则、清单格式与维护窗口顺序见
+[docs/runbooks/disk-and-history-governance.md](runbooks/disk-and-history-governance.md)。
+以下只列部署相关要点。
+
+### 11.1 备份模式
+
+`scripts/backup_full_managed_db.sh` 必须带 `--mode`：
+
+- `--mode daily` 由 `shein-fm-db-backup.timer` 调用，每个 UTC 自然日最多一次成功备份；
+- `--mode deploy` 在部署时人工调用，2 小时冷却并按 SHA-256 去重。
+
+两者共用主机锁，部署备份与定时器不会互相打断。保留规则为“最近 7 个 UTC 自然日各留
+最新一份 + 另留 3 份最新”，过期 dump 归档到 `/lhcos-data/shein-fm-archive` 并经
+字节数与 SHA-256 双重校验后才删除本地源文件。COS 不可用时不删除任何本地备份。
+
+### 11.2 部署成功后清理发布目录
+
+清理**不自动执行**。健康检查与回读通过后显式运行：
+
+```bash
+scripts/post_deploy_prune_releases.sh            # 只计划
+scripts/post_deploy_prune_releases.sh --apply    # 确认后执行
+```
+
+保护 `current`、`previous`、最新 5 个，以及**任何被存活进程 cwd 引用的发布**。
+Webhook receiver/worker 常运行在较旧的发布上，仅按“最新 5 个”清理会删掉正在运行的
+代码目录。
+
+### 11.3 新增 systemd 单元
+
+| 单元 | 节奏 | 说明 |
+| --- | --- | --- |
+| `shein-fm-db-backup.timer` | 每日 02:20 | 现在传 `--mode daily` |
+| `shein-fm-backup-archive.timer` | 每日 03:10 | 保留 + COS 归档 |
+| `shein-fm-disk-guard.timer` | 每 15 分钟 | 只观测，`>=85%` 时 unit failed |
+| `shein-fm-profile-cache-prune.timer` | 每周日 04:40 | Profile 占用时 fail closed |
+
+历史维护**故意没有定时器**：每一步破坏性操作都要先出计划、再带 `--plan-hash` 执行。
+`VACUUM FULL` 只能通过显式 `--reclaim` 在维护窗口人工触发，任何定时器都不会调度它。
+
+### 11.4 对账表迁移窗口
+
+迁移 0013 会重建并交换 `ops.reconciliation_result`（原 3,007,452 行 / ~1.78GB，
+真实粒度仅 93,702 个）。必须按“停供应链同步 → 迁移前全量备份 → 迁移 → verify 0013
+与 9999 → 恢复服务”的顺序执行，详见运维手册第 7 节。旧的 3M 行仅存在于迁移前备份
+及其 COS 副本中，刻意不保留第二份 1.7GB 影子表。

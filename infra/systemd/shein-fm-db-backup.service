@@ -10,7 +10,9 @@ Group=root
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=FULL_BI_BACKUP_DIR=/srv/shein-fm/backups/db
-ExecStart=/usr/bin/bash scripts/backup_full_managed_db.sh
+# `--mode daily` is required: the script keeps at most one successful backup per
+# UTC day, so a retried timer run is a no-op instead of a second dump.
+ExecStart=/usr/bin/bash scripts/backup_full_managed_db.sh --mode daily
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

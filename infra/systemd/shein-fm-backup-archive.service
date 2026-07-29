@@ -1,0 +1,31 @@
+[Unit]
+Description=Archive expired SHEIN full-managed database backups to COS
+Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
+# Archive runs serialize with each other through backup-archive.lock. A database
+# dump uses a separate db-backup.lock and writes to a hidden temporary name;
+# retention ignores that in-flight file and can only see atomically promoted
+# final dumps.
+After=shein-fm-db-backup.service
+# The COS namespace must be mounted before this unit starts. The tool also
+# verifies FSTYPE is exactly fuse.cosfs at runtime, so an unmounted
+# /lhcos-data can never be mistaken for an empty local directory.
+RequiresMountsFor=/lhcos-data
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+# Copy -> verify size -> verify SHA-256 -> write manifest -> delete source. A COS
+# mount failure exits non-zero and leaves every local dump in place.
+ExecStart=/usr/bin/node scripts/archive_full_managed_backups.mjs --apply
+ReadWritePaths=/srv/shein-fm/backups /lhcos-data/shein-fm-archive
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

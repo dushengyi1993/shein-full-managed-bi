@@ -492,6 +492,16 @@ GRANT SELECT, INSERT, UPDATE ON
     fact.shortage_event,
     ops.reconciliation_result
 TO sheinfm_supply_loader;
+-- Bounded reconciliation history (0013). The supply loader upserts the latest
+-- observation per grain per UTC day; it never writes the long-term summary or
+-- anomaly tables, which are recomputed by owner-run maintenance.
+GRANT SELECT, INSERT, UPDATE ON ops.reconciliation_daily_detail
+TO sheinfm_supply_loader;
+GRANT SELECT ON
+    ops.reconciliation_daily_detail,
+    ops.reconciliation_daily_summary,
+    ops.reconciliation_anomaly
+TO sheinfm_materializer_ro;
 
 -- Ingress can resolve a store, persist an immutable receipt, bump duplicate
 -- counters, and enqueue one job. It cannot lease, process or project jobs.

@@ -1,0 +1,28 @@
+[Unit]
+Description=Prune regenerable caches from idle SHEIN full-managed WebAPI Profiles
+Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
+# No `Conflicts=` is declared: the WebAPI experiment runs as an operator-invoked
+# command rather than a systemd unit, and systemd silently ignores a Conflicts
+# entry naming a unit that does not exist, which would look like a guard while
+# providing none. The authoritative guard is the runtime check in the tool: it
+# refuses when any lease exists under /srv/shein-fm/runtime/webapi-locks or any
+# process holds --user-data-dir under the full-managed profile root.
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+# Removes only the exact regenerable cache allow-list. Cookies, Login Data,
+# Web Data, Local Storage, IndexedDB and Sessions are fingerprinted before and
+# after the run and the unit fails if any of them changed.
+ExecStart=/usr/bin/node scripts/prune_full_managed_profile_caches.mjs --apply
+ReadWritePaths=/srv/shein-fm/webapi/profiles
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+Nice=15
+IOSchedulingClass=idle

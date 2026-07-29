@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily SHEIN full-managed backup retention and COS archive
+
+[Timer]
+# Runs after the 02:20 daily backup so the newest dump is already on disk.
+OnCalendar=*-*-* 03:10:00 Asia/Shanghai
+RandomizedDelaySec=5m
+Persistent=true
+Unit=shein-fm-backup-archive.service
+
+[Install]
+WantedBy=timers.target
