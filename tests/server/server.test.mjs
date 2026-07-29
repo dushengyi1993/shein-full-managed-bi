@@ -59,7 +59,7 @@ test('GET /api/dashboard returns only the permitted volume dashboard shape', asy
   assert.equal(response.status, 200);
   const dashboard = await response.json();
 
-  assert.equal(dashboard.schemaVersion, 4);
+  assert.equal(dashboard.schemaVersion, 5);
   assert.equal(dashboard.readOnly, true);
   assert.equal(dashboard.dataset.status, 'sample');
   assert.equal(dashboard.permission.totalStores, 24);
@@ -426,9 +426,9 @@ test('serves the local dashboard and its static assets', async () => {
   assert.match(pageResponse.headers.get('content-type'), /^text\/html/);
   const pageHtml = await pageResponse.text();
   assert.match(pageHtml, /全托运营驾驶舱/);
-  assert.match(pageHtml, /\/app\.js\?v=20260729\.10/);
-  assert.match(pageHtml, /\/styles\.css\?v=20260729\.10/);
-  assert.match(pageHtml, /\/home-parity\.css\?v=20260729\.10/);
+  assert.match(pageHtml, /\/app\.js\?v=20260729\.11/);
+  assert.match(pageHtml, /\/styles\.css\?v=20260729\.11/);
+  assert.match(pageHtml, /\/home-parity\.css\?v=20260729\.11/);
 
   assert.equal(scriptResponse.status, 200);
   assert.match(scriptResponse.headers.get('content-type'), /^text\/javascript/);

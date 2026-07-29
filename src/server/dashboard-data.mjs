@@ -1122,6 +1122,139 @@ function sortRanking(items) {
     });
 }
 
+function normalizeHomeStoreDaily(item) {
+  const source = record(item);
+  const storeCode = text(source.storeCode, '', 24).toUpperCase();
+  const date = isoDate(source.date);
+  if (!storeCode || !date) return null;
+  return {
+    storeCode,
+    date,
+    currency: /^[A-Z]{3}$/.test(text(source.currency, '', 3))
+      ? text(source.currency, '', 3)
+      : null,
+    dealAmount: optionalNonNegativeDecimal(source.dealAmount),
+    netDealAmount: optionalNonNegativeDecimal(source.netDealAmount),
+    salesQuantity: optionalNonNegativeInteger(source.salesQuantity),
+    buyerCount: optionalNonNegativeInteger(source.buyerCount),
+    goodsDetailVisitors: optionalNonNegativeInteger(source.goodsDetailVisitors),
+    exposureUsers: optionalNonNegativeInteger(source.exposureUsers),
+    exposureBasis: ['STORE_DEDUP', 'BRAND_SUMMED', 'UNAVAILABLE'].includes(
+      source.exposureBasis,
+    ) ? source.exposureBasis : 'UNAVAILABLE',
+    stockingOrderCount: optionalNonNegativeInteger(source.stockingOrderCount),
+    urgentPurchaseOrderCount: optionalNonNegativeInteger(
+      source.urgentPurchaseOrderCount,
+    ),
+    paymentOrderCount: optionalNonNegativeInteger(source.paymentOrderCount),
+    newCustomerSalesQuantity: optionalNonNegativeInteger(
+      source.newCustomerSalesQuantity,
+    ),
+    newCustomerPaymentOrderCount: optionalNonNegativeInteger(
+      source.newCustomerPaymentOrderCount,
+    ),
+    sourceUpdatedAt: isoInstant(source.sourceUpdatedAt),
+    observedAt: isoInstant(source.observedAt),
+    qualityStatus: ['COMPLETE', 'PARTIAL', 'LEGAL_ZERO', 'REJECTED'].includes(
+      source.qualityStatus,
+    ) ? source.qualityStatus : 'PARTIAL',
+    sourceCodes: Array.isArray(source.sourceCodes)
+      ? [...new Set(source.sourceCodes
+        .map((value) => text(value, '', 40))
+        .filter(Boolean))].slice(0, 8)
+      : [],
+  };
+}
+
+function normalizeHomeProductDaily(item) {
+  const source = record(item);
+  const storeCode = text(source.storeCode, '', 24).toUpperCase();
+  const date = isoDate(source.date);
+  const productKey = text(source.productKey, '', 160);
+  if (!storeCode || !date || !productKey) return null;
+  return {
+    storeCode,
+    date,
+    productGrain: ['SPU', 'SKC'].includes(source.productGrain)
+      ? source.productGrain
+      : 'SPU',
+    productKey,
+    platformSpuId: text(source.platformSpuId, '', 160) || null,
+    platformSkcId: text(source.platformSkcId, '', 160) || null,
+    supplierCode: text(source.supplierCode, '', 160) || null,
+    supplierSku: text(source.supplierSku, '', 160) || null,
+    displayName: text(source.displayName, '', 240) || null,
+    salesQuantity: optionalNonNegativeInteger(source.salesQuantity),
+    estimatedDealAmount: optionalNonNegativeDecimal(source.estimatedDealAmount),
+    estimationCurrency: /^[A-Z]{3}$/.test(text(source.estimationCurrency, '', 3))
+      ? text(source.estimationCurrency, '', 3)
+      : null,
+    unitPriceEvidence: optionalNonNegativeDecimal(source.unitPriceEvidence),
+    estimationBasis: source.estimationBasis === 'LATEST_FINANCE_UNIT_PRICE'
+      ? 'LATEST_FINANCE_UNIT_PRICE'
+      : 'UNAVAILABLE',
+    priceObservedAt: isoInstant(source.priceObservedAt),
+    sourceUpdatedAt: isoInstant(source.sourceUpdatedAt),
+    observedAt: isoInstant(source.observedAt),
+  };
+}
+
+function normalizeHomeRegionDaily(item) {
+  const source = record(item);
+  const storeCode = text(source.storeCode, '', 24).toUpperCase();
+  const date = isoDate(source.date);
+  const regionKey = text(source.regionKey, '', 80);
+  const regionName = text(source.regionName, '', 160);
+  if (!storeCode || !date || !regionKey || !regionName) return null;
+  return {
+    storeCode,
+    date,
+    regionKey,
+    regionName,
+    salesQuantity: optionalNonNegativeInteger(source.salesQuantity),
+    salesShare: optionalNonNegativeDecimal(source.salesShare),
+    newCustomerSalesQuantity: optionalNonNegativeInteger(
+      source.newCustomerSalesQuantity,
+    ),
+    newCustomerSalesShare: optionalNonNegativeDecimal(
+      source.newCustomerSalesShare,
+    ),
+    sourceUpdatedAt: isoInstant(source.sourceUpdatedAt),
+    observedAt: isoInstant(source.observedAt),
+  };
+}
+
+function normalizeHome(value) {
+  const source = record(value);
+  const storeDaily = Array.isArray(source.storeDaily)
+    ? source.storeDaily.map(normalizeHomeStoreDaily).filter(Boolean)
+    : [];
+  const productDaily = Array.isArray(source.productDaily)
+    ? source.productDaily.map(normalizeHomeProductDaily).filter(Boolean)
+    : [];
+  const regionDaily = Array.isArray(source.regionDaily)
+    ? source.regionDaily.map(normalizeHomeRegionDaily).filter(Boolean)
+    : [];
+  const coverage = record(source.coverage);
+  return {
+    status: ['available', 'empty', 'unavailable'].includes(source.status)
+      ? source.status
+      : 'unavailable',
+    storeDaily,
+    productDaily,
+    regionDaily,
+    coverage: {
+      earliestDate: isoDate(coverage.earliestDate),
+      latestDate: isoDate(coverage.latestDate),
+      storeCount: optionalNonNegativeInteger(coverage.storeCount),
+      storeDailyRows: storeDaily.length,
+      productDailyRows: productDaily.length,
+      regionDailyRows: regionDaily.length,
+      latestObservedAt: isoInstant(coverage.latestObservedAt),
+    },
+  };
+}
+
 export function normalizeDashboardData(input) {
   const source = record(input);
   const permissionSource = record(source.permission);
@@ -1174,7 +1307,7 @@ export function normalizeDashboardData(input) {
     : [];
 
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     readOnly: true,
     dataset: {
       status: datasetStatus,
@@ -1210,6 +1343,7 @@ export function normalizeDashboardData(input) {
     productIdentityPipeline: normalizeProductIdentityPipeline(
       source.productIdentityPipeline,
     ),
+    home: normalizeHome(source.home),
     rankingMeta: {
       store: normalizeRankingMeta(
         record(source.rankingMeta).store,

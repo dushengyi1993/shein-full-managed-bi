@@ -95,6 +95,22 @@ function pgInstant(value) {
   return Number.isNaN(instant.valueOf()) ? null : instant.toISOString();
 }
 
+function pgDate(value) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  const normalized = String(value).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
+}
+
+function pgDecimal(value, location) {
+  if (value === null || value === undefined) return null;
+  const number = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    throw new TypeError(`${location} is not a non-negative decimal`);
+  }
+  return number;
+}
+
 const UNAVAILABLE_PRODUCT_IDENTITY_PIPELINE = Object.freeze({
   status: 'unavailable',
   basis: 'schema_unavailable',
@@ -1283,15 +1299,213 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
 }
 
 export async function materializeDashboardFromDatabase(pool, options = {}) {
-  const dashboard = buildDashboardFromProjectionInput(
-    await readDashboardProjectionInput(pool),
-    options,
-  );
-  const operations = await readOperationsDashboard(pool);
+  const [projection, operations, home] = await Promise.all([
+    readDashboardProjectionInput(pool),
+    readOperationsDashboard(pool),
+    readFullHomeHistory(pool),
+  ]);
+  const dashboard = buildDashboardFromProjectionInput(projection, options);
   return {
     ...dashboard,
     ...operations,
+    home,
   };
+}
+
+const UNAVAILABLE_FULL_HOME_HISTORY = Object.freeze({
+  status: 'unavailable',
+  storeDaily: Object.freeze([]),
+  productDaily: Object.freeze([]),
+  regionDaily: Object.freeze([]),
+  coverage: Object.freeze({
+    earliestDate: null,
+    latestDate: null,
+    storeCount: 0,
+    storeDailyRows: 0,
+    productDailyRows: 0,
+    regionDailyRows: 0,
+    latestObservedAt: null,
+  }),
+});
+
+/**
+ * Read the additive full-managed homepage history contract.
+ *
+ * The materialized payload retains nullable metrics exactly: a missing source
+ * value is never converted to zero. The relation probe keeps older releases
+ * deployable while migration 0014 is rolling out.
+ */
+export async function readFullHomeHistory(pool) {
+  const client = await pool.connect();
+  try {
+    const schemaResult = await client.query(`
+      SELECT
+        to_regclass('fact.full_home_store_daily') IS NOT NULL AS has_store_daily,
+        to_regclass('fact.full_home_product_daily') IS NOT NULL AS has_product_daily,
+        to_regclass('fact.full_home_region_daily') IS NOT NULL AS has_region_daily`);
+    const schema = schemaResult.rows[0] ?? {};
+    if (
+      schema.has_store_daily !== true
+      || schema.has_product_daily !== true
+      || schema.has_region_daily !== true
+    ) {
+      return UNAVAILABLE_FULL_HOME_HISTORY;
+    }
+
+    const [storeResult, productResult, regionResult] = await Promise.all([
+      client.query(`
+        SELECT store_code, to_char(business_date, 'YYYY-MM-DD') AS business_date,
+               currency, deal_amount, net_deal_amount, sales_quantity,
+               buyer_count, goods_detail_visitors, exposure_users,
+               exposure_basis, stocking_order_count,
+               urgent_purchase_order_count, payment_order_count,
+               new_customer_sales_quantity,
+               new_customer_payment_order_count, source_updated_at,
+               observed_at, quality_status, source_codes
+        FROM fact.full_home_store_daily
+        ORDER BY business_date, store_code`),
+      client.query(`
+        SELECT store_code, to_char(business_date, 'YYYY-MM-DD') AS business_date,
+               product_grain, product_key, platform_spu_id, platform_skc_id,
+               supplier_code, supplier_sku, display_name, sales_quantity,
+               estimated_deal_amount, estimation_currency,
+               unit_price_evidence, estimation_basis, price_observed_at,
+               source_updated_at, observed_at
+        FROM fact.full_home_product_daily
+        ORDER BY business_date, store_code, product_grain, product_key`),
+      client.query(`
+        SELECT store_code, to_char(business_date, 'YYYY-MM-DD') AS business_date,
+               region_key, region_name, sales_quantity, sales_share,
+               new_customer_sales_quantity, new_customer_sales_share,
+               source_updated_at, observed_at
+        FROM fact.full_home_region_daily
+        ORDER BY business_date, store_code,
+                 sales_quantity DESC NULLS LAST, region_key`),
+    ]);
+
+    const storeDaily = storeResult.rows.map((row, index) => ({
+      storeCode: row.store_code,
+      date: pgDate(row.business_date),
+      currency: row.currency ?? null,
+      dealAmount: pgDecimal(row.deal_amount, `home.storeDaily[${index}].dealAmount`),
+      netDealAmount: pgDecimal(
+        row.net_deal_amount,
+        `home.storeDaily[${index}].netDealAmount`,
+      ),
+      salesQuantity: pgCount(
+        row.sales_quantity,
+        `home.storeDaily[${index}].salesQuantity`,
+      ),
+      buyerCount: pgCount(row.buyer_count, `home.storeDaily[${index}].buyerCount`),
+      goodsDetailVisitors: pgCount(
+        row.goods_detail_visitors,
+        `home.storeDaily[${index}].goodsDetailVisitors`,
+      ),
+      exposureUsers: pgCount(
+        row.exposure_users,
+        `home.storeDaily[${index}].exposureUsers`,
+      ),
+      exposureBasis: row.exposure_basis,
+      stockingOrderCount: pgCount(
+        row.stocking_order_count,
+        `home.storeDaily[${index}].stockingOrderCount`,
+      ),
+      urgentPurchaseOrderCount: pgCount(
+        row.urgent_purchase_order_count,
+        `home.storeDaily[${index}].urgentPurchaseOrderCount`,
+      ),
+      paymentOrderCount: pgCount(
+        row.payment_order_count,
+        `home.storeDaily[${index}].paymentOrderCount`,
+      ),
+      newCustomerSalesQuantity: pgCount(
+        row.new_customer_sales_quantity,
+        `home.storeDaily[${index}].newCustomerSalesQuantity`,
+      ),
+      newCustomerPaymentOrderCount: pgCount(
+        row.new_customer_payment_order_count,
+        `home.storeDaily[${index}].newCustomerPaymentOrderCount`,
+      ),
+      sourceUpdatedAt: pgInstant(row.source_updated_at),
+      observedAt: pgInstant(row.observed_at),
+      qualityStatus: row.quality_status,
+      sourceCodes: Array.isArray(row.source_codes) ? row.source_codes : [],
+    }));
+    const productDaily = productResult.rows.map((row, index) => ({
+      storeCode: row.store_code,
+      date: pgDate(row.business_date),
+      productGrain: row.product_grain,
+      productKey: row.product_key,
+      platformSpuId: row.platform_spu_id ?? null,
+      platformSkcId: row.platform_skc_id ?? null,
+      supplierCode: row.supplier_code ?? null,
+      supplierSku: row.supplier_sku ?? null,
+      displayName: row.display_name ?? null,
+      salesQuantity: pgCount(
+        row.sales_quantity,
+        `home.productDaily[${index}].salesQuantity`,
+      ),
+      estimatedDealAmount: pgDecimal(
+        row.estimated_deal_amount,
+        `home.productDaily[${index}].estimatedDealAmount`,
+      ),
+      estimationCurrency: row.estimation_currency ?? null,
+      unitPriceEvidence: pgDecimal(
+        row.unit_price_evidence,
+        `home.productDaily[${index}].unitPriceEvidence`,
+      ),
+      estimationBasis: row.estimation_basis,
+      priceObservedAt: pgInstant(row.price_observed_at),
+      sourceUpdatedAt: pgInstant(row.source_updated_at),
+      observedAt: pgInstant(row.observed_at),
+    }));
+    const regionDaily = regionResult.rows.map((row, index) => ({
+      storeCode: row.store_code,
+      date: pgDate(row.business_date),
+      regionKey: row.region_key,
+      regionName: row.region_name,
+      salesQuantity: pgCount(
+        row.sales_quantity,
+        `home.regionDaily[${index}].salesQuantity`,
+      ),
+      salesShare: pgDecimal(
+        row.sales_share,
+        `home.regionDaily[${index}].salesShare`,
+      ),
+      newCustomerSalesQuantity: pgCount(
+        row.new_customer_sales_quantity,
+        `home.regionDaily[${index}].newCustomerSalesQuantity`,
+      ),
+      newCustomerSalesShare: pgDecimal(
+        row.new_customer_sales_share,
+        `home.regionDaily[${index}].newCustomerSalesShare`,
+      ),
+      sourceUpdatedAt: pgInstant(row.source_updated_at),
+      observedAt: pgInstant(row.observed_at),
+    }));
+    const allDates = storeDaily.map(({ date }) => date).filter(Boolean).sort();
+    const observed = [...storeDaily, ...productDaily, ...regionDaily]
+      .map(({ observedAt }) => observedAt)
+      .filter(Boolean)
+      .sort();
+    return {
+      status: storeDaily.length > 0 ? 'available' : 'empty',
+      storeDaily,
+      productDaily,
+      regionDaily,
+      coverage: {
+        earliestDate: allDates[0] ?? null,
+        latestDate: allDates.at(-1) ?? null,
+        storeCount: new Set(storeDaily.map(({ storeCode }) => storeCode)).size,
+        storeDailyRows: storeDaily.length,
+        productDailyRows: productDaily.length,
+        regionDailyRows: regionDaily.length,
+        latestObservedAt: observed.at(-1) ?? null,
+      },
+    };
+  } finally {
+    client.release();
+  }
 }
 
 export async function atomicWriteJson(filePath, value) {

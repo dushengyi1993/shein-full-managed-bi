@@ -720,11 +720,12 @@ BEGIN
         RAISE EXCEPTION 'webhook worker privilege boundary is invalid';
     END IF;
 
-    -- WebAPI experiment loader: positive on its own isolated evidence layer.
+    -- WebAPI loader: append-only evidence plus the reviewed homepage facts.
     FOREACH required_name IN ARRAY ARRAY[
         'raw.webapi_fetch_batch',
         'raw.webapi_metric_observation',
-        'ops.webapi_session_health'
+        'ops.webapi_session_health',
+        'raw.webapi_home_fetch_audit'
     ]
     LOOP
         IF NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'SELECT')
@@ -748,10 +749,32 @@ BEGIN
         RAISE EXCEPTION 'WebAPI metric definition must stay human-reviewed and read-only';
     END IF;
 
-    -- WebAPI experiment loader: negative everywhere else, including the store
-    -- dimension, credential-bearing webhook receipts and the backfill plane.
     FOREACH required_name IN ARRAY ARRAY[
-        'dim.store',
+        'fact.full_home_store_daily',
+        'fact.full_home_region_daily',
+        'fact.full_home_product_daily'
+    ]
+    LOOP
+        IF NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'SELECT')
+           OR NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'INSERT')
+           OR NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'UPDATE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'DELETE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'TRUNCATE') THEN
+            RAISE EXCEPTION 'WebAPI homepage fact boundary is invalid for %',
+                required_name;
+        END IF;
+    END LOOP;
+    IF has_table_privilege(
+        'sheinfm_webapi_loader',
+        'fact.full_product_price_observation',
+        'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+    ) THEN
+        RAISE EXCEPTION 'WebAPI loader must not access OpenAPI finance price evidence';
+    END IF;
+
+    -- Negative everywhere else, including the store dimension,
+    -- credential-bearing webhook receipts and the backfill plane.
+    FOREACH required_name IN ARRAY ARRAY[
         'fact.full_sku_sales_snapshot',
         'fact.inventory_snapshot',
         'fact.purchase_order',
@@ -784,9 +807,12 @@ BEGIN
             END IF;
         END LOOP;
     END LOOP;
-    IF has_schema_privilege('sheinfm_webapi_loader', 'fact', 'USAGE')
+    IF has_column_privilege('sheinfm_webapi_loader', 'dim.store', 'store_code', 'SELECT') THEN
+        RAISE EXCEPTION 'WebAPI experiment loader must not read the store dimension';
+    END IF;
+    IF NOT has_schema_privilege('sheinfm_webapi_loader', 'fact', 'USAGE')
        OR has_schema_privilege('sheinfm_webapi_loader', 'mart', 'USAGE') THEN
-        RAISE EXCEPTION 'WebAPI experiment loader must not reach fact or mart schemas';
+        RAISE EXCEPTION 'WebAPI loader must reach only bounded fact relations, never mart';
     END IF;
 
     -- Existing component roles must not gain WebAPI write access.
@@ -794,7 +820,11 @@ BEGIN
         'raw.webapi_fetch_batch',
         'raw.webapi_metric_observation',
         'ops.webapi_session_health',
-        'dim.webapi_metric_definition'
+        'dim.webapi_metric_definition',
+        'raw.webapi_home_fetch_audit',
+        'fact.full_home_store_daily',
+        'fact.full_home_region_daily',
+        'fact.full_home_product_daily'
     ]
     LOOP
         FOREACH expected_group IN ARRAY ARRAY[
@@ -915,7 +945,8 @@ BEGIN
             -- the capability group it must SET ROLE into.
             ('sheinfm_webapi_loader', 'raw.webapi_fetch_batch', 'webapi_fetch_batch_id'),
             ('sheinfm_webapi_loader', 'raw.webapi_metric_observation', 'webapi_metric_observation_id'),
-            ('sheinfm_webapi_loader', 'ops.webapi_session_health', 'webapi_session_health_id')
+            ('sheinfm_webapi_loader', 'ops.webapi_session_health', 'webapi_session_health_id'),
+            ('sheinfm_webapi_loader', 'raw.webapi_home_fetch_audit', 'webapi_home_fetch_audit_id')
         ) AS expected(role_name, table_name, column_name)
     LOOP
         sequence_name := pg_get_serial_sequence(

@@ -366,7 +366,7 @@ test('logs in with a legacy SHA-256 hash, authorizes APIs, and logs out safely',
 
   const dashboard = await fetch(`${baseUrl}/api/dashboard`, { headers: { Cookie: cookie } });
   assert.equal(dashboard.status, 200);
-  assert.equal((await dashboard.json()).schemaVersion, 4);
+  assert.equal((await dashboard.json()).schemaVersion, 5);
 
   const inventory = await fetch(`${baseUrl}/api/inventory?pageSize=25`, {
     headers: { Cookie: cookie },

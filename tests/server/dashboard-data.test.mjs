@@ -62,7 +62,7 @@ test('normalizes dashboard data through an explicit read-only whitelist', () => 
   });
 
   assert.equal(dashboard.readOnly, true);
-  assert.equal(dashboard.schemaVersion, 4);
+  assert.equal(dashboard.schemaVersion, 5);
   assert.equal(dashboard.dataset.status, 'live');
   assert.equal(dashboard.unitsSold.today, 10);
   assert.equal(dashboard.storeRanking[0].code, 'HIGH');
@@ -113,6 +113,51 @@ test('keeps unavailable volume values missing instead of turning them into zero'
     last7Days: null,
     last30Days: null,
   });
+});
+
+test('whitelists full-managed homepage history while preserving unavailable metrics', () => {
+  const dashboard = normalizeDashboardData({
+    datasetStatus: 'live',
+    updatedAt: '2026-07-29T08:30:00.000Z',
+    home: {
+      status: 'available',
+      coverage: {
+        earliestDate: '2026-07-01',
+        latestDate: '2026-07-29',
+        latestObservedAt: '2026-07-29T08:29:00.000Z',
+      },
+      storeDaily: [{
+        storeCode: 'dl5477',
+        date: '2026-07-29',
+        currency: 'SAR',
+        dealAmount: '123.45',
+        netDealAmount: null,
+        salesQuantity: 8,
+        exposureUsers: 99,
+        exposureBasis: 'BRAND_SUMMED',
+        qualityStatus: 'PARTIAL',
+        sourceCodes: ['WEBAPI_INDEX', 'WEBAPI_ANALYSE'],
+        secret: 'drop-me',
+      }],
+      productDaily: [{
+        storeCode: 'DL5477',
+        date: '2026-07-29',
+        productGrain: 'SPU',
+        productKey: 'SPU-1',
+        salesQuantity: 3,
+        estimatedDealAmount: null,
+        estimationBasis: 'UNAVAILABLE',
+      }],
+    },
+  });
+
+  assert.equal(dashboard.home.storeDaily[0].storeCode, 'DL5477');
+  assert.equal(dashboard.home.storeDaily[0].dealAmount, 123.45);
+  assert.equal(dashboard.home.storeDaily[0].netDealAmount, null);
+  assert.equal(dashboard.home.storeDaily[0].exposureBasis, 'BRAND_SUMMED');
+  assert.equal(dashboard.home.productDaily[0].estimatedDealAmount, null);
+  assert.equal(dashboard.home.coverage.storeDailyRows, 1);
+  assert.doesNotMatch(JSON.stringify(dashboard.home), /secret|drop-me/);
 });
 
 test('uses FULL_BI_DATA_FILE when no function argument is supplied', async () => {

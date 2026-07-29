@@ -67,47 +67,26 @@ test('home opens with one editorial verdict band: conclusions left, scope and fa
   assert.match(header, /scopedUnits\(\{ ignoreQuery: true \}\)/);
 });
 
-test('home assembles the fixed A→F order and no longer mounts the retired home noise', async () => {
+test('home assembles header, KPI tables, vertical trends and rankings in order', async () => {
   const app = await read('src/web/app.js');
   const home = functionBody(app, 'renderHome');
 
   const order = [
-    'homeHeader()',
-    'homeKpis()',
-    '日销量趋势',
-    '月销量趋势',
-    '店铺经营排行',
-    'homeStoreRankingTable(storeRows)',
-    '货号 / 商品经营排行',
-    'homeProductRankingTable(productRows)',
-    'homeFootnote()',
+    'renderHistoryHomeHeader()',
+    'renderHistoryKpis()',
+    'renderHistoryTrends()',
+    'renderHistoryRankings()',
+    'home-footnote',
   ].map((marker) => home.indexOf(marker));
-  assert.ok(order.every((index) => index !== -1), '首页 A→F 区块都必须存在');
+  assert.ok(order.every((index) => index !== -1), '首页历史经营区块都必须存在');
   assert.deepEqual(order, [...order].sort((left, right) => left - right));
 
-  // The noise is gone from the assembly but the functions stay for other routes.
   assert.doesNotMatch(home, /homeBusinessPulse|supplyRadar|renderOperationalPriorities/);
   assert.doesNotMatch(home, /homeTruthStrip|trendCoverageBanner|homeSectionHeading/);
-  assert.match(app, /function homeBusinessPulse\(/);
-  assert.match(app, /function supplyRadar\(/);
-  assert.match(app, /function renderOperationalPriorities\(/);
-
-  // The trend panels follow the owner/store scope and name a global fallback.
-  assert.match(home, /trendScopeLabel\(\)/);
-  const scopeLabel = functionBody(app, 'trendScopeLabel');
-  assert.match(scopeLabel, /无按店日粒度序列，回退全局趋势/);
-  assert.match(scopeLabel, /全部店铺汇总/);
-  assert.match(scopeLabel, /按店日粒度序列/);
-
-  // One compact caliber footnote with the workspace entries closes the page.
-  const footnote = functionBody(app, 'homeFootnote');
-  assert.match(footnote, /class="home-footnote"/);
-  assert.match(footnote, /aria-label="其他业务页面入口"/);
-  assert.match(footnote, /homePulseHref\('sales'\)/);
-  assert.match(footnote, /homePulseHref\('products'\)/);
-  assert.match(footnote, /#inventory/);
-  assert.match(footnote, /#ops/);
-  assert.match(footnote, /#system/);
+  assert.match(home, /货号金额为“销量 × 最新财务报表单价”的估算值/);
+  const trends = functionBody(app, 'renderHistoryTrends');
+  assert.ok(trends.indexOf("'日趋势'") < trends.indexOf("'月趋势'"));
+  assert.match(trends, /home-history-trends/);
 });
 
 test('KPI matrix is one dense real table with legal comparisons only', async () => {
@@ -381,17 +360,18 @@ test('ranking tables show four windows, tiered magnitude and scope-preserving dr
   assert.match(productDrill, /store: state\.store/);
   assert.doesNotMatch(productDrill, /URL_STORE_PATTERN|selectedStore\(\) \?/);
 
-  // Server coverage and truncation stay disclosed next to both tables.
+  // Legacy server coverage helpers remain for the sales workbench; the
+  // homepage itself now uses date-grain historical facts and four rankings.
   assert.match(rankMeta, /rankingMeta\?\.\[kind\]/);
   assert.match(rankMeta, /服务端返回范围待确认/);
   assert.match(rankMeta, /已截断，未命中不代表没有销量/);
-  assert.match(home, /rankingCoverageNote\('store'\)/);
-  assert.match(home, /rankingCoverageNote\(productRankingKey\)/);
-  assert.match(home, /命中数不是 SHEIN 仓库全量货号数/);
-  assert.match(home, /homeRankingWindowNote\(\)/);
-  assert.match(app, /行级昨日销量未提供，排行按今日口径展示/);
-  assert.match(home, /查看明细 · 完整店铺销量工作台 →/);
-  assert.match(home, /查看明细 · 完整商品身份与排行 →/);
+  assert.match(home, /renderHistoryRankings\(\)/);
+  const historical = functionBody(app, 'renderHistoryRankings');
+  assert.match(historical, /店铺成交金额排行/);
+  assert.match(historical, /店铺销量排行/);
+  assert.match(historical, /货号成交金额排行（估算）/);
+  assert.match(historical, /货号销量排行/);
+  assert.match(historical, /无匹配单价则不入榜/);
 });
 
 test('owner scope lives inside the single store selector with no separate owner control', async () => {
@@ -436,8 +416,11 @@ test('limited day-grain history is stated exactly and never padded into a full s
   assert.match(notice, /当前真实日粒度历史只有/);
   assert.match(notice, /不代表 30 个完整日或任何完整自然月/);
 
-  // The exact history sentence rides on the daily chart legend.
-  assert.match(home, /trendHistoryNotice\(\)/);
+  // The historical homepage uses only real dated rows and states the same
+  // missing-day boundary in its chart empty state.
+  assert.match(home, /renderHistoryTrends\(\)/);
+  const historicalChart = functionBody(app, 'historySparkline');
+  assert.match(historicalChart, /缺失不补零、不连线/);
 
   // The banner helper stays available for callers outside home.
   assert.match(banner, /class="quality-notice/);
@@ -579,20 +562,20 @@ test('390px layout has explicit page-level overflow guards', async () => {
   assert.match(parity, /@media \(max-width: 1280px\)[\s\S]*?\.workspace\.main\s*\{[\s\S]*?margin-left: 0/);
 });
 
-test('1440px first screen keeps the verdict, the full matrix and the daily trend title compact', async () => {
+test('1440px homepage keeps historical sections ordered and the trend stack vertical', async () => {
   const [app, parity] = await Promise.all([
     read('src/web/app.js'),
     read('src/web/home-parity.css'),
   ]);
   const home = functionBody(app, 'renderHome');
 
-  // Nothing but the verdict band, the KPI matrix and the trend stack leads
-  // the page, so the daily trend title lands inside a 1440×900 first screen.
-  const firstScreen = ['homeHeader()', 'homeKpis()', '日销量趋势']
+  const firstScreen = ['renderHistoryHomeHeader()', 'renderHistoryKpis()', 'renderHistoryTrends()']
     .map((marker) => home.indexOf(marker));
   assert.ok(firstScreen.every((index) => index !== -1));
   assert.deepEqual(firstScreen, [...firstScreen].sort((left, right) => left - right));
-  assert.ok(home.indexOf('日销量趋势') < home.indexOf('月销量趋势'));
+  const historicalTrends = functionBody(app, 'renderHistoryTrends');
+  assert.ok(historicalTrends.indexOf("'日趋势'") < historicalTrends.indexOf("'月趋势'"));
+  assert.match(parity, /\.home-history-trends\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
 
   const desktopIndex = parity.indexOf('@media (min-width: 1400px)');
   assert.notEqual(desktopIndex, -1);

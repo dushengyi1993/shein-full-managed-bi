@@ -308,18 +308,75 @@ bundle establish the current contract: catalog rows live at
 - the explicit gate `/srv/shein-fm/runtime/webapi-experiment.enabled` must exist
   only for the bounded manual execution window.
 
-No WebAPI systemd unit or timer is shipped. The gate is created only around one
-bounded manual run and removed immediately afterward. WebAPI observations do not
-authorize or feed the purchase-order backfill.
+The generic discovery experiment still ships no timer. Its gate is created only
+around one bounded manual run and removed immediately afterward. WebAPI
+observations do not authorize or feed the purchase-order backfill.
 
-## 9. Deliberately deferred
+## 9. Verified homepage history contract
+
+The homepage history loader is a separate, production contract rather than a
+promotion of the generic experiment. It supports only `DL5477` and `MZ2406`
+during the first trial and uses one cloud Profile at a time.
+
+Store history is fetched in contiguous windows of at most 90 days from
+`/sbn/index/get_critical_indicator_curve_chart`. Shop and product self-analysis
+use the required two-step sequence: `/sbn/analyse/model_dimension` first, then
+`/sbn/analyse/search`. A rejected model request prevents the search call, so
+stale session results can never be mistaken for the requested range. Product
+analysis failures are audited independently and do not erase valid store facts.
+
+```bash
+npm run sync:home-history -- \
+  --stores=DL5477,MZ2406 \
+  --from=2023-06-07 \
+  --to=2026-07-29
+
+touch /srv/shein-fm/runtime/webapi-history.enabled
+npm run sync:home-history -- \
+  --stores=DL5477,MZ2406 \
+  --from=2023-06-07 \
+  --to=2026-07-29 \
+  --execute
+rm -f /srv/shein-fm/runtime/webapi-history.enabled
+```
+
+Dry-run is the default. Real execution additionally requires the dedicated
+`FULL_BI_WEBAPI_DATABASE_URL`, the cloud Linux attestation, the exact Profile
+directories and the explicit `webapi-history.enabled` gate. The browser request
+executes in page context with `credentials: include`; cookies, storage and
+headers never leave the Profile.
+
+Migration 0014 adds:
+
+- `raw.webapi_home_fetch_audit`: append-only hashes, counts and sanitized status;
+- `fact.full_home_store_daily`: nullable store/day metrics;
+- `fact.full_home_product_daily`: product/day quantity and clearly marked
+  estimated amount;
+- `fact.full_home_region_daily`: top-region evidence when the contract is
+  available;
+- `fact.full_product_price_observation`: append-only hashed finance price
+  evidence for the estimate.
+
+An unavailable metric remains SQL `NULL` and renders as `—`. Exposure from
+brand-level self-analysis is labeled `BRAND_SUMMED`, never described as a
+deduplicated store visitor count. Product amount is available only as
+`sales quantity × latest matched finance unit price`; an unmatched product stays
+unknown and does not enter the amount ranking.
+
+The first full backfill remains an explicit manual operation. After it is
+accepted, an incremental service may refresh only today/yesterday under the same
+Profile lock and gate; it must never reopen the full historical range on every
+timer tick.
+
+## 10. Deliberately deferred
 
 - No historical adapter other than `purchase-orders`.
 - No delivery history claim until an update-time-complete contract exists.
-- No historical daily sales reconstruction from the four rolling snapshots.
+- No historical daily sales reconstruction from the four rolling OpenAPI
+  snapshots; homepage history uses the verified WebAPI date-grain contract.
 - No backfill systemd unit or timer; execution remains an explicitly reviewed,
   hash-locked manual operation.
-- No WebAPI systemd unit or timer; execution remains a bounded manual run.
+- No timer for the generic WebAPI discovery experiment.
 - No `fact.full_store_realtime_metric_snapshot`.
 - No metric definition rows, so no metric is `VERIFIED`.
 - No persistent production WebAPI gate file and no enabled WebAPI timer.

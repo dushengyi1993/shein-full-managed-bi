@@ -551,6 +551,9 @@ const initialHashState = parseHashState(
 const state = {
   route: initialHashState.route,
   range: initialHashState.range,
+  homeDateStart: null,
+  homeDateEnd: null,
+  homeDateCustom: false,
   query: initialHashState.query,
   owner: initialHashState.owner,
   store: initialHashState.store,
@@ -631,6 +634,8 @@ const elements = {
   scope: document.querySelector('#scope-filter'),
   rangeButtons: [...document.querySelectorAll('[data-range]')],
   rangeSummary: document.querySelector('#range-summary'),
+  homeDateStart: document.querySelector('#home-date-start'),
+  homeDateEnd: document.querySelector('#home-date-end'),
   clearFilters: document.querySelector('#clear-filters'),
   datasetBadge: document.querySelector('#dataset-badge'),
   liveUpdateBadge: document.querySelector('#live-update-badge'),
@@ -679,6 +684,39 @@ function formatDateTime(value) {
   if (!value) return '暂无有效销量快照';
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? '更新时间待确认' : dateTimeFormatter.format(date);
+}
+
+function shanghaiToday() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const byType = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${byType.year}-${byType.month}-${byType.day}`;
+}
+
+function shiftIsoDate(date, offsetDays) {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.valueOf())) return date;
+  parsed.setUTCDate(parsed.getUTCDate() + offsetDays);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function selectedHomeDateRange() {
+  if (
+    state.homeDateCustom
+    && /^\d{4}-\d{2}-\d{2}$/.test(String(state.homeDateStart || ''))
+    && /^\d{4}-\d{2}-\d{2}$/.test(String(state.homeDateEnd || ''))
+    && state.homeDateStart <= state.homeDateEnd
+  ) {
+    return { start: state.homeDateStart, end: state.homeDateEnd, custom: true };
+  }
+  const today = shanghaiToday();
+  const days = RANGE_META[state.range]?.days || 1;
+  const end = state.range === 'yesterday' ? shiftIsoDate(today, -1) : today;
+  return { start: shiftIsoDate(end, -(days - 1)), end, custom: false };
 }
 
 function datasetStatus() {
@@ -4956,58 +4994,424 @@ function homeFootnote() {
     </footer>`;
 }
 
+function finiteMetric(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function homeHistory() {
+  const source = state.data?.home;
+  return source && typeof source === 'object'
+    ? source
+    : { status: 'unavailable', storeDaily: [], productDaily: [], regionDaily: [], coverage: {} };
+}
+
+function homeDateInRange(date, range = selectedHomeDateRange()) {
+  return typeof date === 'string' && date >= range.start && date <= range.end;
+}
+
+function homeBaseStoreCodes() {
+  const selected = selectedStore();
+  const owner = selectedOwner();
+  return new Set(
+    baseStores()
+      .filter((store) => !selected || store.code === selected.code)
+      .filter((store) => !owner || storeMatchesOwner(store))
+      .map(({ code }) => String(code)),
+  );
+}
+
+function homeStoreSearchMatches() {
+  const query = normalizedQuery();
+  if (!query) return new Set();
+  return new Set(baseStores().filter((store) => [
+    store.code,
+    store.name,
+    ownerNameForStore(store),
+  ].filter(Boolean).join(' ').normalize('NFKC').toLocaleLowerCase('zh-CN').includes(query))
+    .map(({ code }) => String(code)));
+}
+
+function homeProductSearchMatch(row) {
+  const query = normalizedQuery();
+  if (!query) return true;
+  return [
+    row.productKey,
+    row.platformSpuId,
+    row.platformSkcId,
+    row.supplierCode,
+    row.supplierSku,
+    row.displayName,
+    row.storeCode,
+  ].filter(Boolean).join(' ').normalize('NFKC').toLocaleLowerCase('zh-CN').includes(query);
+}
+
+function homeScopedRows(range = selectedHomeDateRange()) {
+  const history = homeHistory();
+  const baseCodes = homeBaseStoreCodes();
+  const storeMatches = homeStoreSearchMatches();
+  const query = normalizedQuery();
+  const effectiveCodes = query && storeMatches.size > 0
+    ? new Set([...baseCodes].filter((code) => storeMatches.has(code)))
+    : baseCodes;
+  const storeDaily = (Array.isArray(history.storeDaily) ? history.storeDaily : [])
+    .filter((row) => effectiveCodes.has(String(row.storeCode)))
+    .filter((row) => homeDateInRange(row.date, range));
+  const productCandidates = (Array.isArray(history.productDaily) ? history.productDaily : [])
+    .filter((row) => baseCodes.has(String(row.storeCode)))
+    .filter((row) => homeDateInRange(row.date, range));
+  const matchingProducts = query
+    ? productCandidates.filter(homeProductSearchMatch)
+    : productCandidates;
+  const productMode = Boolean(query && storeMatches.size === 0 && matchingProducts.length > 0);
+  const productDaily = productMode
+    ? matchingProducts
+    : productCandidates.filter((row) => effectiveCodes.has(String(row.storeCode)));
+  const regionDaily = (Array.isArray(history.regionDaily) ? history.regionDaily : [])
+    .filter((row) => effectiveCodes.has(String(row.storeCode)))
+    .filter((row) => homeDateInRange(row.date, range));
+  return {
+    storeDaily,
+    productDaily,
+    regionDaily,
+    storeCodes: effectiveCodes,
+    productMode,
+  };
+}
+
+function dateSpanDays(range) {
+  const start = new Date(`${range.start}T00:00:00.000Z`);
+  const end = new Date(`${range.end}T00:00:00.000Z`);
+  return Math.max(1, Math.round((end - start) / 86400000) + 1);
+}
+
+function previousHomeDateRange(range = selectedHomeDateRange()) {
+  const days = dateSpanDays(range);
+  return {
+    start: shiftIsoDate(range.start, -days),
+    end: shiftIsoDate(range.start, -1),
+    custom: true,
+  };
+}
+
+function completeMetricSum(rows, key) {
+  if (!rows.length) return null;
+  const values = rows.map((row) => row?.[key]);
+  if (values.some((value) => !finiteMetric(value))) return null;
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return Number.isFinite(total) ? total : null;
+}
+
+function availableMetricSum(rows, key) {
+  const values = rows.map((row) => row?.[key]).filter(finiteMetric);
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0);
+}
+
+function periodMetric(bundle, key) {
+  if (bundle.productMode) {
+    if (key === 'salesQuantity') return completeMetricSum(bundle.productDaily, 'salesQuantity');
+    if (key === 'dealAmount') return completeMetricSum(bundle.productDaily, 'estimatedDealAmount');
+    return null;
+  }
+  return completeMetricSum(bundle.storeDaily, key);
+}
+
+function metricComparison(current, previous) {
+  if (!finiteMetric(current) || !finiteMetric(previous)) return '—';
+  if (previous === 0) return current === 0 ? '持平' : '新增';
+  const change = ((current - previous) / previous) * 100;
+  return `${change >= 0 ? '+' : ''}${change.toFixed(1)}%`;
+}
+
+function formatMoney(value, currency = 'SAR') {
+  if (!finiteMetric(value)) return '—';
+  return new Intl.NumberFormat('zh-CN', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function homeTopRegion(bundle) {
+  const grouped = new Map();
+  for (const row of bundle.regionDaily) {
+    const current = grouped.get(row.regionKey) || {
+      name: row.regionName,
+      salesQuantity: 0,
+      complete: true,
+    };
+    if (!isUnit(row.salesQuantity)) current.complete = false;
+    else current.salesQuantity += row.salesQuantity;
+    grouped.set(row.regionKey, current);
+  }
+  return [...grouped.values()]
+    .filter(({ complete }) => complete)
+    .sort((left, right) => right.salesQuantity - left.salesQuantity)[0] ?? null;
+}
+
+function historyMetricRows() {
+  const range = selectedHomeDateRange();
+  const current = homeScopedRows(range);
+  const previous = homeScopedRows(previousHomeDateRange(range));
+  const rows = [
+    ['成交金额', 'dealAmount', 'money', current.productMode ? '按已匹配货号单价估算' : 'WebAPI 经营指标'],
+    ['净成交金额', 'netDealAmount', 'money', 'WebAPI 经营指标'],
+    ['支付人数', 'buyerCount', 'count', '支付买家去重人数'],
+    ['销量', 'salesQuantity', 'count', current.productMode ? '按匹配货号汇总' : '成交件数'],
+    ['曝光量', 'exposureUsers', 'count', '多品牌求和时标注非店铺去重'],
+    ['商详访客', 'goodsDetailVisitors', 'count', '商品详情页访客'],
+    ['备货订单数', 'stockingOrderCount', 'count', '备货订单'],
+    ['集采订单数', 'urgentPurchaseOrderCount', 'count', 'SHEIN 字段 jcOrdCnt1d'],
+    ['新客销量', 'newCustomerSalesQuantity', 'count', '能力未返回时保持 —'],
+    ['新客支付订单数', 'newCustomerPaymentOrderCount', 'count', '能力未返回时保持 —'],
+  ].map(([label, key, type, note]) => {
+    const value = periodMetric(current, key);
+    const baseline = periodMetric(previous, key);
+    return {
+      label,
+      key,
+      value,
+      baseline,
+      display: type === 'money' ? formatMoney(value) : formatUnits(value),
+      baselineDisplay: type === 'money' ? formatMoney(baseline) : formatUnits(baseline),
+      change: metricComparison(value, baseline),
+      note,
+    };
+  });
+  return { range, current, previous, rows, topRegion: homeTopRegion(current) };
+}
+
+function homeMetricTable(title, subtitle, metrics) {
+  return `
+    <article class="overview-matrix-card home-history-card">
+      <div class="matrix-card-head"><h4>${escapeHtml(title)}</h4><div class="sub">${escapeHtml(subtitle)}</div></div>
+      <div class="metric-matrix-scroll">
+        <table class="metric-matrix home-history-matrix">
+          <thead><tr><th>指标</th><th>当前区间</th><th>上个等长区间</th><th>变化</th><th>口径</th></tr></thead>
+          <tbody>${metrics.map((metric) => `
+            <tr>
+              <th scope="row">${escapeHtml(metric.label)}</th>
+              <td class="num"><strong>${escapeHtml(metric.display)}</strong></td>
+              <td class="num">${escapeHtml(metric.baselineDisplay)}</td>
+              <td class="num">${escapeHtml(metric.change)}</td>
+              <td class="note">${escapeHtml(metric.note)}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </article>`;
+}
+
+function renderHistoryKpis() {
+  const summary = historyMetricRows();
+  const rangeLabel = `${summary.range.start} → ${summary.range.end}`;
+  const region = summary.topRegion;
+  return `
+    <section class="home-kpi home-history-kpis" aria-label="全托关键经营数据">
+      <header class="home-block-head">
+        <div><span class="eyebrow">BUSINESS OVERVIEW</span><h2>关键经营数据</h2></div>
+        <p>${escapeHtml(`${rangeLabel} · ${summary.current.productMode ? '货号搜索范围' : `${summary.current.storeCodes.size} 家店`} · 未返回字段保持 —`)}</p>
+      </header>
+      <div class="home-history-card-stack">
+        ${homeMetricTable('成交与支付', '金额、买家与销量', summary.rows.slice(0, 4))}
+        ${homeMetricTable('流量表现', '曝光与商详访问', summary.rows.slice(4, 6))}
+        ${homeMetricTable('供给与新客', '备货、集采与新客结构', summary.rows.slice(6))}
+      </div>
+      <article class="home-region-summary">
+        <span>销量 Top 主销地区</span>
+        <strong>${escapeHtml(region?.name || '—')}</strong>
+        <small>${region ? `${formatUnits(region.salesQuantity)} 件 · 当前筛选区间` : '地区能力尚未取得可靠结果，不用店铺站点冒充'}</small>
+      </article>
+    </section>`;
+}
+
+function groupHistoryByDate(bundle) {
+  const source = bundle.productMode ? bundle.productDaily : bundle.storeDaily;
+  const quantityKey = 'salesQuantity';
+  const amountKey = bundle.productMode ? 'estimatedDealAmount' : 'dealAmount';
+  const grouped = new Map();
+  for (const row of source) {
+    const current = grouped.get(row.date) || { date: row.date, rows: [] };
+    current.rows.push(row);
+    grouped.set(row.date, current);
+  }
+  return [...grouped.values()].sort((left, right) => left.date.localeCompare(right.date)).map((item) => ({
+    date: item.date,
+    salesQuantity: completeMetricSum(item.rows, quantityKey),
+    dealAmount: completeMetricSum(item.rows, amountKey),
+  }));
+}
+
+function groupHistoryByMonth(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const month = row.date.slice(0, 7);
+    const current = grouped.get(month) || { date: month, rows: [] };
+    current.rows.push(row);
+    grouped.set(month, current);
+  }
+  return [...grouped.values()].sort((left, right) => left.date.localeCompare(right.date)).map((item) => ({
+    date: item.date,
+    salesQuantity: completeMetricSum(item.rows, 'salesQuantity'),
+    dealAmount: completeMetricSum(item.rows, 'dealAmount'),
+  }));
+}
+
+function historySparkline(rows, key, { money = false } = {}) {
+  const visible = rows.filter((row) => finiteMetric(row[key]));
+  if (!visible.length) {
+    return emptyEvidence('当前指标暂无趋势', '所选日期范围没有完整的日粒度事实，缺失不补零、不连线。');
+  }
+  const width = 980;
+  const height = 236;
+  const left = 58;
+  const right = 18;
+  const top = 18;
+  const bottom = 42;
+  const innerWidth = width - left - right;
+  const innerHeight = height - top - bottom;
+  const max = Math.max(1, ...visible.map((row) => row[key]));
+  const points = visible.map((row, index) => ({
+    ...row,
+    x: left + (visible.length === 1 ? innerWidth / 2 : (innerWidth * index) / (visible.length - 1)),
+    y: top + innerHeight - ((row[key] / max) * innerHeight),
+  }));
+  const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ');
+  const valueLabel = (value) => money ? formatMoney(value) : `${formatUnits(value)} 件`;
+  return `
+    <div class="trend-chart home-history-chart">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(`${points[0].date} 至 ${points.at(-1).date} 趋势`)}">
+        ${[1, 0.5, 0].map((ratio) => {
+          const y = top + innerHeight - innerHeight * ratio;
+          return `<line class="chart-grid" x1="${left}" y1="${y.toFixed(1)}" x2="${left + innerWidth}" y2="${y.toFixed(1)}"></line>
+            <text class="chart-axis chart-axis-end" x="${left - 8}" y="${(y + 4).toFixed(1)}">${escapeHtml(money ? new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(max * ratio) : numberFormatter.format(Math.round(max * ratio)))}</text>`;
+        }).join('')}
+        <path class="chart-line" d="${path}"></path>
+        ${points.map((point) => `<circle class="chart-point" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4" tabindex="0" data-tip="${escapeHtml(`${point.date} · ${valueLabel(point[key])}`)}"></circle>`).join('')}
+        <text class="chart-axis" x="${left}" y="${height - 12}">${escapeHtml(points[0].date)}</text>
+        <text class="chart-axis chart-axis-end" x="${left + innerWidth}" y="${height - 12}">${escapeHtml(points.at(-1).date)}</text>
+      </svg>
+    </div>`;
+}
+
+function renderHistoryTrends() {
+  const daily = groupHistoryByDate(homeScopedRows());
+  const monthly = groupHistoryByMonth(daily);
+  const trendPanel = (title, rows, note) => `
+    <article class="panel trend-panel home-history-trend-panel">
+      <header class="home-trend-heading"><div><span class="eyebrow">TREND</span><h4>${escapeHtml(title)}</h4></div><p>${escapeHtml(note)}</p></header>
+      <div class="history-trend-metric"><h5>成交金额${homeScopedRows().productMode ? '（估算）' : ''}</h5>${historySparkline(rows, 'dealAmount', { money: true })}</div>
+      <div class="history-trend-metric"><h5>销量</h5>${historySparkline(rows, 'salesQuantity')}</div>
+    </article>`;
+  return `
+    <div class="trend-stack home-trend-stack home-history-trends">
+      ${trendPanel('日趋势', daily, `${selectedHomeDateRange().start} → ${selectedHomeDateRange().end} · 按业务日`)}
+      ${trendPanel('月趋势', monthly, '按日粒度事实归入自然月；不完整月份不补齐')}
+    </div>`;
+}
+
+function aggregateHistoryRanking(rows, identity, metricKey) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const key = identity.key(row);
+    if (!key) continue;
+    const item = grouped.get(key) || { key, label: identity.label(row), sub: identity.sub(row), rows: [] };
+    item.rows.push(row);
+    grouped.set(key, item);
+  }
+  return [...grouped.values()].map((item) => ({
+    ...item,
+    value: completeMetricSum(item.rows, metricKey),
+  })).filter(({ value }) => finiteMetric(value))
+    .sort((left, right) => right.value - left.value)
+    .slice(0, HOME_RANK_LIMIT);
+}
+
+function historyRankTable(title, note, rows, { money = false, estimated = false } = {}) {
+  return `
+    <article class="panel home-history-rank-card">
+      <header><div><span class="eyebrow">RANKING</span><h4>${escapeHtml(title)}</h4></div><p>${escapeHtml(note)}</p></header>
+      ${rows.length ? `<div class="table-wrap"><table class="data-table compact-rank-table">
+        <thead><tr><th>#</th><th>对象</th><th class="number-column">${money ? '金额' : '销量'}</th></tr></thead>
+        <tbody>${rows.map((row, index) => `<tr>
+          <td class="rank-index">${index + 1}</td>
+          <td class="entity-column"><strong>${escapeHtml(row.label)}</strong><span>${escapeHtml(row.sub || '')}</span></td>
+          <td class="number-column"><strong>${escapeHtml(money ? formatMoney(row.value) : formatUnits(row.value))}</strong>${estimated ? '<small>估算</small>' : money ? '' : '<small>件</small>'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>` : emptyEvidence('当前排行暂无数据', '所选日期和范围内没有完整可排序事实。')}
+    </article>`;
+}
+
+function renderHistoryRankings() {
+  const bundle = homeScopedRows();
+  const storeIdentity = {
+    key: (row) => row.storeCode,
+    label: (row) => baseStores().find(({ code }) => code === row.storeCode)?.name || row.storeCode,
+    sub: (row) => {
+      const store = baseStores().find(({ code }) => code === row.storeCode);
+      return [row.storeCode, ownerNameForStore(store)].filter(Boolean).join(' · ');
+    },
+  };
+  const productIdentity = {
+    key: (row) => `${row.storeCode}:${row.productGrain}:${row.productKey}`,
+    label: (row) => row.supplierCode || row.supplierSku || row.productKey,
+    sub: (row) => [row.displayName, row.storeCode].filter(Boolean).join(' · '),
+  };
+  const storeAmount = aggregateHistoryRanking(bundle.storeDaily, storeIdentity, 'dealAmount');
+  const storeQuantity = aggregateHistoryRanking(bundle.storeDaily, storeIdentity, 'salesQuantity');
+  const productAmount = aggregateHistoryRanking(bundle.productDaily, productIdentity, 'estimatedDealAmount');
+  const productQuantity = aggregateHistoryRanking(bundle.productDaily, productIdentity, 'salesQuantity');
+  const range = selectedHomeDateRange();
+  const note = `${range.start} → ${range.end} · 当前筛选联动`;
+  return `
+    <section class="home-history-rankings" aria-label="经营排行榜">
+      <header class="home-block-head"><div><span class="eyebrow">TOP PERFORMANCE</span><h2>经营排行榜</h2></div><p>${escapeHtml(note)}</p></header>
+      <div class="home-rank-grid">
+        ${historyRankTable('店铺成交金额排行', note, storeAmount, { money: true })}
+        ${historyRankTable('店铺销量排行', note, storeQuantity)}
+        ${historyRankTable('货号成交金额排行（估算）', '销量 × 最新财务单价证据；无匹配单价则不入榜', productAmount, { money: true, estimated: true })}
+        ${historyRankTable('货号销量排行', note, productQuantity)}
+      </div>
+    </section>`;
+}
+
+function renderHistoryHomeHeader() {
+  const history = homeHistory();
+  const range = selectedHomeDateRange();
+  const rows = homeScopedRows(range);
+  const scope = selectedStore()
+    ? `${selectedStore().code} · ${selectedStore().name || selectedStore().code}`
+    : selectedOwner()
+      ? `${selectedOwner().name}负责店铺`
+      : '全部店铺';
+  return `
+    <header class="home-topbar home-verdict home-history-header">
+      <div class="home-topbar-main">
+        <span class="eyebrow">FULL-MANAGED BUSINESS INTELLIGENCE</span>
+        <h1>全托经营总览</h1>
+        <p class="verdict-primary">${escapeHtml(`${range.start} → ${range.end} · ${scope}`)}</p>
+        <p class="verdict-secondary">${escapeHtml(rows.productMode ? '当前为货号搜索范围：销量与金额按命中货号汇总，店铺级人数、流量和订单指标保持未知。' : '首页所有指标、趋势和排行使用同一日期与店铺范围；未知不补零。')}</p>
+      </div>
+      <dl class="home-topbar-facts">
+        <div><dt>历史覆盖</dt><dd>${escapeHtml(history.coverage?.earliestDate && history.coverage?.latestDate ? `${history.coverage.earliestDate} → ${history.coverage.latestDate}` : '待回填')}</dd></div>
+        <div><dt>当前事实行</dt><dd>${numberFormatter.format(rows.storeDaily.length)} 店日 · ${numberFormatter.format(rows.productDaily.length)} 货号日</dd></div>
+        <div><dt>最近入仓</dt><dd>${escapeHtml(formatDateTime(history.coverage?.latestObservedAt))}</dd></div>
+        <div class="home-topbar-state"><dt>数据状态</dt><dd><span class="source-chip ${history.status === 'available' ? 'live' : 'empty'}">${history.status === 'available' ? '历史事实可用' : history.status === 'empty' ? '等待历史数据' : '历史表未接入'}</span></dd></div>
+      </dl>
+    </header>`;
+}
+
 /* Vertical order is fixed: A 首屏经营结论 → B 销量 KPI 数据矩阵 →
    C 日销量趋势 → D 月销量趋势 → E 店铺经营排行 → F 货号/商品经营排行 →
    口径脚注与业务入口。首页噪音（pulse、supply radar、运营提醒）不再参与组装，
    相关函数保留给其他路由使用。 */
 function renderHome() {
-  const coverage = identityCoverage();
-  const storeRows = homeStoreRows();
-  const productRows = homeProductRows();
-  const productSource = scopedProductRanking();
-  const dailyRows = trendRowsForRange();
-  const monthlyRows = monthlyTrendRows();
-  const scopeName = trendScopeLabel();
-  const productRankingKey = canonicalProducts().length ? 'product' : 'storeSku';
-  const rankingWindow = homeRankingWindow();
-  const rankingNote = homeRankingWindowNote();
-  const rankingSubtitle = `按${RANGE_META[rankingWindow.key].label}排序${rankingNote ? ` · ${rankingNote}` : ''}`;
   return `
-    ${homeHeader()}
-    ${homeKpis()}
-    <div class="trend-stack home-trend-stack">
-      <article class="panel trend-panel">
-        <h4>日销量趋势</h4>
-        <p class="sub">${escapeHtml(`${trendWindowLabel(dailyRows)} · ${scopeName} · ${trendRangeLabel(dailyRows)}`)}</p>
-        ${renderTrendChart()}
-        <p class="chart-legend">${escapeHtml(trendHistoryNotice())} 纵轴为销量（件），横轴为业务日期；悬停或键盘聚焦任意日期可读出该日销量与覆盖店铺数。缺日粒度点时保留空态，不用窗口累计值补线。</p>
-      </article>
-      <article class="panel trend-panel">
-        <h4>月销量趋势</h4>
-        <p class="sub">${escapeHtml(`按业务日期归自然月 · ${scopeName} · ${monthlyCoverageLabel(monthlyRows)}`)}</p>
-        ${renderMonthlyTrendChart()}
-        <p class="chart-legend">纵轴为月销量（件）；每根柱下方标出该月实际覆盖业务日数 / 自然日数，部分覆盖的月份不能当作整月合计；少于两个可用月份时保持空态。</p>
-      </article>
-    </div>
-    <section class="home-rank-section" aria-label="店铺经营排行">
-      <article class="panel rank-panel">
-        <h4>店铺经营排行</h4>
-        <p class="sub">${escapeHtml(`${rankingSubtitle} · 当前范围 ${numberFormatter.format(storeRows.length)} 家店 · 前 ${Math.min(HOME_RANK_LIMIT, storeRows.length)} 行 · ${rankingCoverageNote('store')}`)}</p>
-        ${homeStoreRankingTable(storeRows)}
-        <p class="table-note">${rankingNote ? `${escapeHtml(rankingNote)}；` : ''}四个窗口同表比较，"—"表示该窗口未知而非 0；动量只用近 7 日日均对此前 23 日日均，不把滚动窗口当作历史时间序列。点击店铺名就地切换店铺范围。</p>
-        <a class="text-link" href="${escapeHtml(homePulseHref('sales'))}">查看明细 · 完整店铺销量工作台 →</a>
-      </article>
-    </section>
-    <section class="home-rank-section" aria-label="货号与商品经营排行">
-      <article class="panel rank-panel">
-        <h4>货号 / 商品经营排行</h4>
-        <p class="sub">${escapeHtml(`${rankingSubtitle} · ${productIdentityLabel(productSource)} · 前 ${Math.min(HOME_RANK_LIMIT, productRows.length)} 行 · ${coverage.label} · ${rankingCoverageNote(productRankingKey)}`)}</p>
-        ${homeProductRankingTable(productRows)}
-        <p class="table-note">${rankingNote ? `${escapeHtml(rankingNote)}；` : ''}标准商品与店铺本地 SKU 分别标记，未归并商品不会伪装成跨店标准商品；服务端返回范围可能已截断，命中数不是 SHEIN 仓库全量货号数。点击货号就地按该货号筛选。</p>
-        <a class="text-link" href="${escapeHtml(homePulseHref('products'))}">查看明细 · 完整商品身份与排行 →</a>
-      </article>
-    </section>
-    ${homeFootnote()}`;
+    ${renderHistoryHomeHeader()}
+    ${renderHistoryKpis()}
+    ${renderHistoryTrends()}
+    ${renderHistoryRankings()}
+    <footer class="home-footnote"><p>口径：成交金额为 WebAPI 经营指标；货号金额为“销量 × 最新财务报表单价”的估算值并单独标识；曝光若来自品牌行求和则不是店铺去重人数；未知显示 —，不会补 0。</p></footer>`;
 }
 
 function permissionBadge(permission) {
@@ -6430,12 +6834,19 @@ function updateFilters() {
     button.setAttribute('aria-pressed', String(active));
   });
   if (elements.rangeSummary) {
-    elements.rangeSummary.textContent = `${RANGE_META[state.range].label} · ${RANGE_META[state.range].note}`;
+    const dates = selectedHomeDateRange();
+    elements.rangeSummary.textContent = dates.custom
+      ? `${dates.start} → ${dates.end}`
+      : `${RANGE_META[state.range].label} · ${RANGE_META[state.range].note}`;
   }
+  const dates = selectedHomeDateRange();
+  if (elements.homeDateStart) elements.homeDateStart.value = dates.start;
+  if (elements.homeDateEnd) elements.homeDateEnd.value = dates.end;
   const hasFilters = Boolean(state.query.trim())
     || state.owner !== 'ALL'
     || state.store !== 'ALL'
-    || state.range !== 'today';
+    || state.range !== 'today'
+    || state.homeDateCustom;
   elements.clearFilters.disabled = !hasFilters;
 }
 
@@ -6816,12 +7227,27 @@ elements.rangeButtons.forEach((button) => {
   button.addEventListener('click', () => {
     if (!Object.prototype.hasOwnProperty.call(RANGE_META, button.dataset.range)) return;
     state.range = button.dataset.range;
+    state.homeDateCustom = false;
+    state.homeDateStart = null;
+    state.homeDateEnd = null;
     syncUrlFromState();
     render();
     // The product query ranks and filters by the selected range on the server.
     scheduleProductLoad({ resetPages: true });
   });
 });
+
+for (const element of [elements.homeDateStart, elements.homeDateEnd]) {
+  element?.addEventListener('change', () => {
+    const start = String(elements.homeDateStart?.value || '');
+    const end = String(elements.homeDateEnd?.value || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return;
+    state.homeDateStart = start <= end ? start : end;
+    state.homeDateEnd = start <= end ? end : start;
+    state.homeDateCustom = true;
+    render();
+  });
+}
 
 elements.view.addEventListener('click', (event) => {
   const salesRetry = event.target.closest?.('[data-sales-retry]');
@@ -7097,6 +7523,9 @@ elements.clearFilters.addEventListener('click', () => {
   state.owner = 'ALL';
   state.store = 'ALL';
   state.range = 'today';
+  state.homeDateStart = null;
+  state.homeDateEnd = null;
+  state.homeDateCustom = false;
   state.quickFilters = Object.create(null);
   state.focus = null;
   populateScopeOptions();

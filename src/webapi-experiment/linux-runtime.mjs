@@ -187,6 +187,7 @@ function assertDatabaseUrl(value) {
  */
 export async function createLinuxExperimentRuntime({
   databaseUrl,
+  gatePath,
   system = createDefaultSystem(),
 } = {}) {
   if (system.platform !== 'linux') fail('WEBAPI_RUNTIME_PLATFORM_UNSUPPORTED');
@@ -292,6 +293,7 @@ export async function createLinuxExperimentRuntime({
     sessionStateForFailure,
     openSession: ({ storeCode }) => openExperimentSession({
       storeCode,
+      gatePath,
       deps: {
         platform: system.platform,
         spawn: spawnTracked,

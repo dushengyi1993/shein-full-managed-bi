@@ -490,7 +490,8 @@ test('the isolated WebAPI experiment role is least-privilege in 9999 and verify'
   assert.match(migration, /sheinfm_webapi_login must be NOINHERIT/);
   assert.match(verify, /sheinfm_webapi_login is not a safe NOINHERIT login/);
 
-  // Positive: only its own isolated evidence layer, plus reviewed definitions.
+  // Positive: its isolated evidence layer, reviewed definitions and the three
+  // bounded homepage facts.
   const evidenceGrant = migration.match(
     /GRANT SELECT, INSERT ON\s+raw\.webapi_fetch_batch,[\s\S]*?TO sheinfm_webapi_loader;/,
   )?.[0] ?? '';
@@ -502,9 +503,10 @@ test('the isolated WebAPI experiment role is least-privilege in 9999 and verify'
     migration,
     /GRANT SELECT ON dim\.webapi_metric_definition\s+TO sheinfm_webapi_loader;/,
   );
-  assert.match(migration, /GRANT USAGE ON SCHEMA raw, dim, ops\s+TO sheinfm_webapi_loader;/);
+  assert.match(migration, /GRANT USAGE ON SCHEMA raw, dim, fact, ops\s+TO sheinfm_webapi_loader;/);
+  assert.match(migration, /GRANT SELECT, INSERT, UPDATE ON\s+fact\.full_home_store_daily,[\s\S]*?fact\.full_home_product_daily\s+TO sheinfm_webapi_loader;/);
 
-  // Negative: no fact, mart, OpenAPI, webhook, employee or backfill access.
+  // Negative: no unrelated facts, mart, OpenAPI, webhook, employee or backfill access.
   for (const boundary of [
     'WebAPI experiment evidence boundary is invalid for %',
     'WebAPI metric definition must stay human-reviewed and read-only',
@@ -516,7 +518,7 @@ test('the isolated WebAPI experiment role is least-privilege in 9999 and verify'
   }
   for (const boundary of [
     'WebAPI experiment loader retained % on %',
-    'WebAPI experiment loader must not reach fact or mart schemas',
+    'WebAPI loader must reach only bounded fact relations, never mart',
     'runtime principal % gained % on WebAPI relation %',
   ]) {
     assert.ok(verify.includes(boundary), `verify omits: ${boundary}`);

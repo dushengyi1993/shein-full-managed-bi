@@ -1224,6 +1224,274 @@ body {
   }
 }
 
+/* ---------- Full-managed historical homepage ---------- */
+
+.range-toolbar-main {
+  grid-template-columns: minmax(148px, 190px) minmax(230px, 1fr) minmax(250px, 320px);
+}
+
+.date-range-fields {
+  display: grid;
+  grid-template-columns: minmax(105px, 1fr) auto minmax(105px, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.date-range-fields label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.date-range-fields input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 5px;
+  color: var(--ink);
+  border: 0;
+  border-radius: 6px;
+  background: var(--paper-soft);
+  font: inherit;
+}
+
+.date-range-fields i {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.home-history-header .verdict-primary {
+  font-size: clamp(17px, 2vw, 24px);
+}
+
+.home-history-kpis,
+.home-history-rankings {
+  margin-top: 14px;
+}
+
+.home-history-card-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.home-history-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+
+.home-history-matrix {
+  width: 100%;
+  min-width: 760px;
+}
+
+.home-history-matrix th:first-child {
+  width: 170px;
+}
+
+.home-history-matrix td.num {
+  width: 150px;
+  color: var(--ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-history-matrix td.note {
+  min-width: 230px;
+  color: var(--muted);
+}
+
+.home-region-summary {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.7fr) minmax(180px, 1fr) minmax(260px, 1.4fr);
+  align-items: center;
+  gap: 16px;
+  margin-top: 10px;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+
+.home-region-summary span,
+.home-region-summary small {
+  color: var(--muted-strong);
+}
+
+.home-region-summary strong {
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.home-history-trends {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.home-history-trend-panel {
+  width: 100%;
+}
+
+.home-trend-heading,
+.home-history-rank-card > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 12px;
+}
+
+.home-trend-heading h4,
+.home-history-rank-card h4 {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.home-trend-heading p,
+.home-history-rank-card header p {
+  margin: 0;
+  color: var(--muted);
+  text-align: right;
+}
+
+.history-trend-metric + .history-trend-metric {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.history-trend-metric h5 {
+  margin: 0 0 3px;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.home-history-chart {
+  min-height: 220px;
+  border: 0;
+  background: transparent;
+}
+
+.home-history-chart .chart-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.home-history-chart .chart-point {
+  fill: var(--paper);
+  stroke: var(--accent);
+  stroke-width: 2;
+  cursor: crosshair;
+}
+
+.home-history-rankings .home-block-head {
+  margin-bottom: 10px;
+}
+
+.home-rank-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.home-history-rank-card {
+  min-width: 0;
+  padding: 14px;
+}
+
+.compact-rank-table {
+  min-width: 520px;
+}
+
+.compact-rank-table .rank-index {
+  width: 42px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.compact-rank-table .number-column strong {
+  display: block;
+  color: var(--ink);
+}
+
+.compact-rank-table .number-column small {
+  color: var(--muted);
+}
+
+@media (max-width: 1320px) {
+  .bar {
+    grid-template-columns: minmax(230px, 1fr) minmax(220px, 0.8fr);
+    grid-template-areas:
+      "search scope"
+      "range range"
+      "actions actions";
+  }
+
+  .range-toolbar-main {
+    grid-template-columns: minmax(150px, 190px) minmax(240px, 1fr) minmax(250px, 320px);
+  }
+
+  .home-filter-bar .command-actions {
+    justify-content: end;
+  }
+}
+
+@media (max-width: 850px) {
+  .date-range-fields {
+    grid-area: date-range;
+  }
+
+  .bar,
+  .home-filter-bar {
+    grid-template-areas:
+      "search search"
+      "scope range-summary"
+      "range-presets range-presets"
+      "date-range date-range"
+      "actions actions";
+  }
+
+  .home-filter-bar .date-range-fields {
+    display: grid;
+  }
+
+  .home-rank-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-region-summary {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .home-trend-heading,
+  .home-history-rank-card > header {
+    display: block;
+  }
+
+  .home-trend-heading p,
+  .home-history-rank-card header p {
+    margin-top: 4px;
+    text-align: left;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .primary-nav a,
   .rank-entity,

@@ -70,7 +70,12 @@ BEGIN
         'raw.webapi_fetch_batch',
         'raw.webapi_metric_observation',
         'dim.webapi_metric_definition',
-        'ops.webapi_session_health'
+        'ops.webapi_session_health',
+        'raw.webapi_home_fetch_audit',
+        'fact.full_home_store_daily',
+        'fact.full_home_region_daily',
+        'fact.full_home_product_daily',
+        'fact.full_product_price_observation'
     ]
     LOOP
         IF to_regclass(relation_name) IS NULL THEN
@@ -374,8 +379,10 @@ GRANT USAGE ON SCHEMA raw, dim, fact, ops
 TO sheinfm_supply_loader;
 GRANT USAGE ON SCHEMA raw, dim, ops
 TO sheinfm_webhook_ingress, sheinfm_webhook_worker;
--- The WebAPI experiment never needs fact or mart usage at all.
-GRANT USAGE ON SCHEMA raw, dim, ops
+-- The WebAPI login also owns the reviewed homepage history loader. It receives
+-- fact usage only for the three explicit homepage facts below; mart remains
+-- unreachable.
+GRANT USAGE ON SCHEMA raw, dim, fact, ops
 TO sheinfm_webapi_loader;
 
 GRANT EXECUTE ON FUNCTION ops.distinct_identity_evidence_count(text[])
@@ -398,6 +405,10 @@ GRANT SELECT ON
     fact.stock_advice_snapshot,
     fact.supply_projection_batch,
     fact.supply_projection_member,
+    fact.full_home_store_daily,
+    fact.full_home_region_daily,
+    fact.full_home_product_daily,
+    fact.full_product_price_observation,
     raw.openapi_fetch_batch,
     -- Identity pipeline aggregates only. The dashboard counts sealed evidence
     -- sets, candidates and decisions; it never reads raw.identifier_observation
@@ -445,6 +456,22 @@ TO sheinfm_sales_loader;
 GRANT SELECT, INSERT ON ops.sales_sync_run
 TO sheinfm_sales_loader;
 GRANT SELECT, INSERT, UPDATE ON ops.sales_business_watermark
+TO sheinfm_sales_loader;
+-- Finance report rows are immutable price observations used only to estimate
+-- homepage product amount. The sales loader can append/read evidence but can
+-- never alter or delete it.
+GRANT SELECT, INSERT ON fact.full_product_price_observation
+TO sheinfm_sales_loader;
+GRANT SELECT ON fact.full_home_product_daily
+TO sheinfm_sales_loader;
+GRANT UPDATE (
+    estimated_deal_amount,
+    estimation_currency,
+    unit_price_evidence,
+    estimation_basis,
+    price_observed_at,
+    updated_at
+) ON fact.full_home_product_daily
 TO sheinfm_sales_loader;
 
 -- Supply loader: supply-only raw evidence, dimensions and facts. The attempt
@@ -554,9 +581,15 @@ TO sheinfm_webhook_worker;
 GRANT SELECT, INSERT ON
     raw.webapi_fetch_batch,
     raw.webapi_metric_observation,
-    ops.webapi_session_health
+    ops.webapi_session_health,
+    raw.webapi_home_fetch_audit
 TO sheinfm_webapi_loader;
 GRANT SELECT ON dim.webapi_metric_definition
+TO sheinfm_webapi_loader;
+GRANT SELECT, INSERT, UPDATE ON
+    fact.full_home_store_daily,
+    fact.full_home_region_daily,
+    fact.full_home_product_daily
 TO sheinfm_webapi_loader;
 
 -- Backfill control plane. Only the two OpenAPI domain loaders may open runs and
@@ -636,6 +669,8 @@ BEGIN
             ('sheinfm_webapi_loader', 'raw.webapi_fetch_batch', 'webapi_fetch_batch_id'),
             ('sheinfm_webapi_loader', 'raw.webapi_metric_observation', 'webapi_metric_observation_id'),
             ('sheinfm_webapi_loader', 'ops.webapi_session_health', 'webapi_session_health_id'),
+            ('sheinfm_webapi_loader', 'raw.webapi_home_fetch_audit', 'webapi_home_fetch_audit_id'),
+            ('sheinfm_sales_loader', 'fact.full_product_price_observation', 'full_product_price_observation_id'),
             ('sheinfm_sales_loader', 'ops.backfill_run', 'backfill_run_id'),
             ('sheinfm_sales_loader', 'ops.backfill_window', 'backfill_window_id'),
             ('sheinfm_sales_loader', 'ops.backfill_checkpoint', 'backfill_checkpoint_id'),
@@ -882,7 +917,8 @@ BEGIN
     FOREACH required_name IN ARRAY ARRAY[
         'raw.webapi_fetch_batch',
         'raw.webapi_metric_observation',
-        'ops.webapi_session_health'
+        'ops.webapi_session_health',
+        'raw.webapi_home_fetch_audit'
     ]
     LOOP
         IF NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'SELECT')
@@ -900,6 +936,30 @@ BEGIN
         'sheinfm_webapi_loader', 'dim.webapi_metric_definition', 'INSERT,UPDATE,DELETE'
     ) THEN
         RAISE EXCEPTION 'WebAPI metric definition must stay human-reviewed and read-only';
+    END IF;
+
+    -- The reviewed homepage loader may upsert only its three formal facts.
+    FOREACH required_name IN ARRAY ARRAY[
+        'fact.full_home_store_daily',
+        'fact.full_home_region_daily',
+        'fact.full_home_product_daily'
+    ]
+    LOOP
+        IF NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'SELECT')
+           OR NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'INSERT')
+           OR NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'UPDATE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'DELETE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'TRUNCATE') THEN
+            RAISE EXCEPTION 'WebAPI homepage fact boundary is invalid for %',
+                required_name;
+        END IF;
+    END LOOP;
+    IF has_table_privilege(
+        'sheinfm_webapi_loader',
+        'fact.full_product_price_observation',
+        'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+    ) THEN
+        RAISE EXCEPTION 'WebAPI loader must not access OpenAPI finance price evidence';
     END IF;
 
     -- WebAPI experiment loader: negative on every other component's objects.
@@ -944,7 +1004,11 @@ BEGIN
         'raw.webapi_fetch_batch',
         'raw.webapi_metric_observation',
         'ops.webapi_session_health',
-        'dim.webapi_metric_definition'
+        'dim.webapi_metric_definition',
+        'raw.webapi_home_fetch_audit',
+        'fact.full_home_store_daily',
+        'fact.full_home_region_daily',
+        'fact.full_home_product_daily'
     ]
     LOOP
         FOREACH principal_check IN ARRAY ARRAY[

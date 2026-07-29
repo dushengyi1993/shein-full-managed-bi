@@ -139,7 +139,11 @@ function chromeArguments({ profileDirectory, debuggingPort }) {
  * @param {object} input.deps injected runtime
  * @returns {Promise<{storeCode: string, sessionState: string, evaluate: Function, close: Function}>}
  */
-export async function openExperimentSession({ storeCode, deps } = {}) {
+export async function openExperimentSession({
+  storeCode,
+  deps,
+  gatePath = WEBAPI_EXPERIMENT_GATE_PATH,
+} = {}) {
   const canonical = String(storeCode ?? '').trim().toUpperCase();
   if (!WEBAPI_STORE_CODES.includes(canonical)) {
     throw new WebApiSessionError(SESSION_REJECT_CODES.STORE_NOT_ALLOWED, null);
@@ -193,7 +197,7 @@ export async function openExperimentSession({ storeCode, deps } = {}) {
   assertRealProfileLaunchAllowed({
     storeCode: canonical,
     platform,
-    gateExists: await pathExists(WEBAPI_EXPERIMENT_GATE_PATH),
+    gateExists: await pathExists(gatePath),
     availableDependencies,
     profileExists: await pathExists(profileDirectory),
   });

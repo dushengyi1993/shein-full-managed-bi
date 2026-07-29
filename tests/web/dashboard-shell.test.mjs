@@ -57,7 +57,7 @@ test('full-managed primary navigation follows the sales-first semi-managed inter
   assert.match(styles, /@media \(max-width: 620px\)/);
 });
 
-test('home shell keeps the verdict band, KPI matrix, trends, ranking tables and footnote', async () => {
+test('home shell keeps the historical filter, KPI tables, vertical trends and four rankings', async () => {
   const [html, app, parityStyles] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
@@ -65,27 +65,25 @@ test('home shell keeps the verdict band, KPI matrix, trends, ranking tables and 
   ]);
 
   assert.match(html, /id="scope-filter"/);
+  assert.match(html, /id="home-date-start"/);
+  assert.match(html, /id="home-date-end"/);
   assert.match(html, /aria-label="店铺或负责人范围"/);
   assert.doesNotMatch(html, /id="owner-filter"|id="store-filter"/);
   assert.match(app, /today: \{ label: '今日'/);
   assert.match(app, /yesterday: \{ label: '昨日'/);
   assert.match(app, /last7Days: \{ label: '近 7 日'/);
   assert.match(app, /last30Days: \{ label: '近 30 日'/);
-  assert.match(app, /首屏经营结论/);
-  assert.match(app, /销量 KPI 数据矩阵/);
-  assert.match(app, /日销量趋势/);
-  assert.match(app, /月销量趋势/);
-  assert.match(app, /店铺经营排行/);
-  assert.match(app, /货号 \/ 商品经营排行/);
-  assert.match(app, /function homeHeader\(\)/);
-  assert.match(app, /function homeTodayVerdict\(/);
-  assert.match(app, /function homeMomentumVerdict\(/);
-  assert.match(app, /function homeKpis\(\)/);
-  assert.match(app, /function homeStoreRankingTable\(/);
-  assert.match(app, /function homeProductRankingTable\(/);
-  assert.match(app, /function homeFootnote\(\)/);
-  assert.match(app, /function homeMagnitudeCell\(/);
-  assert.match(app, /function monthlyTrendRows\(\)/);
+  assert.match(app, /关键经营数据/);
+  assert.match(app, /日趋势/);
+  assert.match(app, /月趋势/);
+  assert.match(app, /店铺成交金额排行/);
+  assert.match(app, /店铺销量排行/);
+  assert.match(app, /货号成交金额排行（估算）/);
+  assert.match(app, /货号销量排行/);
+  assert.match(app, /function renderHistoryHomeHeader\(\)/);
+  assert.match(app, /function renderHistoryKpis\(\)/);
+  assert.match(app, /function renderHistoryTrends\(\)/);
+  assert.match(app, /function renderHistoryRankings\(\)/);
   assert.match(app, /OWNER:\$\{owner\.key\}/);
   assert.match(app, /STORE:\$\{store\.code\}/);
   assert.match(app, /店内商品排行（标准商品待归并）/);
@@ -93,10 +91,10 @@ test('home shell keeps the verdict band, KPI matrix, trends, ranking tables and 
   assert.match(app, /数据已过期/);
   assert.match(app, /数据未接入/);
   assert.match(app, /class="home-topbar home-verdict"/);
-  assert.match(app, /class="home-kpi-table"/);
-  assert.match(app, /class="trend-stack home-trend-stack"/);
+  assert.match(app, /class="metric-matrix home-history-matrix"/);
+  assert.match(app, /class="trend-stack home-trend-stack home-history-trends"/);
   assert.match(app, /class="home-footnote"/);
-  assert.match(parityStyles, /\.home-kpi-table\s*\{/);
+  assert.match(parityStyles, /\.home-history-matrix\s*\{/);
   assert.match(parityStyles, /\.metric-matrix-scroll\s*\{/);
   assert.match(parityStyles, /\.trend-stack\s*\{/);
   assert.match(parityStyles, /\.rank-meter\s*\{/);
@@ -113,15 +111,19 @@ test('home shell keeps the verdict band, KPI matrix, trends, ranking tables and 
   assert.match(app, /\$\{renderOperationalPriorities\(\)\}/);
 });
 
-test('full-managed shell keeps unsupported consumer metrics out of the KPI and ranking functions', async () => {
+test('full-managed homepage exposes the confirmed metrics without inventing unsupported profit fields', async () => {
   const app = await read('src/web/app.js');
-  const homeStart = app.indexOf('function homeKpis()');
-  const homeEnd = app.indexOf('function permissionBadge', homeStart);
+  const homeStart = app.indexOf('function historyMetricRows()');
+  const homeEnd = app.indexOf('function renderHistoryHomeHeader', homeStart);
   const homeFunctions = app.slice(homeStart, homeEnd);
 
   assert.doesNotMatch(homeFunctions, /\bGMV\b/i);
   assert.doesNotMatch(homeFunctions, /\bCOD\b/i);
-  assert.doesNotMatch(homeFunctions, /订单数|消费者退货/);
+  assert.doesNotMatch(homeFunctions, /利润|消费者退货/);
+  for (const metric of ['成交金额', '净成交金额', '支付人数', '销量', '曝光量', '商详访客', '备货订单数', '集采订单数', '新客销量', '新客支付订单数']) {
+    assert.match(homeFunctions, new RegExp(metric));
+  }
+  assert.match(homeFunctions, /销量 Top 主销地区/);
 });
 
 test('product identity page keeps unmapped store-local SKUs visible without cross-store aggregation', async () => {
@@ -154,7 +156,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.10`));
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.11`));
   }
   assert.doesNotMatch(html, /v=20260728\.[123]/);
   for (const sheet of [styles, parityStyles]) {
