@@ -17,6 +17,10 @@ import {
   InventoryQueryError,
   queryInventoryDashboard,
 } from './inventory-query.mjs';
+import {
+  ProductQueryError,
+  queryProductDashboard,
+} from './product-query.mjs';
 import { createDashboardUpdateBroker } from './dashboard-update-stream.mjs';
 import {
   createAuthService,
@@ -469,6 +473,33 @@ export function createRequestHandler(options = {}) {
           error: {
             code: 'INVENTORY_DATA_UNAVAILABLE',
             message: '库存与备货查询暂不可用',
+          },
+        }, method);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/products') {
+      try {
+        const dashboard = await loadDashboardData(dataFile);
+        const projected = projectDashboardForUser(dashboard, signedInUser);
+        sendJson(
+          response,
+          200,
+          queryProductDashboard(projected, url.searchParams),
+          method,
+        );
+      } catch (error) {
+        if (error instanceof ProductQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'PRODUCT_DATA_UNAVAILABLE',
+            message: '商品身份查询暂不可用',
           },
         }, method);
       }

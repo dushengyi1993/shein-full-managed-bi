@@ -387,6 +387,7 @@ GRANT SELECT ON
     dim.store,
     dim.full_sku,
     dim.canonical_product,
+    dim.canonical_variant,
     dim.full_sku_canonical_assignment,
     fact.full_sku_sales_snapshot,
     fact.purchase_order,
@@ -398,6 +399,12 @@ GRANT SELECT ON
     fact.supply_projection_batch,
     fact.supply_projection_member,
     raw.openapi_fetch_batch,
+    -- Identity pipeline aggregates only. The dashboard counts sealed evidence
+    -- sets, candidates and decisions; it never reads raw.identifier_observation
+    -- or ops.product_match_candidate_evidence, so those stay denied.
+    raw.product_identity_observation_set,
+    ops.product_match_candidate,
+    ops.product_identity_decision,
     ops.permission_probe,
     ops.sales_sync_run,
     ops.sales_quality_event,

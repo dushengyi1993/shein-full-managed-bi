@@ -228,6 +228,95 @@ test('9999 grants one group per login and proves cross-domain negative privilege
   assert.match(verify, /ciphertext/);
 });
 
+test('the materializer reads identity pipeline aggregates but never raw identity evidence', async () => {
+  const migration = await text('db/migrations/9999_runtime_role_reconcile.sql');
+  const verify = await text('db/verify/9999_runtime_role_reconcile.sql');
+  const materializer = await text('src/warehouse/dashboard-materializer.mjs');
+  const materializerGrant = migration.match(
+    /GRANT SELECT ON[\s\S]*?TO sheinfm_materializer_ro, sheinfm_app;/,
+  )?.[0] || '';
+  assert.notEqual(materializerGrant, '');
+  // Only granted relations count: a comment naming a denied relation must not
+  // satisfy an allow assertion, nor break a deny assertion.
+  const grantedRelations = materializerGrant
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n');
+
+  // The four relations the aggregate query actually reads, plus the two that
+  // were already granted. Without these the schema probe reports the pipeline
+  // unavailable, because information_schema.columns hides unreadable columns.
+  for (const relation of [
+    'raw\\.product_identity_observation_set',
+    'ops\\.product_match_candidate',
+    'ops\\.product_identity_decision',
+    'dim\\.canonical_variant',
+    'dim\\.canonical_product',
+    'dim\\.full_sku_canonical_assignment',
+  ]) {
+    assert.match(grantedRelations, new RegExp(`\\s${relation},`), relation);
+    assert.match(verify, new RegExp(`'${relation}',`), relation);
+  }
+
+  // Raw identifier rows and per-relation candidate evidence stay unreadable:
+  // the dashboard projects counts only.
+  for (const denied of [
+    'raw\\.identifier_observation',
+    'ops\\.product_match_candidate_evidence',
+  ]) {
+    assert.doesNotMatch(grantedRelations, new RegExp(`\\s${denied},`), denied);
+    assert.doesNotMatch(grantedRelations, new RegExp(`\\s${denied}\\s*$`), denied);
+  }
+  assert.match(
+    verify,
+    /FOREACH required_name IN ARRAY ARRAY\[\s*'raw\.identifier_observation',\s*'ops\.product_match_candidate_evidence'\s*\][\s\S]*?materializer must not read raw identity evidence/,
+  );
+  assert.match(
+    verify,
+    /IF has_table_privilege\(\s*'sheinfm_materializer_login',\s*required_name,\s*'SELECT'\s*\) THEN\s*RAISE EXCEPTION 'materializer must not read raw identity evidence %'/,
+  );
+
+  // The grant is SELECT only: no mutation, sequence or function capability.
+  assert.doesNotMatch(materializerGrant, /INSERT|UPDATE|DELETE|TRUNCATE/);
+  assert.doesNotMatch(
+    migration,
+    /GRANT[^;]*ON SEQUENCE[^;]*TO[^;]*sheinfm_materializer_ro/,
+  );
+  assert.doesNotMatch(
+    migration,
+    /GRANT EXECUTE[^;]*TO[^;]*sheinfm_materializer_ro/,
+  );
+
+  // The readiness probe must not depend on an ungranted relation. Only real
+  // code counts, so explanatory comments are stripped first.
+  const pipelineStart = materializer.indexOf(
+    'export async function readProductIdentityPipeline',
+  );
+  assert.notEqual(pipelineStart, -1);
+  const pipelineEnd = materializer.indexOf(
+    '\nexport async function readDashboardProjectionInput',
+    pipelineStart,
+  );
+  assert.notEqual(pipelineEnd, -1);
+  const probe = materializer
+    .slice(pipelineStart, pipelineEnd)
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+    .join('\n');
+  const schemaProbe = probe.slice(0, probe.indexOf('const schema ='));
+
+  assert.match(schemaProbe, /to_regclass\('raw\.product_identity_observation_set'\)/);
+  assert.match(schemaProbe, /to_regclass\('ops\.product_match_candidate'\)/);
+  assert.match(schemaProbe, /to_regclass\('ops\.product_identity_decision'\)/);
+  assert.match(schemaProbe, /to_regclass\('dim\.full_sku_canonical_assignment'\)/);
+  assert.match(schemaProbe, /to_regclass\('dim\.canonical_product'\)/);
+  assert.match(schemaProbe, /to_regclass\('dim\.canonical_variant'\)/);
+  assert.doesNotMatch(probe, /has_identifier_observation/);
+  // The aggregate itself never touches raw identifier or candidate evidence.
+  assert.doesNotMatch(probe, /raw\.identifier_observation/);
+  assert.doesNotMatch(probe, /product_match_candidate_evidence/);
+});
+
 test('9999 preserves only append permissions needed by the identity evidence and resolution pipeline', async () => {
   const migration = await text('db/migrations/9999_runtime_role_reconcile.sql');
   const verify = await text('db/verify/9999_runtime_role_reconcile.sql');

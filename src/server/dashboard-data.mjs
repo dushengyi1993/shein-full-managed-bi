@@ -1011,6 +1011,103 @@ function productIdentityCoverage(value, storeSkuRanking) {
   };
 }
 
+const PIPELINE_UNAVAILABLE_NOTE = '身份归并证据尚不可用，因此证据、候选、决策与标准商品数量均未知';
+
+/**
+ * Whitelist the identity pipeline aggregate.
+ *
+ * Only counts, timestamps and a status/basis survive. Run ids, fingerprints,
+ * raw identifiers and evidence payloads are dropped even when present, and a
+ * count that fails its relationship check degrades to null rather than to zero.
+ */
+function normalizeProductIdentityPipeline(value) {
+  const source = record(value);
+  const available = source.status === 'available';
+  const evidenceSource = record(source.evidence);
+  const candidateSource = record(source.candidates);
+  const decisionSource = record(source.decisions);
+  const assignmentSource = record(source.assignments);
+  const canonicalSource = record(source.canonical);
+  const count = (input) => (available ? optionalNonNegativeInteger(input) : null);
+  const instant = (input) => (available ? isoInstant(input) : null);
+
+  const sealedSetCount = count(evidenceSource.sealedSetCount);
+  const observedStoreCount = count(evidenceSource.observedStoreCount);
+  const identifierMemberCount = count(evidenceSource.identifierMemberCount);
+  const total = count(candidateSource.total);
+  const recommendation = (input) => {
+    const parsed = count(input);
+    // A bucket larger than its own total is inconsistent evidence, not a fact.
+    return parsed === null || total === null || parsed <= total ? parsed : null;
+  };
+  const evidence = {
+    // A sealed set carries at least one member, so members below sets is
+    // inconsistent and must not be reported as a smaller-but-real number.
+    sealedSetCount,
+    observedStoreCount,
+    identifierMemberCount: (
+      identifierMemberCount === null
+      || sealedSetCount === null
+      || identifierMemberCount >= sealedSetCount
+    ) ? identifierMemberCount : null,
+    latestSealedAt: instant(evidenceSource.latestSealedAt),
+  };
+  const candidates = {
+    total,
+    confirmed: recommendation(candidateSource.confirmed),
+    proposed: recommendation(candidateSource.proposed),
+    reviewRequired: recommendation(candidateSource.reviewRequired),
+    blocked: recommendation(candidateSource.blocked),
+    globalScope: recommendation(candidateSource.globalScope),
+    localSingletonScope: recommendation(candidateSource.localSingletonScope),
+    latestEvaluatedAt: instant(candidateSource.latestEvaluatedAt),
+  };
+  const decisions = {
+    confirmedCount: count(decisionSource.confirmedCount),
+    latestDecidedAt: instant(decisionSource.latestDecidedAt),
+  };
+  const currentConfirmedCount = count(assignmentSource.currentConfirmedCount);
+  const assignments = {
+    // A current confirmed assignment always has a confirmed decision behind it.
+    currentConfirmedCount: (
+      currentConfirmedCount === null
+      || decisions.confirmedCount === null
+      || currentConfirmedCount <= decisions.confirmedCount
+    ) ? currentConfirmedCount : null,
+    latestAssignedAt: instant(assignmentSource.latestAssignedAt),
+  };
+  const canonical = {
+    // A canonical product may legitimately carry no variant, so the variant
+    // count has no relationship to the product count and is only bounded.
+    globalActiveProductCount: count(canonicalSource.globalActiveProductCount),
+    activeVariantCount: count(canonicalSource.activeVariantCount),
+  };
+  const stageValues = [
+    evidence.sealedSetCount,
+    candidates.total,
+    decisions.confirmedCount,
+    assignments.currentConfirmedCount,
+    canonical.globalActiveProductCount,
+  ];
+  const status = available
+    ? stageValues.every((item) => item !== null) ? 'available' : 'partial'
+    : 'unavailable';
+  return {
+    status,
+    basis: available
+      ? text(source.basis, 'identity_resolution_schema', 64)
+      : 'schema_unavailable',
+    note: text(source.note, available ? '' : PIPELINE_UNAVAILABLE_NOTE, 240)
+      || PIPELINE_UNAVAILABLE_NOTE,
+    evidence,
+    candidates,
+    decisions,
+    assignments,
+    canonical,
+    updatedAt: instant(source.updatedAt),
+  };
+}
+
 function sortRanking(items) {
   const rankValue = (value) => (Number.isSafeInteger(value) ? value : -1);
   return items.sort((left, right) => {
@@ -1106,6 +1203,9 @@ export function normalizeDashboardData(input) {
     productIdentityCoverage: productIdentityCoverage(
       source.productIdentityCoverage,
       storeSkuRanking,
+    ),
+    productIdentityPipeline: normalizeProductIdentityPipeline(
+      source.productIdentityPipeline,
     ),
     rankingMeta: {
       store: normalizeRankingMeta(

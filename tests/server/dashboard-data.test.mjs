@@ -792,3 +792,165 @@ test('active-catalog identity coverage is independent from dated sales ranking r
   assert.equal(malformed.productIdentityCoverage.basis, 'sales_ranking');
   assert.equal(malformed.productIdentityCoverage.totalSkus, 1);
 });
+
+test('the identity pipeline whitelist keeps aggregate counts and drops raw evidence', () => {
+  const dashboard = normalizeDashboardData({
+    updatedAt: '2026-07-29T02:00:00.000Z',
+    productIdentityPipeline: {
+      status: 'available',
+      basis: 'identity_resolution_schema',
+      note: '计数来自最新一次密封证据run',
+      evidence: {
+        sealedSetCount: 10_012,
+        observedStoreCount: 24,
+        identifierMemberCount: 364_545,
+        latestSealedAt: '2026-07-29T01:00:00.000Z',
+        // Values that must never survive the whitelist.
+        observationRunId: 'RUN-SECRET',
+        setPayloadFingerprint: 'a'.repeat(64),
+        rawValue: 'GTIN-0000000000000',
+      },
+      candidates: {
+        total: 482,
+        confirmed: 482,
+        proposed: 0,
+        reviewRequired: 0,
+        blocked: 0,
+        globalScope: 482,
+        localSingletonScope: 0,
+        latestEvaluatedAt: '2026-07-29T01:10:00.000Z',
+        matchedEvidence: [{ type: 'BARCODE', value: '0000000000000' }],
+      },
+      decisions: {
+        confirmedCount: 482,
+        latestDecidedAt: '2026-07-29T01:20:00.000Z',
+        actorKey: 'auto-matcher',
+        rationale: 'must not be returned',
+      },
+      assignments: {
+        currentConfirmedCount: 482,
+        latestAssignedAt: '2026-07-29T01:30:00.000Z',
+      },
+      canonical: { globalActiveProductCount: 66, activeVariantCount: 66 },
+      updatedAt: '2026-07-29T01:30:00.000Z',
+      credentials: { appSecret: 'must not be returned' },
+      dataFile: '/srv/full-bi/private/dashboard.json',
+    },
+  });
+  const pipeline = dashboard.productIdentityPipeline;
+
+  assert.equal(pipeline.status, 'available');
+  assert.equal(pipeline.basis, 'identity_resolution_schema');
+  assert.deepEqual(Object.keys(pipeline).sort(), [
+    'assignments', 'basis', 'candidates', 'canonical',
+    'decisions', 'evidence', 'note', 'status', 'updatedAt',
+  ]);
+  assert.deepEqual(pipeline.evidence, {
+    sealedSetCount: 10_012,
+    observedStoreCount: 24,
+    identifierMemberCount: 364_545,
+    latestSealedAt: '2026-07-29T01:00:00.000Z',
+  });
+  assert.deepEqual(pipeline.candidates, {
+    total: 482,
+    confirmed: 482,
+    proposed: 0,
+    reviewRequired: 0,
+    blocked: 0,
+    globalScope: 482,
+    localSingletonScope: 0,
+    latestEvaluatedAt: '2026-07-29T01:10:00.000Z',
+  });
+  assert.deepEqual(pipeline.decisions, {
+    confirmedCount: 482,
+    latestDecidedAt: '2026-07-29T01:20:00.000Z',
+  });
+  assert.deepEqual(pipeline.canonical, {
+    globalActiveProductCount: 66,
+    activeVariantCount: 66,
+  });
+  assert.equal(pipeline.updatedAt, '2026-07-29T01:30:00.000Z');
+
+  const serialized = JSON.stringify(dashboard);
+  assert.doesNotMatch(serialized, /RUN-SECRET/);
+  assert.doesNotMatch(serialized, /a{64}/);
+  assert.doesNotMatch(serialized, /GTIN-0000000000000/);
+  assert.doesNotMatch(serialized, /appSecret|must not be returned/);
+  assert.doesNotMatch(serialized, /srv\/full-bi\/private/);
+  assert.doesNotMatch(serialized, /auto-matcher|matchedEvidence|rationale/);
+});
+
+test('an unavailable identity pipeline stays unknown instead of reporting zero', () => {
+  const missing = normalizeDashboardData({ updatedAt: '2026-07-29T02:00:00.000Z' });
+  const pipeline = missing.productIdentityPipeline;
+  assert.equal(pipeline.status, 'unavailable');
+  assert.equal(pipeline.basis, 'schema_unavailable');
+  assert.match(pipeline.note, /未知/);
+  assert.equal(pipeline.evidence.sealedSetCount, null);
+  assert.equal(pipeline.evidence.latestSealedAt, null);
+  assert.equal(pipeline.candidates.total, null);
+  assert.equal(pipeline.decisions.confirmedCount, null);
+  assert.equal(pipeline.assignments.currentConfirmedCount, null);
+  assert.equal(pipeline.canonical.globalActiveProductCount, null);
+  assert.equal(pipeline.updatedAt, null);
+
+  // A payload that claims unavailable can never smuggle counts back in.
+  const claimed = normalizeDashboardData({
+    updatedAt: '2026-07-29T02:00:00.000Z',
+    productIdentityPipeline: {
+      status: 'unavailable',
+      basis: 'identity_resolution_schema',
+      evidence: { sealedSetCount: 10_012, latestSealedAt: '2026-07-29T01:00:00.000Z' },
+      canonical: { globalActiveProductCount: 66 },
+      updatedAt: '2026-07-29T01:30:00.000Z',
+    },
+  });
+  assert.equal(claimed.productIdentityPipeline.status, 'unavailable');
+  assert.equal(claimed.productIdentityPipeline.basis, 'schema_unavailable');
+  assert.equal(claimed.productIdentityPipeline.evidence.sealedSetCount, null);
+  assert.equal(claimed.productIdentityPipeline.canonical.globalActiveProductCount, null);
+  assert.equal(claimed.productIdentityPipeline.updatedAt, null);
+});
+
+test('malformed pipeline relationships degrade to null and partial, never invented zero', () => {
+  const dashboard = normalizeDashboardData({
+    updatedAt: '2026-07-29T02:00:00.000Z',
+    productIdentityPipeline: {
+      status: 'available',
+      evidence: {
+        // A sealed set always carries at least one member, so 3 members under
+        // 10 sets is inconsistent evidence rather than a smaller real number.
+        sealedSetCount: 10,
+        identifierMemberCount: 3,
+        observedStoreCount: -2,
+        latestSealedAt: 'not-a-date',
+      },
+      candidates: {
+        total: 5,
+        // A recommendation bucket cannot exceed its own total.
+        confirmed: 9,
+        proposed: 2,
+        blocked: 'many',
+      },
+      // A current confirmed assignment always has a confirmed decision behind it.
+      decisions: { confirmedCount: 1 },
+      assignments: { currentConfirmedCount: 7 },
+      canonical: { globalActiveProductCount: 4, activeVariantCount: 1 },
+    },
+  });
+  const pipeline = dashboard.productIdentityPipeline;
+
+  assert.equal(pipeline.evidence.sealedSetCount, 10);
+  assert.equal(pipeline.evidence.identifierMemberCount, null);
+  assert.equal(pipeline.evidence.observedStoreCount, null);
+  assert.equal(pipeline.evidence.latestSealedAt, null);
+  assert.equal(pipeline.candidates.total, 5);
+  assert.equal(pipeline.candidates.confirmed, null);
+  assert.equal(pipeline.candidates.proposed, 2);
+  assert.equal(pipeline.candidates.blocked, null);
+  assert.equal(pipeline.assignments.currentConfirmedCount, null);
+  // A canonical product may legitimately have fewer variants than products.
+  assert.equal(pipeline.canonical.activeVariantCount, 1);
+  // A stage that lost its count downgrades the whole aggregate to partial.
+  assert.equal(pipeline.status, 'partial');
+});

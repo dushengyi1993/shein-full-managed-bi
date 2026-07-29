@@ -408,6 +408,7 @@ BEGIN
         'dim.store',
         'dim.full_sku',
         'dim.canonical_product',
+        'dim.canonical_variant',
         'dim.full_sku_canonical_assignment',
         'fact.full_sku_sales_snapshot',
         'fact.purchase_order',
@@ -419,6 +420,12 @@ BEGIN
         'fact.supply_projection_batch',
         'fact.supply_projection_member',
         'raw.openapi_fetch_batch',
+        -- Identity pipeline aggregate sources. Without these the schema probe
+        -- reports the whole pipeline unavailable, because
+        -- information_schema.columns hides columns the role cannot read.
+        'raw.product_identity_observation_set',
+        'ops.product_match_candidate',
+        'ops.product_identity_decision',
         'ops.permission_probe',
         'ops.sales_sync_run',
         'ops.sales_quality_event',
@@ -440,6 +447,23 @@ BEGIN
             'SELECT'
         ) THEN
             RAISE EXCEPTION 'materializer lacks SELECT on %', required_name;
+        END IF;
+    END LOOP;
+    -- The dashboard aggregates counts only. Raw identifier values and per
+    -- relation candidate evidence are never projected, so the materializer must
+    -- not be able to read those rows at all.
+    FOREACH required_name IN ARRAY ARRAY[
+        'raw.identifier_observation',
+        'ops.product_match_candidate_evidence'
+    ]
+    LOOP
+        IF has_table_privilege(
+            'sheinfm_materializer_login',
+            required_name,
+            'SELECT'
+        ) THEN
+            RAISE EXCEPTION 'materializer must not read raw identity evidence %',
+                required_name;
         END IF;
     END LOOP;
     IF NOT has_column_privilege(

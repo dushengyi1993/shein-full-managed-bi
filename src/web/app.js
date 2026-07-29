@@ -94,6 +94,18 @@ const URL_ADVICE_SORTS = Object.freeze([
 const URL_INVENTORY_PAGE_SIZES = Object.freeze([25, 50, 100]);
 const URL_DEFAULT_INVENTORY_PAGE_SIZE = 25;
 
+/* Product identity workspace state. Values are allow-listed here and checked
+   again before reaching `/api/products`, so a shared link can never widen the
+   server contract. */
+const URL_PRODUCT_VIEWS = Object.freeze(['PENDING', 'CANONICAL']);
+const URL_PRODUCT_SORTS = Object.freeze([
+  'IMPACT_DESC',
+  'LAST30_DESC',
+  'LAST7_DESC',
+  'TODAY_DESC',
+  'STORE_ASC',
+]);
+
 const URL_STORE_PATTERN = /^[A-Z0-9]{2,12}$/;
 const URL_OWNER_PATTERN = /^[\p{L}\p{N}._:-]{1,64}$/u;
 const URL_CODE_PATTERN = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}<>"'`\\]{1,120}$/u;
@@ -226,6 +238,17 @@ function parseHashState(rawHash, inherited = {}) {
       inventoryPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.inventoryPageSize)
         ? inherited.inventoryPageSize
         : URL_DEFAULT_INVENTORY_PAGE_SIZE,
+      productView: URL_PRODUCT_VIEWS.includes(inherited.productView)
+        ? inherited.productView
+        : 'PENDING',
+      productSort: URL_PRODUCT_SORTS.includes(inherited.productSort)
+        ? inherited.productSort
+        : 'IMPACT_DESC',
+      productPendingPage: 1,
+      productCanonicalPage: 1,
+      productPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.productPageSize)
+        ? inherited.productPageSize
+        : URL_DEFAULT_INVENTORY_PAGE_SIZE,
       // Navigating to another surface invalidates a focus that belonged to the
       // previous one.
       focus: null,
@@ -278,6 +301,11 @@ function parseHashState(rawHash, inherited = {}) {
     inventoryPage: pageParam('invPage'),
     advicePage: pageParam('advicePage'),
     inventoryPageSize: pageSizeParam(params.get('size')),
+    productView: allowListedToken(params.get('view'), URL_PRODUCT_VIEWS, 'PENDING'),
+    productSort: allowListedToken(params.get('prodSort'), URL_PRODUCT_SORTS, 'IMPACT_DESC'),
+    productPendingPage: pageParam('pendingPage'),
+    productCanonicalPage: pageParam('canonicalPage'),
+    productPageSize: pageSizeParam(params.get('size')),
     // A focus only applies on the surface that can prove it.
     focus: focus && FOCUS_DOMAINS[focus.domain].route === route ? focus : null,
     canonicalLink: true,
@@ -330,6 +358,22 @@ function serializeHashState(input = {}) {
     }
     const pageSize = pageSizeParam(input.inventoryPageSize);
     if (pageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) params.set('size', String(pageSize));
+  }
+  if (route === 'products') {
+    const view = allowListedToken(input.productView, URL_PRODUCT_VIEWS, 'PENDING');
+    if (view !== 'PENDING') params.set('view', view);
+    const productSort = allowListedToken(input.productSort, URL_PRODUCT_SORTS, 'IMPACT_DESC');
+    if (productSort !== 'IMPACT_DESC') params.set('prodSort', productSort);
+    if (Number.isSafeInteger(input.productPendingPage) && input.productPendingPage > 1) {
+      params.set('pendingPage', String(Math.min(input.productPendingPage, 9999)));
+    }
+    if (Number.isSafeInteger(input.productCanonicalPage) && input.productCanonicalPage > 1) {
+      params.set('canonicalPage', String(Math.min(input.productCanonicalPage, 9999)));
+    }
+    const productPageSize = pageSizeParam(input.productPageSize);
+    if (productPageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) {
+      params.set('size', String(productPageSize));
+    }
   }
   const focus = input.focus && FOCUS_DOMAINS[input.focus.domain]?.route === route
     ? serializeFocusToken(input.focus)
@@ -435,6 +479,17 @@ const state = {
     advicePage: initialHashState.advicePage || 1,
     pageSize: initialHashState.inventoryPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
   },
+  products: {
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+    view: initialHashState.productView || 'PENDING',
+    sort: initialHashState.productSort || 'IMPACT_DESC',
+    pendingPage: initialHashState.productPendingPage || 1,
+    canonicalPage: initialHashState.productCanonicalPage || 1,
+    pageSize: initialHashState.productPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
+  },
   updates: {
     status: 'connecting',
     observedAt: null,
@@ -465,6 +520,7 @@ const elements = {
 let procurementLoadTimer = null;
 let salesLoadTimer = null;
 let inventoryLoadTimer = null;
+let productLoadTimer = null;
 let dashboardEventSource = null;
 
 function routeFromLocation() {
@@ -2790,6 +2846,362 @@ function inventoryStoreSummary(queryData) {
 }
 /* --- inventory-query:end --- */
 
+/* --- product-query:start ---
+   The product identity workspace reads only `/api/products`. Filtering, sorting
+   and paging happen on the server, so the browser never slices the dashboard
+   and never presents the materialized ranking as the SHEIN catalog. */
+
+function productRecord(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+/** Owner name for a bare store code; pending rows carry no owner field. */
+function ownerNameForStoreCode(storeCode) {
+  const normalized = String(storeCode ?? '').trim().toUpperCase();
+  if (normalized === '') return '';
+  const store = baseStores().find(
+    (item) => String(item?.code ?? '').toUpperCase() === normalized,
+  );
+  return store ? ownerNameForStore(store) : '';
+}
+
+function productQuickValue() {
+  const active = quickFilterValue('products');
+  return ['WITH_SALES', 'UNMAPPED', 'MISSING_SPU', 'CANONICAL'].includes(active)
+    ? active
+    : 'ALL';
+}
+
+function productQueryUrl() {
+  const params = new URLSearchParams({
+    owner: state.owner,
+    store: state.store,
+    q: state.query,
+    quick: productQuickValue(),
+    sort: allowListedToken(state.products.sort, URL_PRODUCT_SORTS, 'IMPACT_DESC'),
+    range: URL_RANGE_KEYS.includes(state.range) ? state.range : URL_DEFAULT_RANGE,
+    pendingPage: String(state.products.pendingPage),
+    canonicalPage: String(state.products.canonicalPage),
+    pageSize: String(pageSizeParam(state.products.pageSize)),
+  });
+  return `/api/products?${params.toString()}`;
+}
+
+async function loadProducts({ resetPages = false } = {}) {
+  if (resetPages) {
+    state.products.pendingPage = 1;
+    state.products.canonicalPage = 1;
+  }
+  if (state.route !== 'products') return;
+  const requestSerial = state.products.requestSerial + 1;
+  state.products.requestSerial = requestSerial;
+  state.products.loading = true;
+  state.products.error = '';
+  render();
+  try {
+    const result = await fetchJson(productQueryUrl());
+    // A response that lost the race must never replace newer filter state.
+    if (requestSerial !== state.products.requestSerial) return;
+    if (
+      !result
+      || result.readOnly !== true
+      || !Array.isArray(result.pending?.rows)
+      || !Array.isArray(result.canonical?.rows)
+      || !result.summary
+      || !result.source
+    ) {
+      throw new Error('商品身份查询结构无效');
+    }
+    state.products.data = result;
+  } catch (error) {
+    if (requestSerial !== state.products.requestSerial) return;
+    state.products.data = null;
+    state.products.error = error instanceof Error
+      ? error.message
+      : '商品身份查询暂不可用';
+  } finally {
+    if (requestSerial === state.products.requestSerial) {
+      state.products.loading = false;
+      render();
+    }
+  }
+}
+
+function scheduleProductLoad({ resetPages = false, delay = 0 } = {}) {
+  if (productLoadTimer !== null) window.clearTimeout(productLoadTimer);
+  // Invalidate any in-flight response now, not when the debounce fires, so an
+  // old scope can never paint under the new URL state.
+  state.products.requestSerial += 1;
+  if (resetPages) {
+    state.products.pendingPage = 1;
+    state.products.canonicalPage = 1;
+    state.products.data = null;
+    state.products.error = '';
+    state.products.loading = true;
+  }
+  if (state.route !== 'products') return;
+  if (resetPages) render();
+  productLoadTimer = window.setTimeout(() => {
+    productLoadTimer = null;
+    void loadProducts();
+  }, delay);
+}
+
+function productQueryState(kind) {
+  const error = kind === 'error';
+  return `
+    <section class="panel procurement-query-state${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}">
+      <span class="eyebrow">PRODUCT QUERY</span>
+      <h2>${error ? '商品身份查询暂不可用' : '正在按当前条件查询商品身份'}</h2>
+      <p>${error
+        ? escapeHtml(state.products.error || '请稍后重试。')
+        : '筛选、排序和分页在服务端执行；旧筛选结果不会冒充新结果。'}</p>
+      ${error
+        ? '<button type="button" class="clear-button" data-product-retry="1">重新查询</button>'
+        : '<div class="query-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>'}
+    </section>`;
+}
+
+function productPagination(pagination, kind, label, position) {
+  if (!pagination || !isUnit(pagination.page) || !isUnit(pagination.pageSize)) return '';
+  const matched = isUnit(pagination.matchedMaterializedRows)
+    ? pagination.matchedMaterializedRows
+    : 0;
+  const pageCount = isUnit(pagination.pageCount) ? pagination.pageCount : 0;
+  const displayedPage = pageCount === 0 ? 0 : pagination.page;
+  return `
+    <nav class="table-pagination ${position === 'top' ? 'pagination-top' : ''}" aria-label="${escapeHtml(label)}分页（${position === 'top' ? '表格上方' : '表格下方'}）">
+      <p>已物化范围命中 ${numberFormatter.format(matched)} 条 · 第 ${numberFormatter.format(displayedPage)} / ${numberFormatter.format(pageCount)} 页</p>
+      <div>
+        <button type="button" data-product-page-kind="${escapeHtml(kind)}" data-product-page="${Math.max(1, pagination.page - 1)}" ${pagination.hasPrevious ? '' : 'disabled'}>上一页</button>
+        <button type="button" data-product-page-kind="${escapeHtml(kind)}" data-product-page="${pagination.page + 1}" ${pagination.hasNext ? '' : 'disabled'}>下一页</button>
+      </div>
+    </nav>`;
+}
+
+function productViewTabs(queryData) {
+  const active = state.products.view;
+  const pendingMatched = isUnit(queryData?.pending?.pagination?.matchedMaterializedRows)
+    ? queryData.pending.pagination.matchedMaterializedRows
+    : 0;
+  const canonicalMatched = isUnit(queryData?.canonical?.pagination?.matchedMaterializedRows)
+    ? queryData.canonical.pagination.matchedMaterializedRows
+    : 0;
+  const tabs = [
+    ['PENDING', '待归并队列', pendingMatched],
+    ['CANONICAL', '标准商品', canonicalMatched],
+  ];
+  return `
+    <div class="segmented-tabs" role="tablist" aria-label="商品身份工作台视图">
+      ${tabs.map(([value, label, matched]) => `
+        <button type="button" role="tab" id="product-tab-${escapeHtml(value)}" data-product-view="${escapeHtml(value)}" class="${active === value ? 'active' : ''}" aria-selected="${active === value ? 'true' : 'false'}" aria-controls="product-workspace-table">
+          <strong>${escapeHtml(label)}</strong>
+          <small>命中 ${numberFormatter.format(matched)} 条</small>
+        </button>`).join('')}
+    </div>`;
+}
+
+function productSelect(kind, label, options, current) {
+  return `
+    <label class="sales-sort-control">
+      <span>${escapeHtml(label)}</span>
+      <select data-product-select="${escapeHtml(kind)}">
+        ${options.map(([value, text]) => `<option value="${escapeHtml(String(value))}" ${String(current) === String(value) ? 'selected' : ''}>${escapeHtml(text)}</option>`).join('')}
+      </select>
+    </label>`;
+}
+
+/** Two universes side by side: the active catalog and the sealed evidence run. */
+function productDecisionSummary(queryData) {
+  const catalog = productRecord(queryData.source?.activeCatalogCoverage);
+  const pipeline = productRecord(queryData.source?.pipeline);
+  const evidence = productRecord(pipeline.evidence);
+  const assignments = productRecord(pipeline.assignments);
+  const canonical = productRecord(pipeline.canonical);
+  const summary = productRecord(queryData.summary);
+  const impact = productRecord(summary.pendingImpact);
+  const pendingSource = productRecord(queryData.pending?.source);
+  const coverageValue = typeof catalog.coverageRate === 'number'
+    ? `${(catalog.coverageRate * 100).toFixed(1)}%`
+    : '待确认';
+  const impactValue = isUnit(impact.total)
+    ? `${numberFormatter.format(impact.total)} 件`
+    : isUnit(impact.knownSum)
+      ? `≥ ${numberFormatter.format(impact.knownSum)} 件`
+      : '未知';
+  return operationSummaryCards([
+    {
+      label: '活跃目录身份覆盖',
+      value: `${nullableUnits(catalog.confirmedSkus, '未知')} / ${nullableUnits(catalog.totalSkus, '未知')}`,
+      note: `覆盖率 ${coverageValue} · 缺少平台 SPU ${nullableUnits(catalog.missingSpuSkus, '未知')} 个；这是全量活跃目录口径，不依赖销量业务日。未确认 ${nullableUnits(catalog.unconfirmedSkus, '未知')} 个`,
+      tone: catalog.coverageRate === 1 ? 'available' : 'partial',
+    },
+    {
+      label: '证据覆盖（最新密封 run）',
+      value: `${nullableUnits(evidence.sealedSetCount, '未知')} 组 / ${nullableUnits(evidence.observedStoreCount, '未知')} 店`,
+      note: `标识符成员 ${nullableUnits(evidence.identifierMemberCount, '未知')} 条 · 最新密封 ${sourceTime(evidence.latestSealedAt)}`,
+      tone: pipeline.status === 'available' ? 'available' : 'partial',
+    },
+    {
+      label: '已确认归并与标准商品',
+      value: `${nullableUnits(assignments.currentConfirmedCount, '未知')} / ${nullableUnits(canonical.globalActiveProductCount, '未知')}`,
+      note: `当前生效 GLOBAL 归并数 / GLOBAL ACTIVE 标准商品数 · 活跃变体 ${nullableUnits(canonical.activeVariantCount, '未知')}`,
+      tone: pipeline.status === 'available' ? 'available' : 'partial',
+    },
+    {
+      label: '销量物化待归并队列',
+      value: `${numberFormatter.format(isUnit(summary.matchedMaterializedPendingRows) ? summary.matchedMaterializedPendingRows : 0)} 条`,
+      note: `${RANGE_META[state.range].label}影响 ${impactValue}${isUnit(impact.unknownCount) && impact.unknownCount > 0 ? `（${numberFormatter.format(impact.unknownCount)} 行未知，拒绝补零）` : ''} · 源物化 ${nullableUnits(pendingSource.returned, '未知')} / ${nullableUnits(pendingSource.total, '未知')}${pendingSource.truncated === true ? '，已截断' : ''}`,
+      tone: isUnit(summary.matchedMaterializedPendingRows) && summary.matchedMaterializedPendingRows > 0
+        ? 'partial'
+        : 'available',
+    },
+  ]);
+}
+
+/** The real read-only pipeline: sealed evidence → candidate → decision → product. */
+function productPipelineFlow(queryData) {
+  const pipeline = productRecord(queryData.source?.pipeline);
+  const evidence = productRecord(pipeline.evidence);
+  const candidates = productRecord(pipeline.candidates);
+  const decisions = productRecord(pipeline.decisions);
+  const assignments = productRecord(pipeline.assignments);
+  const canonical = productRecord(pipeline.canonical);
+  const unknown = pipeline.status === 'unavailable';
+  const stageValue = (value, unit) => (
+    unknown || !isUnit(value) ? '未知' : `${numberFormatter.format(value)} ${unit}`
+  );
+  const stages = [
+    [
+      '密封证据集',
+      `按店铺密封的观测集与标识符成员；平台 SPU/SKC/SKU 仅在店内为强标识。`,
+      stageValue(evidence.sealedSetCount, '组'),
+      sourceTime(evidence.latestSealedAt),
+    ],
+    [
+      '候选生成',
+      `同一 run 内的候选与推荐分布：确认 ${stageValue(candidates.confirmed, '条')} · 待提议 ${stageValue(candidates.proposed, '条')} · 需人工 ${stageValue(candidates.reviewRequired, '条')} · 冲突阻断 ${stageValue(candidates.blocked, '条')}。`,
+      stageValue(candidates.total, '条'),
+      sourceTime(candidates.latestEvaluatedAt),
+    ],
+    [
+      '身份决策',
+      `AUTO 与人工决策共用同一审计表；决策不等于当前生效归并。GLOBAL ${stageValue(candidates.globalScope, '条')} · 店内单例 ${stageValue(candidates.localSingletonScope, '条')}。`,
+      stageValue(decisions.confirmedCount, '条'),
+      sourceTime(decisions.latestDecidedAt),
+    ],
+    [
+      '归并与标准商品',
+      `只有 GLOBAL + CONFIRMED 的当前归并可跨店聚合；标准商品 ${stageValue(canonical.globalActiveProductCount, '个')} · 活跃变体 ${stageValue(canonical.activeVariantCount, '个')}。`,
+      stageValue(assignments.currentConfirmedCount, '条'),
+      sourceTime(assignments.latestAssignedAt),
+    ],
+  ];
+  return `
+    <section class="process-panel">
+      ${panelHeading(
+        'IDENTITY RESOLUTION',
+        '身份归并流水线（只读）',
+        unknown
+          ? '身份归并证据当前不可用，四个阶段数量均显示未知，不显示 0'
+          : `真实聚合计数 · ${String(pipeline.note || '')}`,
+      )}
+      <ol class="process-flow four-steps">
+        ${stages.map(([title, description, value, freshness], index) => `
+          <li>
+            <span>${String(index + 1).padStart(2, '0')}</span>
+            <div>
+              <strong>${escapeHtml(title)}</strong>
+              <p>${escapeHtml(description)}</p>
+              <small class="stage-freshness">证据时间 ${escapeHtml(freshness)}</small>
+            </div>
+            <b>${escapeHtml(value)}</b>
+          </li>`).join('')}
+      </ol>
+    </section>`;
+}
+
+function productPendingTable(rows) {
+  if (!rows.length) {
+    return emptyEvidence(
+      '当前筛选没有待归并货号',
+      '服务端在已物化范围内没有命中未确认店内身份；这不代表全量活跃目录已完成归并。',
+    );
+  }
+  const visible = orderRowsForFocus(rows, 'product');
+  return `
+    <div class="table-wrap">
+      <table class="data-table product-table pending-mapping-table" id="product-workspace-table" role="tabpanel" aria-labelledby="product-tab-PENDING">
+        <caption class="sr-only">当前筛选命中的已物化待归并店内货号</caption>
+        <thead><tr><th scope="col">店铺 / 负责人</th><th scope="col">店内货号</th><th scope="col">SPU / SKC / SKU</th><th scope="col">商品名称</th>${WINDOW_KEYS.map((key) => `<th scope="col" class="number-column">${escapeHtml(RANGE_META[key].label)}</th>`).join('')}<th scope="col" class="number-column">当前窗口影响</th><th scope="col">归并状态</th><th scope="col">身份边界</th><th scope="col">定位</th></tr></thead>
+        <tbody>${visible.map((item) => `
+          <tr class="${isFocusedRow(item, 'product') ? 'focused-row' : ''}">
+            <td class="entity-column"><strong>${escapeHtml(item.storeCode || '店铺待确认')}</strong><span>${escapeHtml(`负责人 ${ownerNameForStoreCode(item.storeCode) || '待分配'}`)}</span></td>
+            <td class="entity-column"><strong>${escapeHtml(item.supplierCode || item.supplierSku || item.productKey || '店内货号待确认')}</strong><span>${escapeHtml(item.supplierSku || '')}</span></td>
+            <td class="entity-column"><strong>${escapeHtml(item.sku || 'SKU 待确认')}</strong><span>${escapeHtml([item.skc || 'SKC 待确认', item.productKey].filter(Boolean).join(' · '))}</span></td>
+            <td>${escapeHtml(productName(item))}</td>
+            ${WINDOW_KEYS.map((key) => `<td class="number-column">${formatUnits(item?.unitsSold?.[key])}</td>`).join('')}
+            <td class="number-column">${formatUnits(item?.unitsSold?.[state.range])}</td>
+            <td><span class="row-status partial">${escapeHtml(mappingStatusLabel(item.mappingStatus))}</span></td>
+            <td class="boundary-cell"><span class="rank-identity local">店内身份</span><span>平台 SPU/SKC/SKU 仅在本店为强标识，禁止跨店按裸 SKU 合并</span></td>
+            <td>${rowFocusLink(item, 'product')}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <p class="table-note">当前页显示 ${numberFormatter.format(visible.length)} 条，排序与分页由服务端决定。“—”表示该窗口未知而非 0；这些行始终保留“店铺 + 店内货号 / SKC / SKU”身份，不参与跨店标准商品合计。</p>`;
+}
+
+function productCanonicalTable(rows) {
+  if (!rows.length) {
+    return emptyEvidence(
+      '当前筛选没有标准商品',
+      '服务端在已物化范围内没有命中 GLOBAL + CONFIRMED 的跨店标准商品；未确认身份不会被当作标准商品展示。',
+    );
+  }
+  const visible = orderRowsForFocus(rows, 'product');
+  return `
+    <div class="table-wrap">
+      <table class="data-table product-table" id="product-workspace-table" role="tabpanel" aria-labelledby="product-tab-CANONICAL">
+        <caption class="sr-only">当前筛选命中的已确认跨店标准商品</caption>
+        <thead><tr><th scope="col">标准商品</th><th scope="col">覆盖店铺</th>${WINDOW_KEYS.map((key) => `<th scope="col" class="number-column">${escapeHtml(RANGE_META[key].label)}</th>`).join('')}<th scope="col">可比动量</th><th scope="col">确认边界</th><th scope="col">定位</th></tr></thead>
+        <tbody>${visible.map((item) => {
+          const scopedCount = isUnit(item.scopedStoreCount) ? item.scopedStoreCount : null;
+          const totalCount = isUnit(item.totalStoreCount) ? item.totalStoreCount : null;
+          const breakdown = Array.isArray(item.storeBreakdown) ? item.storeBreakdown : [];
+          return `
+          <tr class="${isFocusedRow(item, 'product') ? 'focused-row' : ''}">
+            <td class="entity-column"><strong>${escapeHtml(item.standardProductCode || item.canonicalProductId || '标准商品待编号')}</strong><span>${escapeHtml(productName(item))}</span></td>
+            <td class="entity-column"><strong>${escapeHtml(scopedCount === null ? '店铺数未知' : `${numberFormatter.format(scopedCount)} 家店`)}</strong><span>${escapeHtml(breakdown.slice(0, 4).map(({ storeCode }) => storeCode).join(' · ') || '店铺明细未知')}${breakdown.length > 4 ? ' …' : ''}</span></td>
+            ${WINDOW_KEYS.map((key) => `<td class="number-column">${formatUnits(item?.unitsSold?.[key])}</td>`).join('')}
+            ${homeMomentumCell(item)}
+            <td class="boundary-cell"><span class="rank-identity canonical">GLOBAL 已确认</span><span>${escapeHtml(item.scopeRecomputed === true
+              ? `已按当前范围重算：${scopedCount === null ? '店铺数未知' : `${numberFormatter.format(scopedCount)}`} / 全量 ${totalCount === null ? '未知' : numberFormatter.format(totalCount)} 家店`
+              : '仅 GLOBAL + CONFIRMED 归并允许跨店合计')}</span></td>
+            <td>${rowFocusLink(item, 'product')}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+    <p class="table-note">当前页显示 ${numberFormatter.format(visible.length)} 条。只有 GLOBAL + CONFIRMED 的当前归并参与跨店合计；任一店铺窗口未知时该窗口合计保持“—”，不补零。</p>`;
+}
+
+/** The scientific rules, stated as boundaries rather than fake process steps. */
+function productIdentityBoundaries() {
+  return `
+    <section class="panel condition-panel">
+      ${panelHeading('IDENTITY BOUNDARY', '身份判定边界（只读）', '强证据、召回信号与冲突阻断项分开表达；本页不提供任何合并、审批或编辑入口')}
+      <ul class="condition-list">
+        <li><strong>店内强标识</strong><span>平台 SPU、SKC、SKU 只在同一店铺内是强标识，跨店不成立</span></li>
+        <li><strong>仅召回信号</strong><span>供应商编码、商家 SKU、标题与图片 URL 只用于生成候选，不作为归并证据</span></li>
+        <li><strong>强证据</strong><span>有效 GTIN 与官方型号属性 1000546；品类、品牌与白名单规格只在严格策略下参与</span></li>
+        <li><strong>冲突阻断</strong><span>电压、插头、容量、端子品类或关键尺寸冲突时禁止自动合并</span></li>
+        <li><strong>聚合边界</strong><span>只有 GLOBAL + CONFIRMED 归并可跨店聚合，店内行始终隔离</span></li>
+        <li><strong>写入能力</strong><span>本批不写 SHEIN，也不写归并与决策；所有控件保持只读</span></li>
+      </ul>
+    </section>`;
+}
+/* --- product-query:end --- */
+
 function rowAttentionStage(row, kind) {
   if (row?.attentionLabel) return row.attentionLabel;
   if (kind === 'procurement') {
@@ -4454,140 +4866,83 @@ function renderSales() {
     </section>`;
 }
 
-function productRows() {
-  return skuRowsForView();
-}
-
-function pendingProductMappingTable(rows) {
-  if (!rows.length) {
-    return emptyEvidence(
-      '当前筛选没有待归并货号',
-      '这里只说明没有命中当前筛选的未确认身份；不会据此推断全部货号都已归并。',
-    );
-  }
-  const active = quickFilterValue('products');
-  const filtered = rows.filter((row) => {
-    if (active === 'MISSING_SPU') return String(row.mappingStatus || '').toUpperCase() === 'MISSING_SPU_ID';
-    if (active === 'WITH_SALES') return isUnit(row?.unitsSold?.[state.range]) && row.unitsSold[state.range] > 0;
-    return true;
-  });
-  const sorted = [...filtered].sort((left, right) => {
-    const leftValue = left?.unitsSold?.[state.range];
-    const rightValue = right?.unitsSold?.[state.range];
-    return (isUnit(rightValue) ? rightValue : -1) - (isUnit(leftValue) ? leftValue : -1);
-  });
-  const visible = sorted.slice(0, 50);
-  if (!visible.length) {
-    return emptyEvidence(
-      '当前快速筛查没有待归并货号',
-      '调整快速筛查或全局商品搜索后重试；空结果不表示全量目录已完成归并。',
-    );
-  }
-  return `
-    <div class="table-wrap">
-      <table class="data-table product-table pending-mapping-table">
-        <thead><tr><th scope="col">店铺</th><th scope="col">原始货号 / SKC</th><th scope="col">平台 SKU</th><th scope="col">商品名称</th><th scope="col" class="number-column">${escapeHtml(RANGE_META[state.range].label)}销量</th><th scope="col">归并状态</th><th scope="col">定位</th></tr></thead>
-        <tbody>${visible.map((item) => `
-          <tr class="${isFocusedRow(item, 'product') ? 'focused-row' : ''}">
-            <td class="entity-column"><strong>${escapeHtml(item.storeCode || '店铺待确认')}</strong><span>店内身份隔离</span></td>
-            <td class="entity-column"><strong>${escapeHtml(item.supplierCode || item.supplierSku || item.productKey || '原始货号待确认')}</strong><span>${escapeHtml(item.skc || 'SKC 待确认')}</span></td>
-            <td class="entity-column"><strong>${escapeHtml(item.sku || 'SKU 待确认')}</strong><span>${escapeHtml(item.productKey || '')}</span></td>
-            <td>${escapeHtml(productName(item))}</td>
-            <td class="number-column">${formatUnits(item?.unitsSold?.[state.range])}</td>
-            <td><span class="row-status partial">${escapeHtml(mappingStatusLabel(item.mappingStatus))}</span></td>
-            <td>${rowFocusLink(item, 'product')}</td>
-          </tr>`).join('')}</tbody>
-      </table>
-    </div>
-    <p class="table-note">按${escapeHtml(RANGE_META[state.range].label)}销量影响降序，显示前 ${numberFormatter.format(visible.length)} / ${numberFormatter.format(sorted.length)} 条${sorted.length > visible.length ? '，其余已截断' : ''}。优先归并高销量货号；这些行始终保留“店铺 + 原始货号/SKC/SKU”身份，不参与跨店标准商品合计。</p>`;
-}
-
 function renderProducts() {
-  const rows = productRows();
-  const visibleRows = rows.slice(0, 50);
-  const source = scopedProductRanking();
-  const pendingRows = unmappedStoreSkuRows();
-  const coverage = identityCoverage();
-  const pendingImpact = sumCompleteWindow(pendingRows, state.range);
-  const identityStatus = source.mixed
-    ? '标准商品与店内身份分层可见'
-    : source.canonical ? '标准商品身份已接入' : '店内商品身份待归并';
+  if (state.products.loading && !state.products.data) {
+    return `${sampleNotice()}${focusEvidencePanel()}${productQueryState('loading')}`;
+  }
+  if (state.products.error && !state.products.data) {
+    return `${sampleNotice()}${focusEvidencePanel()}${productQueryState('error')}`;
+  }
+  const queryData = state.products.data;
+  if (!queryData) return productQueryState('loading');
+  const pendingView = state.products.view === 'PENDING';
+  const activeList = pendingView ? queryData.pending : queryData.canonical;
+  const pagination = activeList.pagination;
+  const paginationKind = pendingView ? 'pending' : 'canonical';
+  const paginationLabel = pendingView ? '待归并队列' : '标准商品';
+  const catalog = productRecord(queryData.source?.activeCatalogCoverage);
+  const source = productRecord(activeList.source);
+  const quickOptions = pendingView
+    ? [
+        ['ALL', '全部待归并'],
+        ['WITH_SALES', '当前窗口有销量'],
+        ['UNMAPPED', '等待证据归并'],
+        ['MISSING_SPU', '缺少平台 SPU'],
+      ]
+    : [
+        ['ALL', '全部标准商品'],
+        ['WITH_SALES', '当前窗口有销量'],
+        ['CANONICAL', '仅已确认身份'],
+      ];
+  const sourceLine = [
+    `已物化范围命中 ${numberFormatter.format(isUnit(pagination?.matchedMaterializedRows) ? pagination.matchedMaterializedRows : 0)} 条`,
+    `源物化 ${nullableUnits(source.returned, '未知')} / ${nullableUnits(source.total, '未知')} 条`,
+    source.truncated === true ? '源结果已截断，非 SHEIN 全量目录' : '源物化未截断',
+    `业务日期 ${queryData.source?.businessDate || '未知'}`,
+  ].join(' · ');
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
     ${pageIntro(
       'PRODUCT IDENTITY',
-      '商品中心',
-      '原始店铺货号、SKC、SKU 与标准商品分层保存；只有通过身份归并的商品才能跨店聚合。',
-      `<span>当前身份范围</span><strong>${escapeHtml(identityStatus)}</strong><small>${escapeHtml(coverage.label)} · 全量活跃目录 ${numberFormatter.format(coverage.confirmed)}/${numberFormatter.format(coverage.total)} 个 SKU 已确认${coverage.missingSpu === null ? '' : ` · 缺少平台 SPU ${numberFormatter.format(coverage.missingSpu)} 个`}</small>`,
+      '商品分析',
+      '店内货号、SKC、SKU 与标准商品分层保存；只有 GLOBAL + CONFIRMED 归并才能跨店聚合。',
+      `<span>活跃目录身份覆盖</span><strong>${escapeHtml(`${nullableUnits(catalog.confirmedSkus, '未知')} / ${nullableUnits(catalog.totalSkus, '未知')}`)}</strong><small>${escapeHtml(`缺少平台 SPU ${nullableUnits(catalog.missingSpuSkus, '未知')} 个 · 与销量物化范围是两个不同口径`)}</small>`,
     )}
-    ${operationSummaryCards([
-      {
-        label: '标准身份覆盖',
-        value: coverage.rate === null ? '待确认' : `${(coverage.rate * 100).toFixed(1)}%`,
-        note: `${numberFormatter.format(coverage.confirmed)} / ${numberFormatter.format(coverage.total)} 个目录 SKU`,
-        tone: coverage.rate === 1 ? 'available' : 'partial',
-      },
-      {
-        label: '未确认目录 SKU',
-        value: numberFormatter.format(coverage.unconfirmed),
-        note: '未确认商品保持店铺隔离，不会按裸 SKU 跨店合并',
-        tone: coverage.unconfirmed > 0 ? 'partial' : 'available',
-      },
-      {
-        label: '当前销量范围待归并',
-        value: numberFormatter.format(pendingRows.length),
-        note: pendingImpact === null ? '销量影响存在缺失窗口' : `${RANGE_META[state.range].label}涉及 ${numberFormatter.format(pendingImpact)} 件`,
-        tone: pendingRows.length > 0 ? 'partial' : 'available',
-      },
-      {
-        label: '归并顺序',
-        value: '高销量优先',
-        note: '先处理销量影响大的货号，再处理缺少平台 SPU 和属性冲突',
-      },
-    ])}
-    <section class="table-section">
-      ${panelHeading('PRODUCT RANKING', productIdentityLabel(source), `${RANGE_META[state.range].label} · 完整销量范围 · 标准商品与店内商品明确标记`)}
-      ${visibleRows.length ? `
-        <div class="table-wrap">
-          <table class="data-table product-table">
-            <thead><tr><th scope="col">标准商品 / 店内商品键</th><th scope="col">商品名 / 店铺</th><th scope="col">当前窗口销量</th><th scope="col">身份范围</th><th scope="col">映射状态</th><th scope="col">定位</th></tr></thead>
-            <tbody>${visibleRows.map((item) => `
-              <tr class="${isFocusedRow(item, 'product') ? 'focused-row' : ''}">
-                <td class="entity-column"><strong>${escapeHtml(productCode(item))}</strong><span>${escapeHtml(item.canonicalProductId || item.skc || item.sku || '')}</span></td>
-                <td class="entity-column"><strong>${escapeHtml(productName(item))}</strong><span>${escapeHtml(item.storeCode ? `店铺 ${item.storeCode}` : `${item.storeCount || '—'} 家店铺`)}</span></td>
-                <td class="number-column">${formatUnits(item?.unitsSold?.[state.range])}</td>
-                <td>${productIdentityBadge(item)}</td>
-                <td class="boundary-cell">${escapeHtml(mappingStatusLabel(item.mappingStatus || (isCanonicalProduct(item) ? 'CONFIRMED' : 'UNMAPPED')))}</td>
-                <td>${rowFocusLink(item, 'product')}</td>
-              </tr>`).join('')}</tbody>
-          </table>
-        </div>
-        <p class="table-note">按${escapeHtml(RANGE_META[state.range].label)}销量降序显示前 ${numberFormatter.format(visibleRows.length)} / ${numberFormatter.format(rows.length)} 条${rows.length > visibleRows.length ? '，其余已截断' : ''}。排行同时保留已确认标准商品和未确认店内商品；只有标准商品允许跨店聚合，未确认行始终按店铺身份隔离。${coverage.label}。</p>` : emptyEvidence(
-          '商品排行暂无可用行',
-          selectedStore() || selectedOwner()
-            ? '当前数据没有带店铺键的货号销量事实，无法安全生成筛选范围内的商品排行。'
-            : '当前 API 没有返回命中搜索的商品销量行。',
-        )}
+    ${productDecisionSummary(queryData)}
+    ${productPipelineFlow(queryData)}
+    <section class="table-section inventory-workspace">
+      ${panelHeading(
+        'IDENTITY WORKSPACE',
+        '商品身份工作台',
+        `服务端筛选、排序与分页 · ${sourceLine}`,
+      )}
+      ${productViewTabs(queryData)}
+      ${quickFilterBar('products', pendingView ? '待归并快速筛查' : '标准商品快速筛查', quickOptions)}
+      <div class="inventory-controls">
+        ${productSelect('sort', '排序', [
+          ['IMPACT_DESC', `${RANGE_META[state.range].label}影响`],
+          ['LAST30_DESC', '近 30 日销量'],
+          ['LAST7_DESC', '近 7 日销量'],
+          ['TODAY_DESC', '今日销量'],
+          ['STORE_ASC', '按店铺编码'],
+        ], state.products.sort)}
+        ${productSelect('pageSize', '每页', [
+          [25, '25 条'],
+          [50, '50 条'],
+          [100, '100 条'],
+        ], pageSizeParam(state.products.pageSize))}
+      </div>
+      ${productPagination(pagination, paginationKind, paginationLabel, 'top')}
+      ${pendingView
+        ? productPendingTable(queryData.pending.rows)
+        : productCanonicalTable(queryData.canonical.rows)}
+      ${productPagination(pagination, paginationKind, paginationLabel, 'bottom')}
+      ${state.products.loading ? '<p class="query-refresh-note" role="status">正在刷新当前商品身份筛选结果…</p>' : ''}
+      ${source.truncated === true ? '<p class="table-note warning-note">当前队列只覆盖物化到 Dashboard 的销量排行行；源结果已截断，命中数不是活跃目录或 SHEIN 仓库全量商品数。</p>' : ''}
+      ${queryData.scope?.canonicalQuantitiesRecomputed === true ? '<p class="table-note">当前范围已生效：标准商品数量与店铺数按范围内店铺重算，不展示全量跨店合计。</p>' : ''}
     </section>
-    <section class="table-section">
-      ${panelHeading('UNMAPPED IDENTITY QUEUE', '高销量待归并货号', `${pendingRows.length ? `${numberFormatter.format(pendingRows.length)} 条未确认店内身份` : '当前筛选无未确认店内身份'} · 每次最多展示前 50 条`)}
-      ${quickFilterBar('products', '快速筛查', [
-        ['ALL', '全部待归并'],
-        ['WITH_SALES', '当前窗口有销量'],
-        ['MISSING_SPU', '缺少平台 SPU'],
-      ])}
-      ${pendingProductMappingTable(pendingRows)}
-    </section>
-    <section class="process-panel">
-      ${panelHeading('IDENTITY RESOLUTION', '货号科学归并', '原始值永不覆盖，合并与拆分均保留版本和审核记录')}
-      <ol class="process-flow four-steps">
-        <li><span>01</span><div><strong>原始身份留存</strong><p>按店铺保存 supplierCode、supplierSku、SKC、SKU、标题与属性。</p></div><b>平台事实</b></li>
-        <li><span>02</span><div><strong>候选归并</strong><p>用型号、品类、关键属性、条码和图片生成候选，不靠单一字符串。</p></div><b>待接入</b></li>
-        <li><span>03</span><div><strong>冲突与置信度</strong><p>电压、插头、容量等冲突禁止自动合并；中置信度进入人工审核。</p></div><b>待接入</b></li>
-        <li><span>04</span><div><strong>标准商品版本</strong><p>确认后生成标准商品与变体，事实仍引用原始平台 SKU。</p></div><b>${coverage.confirmed > 0 ? '部分可用' : '待接入'}</b></li>
-      </ol>
-    </section>`;
+    ${productIdentityBoundaries()}`;
 }
 
 function integrationGate({ kicker, title, description, evidence, boundary, futureFields }) {
@@ -5878,6 +6233,9 @@ async function loadDashboard() {
   if (state.data && state.route === 'inventory') {
     scheduleInventoryLoad();
   }
+  if (state.data && state.route === 'products') {
+    scheduleProductLoad();
+  }
 }
 
 function connectDashboardUpdates() {
@@ -5946,6 +6304,11 @@ function currentHashState() {
     inventoryPage: state.inventory.inventoryPage,
     advicePage: state.inventory.advicePage,
     inventoryPageSize: state.inventory.pageSize,
+    productView: state.products.view,
+    productSort: state.products.sort,
+    productPendingPage: state.products.pendingPage,
+    productCanonicalPage: state.products.canonicalPage,
+    productPageSize: state.products.pageSize,
   };
 }
 
@@ -5980,6 +6343,11 @@ function applyHashState(parsed) {
   state.inventory.inventoryPage = parsed.inventoryPage || 1;
   state.inventory.advicePage = parsed.advicePage || 1;
   state.inventory.pageSize = pageSizeParam(parsed.inventoryPageSize);
+  state.products.view = parsed.productView || 'PENDING';
+  state.products.sort = parsed.productSort || 'IMPACT_DESC';
+  state.products.pendingPage = parsed.productPendingPage || 1;
+  state.products.canonicalPage = parsed.productCanonicalPage || 1;
+  state.products.pageSize = pageSizeParam(parsed.productPageSize);
   if (parsed.quick === 'ALL') delete state.quickFilters[parsed.route];
   else state.quickFilters[parsed.route] = parsed.quick;
 }
@@ -6009,6 +6377,12 @@ function syncRouteFromLocation() {
     state.inventory.requestSerial += 1;
     state.inventory.loading = false;
   }
+  if (state.route === 'products') {
+    scheduleProductLoad({ resetPages: routeChanged });
+  } else if (routeChanged) {
+    state.products.requestSerial += 1;
+    state.products.loading = false;
+  }
   if (routeChanged && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -6021,6 +6395,7 @@ elements.search.addEventListener('input', (event) => {
   scheduleProcurementLoad({ resetPage: true, delay: 220 });
   scheduleSalesLoad({ resetPages: true, delay: 220 });
   scheduleInventoryLoad({ resetPages: true, delay: 220 });
+  scheduleProductLoad({ resetPages: true, delay: 220 });
 });
 
 elements.scope.addEventListener('change', (event) => {
@@ -6032,6 +6407,7 @@ elements.scope.addEventListener('change', (event) => {
   scheduleProcurementLoad({ resetPage: true });
   scheduleSalesLoad({ resetPages: true });
   scheduleInventoryLoad({ resetPages: true, delay: 120 });
+  scheduleProductLoad({ resetPages: true, delay: 120 });
 });
 
 elements.rangeButtons.forEach((button) => {
@@ -6040,6 +6416,8 @@ elements.rangeButtons.forEach((button) => {
     state.range = button.dataset.range;
     syncUrlFromState();
     render();
+    // The product query ranks and filters by the selected range on the server.
+    scheduleProductLoad({ resetPages: true });
   });
 });
 
@@ -6116,6 +6494,47 @@ elements.view.addEventListener('click', (event) => {
     }
     return;
   }
+  const productRetry = event.target.closest?.('[data-product-retry]');
+  if (productRetry && elements.view.contains(productRetry)) {
+    void loadProducts();
+    return;
+  }
+  const productView = event.target.closest?.('[data-product-view]');
+  if (productView && elements.view.contains(productView)) {
+    const value = String(productView.dataset.productView || '').toUpperCase();
+    if (URL_PRODUCT_VIEWS.includes(value) && value !== state.products.view) {
+      const currentQuick = productQuickValue();
+      const nextQuickValues = value === 'PENDING'
+        ? ['ALL', 'WITH_SALES', 'UNMAPPED', 'MISSING_SPU']
+        : ['ALL', 'WITH_SALES', 'CANONICAL'];
+      state.products.view = value;
+      const quickNeedsReset = !nextQuickValues.includes(currentQuick);
+      if (quickNeedsReset) delete state.quickFilters.products;
+      syncUrlFromState();
+      if (quickNeedsReset) {
+        // A view-specific quick filter must never stay invisibly active after
+        // switching tabs. Reset it and query the unfiltered target view.
+        scheduleProductLoad({ resetPages: true });
+      } else {
+        // Both lists arrived under the same applicable filter, so switching
+        // tabs is a local view change and needs no network request.
+        render();
+      }
+    }
+    return;
+  }
+  const productPage = event.target.closest?.('[data-product-page]');
+  if (productPage && elements.view.contains(productPage)) {
+    const nextPage = Number(productPage.dataset.productPage);
+    const kind = productPage.dataset.productPageKind;
+    if (Number.isSafeInteger(nextPage) && nextPage >= 1 && !productPage.disabled) {
+      if (kind === 'canonical') state.products.canonicalPage = nextPage;
+      else state.products.pendingPage = nextPage;
+      syncUrlFromState();
+      void loadProducts();
+    }
+    return;
+  }
   const clearFocus = event.target.closest?.('[data-clear-focus]');
   if (clearFocus && elements.view.contains(clearFocus)) {
     // Clearing a focus keeps the broader store/range investigation intact.
@@ -6138,6 +6557,7 @@ elements.view.addEventListener('click', (event) => {
   if (route === 'procurement') scheduleProcurementLoad({ resetPage: true });
   if (route === 'sales') scheduleSalesLoad({ resetPages: true });
   if (route === 'inventory') scheduleInventoryLoad({ resetPages: true });
+  if (route === 'products') scheduleProductLoad({ resetPages: true });
 });
 
 elements.view.addEventListener('change', (event) => {
@@ -6161,6 +6581,23 @@ elements.view.addEventListener('change', (event) => {
     state.inventory.advicePage = 1;
     syncUrlFromState();
     void loadInventory();
+    return;
+  }
+  const productSelectControl = event.target.closest?.('[data-product-select]');
+  if (productSelectControl && elements.view.contains(productSelectControl)) {
+    const kind = String(productSelectControl.dataset.productSelect || '');
+    const raw = String(productSelectControl.value || '');
+    if (kind === 'sort') {
+      state.products.sort = allowListedToken(raw, URL_PRODUCT_SORTS, 'IMPACT_DESC');
+    } else if (kind === 'pageSize') {
+      state.products.pageSize = pageSizeParam(raw);
+    } else {
+      return;
+    }
+    state.products.pendingPage = 1;
+    state.products.canonicalPage = 1;
+    syncUrlFromState();
+    void loadProducts();
     return;
   }
   const salesSort = event.target.closest?.('[data-sales-sort]');
@@ -6187,6 +6624,7 @@ elements.clearFilters.addEventListener('click', () => {
   scheduleProcurementLoad({ resetPage: true });
   scheduleSalesLoad({ resetPages: true });
   scheduleInventoryLoad({ resetPages: true });
+  scheduleProductLoad({ resetPages: true });
   elements.search.focus();
 });
 

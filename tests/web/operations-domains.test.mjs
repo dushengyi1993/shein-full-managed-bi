@@ -187,8 +187,10 @@ test('complete product ranking keeps canonical and store-local rows together wit
   assert.match(canonical, /confirmedStoreSku/);
   assert.match(app, /完整商品排行（标准与店内身份分开）/);
   assert.match(app, /标准身份覆盖/);
-  assert.match(app, /slice\(0, 50\)/);
-  assert.match(app, /高销量待归并货号/);
+  // The product queue is server-paged now: the old client-side 50-row slice is
+  // gone and the pending queue is named after the identity workspace tab.
+  assert.match(app, /待归并队列/);
+  assert.match(app, /function productPendingTable\(rows\)/);
 });
 
 test('sales analysis exposes comparable daily averages without comparing partial today to full yesterday', async () => {

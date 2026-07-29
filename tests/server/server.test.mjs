@@ -180,6 +180,78 @@ test('inventory query rejects duplicates, bad bounds and mutation methods', asyn
   assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
 });
 
+test('GET /api/products is a bounded read-only identity query surface', async () => {
+  const response = await fetch(
+    `${baseUrl}/api/products?owner=ALL&store=ALL&quick=ALL&sort=IMPACT_DESC`
+    + '&range=today&pendingPage=1&canonicalPage=1&pageSize=50',
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.schemaVersion, 1);
+  assert.equal(payload.readOnly, true);
+  assert.equal(payload.query.pageSize, 50);
+  assert.equal(payload.query.sort, 'IMPACT_DESC');
+  assert.equal(payload.query.range, 'today');
+  assert.ok(Array.isArray(payload.pending.rows));
+  assert.ok(Array.isArray(payload.canonical.rows));
+  // Independent pagination for the two lists.
+  assert.equal(payload.pending.pagination.pageSize, 50);
+  assert.equal(payload.canonical.pagination.pageSize, 50);
+  assert.equal(typeof payload.pending.pagination.matchedMaterializedRows, 'number');
+  assert.equal(typeof payload.canonical.pagination.matchedMaterializedRows, 'number');
+  assert.equal(typeof payload.pending.source.truncated, 'boolean');
+  assert.equal(typeof payload.canonical.source.truncated, 'boolean');
+  // Two separate universes plus the aggregate pipeline are exposed.
+  assert.ok(Object.hasOwn(payload.source.activeCatalogCoverage, 'confirmedSkus'));
+  assert.ok(Object.hasOwn(payload.source.pipeline, 'status'));
+  assert.ok(Object.hasOwn(payload.source.pipeline.evidence, 'sealedSetCount'));
+  assert.ok(Object.hasOwn(payload.summary, 'matchedMaterializedPendingRows'));
+  assert.ok(Object.hasOwn(payload.summary.pendingImpact, 'unknownCount'));
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+
+  // No raw identity evidence, run id or fingerprint may reach the browser.
+  const serialized = JSON.stringify(payload.source.pipeline);
+  assert.doesNotMatch(serialized, /observationRunId|runId|fingerprint|payload|rawValue/i);
+
+  const head = await fetch(`${baseUrl}/api/products`, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+  assert.equal(head.headers.get('cache-control'), 'no-store');
+});
+
+test('product query rejects duplicates, bad bounds and mutation methods', async () => {
+  const duplicate = await fetch(`${baseUrl}/api/products?q=a&q=b`);
+  assert.equal(duplicate.status, 400);
+  assert.match(await duplicate.text(), /QUERY_PARAMETER_DUPLICATED/);
+
+  // Page size is a closed set: an arbitrary bounded number is still rejected.
+  const badPageSize = await fetch(`${baseUrl}/api/products?pageSize=30`);
+  assert.equal(badPageSize.status, 400);
+  assert.match(await badPageSize.text(), /QUERY_PARAMETER_OUT_OF_RANGE/);
+
+  const outOfRange = await fetch(`${baseUrl}/api/products?pendingPage=0`);
+  assert.equal(outOfRange.status, 400);
+  assert.match(await outOfRange.text(), /QUERY_PARAMETER_INVALID|QUERY_PARAMETER_OUT_OF_RANGE/);
+
+  const unknownQuick = await fetch(`${baseUrl}/api/products?quick=DROP`);
+  assert.equal(unknownQuick.status, 400);
+  assert.match(await unknownQuick.text(), /QUERY_PARAMETER_INVALID/);
+
+  const unknownSort = await fetch(`${baseUrl}/api/products?sort=DROP`);
+  assert.equal(unknownSort.status, 400);
+  assert.match(await unknownSort.text(), /QUERY_PARAMETER_INVALID/);
+
+  const unknownStore = await fetch(`${baseUrl}/api/products?store=ZZ9999`);
+  assert.equal(unknownStore.status, 400);
+  assert.match(await unknownStore.text(), /QUERY_STORE_UNKNOWN/);
+
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const mutation = await fetch(`${baseUrl}/api/products`, { method });
+    assert.equal(mutation.status, 405, method);
+    assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
+  }
+});
+
 test('GET /api/events opens a no-buffer read-only SSE stream', async () => {
   const result = await new Promise((resolve, reject) => {
     const clientRequest = request(
@@ -272,9 +344,9 @@ test('serves the local dashboard and its static assets', async () => {
   assert.match(pageResponse.headers.get('content-type'), /^text\/html/);
   const pageHtml = await pageResponse.text();
   assert.match(pageHtml, /全托运营驾驶舱/);
-  assert.match(pageHtml, /\/app\.js\?v=20260729\.6/);
-  assert.match(pageHtml, /\/styles\.css\?v=20260729\.6/);
-  assert.match(pageHtml, /\/home-parity\.css\?v=20260729\.6/);
+  assert.match(pageHtml, /\/app\.js\?v=20260729\.7/);
+  assert.match(pageHtml, /\/styles\.css\?v=20260729\.7/);
+  assert.match(pageHtml, /\/home-parity\.css\?v=20260729\.7/);
 
   assert.equal(scriptResponse.status, 200);
   assert.match(scriptResponse.headers.get('content-type'), /^text\/javascript/);

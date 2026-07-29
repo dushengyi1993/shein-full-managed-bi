@@ -83,6 +83,234 @@ function platformSpuId(value) {
     : String(value).normalize('NFKC').trim();
 }
 
+/** Optional aggregate count: an absent row stays unknown instead of zero. */
+function pgCount(value, location) {
+  if (value === null || value === undefined) return null;
+  return pgInteger(value, location);
+}
+
+function pgInstant(value) {
+  if (value === null || value === undefined) return null;
+  const instant = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(instant.valueOf()) ? null : instant.toISOString();
+}
+
+const UNAVAILABLE_PRODUCT_IDENTITY_PIPELINE = Object.freeze({
+  status: 'unavailable',
+  basis: 'schema_unavailable',
+  note: '身份归并迁移尚未在当前数据库生效，因此证据、候选、决策与标准商品数量均未知',
+  evidence: Object.freeze({
+    sealedSetCount: null,
+    observedStoreCount: null,
+    identifierMemberCount: null,
+    latestSealedAt: null,
+  }),
+  candidates: Object.freeze({
+    total: null,
+    confirmed: null,
+    proposed: null,
+    reviewRequired: null,
+    blocked: null,
+    globalScope: null,
+    localSingletonScope: null,
+    latestEvaluatedAt: null,
+  }),
+  decisions: Object.freeze({ confirmedCount: null, latestDecidedAt: null }),
+  assignments: Object.freeze({ currentConfirmedCount: null, latestAssignedAt: null }),
+  canonical: Object.freeze({ globalActiveProductCount: null, activeVariantCount: null }),
+  updatedAt: null,
+});
+
+/**
+ * Read the identity pipeline as counts and timestamps only.
+ *
+ * No raw identifier, evidence payload, run id, fingerprint or private path
+ * leaves this function: the portal only needs to say how much evidence exists
+ * and how far it has progressed. A missing migration yields an explicit
+ * `unavailable` contract instead of an invented zero.
+ */
+export async function readProductIdentityPipeline(client) {
+  const schemaResult = await client.query(`
+    SELECT
+      to_regclass('raw.product_identity_observation_set') IS NOT NULL AS has_observation_set,
+      to_regclass('ops.product_match_candidate') IS NOT NULL AS has_candidate,
+      to_regclass('ops.product_identity_decision') IS NOT NULL AS has_decision,
+      to_regclass('dim.full_sku_canonical_assignment') IS NOT NULL AS has_assignment,
+      to_regclass('dim.canonical_product') IS NOT NULL AS has_canonical_product,
+      to_regclass('dim.canonical_variant') IS NOT NULL AS has_canonical_variant,
+      EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'ops' AND table_name = 'product_match_candidate'
+          AND column_name = 'observation_run_id'
+      ) AS has_candidate_run,
+      EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'ops' AND table_name = 'product_match_candidate'
+          AND column_name = 'identity_scope'
+      ) AS has_candidate_scope,
+      EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'dim' AND table_name = 'full_sku_canonical_assignment'
+          AND column_name = 'identity_scope'
+      ) AS has_assignment_scope,
+      EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'dim' AND table_name = 'canonical_product'
+          AND column_name = 'identity_scope'
+      ) AS has_canonical_scope`);
+  const schema = schemaResult.rows[0] ?? {};
+  // raw.identifier_observation is deliberately absent: the aggregate never
+  // queries raw identifier rows, and probing it would require a SELECT grant
+  // that must stay denied. information_schema.columns also hides columns the
+  // role cannot read, so probing an ungranted relation would report the whole
+  // pipeline as unavailable even when every table and column exists.
+  const ready = [
+    'has_observation_set',
+    'has_candidate',
+    'has_decision',
+    'has_assignment',
+    'has_canonical_product',
+    'has_canonical_variant',
+    'has_candidate_run',
+    'has_candidate_scope',
+    'has_assignment_scope',
+    'has_canonical_scope',
+  ].every((key) => schema[key] === true);
+  if (!ready) return UNAVAILABLE_PRODUCT_IDENTITY_PIPELINE;
+
+  const [evidenceResult, candidateResult, decisionResult, assignmentResult, canonicalResult] =
+    await Promise.all([
+      // Only the newest sealed run is summarized; older runs are historical.
+      client.query(`
+        WITH latest_run AS (
+          SELECT observation_run_id
+          FROM raw.product_identity_observation_set
+          WHERE status = 'SEALED'
+          GROUP BY observation_run_id
+          ORDER BY max(sealed_at) DESC, observation_run_id DESC
+          LIMIT 1
+        )
+        SELECT count(*)::bigint AS sealed_set_count,
+               count(DISTINCT sets.store_id)::bigint AS observed_store_count,
+               coalesce(sum(sets.member_count), 0)::bigint AS identifier_member_count,
+               max(sets.sealed_at) AS latest_sealed_at
+        FROM latest_run
+        JOIN raw.product_identity_observation_set sets
+          ON sets.observation_run_id = latest_run.observation_run_id
+         AND sets.status = 'SEALED'`),
+      client.query(`
+        WITH latest_run AS (
+          SELECT observation_run_id
+          FROM ops.product_match_candidate
+          GROUP BY observation_run_id
+          ORDER BY max(evaluated_at) DESC, observation_run_id DESC
+          LIMIT 1
+        )
+        SELECT count(*)::bigint AS total,
+               count(*) FILTER (WHERE candidate.recommendation = 'CONFIRMED')::bigint AS confirmed,
+               count(*) FILTER (WHERE candidate.recommendation = 'PROPOSED')::bigint AS proposed,
+               count(*) FILTER (WHERE candidate.recommendation = 'REVIEW_REQUIRED')::bigint AS review_required,
+               count(*) FILTER (WHERE candidate.recommendation = 'BLOCKED')::bigint AS blocked,
+               count(*) FILTER (WHERE candidate.identity_scope = 'GLOBAL')::bigint AS global_scope,
+               count(*) FILTER (WHERE candidate.identity_scope = 'LOCAL_SINGLETON')::bigint AS local_scope,
+               max(candidate.evaluated_at) AS latest_evaluated_at
+        FROM latest_run
+        JOIN ops.product_match_candidate candidate
+          ON candidate.observation_run_id = latest_run.observation_run_id`),
+      client.query(`
+        SELECT count(*) FILTER (WHERE decision_outcome = 'CONFIRMED')::bigint AS confirmed_count,
+               max(decided_at) FILTER (WHERE decision_outcome = 'CONFIRMED') AS latest_decided_at
+        FROM ops.product_identity_decision`),
+      client.query(`
+        SELECT count(*)::bigint AS current_confirmed_count,
+               max(updated_at) AS latest_assigned_at
+        FROM dim.full_sku_canonical_assignment
+        WHERE assignment_status = 'CONFIRMED'
+          AND valid_to IS NULL
+          AND identity_scope = 'GLOBAL'`),
+      client.query(`
+        SELECT (
+                 SELECT count(*)::bigint
+                 FROM dim.canonical_product
+                 WHERE identity_scope = 'GLOBAL' AND status = 'ACTIVE'
+               ) AS global_active_product_count,
+               (
+                 SELECT count(*)::bigint
+                 FROM dim.canonical_variant variant
+                 JOIN dim.canonical_product product
+                   ON product.canonical_product_id = variant.canonical_product_id
+                 WHERE variant.status = 'ACTIVE'
+                   AND product.identity_scope = 'GLOBAL'
+                   AND product.status = 'ACTIVE'
+               ) AS active_variant_count`),
+    ]);
+
+  const evidenceRow = evidenceResult.rows[0] ?? {};
+  const candidateRow = candidateResult.rows[0] ?? {};
+  const decisionRow = decisionResult.rows[0] ?? {};
+  const assignmentRow = assignmentResult.rows[0] ?? {};
+  const canonicalRow = canonicalResult.rows[0] ?? {};
+  const evidence = {
+    sealedSetCount: pgCount(evidenceRow.sealed_set_count, 'pipeline.sealedSetCount'),
+    observedStoreCount: pgCount(evidenceRow.observed_store_count, 'pipeline.observedStoreCount'),
+    identifierMemberCount: pgCount(
+      evidenceRow.identifier_member_count,
+      'pipeline.identifierMemberCount',
+    ),
+    latestSealedAt: pgInstant(evidenceRow.latest_sealed_at),
+  };
+  const candidates = {
+    total: pgCount(candidateRow.total, 'pipeline.candidates.total'),
+    confirmed: pgCount(candidateRow.confirmed, 'pipeline.candidates.confirmed'),
+    proposed: pgCount(candidateRow.proposed, 'pipeline.candidates.proposed'),
+    reviewRequired: pgCount(candidateRow.review_required, 'pipeline.candidates.reviewRequired'),
+    blocked: pgCount(candidateRow.blocked, 'pipeline.candidates.blocked'),
+    globalScope: pgCount(candidateRow.global_scope, 'pipeline.candidates.globalScope'),
+    localSingletonScope: pgCount(candidateRow.local_scope, 'pipeline.candidates.localScope'),
+    latestEvaluatedAt: pgInstant(candidateRow.latest_evaluated_at),
+  };
+  const decisions = {
+    confirmedCount: pgCount(decisionRow.confirmed_count, 'pipeline.decisions.confirmedCount'),
+    latestDecidedAt: pgInstant(decisionRow.latest_decided_at),
+  };
+  const assignments = {
+    currentConfirmedCount: pgCount(
+      assignmentRow.current_confirmed_count,
+      'pipeline.assignments.currentConfirmedCount',
+    ),
+    latestAssignedAt: pgInstant(assignmentRow.latest_assigned_at),
+  };
+  const canonical = {
+    globalActiveProductCount: pgCount(
+      canonicalRow.global_active_product_count,
+      'pipeline.canonical.globalActiveProductCount',
+    ),
+    activeVariantCount: pgCount(
+      canonicalRow.active_variant_count,
+      'pipeline.canonical.activeVariantCount',
+    ),
+  };
+  const instants = [
+    evidence.latestSealedAt,
+    candidates.latestEvaluatedAt,
+    decisions.latestDecidedAt,
+    assignments.latestAssignedAt,
+  ].filter(Boolean);
+  return {
+    status: 'available',
+    basis: 'identity_resolution_schema',
+    note: '计数来自最新一次密封证据run与当前生效归并结果；不包含任何原始标识符或证据明细',
+    evidence,
+    candidates,
+    decisions,
+    assignments,
+    canonical,
+    updatedAt: instants.length === 0
+      ? null
+      : new Date(Math.max(...instants.map((value) => new Date(value).valueOf()))).toISOString(),
+  };
+}
+
 export async function readDashboardProjectionInput(pool) {
   const client = await pool.connect();
   let transactionOpen = false;
@@ -440,6 +668,9 @@ export async function readDashboardProjectionInput(pool) {
           : new Date(row.source_fetched_at).toISOString(),
       })),
       owners,
+      // Read inside the same repeatable-read snapshot so pipeline counts cannot
+      // disagree with the catalog and ranking rows projected above.
+      productIdentityPipeline: await readProductIdentityPipeline(client),
     };
     await client.query('COMMIT');
     transactionOpen = false;
@@ -853,6 +1084,10 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
       productIdentityCoverage: buildProductIdentityCoverage(
         input.productIdentityCatalog,
       ),
+      // The identity pipeline is independent of the sales business date: an
+      // empty sales window must not erase real evidence and assignment counts.
+      productIdentityPipeline: input.productIdentityPipeline
+        ?? UNAVAILABLE_PRODUCT_IDENTITY_PIPELINE,
     };
   }
   const storeHealth = Array.isArray(input.storeHealth) ? input.storeHealth : [];
@@ -1042,6 +1277,8 @@ export function buildDashboardFromProjectionInput(input, { storeCatalog = [] } =
   dashboard.productIdentityCoverage = buildProductIdentityCoverage(
     input.productIdentityCatalog,
   );
+  dashboard.productIdentityPipeline = input.productIdentityPipeline
+    ?? UNAVAILABLE_PRODUCT_IDENTITY_PIPELINE;
   return dashboard;
 }
 

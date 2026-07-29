@@ -8,6 +8,14 @@ async function read(relativePath) {
   return readFile(new URL(relativePath, projectRoot), 'utf8');
 }
 
+/** Slice one top-level function declaration out of the browser bundle. */
+function functionBody(source, functionName) {
+  const start = source.indexOf(`function ${functionName}(`);
+  assert.notEqual(start, -1, `${functionName} must exist`);
+  const nextFunction = source.indexOf('\nfunction ', start + 1);
+  return source.slice(start, nextFunction === -1 ? source.length : nextFunction);
+}
+
 test('full-managed primary navigation follows the sales-first semi-managed interaction order', async () => {
   const [html, app, styles] = await Promise.all([
     read('src/web/index.html'),
@@ -114,20 +122,21 @@ test('full-managed shell keeps unsupported consumer metrics out of the KPI and r
 test('product identity page keeps unmapped store-local SKUs visible without cross-store aggregation', async () => {
   const app = await read('src/web/app.js');
 
+  // The queue is server-paged now; the old client-side 50-row slice is gone.
+  assert.match(app, /function productPendingTable\(rows\)/);
   assert.match(app, /function unmappedStoreSkuRows\(\)/);
   assert.match(app, /mappingStatus \|\| ''\).*CONFIRMED/s);
-  assert.match(app, /高销量待归并货号/);
-  assert.match(app, /const visible = sorted\.slice\(0, 50\)/);
-  assert.match(app, /销量影响降序/);
-  assert.match(app, /店铺 \+ 原始货号\/SKC\/SKU/);
+  assert.match(app, /待归并队列/);
   assert.match(app, /不参与跨店标准商品合计/);
-  assert.match(app, /function pendingProductMappingTable\(rows\)/);
   assert.match(app, /缺少平台 SPU，无法自动归并/);
   assert.match(app, /mappingStatusLabel\(item\.mappingStatus\)/);
-  assert.match(app, /缺少平台 SPU \$\{numberFormatter\.format\(coverage\.missingSpu\)\} 个/);
-  assert.match(app, /全量活跃目录/);
+  assert.match(app, /平台 SPU\/SKC\/SKU 仅在本店为强标识，禁止跨店按裸 SKU 合并/);
+  assert.match(app, /只有 GLOBAL \+ CONFIRMED 归并可跨店聚合/);
   assert.match(app, /function rankingProducts\(\)[\s\S]*rows: products/);
-  assert.match(app, /排行同时保留已确认标准商品和未确认店内商品/);
+
+  const products = functionBody(app, 'renderProducts');
+  assert.doesNotMatch(products, /slice\(0, 50\)|slice\(0,50\)/);
+  assert.match(products, /state\.products\.data/);
 });
 
 test('web assets stay self-hosted and off the banned typefaces', async () => {
@@ -140,7 +149,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.6`));
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.7`));
   }
   assert.doesNotMatch(html, /v=20260728\.[123]/);
   for (const sheet of [styles, parityStyles]) {
