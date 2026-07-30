@@ -20,7 +20,10 @@ Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/supply/openapi.jso
 EnvironmentFile=/srv/shein-fm/secrets/supply/database.env
 RuntimeDirectory=shein-fm-supply
 RuntimeDirectoryMode=0700
-ExecStart=/usr/bin/flock -n /run/shein-fm-supply/purchase-order-history.lock /usr/bin/node scripts/backfill_full_managed_purchase_order_history.mjs --execute --approved-manifest-hash=48fbec562c7d875e6d1335d310a177d67149d4b2d5a777e74b09dbc91d650be4
+# Reuse the normal supply lock. A history run waits for the current incremental
+# sync to finish, then future timer runs fail their own non-blocking lock instead
+# of overlapping the same OpenAPI and warehouse writers.
+ExecStart=/usr/bin/flock /run/shein-fm-supply/sync.lock /usr/bin/node scripts/backfill_full_managed_purchase_order_history.mjs --execute --approved-manifest-hash=48fbec562c7d875e6d1335d310a177d67149d4b2d5a777e74b09dbc91d650be4
 TimeoutStartSec=72h
 NoNewPrivileges=true
 PrivateTmp=true
