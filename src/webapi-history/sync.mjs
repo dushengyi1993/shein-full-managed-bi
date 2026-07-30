@@ -304,80 +304,90 @@ async function syncStoreWindow({
     firstErrorCode: null,
   };
   for (const businessDate of datesInWindow(window)) {
-    if (completedTradeDates.has(businessDate)) {
-      tradeDaily.skipped += 1;
-    } else {
-      const request = buildTradeOverviewRequest({
-        startDate: businessDate,
-        endDate: businessDate,
-        observedDate: businessDate,
-      });
-      const trade = await requestAndAudit({
-        transport,
-        repository,
-        storeCode,
-        endpointCode: 'TRADE_OVERVIEW',
-        request,
-        startDate: businessDate,
-        endDate: businessDate,
-        clock,
-        handle: async (body, observedAt) => {
-          const row = parseTradeOverview(body, {
-            storeCode,
-            businessDate,
-            observedAt,
-          });
-          await repository.upsertStoreDaily([row]);
-          return { accepted: 1 };
-        },
-      });
-      if (trade.ok) {
-        tradeDaily.loaded += 1;
-        completedTradeDates.add(businessDate);
+    const syncTradeDate = async () => {
+      if (completedTradeDates.has(businessDate)) {
+        tradeDaily.skipped += 1;
       } else {
-        tradeDaily.ok = false;
-        tradeDaily.failed += 1;
-        tradeDaily.firstErrorCode ??= trade.errorCode;
-      }
-    }
-
-    if (completedRegionDates.has(businessDate)) {
-      regionDaily.skipped += 1;
-      continue;
-    }
-    const request = buildRegionRankRequest({
-      startDate: businessDate,
-      endDate: businessDate,
-      observedDate: businessDate,
-    });
-    const region = await requestAndAudit({
-      transport,
-      repository,
-      storeCode,
-      endpointCode: 'REGION_RANK',
-      request,
-      startDate: businessDate,
-      endDate: businessDate,
-      clock,
-      handle: async (body, observedAt) => {
-        const rows = parseRegionRows(body, {
-          storeCode,
-          businessDate,
-          observedAt,
+        const request = buildTradeOverviewRequest({
+          startDate: businessDate,
+          endDate: businessDate,
+          observedDate: businessDate,
         });
-        await repository.upsertRegions(rows);
-        return { accepted: rows.length };
-      },
-    });
-    if (region.ok) {
-      regionDaily.loaded += 1;
-      regionDaily.acceptedRows += region.accepted;
-      completedRegionDates.add(businessDate);
-    } else {
-      regionDaily.ok = false;
-      regionDaily.failed += 1;
-      regionDaily.firstErrorCode ??= region.errorCode;
-    }
+        const trade = await requestAndAudit({
+          transport,
+          repository,
+          storeCode,
+          endpointCode: 'TRADE_OVERVIEW',
+          request,
+          startDate: businessDate,
+          endDate: businessDate,
+          clock,
+          handle: async (body, observedAt) => {
+            const row = parseTradeOverview(body, {
+              storeCode,
+              businessDate,
+              observedAt,
+            });
+            await repository.upsertStoreDaily([row]);
+            return { accepted: 1 };
+          },
+        });
+        if (trade.ok) {
+          tradeDaily.loaded += 1;
+          completedTradeDates.add(businessDate);
+        } else {
+          tradeDaily.ok = false;
+          tradeDaily.failed += 1;
+          tradeDaily.firstErrorCode ??= trade.errorCode;
+        }
+      }
+    };
+
+    const syncRegionDate = async () => {
+      if (completedRegionDates.has(businessDate)) {
+        regionDaily.skipped += 1;
+      } else {
+        const request = buildRegionRankRequest({
+          startDate: businessDate,
+          endDate: businessDate,
+          observedDate: businessDate,
+        });
+        const region = await requestAndAudit({
+          transport,
+          repository,
+          storeCode,
+          endpointCode: 'REGION_RANK',
+          request,
+          startDate: businessDate,
+          endDate: businessDate,
+          clock,
+          handle: async (body, observedAt) => {
+            const rows = parseRegionRows(body, {
+              storeCode,
+              businessDate,
+              observedAt,
+            });
+            await repository.upsertRegions(rows);
+            return { accepted: rows.length };
+          },
+        });
+        if (region.ok) {
+          regionDaily.loaded += 1;
+          regionDaily.acceptedRows += region.accepted;
+          completedRegionDates.add(businessDate);
+        } else {
+          regionDaily.ok = false;
+          regionDaily.failed += 1;
+          regionDaily.firstErrorCode ??= region.errorCode;
+        }
+      }
+    };
+
+    // The two live management-analysis endpoints are independent read-only
+    // contracts for the same day. Keep dates and Profiles serial, but overlap
+    // this pair so a full history run does not pay two network round trips per
+    // day.
+    await Promise.all([syncTradeDate(), syncRegionDate()]);
   }
   result.tradeDaily = tradeDaily;
   result.regionDaily = regionDaily;

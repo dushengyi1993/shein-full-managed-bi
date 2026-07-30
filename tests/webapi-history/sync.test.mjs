@@ -107,10 +107,12 @@ test('homepage history sync resumes successful daily trade and region requests',
   const events = [];
   const storeRows = [];
   const regionRows = [];
+  let activeDailyRequests = 0;
+  let maximumDailyRequests = 0;
   const result = await runFullHomeHistorySync({
     storeCodes: ['DL5477'],
     startDate: '2026-07-28',
-    endDate: '2026-07-29',
+    endDate: '2026-07-30',
     includeProducts: false,
     openSession: async () => ({
       evaluate() {},
@@ -118,6 +120,12 @@ test('homepage history sync resumes successful daily trade and region requests',
     }),
     transportFactory: () => async (endpointCode, request) => {
       events.push(`${endpointCode}:${request.startDate ?? request.startDt ?? request.time?.startDate}`);
+      if (['TRADE_OVERVIEW', 'REGION_RANK'].includes(endpointCode)) {
+        activeDailyRequests += 1;
+        maximumDailyRequests = Math.max(maximumDailyRequests, activeDailyRequests);
+        await new Promise((resolve) => setImmediate(resolve));
+        activeDailyRequests -= 1;
+      }
       if (endpointCode === 'STORE_DAILY_HISTORY') {
         return response({
           code: '0',
@@ -177,14 +185,15 @@ test('homepage history sync resumes successful daily trade and region requests',
   assert.equal(result.complete, true);
   assert.deepEqual(
     events.filter((item) => item.startsWith('TRADE_OVERVIEW')),
-    ['TRADE_OVERVIEW:20260729'],
+    ['TRADE_OVERVIEW:20260729', 'TRADE_OVERVIEW:20260730'],
   );
   assert.deepEqual(
     events.filter((item) => item.startsWith('REGION_RANK')),
-    ['REGION_RANK:20260728'],
+    ['REGION_RANK:20260728', 'REGION_RANK:20260730'],
   );
-  assert.equal(storeRows.filter((row) => row.sourceCode === 'WEBAPI_TRADE').length, 1);
-  assert.equal(regionRows.length, 1);
+  assert.equal(storeRows.filter((row) => row.sourceCode === 'WEBAPI_TRADE').length, 2);
+  assert.equal(regionRows.length, 2);
   assert.equal(result.results[0].tradeDaily.skipped, 1);
   assert.equal(result.results[0].regionDaily.skipped, 1);
+  assert.equal(maximumDailyRequests, 2);
 });

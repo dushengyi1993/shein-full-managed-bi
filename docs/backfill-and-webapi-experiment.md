@@ -337,6 +337,9 @@ The live management-analysis page sends compact `startDt` / `endDt` values.
 Trade overview requires `dtFlag=1`; the region ranking requires `statType=2`.
 The similarly named `startDate` / `endDate` plus `queryType` shape belongs to
 the store curve contract and must not be reused for these two endpoints.
+Within one Profile and one business date the two read-only requests may run in
+parallel. Dates remain serial, and the host-wide plus per-Profile leases still
+prohibit concurrent Profile sessions.
 
 ```bash
 npm run sync:home-history -- \
