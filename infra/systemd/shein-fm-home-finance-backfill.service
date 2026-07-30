@@ -14,6 +14,7 @@ Group=sheinfm-sales
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
+Environment=SHEIN_FM_CLOUD_EXECUTION=1
 Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/sales/openapi.json
 EnvironmentFile=/srv/shein-fm/secrets/sales/database.env
 RuntimeDirectory=shein-fm-sales
