@@ -36,6 +36,16 @@
 5. 24 店完成后撤销批次文件或停止 `shein-fm-store-login.service`，并创建
    `/srv/shein-fm/runtime/store-login/renewal.enabled` 启用续期。
 
+24 店完成后还要以状态文件回读为证据，创建两个不含秘密的门禁：
+
+- `/srv/shein-fm/runtime/store-login/all-24-completed`
+- `/srv/shein-fm/runtime/webapi-history.enabled`
+
+随后启动 `shein-fm-home-webapi-backfill.service`。它只读取 24 个已验证
+Profile，从平台最早支持日期起串行回补首页店铺日指标、地区和货号日指标；
+成功后独立触发 Dashboard 物化。任意店铺登录失效时任务失败关闭该浏览器，
+不会借用其他 Profile 或把其他店数据归入本店。
+
 续期服务每天两次逐店打开同一 Profile。只有当 Chrome 已自动填好账号和密码时
 才点击登录按钮；脚本只接收“字段是否有值”的布尔值，不接收字段内容。任何店铺
 身份无法确认时均记录为失败，禁止把其他店铺数据归到该店。
