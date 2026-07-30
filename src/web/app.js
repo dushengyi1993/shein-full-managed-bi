@@ -872,6 +872,31 @@ function ownerNameForStore(store) {
   return String(store?.ownerName || store?.owner?.name || '').trim();
 }
 
+const OWNER_COLOR_PALETTE = [
+  '#0f766e',
+  '#2563a6',
+  '#a16207',
+  '#a23e57',
+  '#6d4aa2',
+  '#3f7c45',
+  '#b45f32',
+  '#39738c',
+];
+
+function shortOwnerName(value) {
+  const name = String(value || '').trim();
+  return [...name].length > 2 ? [...name].slice(-2).join('') : name;
+}
+
+function ownerDisplayColor(value) {
+  const source = String(value || 'unassigned');
+  let hash = 0;
+  for (const character of source) {
+    hash = ((hash * 31) + character.codePointAt(0)) >>> 0;
+  }
+  return OWNER_COLOR_PALETTE[hash % OWNER_COLOR_PALETTE.length];
+}
+
 function allOwners() {
   const provided = Array.isArray(state.data?.owners) ? state.data.owners : [];
   const visibleStoreCodes = new Set(baseStores().map(({ code }) => String(code)));
@@ -5303,7 +5328,7 @@ function homeCurrency(bundle) {
   return direct.length === 1 ? direct[0] : financeCurrency(bundle);
 }
 
-function homeTopRegion(bundle) {
+function homeTopRegions(bundle) {
   const grouped = new Map();
   for (const row of bundle.regionDaily) {
     const current = grouped.get(row.regionKey) || {
@@ -5317,7 +5342,35 @@ function homeTopRegion(bundle) {
   }
   return [...grouped.values()]
     .filter(({ complete }) => complete)
-    .sort((left, right) => right.salesQuantity - left.salesQuantity)[0] ?? null;
+    .sort((left, right) => right.salesQuantity - left.salesQuantity);
+}
+
+function metricRate(numerator, denominator) {
+  if (
+    typeof numerator !== 'number'
+    || !Number.isFinite(numerator)
+    || typeof denominator !== 'number'
+    || !Number.isFinite(denominator)
+    || denominator <= 0
+  ) return null;
+  return numerator / denominator;
+}
+
+function formatRate(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${(value * 100).toFixed(1)}%`
+    : '—';
+}
+
+function ratePointChange(current, previous) {
+  if (
+    typeof current !== 'number'
+    || !Number.isFinite(current)
+    || typeof previous !== 'number'
+    || !Number.isFinite(previous)
+  ) return '—';
+  const points = (current - previous) * 100;
+  return `${points >= 0 ? '+' : ''}${points.toFixed(1)}pp`;
 }
 
 function historyMetricRows() {
@@ -5331,6 +5384,7 @@ function historyMetricRows() {
     ['销量', 'salesQuantity', 'count', current.productMode ? '按匹配货号汇总' : '成交件数'],
     ['曝光量', 'exposureUsers', 'count', '多品牌求和时标注非店铺去重'],
     ['商详访客', 'goodsDetailVisitors', 'count', '商品详情页访客'],
+    ['支付订单数', 'paymentOrderCount', 'count', '支付成功订单数'],
     ['备货订单数', 'stockingOrderCount', 'count', '备货订单'],
     ['集采订单数', 'urgentPurchaseOrderCount', 'count', 'SHEIN 字段 jcOrdCnt1d'],
     ['新客销量', 'newCustomerSalesQuantity', 'count', '能力未返回时保持 —'],
@@ -5353,7 +5407,51 @@ function historyMetricRows() {
       note,
     };
   });
-  return { range, current, previous, rows, topRegion: homeTopRegion(current) };
+  const trafficRate = metricRate(
+    periodMetric(current, 'paymentOrderCount'),
+    periodMetric(current, 'goodsDetailVisitors'),
+  );
+  const previousTrafficRate = metricRate(
+    periodMetric(previous, 'paymentOrderCount'),
+    periodMetric(previous, 'goodsDetailVisitors'),
+  );
+  const trafficRows = [
+    ...rows.filter(({ key }) => [
+      'exposureUsers',
+      'goodsDetailVisitors',
+      'paymentOrderCount',
+    ].includes(key)),
+    {
+      label: '商详支付率',
+      key: 'detailPaymentRate',
+      value: trafficRate,
+      baseline: previousTrafficRate,
+      display: formatRate(trafficRate),
+      baselineDisplay: formatRate(previousTrafficRate),
+      change: ratePointChange(trafficRate, previousTrafficRate),
+      note: '支付订单数 ÷ 商详访客；按日事实累计后重算',
+    },
+  ];
+  return {
+    range,
+    current,
+    previous,
+    rows,
+    transactionRows: rows.filter(({ key }) => [
+      'dealAmount',
+      'netDealAmount',
+      'buyerCount',
+      'salesQuantity',
+    ].includes(key)),
+    trafficRows,
+    supplyRows: rows.filter(({ key }) => [
+      'stockingOrderCount',
+      'urgentPurchaseOrderCount',
+      'newCustomerSalesQuantity',
+      'newCustomerPaymentOrderCount',
+    ].includes(key)),
+    topRegions: homeTopRegions(current),
+  };
 }
 
 function homeMetricTable(title, subtitle, metrics) {
@@ -5377,7 +5475,10 @@ function homeMetricTable(title, subtitle, metrics) {
 function renderHistoryKpis() {
   const summary = historyMetricRows();
   const rangeLabel = `${summary.range.start} → ${summary.range.end}`;
-  const region = summary.topRegion;
+  const regionRows = Array.from({ length: 4 }, (_, index) => ({
+    rank: index + 1,
+    region: summary.topRegions[index] ?? null,
+  }));
   return `
     <section class="home-kpi home-history-kpis" aria-label="全托关键经营数据">
       <header class="home-block-head">
@@ -5385,16 +5486,17 @@ function renderHistoryKpis() {
         <p>${escapeHtml(`${rangeLabel} · ${summary.current.productMode ? '货号搜索范围' : `${summary.current.storeCodes.size} 家店`} · 未返回字段保持 —`)}</p>
       </header>
       <div class="kpi-six home-history-card-grid">
-        ${homeMetricTable('成交与支付', '金额、买家与销量', summary.rows.slice(0, 4))}
-        ${homeMetricTable('流量表现', '曝光与商详访问', summary.rows.slice(4, 6))}
-        ${homeMetricTable('供给与新客', '备货、集采与新客结构', summary.rows.slice(6))}
+        ${homeMetricTable('成交与支付', '金额、买家与销量', summary.transactionRows)}
+        ${homeMetricTable('流量表现', '曝光、商详与支付转化', summary.trafficRows)}
+        ${homeMetricTable('供给与新客', '备货、集采与新客结构', summary.supplyRows)}
         <article class="overview-matrix-card home-history-card home-region-card">
-          <div class="matrix-card-head"><h4>主销地区</h4><div class="sub">按当前筛选区间销量排序</div></div>
+          <div class="matrix-card-head"><h4>主销地区</h4><div class="sub">销量 Top 4</div></div>
           <div class="metric-matrix cols-1" role="table" aria-label="销量 Top 主销地区">
-            <span class="matrix-cell head" role="columnheader">指标</span>
-            <span class="matrix-cell head" role="columnheader">当前结果</span>
-            <span class="matrix-cell label" role="rowheader">销量 Top 主销地区</span>
-            <span class="matrix-cell value" role="cell">${escapeHtml(region?.name || '—')}<small class="metric-subvalue">${region ? `${formatUnits(region.salesQuantity)} 件` : '地区数据暂不可用'}</small></span>
+            <span class="matrix-cell head" role="columnheader">排名</span>
+            <span class="matrix-cell head" role="columnheader">地区 / 销量</span>
+            ${regionRows.map(({ rank, region }) => `
+              <span class="matrix-cell label" role="rowheader">Top ${rank}</span>
+              <span class="matrix-cell value" role="cell">${escapeHtml(region?.name || '—')}<small class="metric-subvalue">${region ? `${formatUnits(region.salesQuantity)} 件` : '地区数据暂不可用'}</small></span>`).join('')}
           </div>
         </article>
       </div>
@@ -5494,41 +5596,102 @@ function groupHistoryByMonth(rows) {
   });
 }
 
-function historySparkline(rows, key, { money = false, suffix = '' } = {}) {
+function historyTrendChart(rows, key, { money = false, suffix = '' } = {}, kind = 'line') {
   const visible = rows.filter((row) => finiteMetric(row[key]));
   if (!visible.length) {
     return emptyEvidence('当前指标暂无趋势', '所选日期范围没有完整的日粒度事实，缺失不补零、不连线。');
   }
   const width = 980;
-  const height = 236;
+  const height = 256;
   const left = 58;
   const right = 18;
-  const top = 18;
+  const top = 32;
   const bottom = 42;
   const innerWidth = width - left - right;
   const innerHeight = height - top - bottom;
-  const max = Math.max(1, ...visible.map((row) => row[key]));
+  const rawMin = Math.min(...visible.map((row) => row[key]));
+  const rawMax = Math.max(...visible.map((row) => row[key]));
+  const min = Math.min(0, rawMin);
+  const max = Math.max(0, rawMax);
+  const span = Math.max(1, max - min);
+  const yFor = (value) => top + innerHeight - (((value - min) / span) * innerHeight);
   const points = visible.map((row, index) => ({
     ...row,
     x: left + (visible.length === 1 ? innerWidth / 2 : (innerWidth * index) / (visible.length - 1)),
-    y: top + innerHeight - ((row[key] / max) * innerHeight),
+    y: yFor(row[key]),
   }));
   const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ');
   const valueLabel = (point) => money
     ? formatMoney(point[key], point.currency)
     : `${formatUnits(point[key])}${suffix ? ` ${suffix}` : ''}`;
+  const compactValue = (point) => {
+    const value = new Intl.NumberFormat('zh-CN', {
+      notation: 'compact',
+      maximumFractionDigits: 1,
+    }).format(point[key]);
+    return `${money && point.currency ? `${point.currency} ` : ''}${value}${!money && suffix ? suffix : ''}`;
+  };
+  const maxIndex = points.reduce(
+    (best, point, index) => (point[key] > points[best][key] ? index : best),
+    0,
+  );
+  const minIndex = points.reduce(
+    (best, point, index) => (point[key] < points[best][key] ? index : best),
+    0,
+  );
+  const labelled = new Set([0, points.length - 1, maxIndex, minIndex]);
+  const gridValues = [max, min + span / 2, min];
+  const axis = gridValues.map((value) => {
+    const y = yFor(value);
+    const label = money
+      ? new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+      : numberFormatter.format(Math.round(value));
+    return `<line class="chart-grid" x1="${left}" y1="${y.toFixed(1)}" x2="${left + innerWidth}" y2="${y.toFixed(1)}"></line>
+      <text class="chart-axis chart-axis-end" x="${left - 8}" y="${(y + 4).toFixed(1)}">${escapeHtml(label)}</text>`;
+  }).join('');
+  const zeroY = yFor(0);
+  const pointLabels = points.map((point, index) => {
+    if (!labelled.has(index)) return '';
+    const below = point[key] < 0;
+    const y = below ? point.y + 18 : Math.max(14, point.y - 10);
+    const anchor = index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle';
+    return `<text class="chart-value-label" text-anchor="${anchor}" x="${point.x.toFixed(1)}" y="${y.toFixed(1)}">${escapeHtml(compactValue(point))}</text>`;
+  }).join('');
+  const bars = points.map((point, index) => {
+    const slot = innerWidth / Math.max(1, points.length);
+    const barWidth = Math.max(5, Math.min(44, slot * 0.58));
+    const x = left + (slot * index) + ((slot - barWidth) / 2);
+    const y = Math.min(point.y, zeroY);
+    const barHeight = Math.max(1, Math.abs(zeroY - point.y));
+    return `<rect class="history-bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="5" tabindex="0" data-tip="${escapeHtml(`${point.date} · ${valueLabel(point)}`)}"></rect>`;
+  }).join('');
+  const barLabels = points.map((point, index) => {
+    const shouldLabel = points.length <= 12 || labelled.has(index);
+    if (!shouldLabel) return '';
+    const slot = innerWidth / Math.max(1, points.length);
+    const x = left + (slot * index) + (slot / 2);
+    const y = point[key] < 0 ? point.y + 18 : Math.max(14, point.y - 8);
+    return `<text class="chart-value-label" text-anchor="middle" x="${x.toFixed(1)}" y="${y.toFixed(1)}">${escapeHtml(compactValue(point))}</text>`;
+  }).join('');
+  const barAxis = points.map((point, index) => {
+    const every = Math.max(1, Math.ceil(points.length / 8));
+    if (index !== 0 && index !== points.length - 1 && index % every !== 0) return '';
+    const slot = innerWidth / Math.max(1, points.length);
+    const x = left + (slot * index) + (slot / 2);
+    return `<text class="chart-axis" text-anchor="middle" x="${x.toFixed(1)}" y="${height - 12}">${escapeHtml(point.date)}</text>`;
+  }).join('');
   return `
-    <div class="line-chart trend-chart home-history-chart">
+    <div class="line-chart trend-chart home-history-chart ${kind === 'bar' ? 'history-bar-chart' : 'history-line-chart'}">
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(`${points[0].date} 至 ${points.at(-1).date} 趋势`)}">
-        ${[1, 0.5, 0].map((ratio) => {
-          const y = top + innerHeight - innerHeight * ratio;
-          return `<line class="chart-grid" x1="${left}" y1="${y.toFixed(1)}" x2="${left + innerWidth}" y2="${y.toFixed(1)}"></line>
-            <text class="chart-axis chart-axis-end" x="${left - 8}" y="${(y + 4).toFixed(1)}">${escapeHtml(money ? new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(max * ratio) : numberFormatter.format(Math.round(max * ratio)))}</text>`;
-        }).join('')}
-        <path class="chart-line" d="${path}"></path>
-        ${points.map((point) => `<circle class="chart-point" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4" tabindex="0" data-tip="${escapeHtml(`${point.date} · ${valueLabel(point)}`)}"></circle>`).join('')}
-        <text class="chart-axis" x="${left}" y="${height - 12}">${escapeHtml(points[0].date)}</text>
-        <text class="chart-axis chart-axis-end" x="${left + innerWidth}" y="${height - 12}">${escapeHtml(points.at(-1).date)}</text>
+        ${axis}
+        <line class="chart-zero" x1="${left}" y1="${zeroY.toFixed(1)}" x2="${left + innerWidth}" y2="${zeroY.toFixed(1)}"></line>
+        ${kind === 'bar'
+          ? `${bars}${barLabels}${barAxis}`
+          : `<path class="chart-line" d="${path}"></path>
+             ${points.map((point) => `<circle class="chart-point" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4" tabindex="0" data-tip="${escapeHtml(`${point.date} · ${valueLabel(point)}`)}"></circle>`).join('')}
+             ${pointLabels}
+             <text class="chart-axis" x="${left}" y="${height - 12}">${escapeHtml(points[0].date)}</text>
+             <text class="chart-axis chart-axis-end" x="${left + innerWidth}" y="${height - 12}">${escapeHtml(points.at(-1).date)}</text>`}
       </svg>
     </div>`;
 }
@@ -5555,11 +5718,11 @@ function renderHistoryTrends() {
       ? '成交金额（估算）'
       : '成交金额';
   const metricLabel = metricKey === 'dealAmount' ? amountLabel : metric.label;
-  const trendPanel = (title, rows, note) => `
+  const trendPanel = (title, rows, note, kind) => `
     <article class="panel trend-panel home-history-trend-panel">
       <h4>${escapeHtml(`${title} · ${metricLabel}`)}</h4>
       <p class="sub">${escapeHtml(note)}</p>
-      ${historySparkline(rows, metricKey, metric)}
+      ${historyTrendChart(rows, metricKey, metric, kind)}
     </article>`;
   return `
     <section class="home-history-trends" aria-label="经营趋势">
@@ -5570,8 +5733,8 @@ function renderHistoryTrends() {
         </div>
       </header>
       <div class="trend-stack home-trend-stack">
-        ${trendPanel('日趋势', daily, `${selectedHomeDateRange().start} → ${selectedHomeDateRange().end} · ${amountBasis === 'FINANCE' ? '金额按报账明细生成日' : '按业务日'}`)}
-        ${trendPanel('月趋势', monthly, `${amountBasis === 'FINANCE' ? '报账明细生成日' : '业务日'}归入自然月；不完整月份不补齐`)}
+        ${trendPanel('日趋势', daily, `${selectedHomeDateRange().start} → ${selectedHomeDateRange().end} · 折线展示连续变化，关键点直接标数`, 'line')}
+        ${trendPanel('月趋势', monthly, `${amountBasis === 'FINANCE' ? '报账明细生成日' : '业务日'}归入自然月 · 柱形展示月度规模，不完整月份不补齐`, 'bar')}
       </div>
     </section>`;
 }
@@ -5599,19 +5762,73 @@ function aggregateHistoryRanking(rows, identity, metricKey) {
     .slice(0, HOME_RANK_LIMIT);
 }
 
-function historyRankTable(title, note, rows, { money = false, estimated = false } = {}) {
+function rankingKnownSum(rows, keys) {
+  for (const key of keys) {
+    const value = completeMetricSum(rows, key);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function rankingObservedDays(rows) {
+  return new Set(rows.map(({ date }) => date).filter(Boolean)).size;
+}
+
+function storeHistoryRankMeta(row, primary) {
+  const quantity = rankingKnownSum(row.rows, ['salesQuantity', 'goodsCount']);
+  const amount = rankingKnownSum(row.rows, ['dealAmount', 'incomeAmount']);
+  const orders = rankingKnownSum(row.rows, ['paymentOrderCount']);
+  const days = rankingObservedDays(row.rows);
+  const parts = primary === 'amount'
+    ? [
+      quantity === null ? null : `销量 ${formatUnits(quantity)} 件`,
+      orders === null ? null : `支付订单 ${formatUnits(orders)} 单`,
+      days ? `${formatUnits(days)} 天有数据` : null,
+    ]
+    : [
+      amount === null ? null : `金额 ${formatMoney(amount, row.currency)}`,
+      orders === null ? null : `支付订单 ${formatUnits(orders)} 单`,
+      days ? `${formatUnits(days)} 天有数据` : null,
+    ];
+  return parts.filter(Boolean).join(' · ');
+}
+
+function productHistoryRankMeta(row, primary) {
+  const quantity = rankingKnownSum(row.rows, ['salesQuantity', 'goodsCount']);
+  const amount = rankingKnownSum(row.rows, ['estimatedDealAmount', 'incomeAmount']);
+  const storeCodes = [...new Set(row.rows.map(({ storeCode }) => storeCode).filter(Boolean))];
+  const days = rankingObservedDays(row.rows);
+  const parts = primary === 'amount'
+    ? [
+      quantity === null ? null : `销量 ${formatUnits(quantity)} 件`,
+      storeCodes.length ? `店铺 ${storeCodes.join('、')}` : null,
+      days ? `${formatUnits(days)} 天有数据` : null,
+    ]
+    : [
+      amount === null ? null : `金额 ${formatMoney(amount, row.currency)}`,
+      storeCodes.length ? `店铺 ${storeCodes.join('、')}` : null,
+      days ? `${formatUnits(days)} 天有数据` : null,
+    ];
+  return parts.filter(Boolean).join(' · ');
+}
+
+function historyRankTable(title, note, rows, {
+  money = false,
+  estimated = false,
+  defaultColor = '#2563a6',
+} = {}) {
   const max = Math.max(1, ...rows.map(({ value }) => Math.abs(value)));
-  const barColor = money ? '#b64b32' : '#275eea';
   return `
     <article class="panel rank-panel home-history-rank-card">
       <h4>${escapeHtml(title)}</h4>
       <p class="sub">${escapeHtml(note)}</p>
       ${rows.length ? `<div class="rank-list">${rows.map((row, index) => {
         const pct = Math.max(4, Math.round((Math.abs(row.value) / max) * 100));
-        return `<div class="rank-item" style="--bar-color:${barColor};--rank-pct:${pct}%">
+        const barColor = row.color || defaultColor;
+        return `<div class="rank-item" style="--bar-color:${escapeHtml(barColor)};--owner-color:${escapeHtml(barColor)};--rank-pct:${pct}%">
           <span class="rank-no">${index + 1}</span>
           <span class="rank-main">
-            <span class="rank-title-line"><span class="rank-name">${escapeHtml(row.label)}</span>${row.ownerName ? `<span class="rank-owner">${escapeHtml(row.ownerName)}</span>` : ''}</span>
+            <span class="rank-title-line"><span class="rank-name">${escapeHtml(row.label)}</span>${row.ownerName ? `<span class="rank-owner" title="${escapeHtml(row.ownerName)}">${escapeHtml(shortOwnerName(row.ownerName))}</span>` : ''}</span>
             <span class="rank-meta">${escapeHtml(row.sub || '')}</span>
           </span>
           <span class="rank-value">${escapeHtml(money ? formatMoney(row.value, row.currency) : formatUnits(row.value))}<small>${estimated ? '估算' : money ? '' : '件'}</small></span>
@@ -5629,10 +5846,7 @@ function renderHistoryRankings() {
       const store = baseStores().find(({ code }) => code === row.storeCode);
       return ownerNameForStore(store);
     },
-    sub: (row) => {
-      const store = baseStores().find(({ code }) => code === row.storeCode);
-      return [row.storeCode, ownerNameForStore(store)].filter(Boolean).join(' · ');
-    },
+    sub: () => '',
   };
   const productIdentity = {
     key: (row) => `${row.storeCode}:${row.productGrain}:${row.productKey}`,
@@ -5641,8 +5855,11 @@ function renderHistoryRankings() {
   };
   const financeProductIdentity = {
     key: (row) => `${row.storeCode}:${row.productKey}`,
-    label: (row) => row.supplierSku || row.platformSkcId || row.platformSkuId || row.productKey,
-    sub: (row) => [row.platformSkcId, row.storeCode].filter(Boolean).join(' · '),
+    label: (row) => row.supplierSku
+      || (row.platformSkcId ? `SKC ${row.platformSkcId}` : '')
+      || (row.platformSkuId ? `SKU ${row.platformSkuId}` : '')
+      || row.productKey,
+    sub: () => '待标准货号归并',
   };
   let storeAmount = aggregateHistoryRanking(bundle.storeDaily, storeIdentity, 'dealAmount');
   let storeAmountBasis = 'OPERATING';
@@ -5655,12 +5872,33 @@ function renderHistoryRankings() {
       }));
     storeAmountBasis = storeAmount.length ? 'FINANCE' : 'UNAVAILABLE';
   }
+  const storeAmountCurrency = homeCurrency(bundle) || rankedFinanceCurrency;
+  storeAmount = storeAmount.map((row) => {
+    const store = baseStores().find(({ code }) => code === row.key);
+    const ownerKey = ownerKeyForStore(store) || row.ownerName;
+    const next = {
+      ...row,
+      currency: row.currency || storeAmountCurrency,
+      color: ownerDisplayColor(ownerKey),
+    };
+    return { ...next, sub: storeHistoryRankMeta(next, 'amount') };
+  });
   let storeQuantity = aggregateHistoryRanking(bundle.storeDaily, storeIdentity, 'salesQuantity');
   let storeQuantityBasis = 'OPERATING';
   if (!storeQuantity.length) {
     storeQuantity = aggregateHistoryRanking(bundle.financeDaily, storeIdentity, 'goodsCount');
     storeQuantityBasis = storeQuantity.length ? 'FINANCE' : 'UNAVAILABLE';
   }
+  storeQuantity = storeQuantity.map((row) => {
+    const store = baseStores().find(({ code }) => code === row.key);
+    const ownerKey = ownerKeyForStore(store) || row.ownerName;
+    const next = {
+      ...row,
+      currency: homeCurrency(bundle) || rankedFinanceCurrency,
+      color: ownerDisplayColor(ownerKey),
+    };
+    return { ...next, sub: storeHistoryRankMeta(next, 'quantity') };
+  });
   let productAmount = aggregateHistoryRanking(
     bundle.productDaily,
     productIdentity,
@@ -5678,6 +5916,20 @@ function renderHistoryRankings() {
     }));
     productAmountBasis = productAmount.length ? 'FINANCE' : 'UNAVAILABLE';
   }
+  productAmount = productAmount.map((row) => {
+    const next = {
+      ...row,
+      currency: row.currency || homeCurrency(bundle) || rankedFinanceCurrency,
+      color: '#a23e57',
+    };
+    return {
+      ...next,
+      sub: [
+        productAmountBasis === 'FINANCE' ? '待标准货号归并' : null,
+        productHistoryRankMeta(next, 'amount'),
+      ].filter(Boolean).join(' · '),
+    };
+  });
   let productQuantity = aggregateHistoryRanking(
     bundle.productDaily,
     productIdentity,
@@ -5692,6 +5944,20 @@ function renderHistoryRankings() {
     );
     productQuantityBasis = productQuantity.length ? 'FINANCE' : 'UNAVAILABLE';
   }
+  productQuantity = productQuantity.map((row) => {
+    const next = {
+      ...row,
+      currency: homeCurrency(bundle) || rankedFinanceCurrency,
+      color: '#6d4aa2',
+    };
+    return {
+      ...next,
+      sub: [
+        productQuantityBasis === 'FINANCE' ? '待标准货号归并' : null,
+        productHistoryRankMeta(next, 'quantity'),
+      ].filter(Boolean).join(' · '),
+    };
+  });
   const range = selectedHomeDateRange();
   const note = `${range.start} → ${range.end} · 当前筛选联动`;
   return `
@@ -5702,7 +5968,7 @@ function renderHistoryRankings() {
           storeAmountBasis === 'FINANCE' ? '店铺财务报账收入排行' : '店铺成交金额排行',
           storeAmountBasis === 'FINANCE' ? `${note} · 按报账明细生成日，不等同消费者下单日` : note,
           storeAmount,
-          { money: true },
+          { money: true, defaultColor: '#0f766e' },
         )}
         ${historyRankTable(
           storeQuantityBasis === 'FINANCE' ? '店铺财务明细件数排行' : '店铺销量排行',
@@ -5710,59 +5976,34 @@ function renderHistoryRankings() {
             ? '来自报账销售款明细 goodsCount，按报账明细生成日汇总'
             : note,
           storeQuantity,
+          { defaultColor: '#2563a6' },
         )}
         ${historyRankTable(
-          productAmountBasis === 'FINANCE' ? '货号财务报账收入排行' : '货号成交金额排行（估算）',
+          productAmountBasis === 'FINANCE' ? 'SKC 财务报账收入排行（待归并）' : '货号成交金额排行（估算）',
           productAmountBasis === 'FINANCE'
             ? '按报账销售款明细生成日汇总，不冒充消费者下单日成交额'
             : '销量 × 最新财务单价证据；无匹配单价则不入榜',
           productAmount,
-          { money: true, estimated: productAmountBasis === 'ESTIMATED' },
+          { money: true, estimated: productAmountBasis === 'ESTIMATED', defaultColor: '#a23e57' },
         )}
         ${historyRankTable(
-          productQuantityBasis === 'FINANCE' ? '货号财务明细件数排行' : '货号销量排行',
+          productQuantityBasis === 'FINANCE' ? 'SKC 财务明细件数排行（待归并）' : '货号销量排行',
           productQuantityBasis === 'FINANCE'
             ? '来自报账销售款明细 goodsCount，按报账明细生成日汇总'
             : note,
           productQuantity,
+          { defaultColor: '#6d4aa2' },
         )}
       </div>
     </section>`;
 }
 
-function renderHistoryHomeHeader() {
-  const history = homeHistory();
-  const range = selectedHomeDateRange();
-  const rows = homeScopedRows(range);
-  const scope = selectedStore()
-    ? `${selectedStore().code} · ${selectedStore().name || selectedStore().code}`
-    : selectedOwner()
-      ? `${selectedOwner().name}负责店铺`
-      : '全部店铺';
-  return `
-    <header class="home-topbar home-verdict home-history-header">
-      <div class="home-topbar-main">
-        <span class="eyebrow">FULL-MANAGED BUSINESS INTELLIGENCE</span>
-        <h1>全托经营总览</h1>
-        <p class="verdict-primary">${escapeHtml(`${range.start} → ${range.end} · ${scope}`)}</p>
-        <p class="verdict-secondary">${escapeHtml(rows.productMode ? '当前为货号搜索范围：销量与金额按命中货号汇总，店铺级人数、流量和订单指标保持未知。' : '首页所有指标、趋势和排行使用同一日期与店铺范围；未知不补零。')}</p>
-      </div>
-      <dl class="home-topbar-facts">
-        <div><dt>历史覆盖</dt><dd>${escapeHtml(history.coverage?.earliestDate && history.coverage?.latestDate ? `${history.coverage.earliestDate} → ${history.coverage.latestDate}` : '待回填')}</dd></div>
-        <div><dt>当前事实行</dt><dd>${numberFormatter.format(rows.storeDaily.length)} 店日 · ${numberFormatter.format(rows.productDaily.length)} 货号日 · ${numberFormatter.format(rows.financeDaily.length)} 财务店日</dd></div>
-        <div><dt>最近入仓</dt><dd>${escapeHtml(formatDateTime(history.coverage?.latestObservedAt))}</dd></div>
-        <div class="home-topbar-state"><dt>数据状态</dt><dd><span class="source-chip ${history.status === 'available' ? 'live' : 'empty'}">${history.status === 'available' ? '历史事实可用' : history.status === 'empty' ? '等待历史数据' : '历史表未接入'}</span></dd></div>
-      </dl>
-    </header>`;
-}
-
-/* Vertical order is fixed: A 首屏经营结论 → B 销量 KPI 数据矩阵 →
-   C 日销量趋势 → D 月销量趋势 → E 店铺经营排行 → F 货号/商品经营排行 →
+/* Vertical order is fixed: A 销量 KPI 数据矩阵 → B 日销量趋势 →
+   C 月销量趋势 → D 店铺经营排行 → E 货号/商品经营排行 →
    口径脚注与业务入口。首页噪音（pulse、supply radar、运营提醒）不再参与组装，
    相关函数保留给其他路由使用。 */
 function renderHome() {
   return `
-    ${renderHistoryHomeHeader()}
     ${renderHistoryKpis()}
     ${renderHistoryTrends()}
     ${renderHistoryRankings()}

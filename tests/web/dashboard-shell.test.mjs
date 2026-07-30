@@ -82,7 +82,7 @@ test('home shell keeps the historical filter, KPI tables, vertical trends and fo
   assert.match(app, /店铺销量排行/);
   assert.match(app, /货号成交金额排行（估算）/);
   assert.match(app, /货号销量排行/);
-  assert.match(app, /function renderHistoryHomeHeader\(\)/);
+  assert.doesNotMatch(app, /function renderHistoryHomeHeader\(\)/);
   assert.match(app, /function renderHistoryKpis\(\)/);
   assert.match(app, /function renderHistoryTrends\(\)/);
   assert.match(app, /function renderHistoryRankings\(\)/);
@@ -92,7 +92,7 @@ test('home shell keeps the historical filter, KPI tables, vertical trends and fo
   assert.match(app, /合法为 0/);
   assert.match(app, /数据已过期/);
   assert.match(app, /数据未接入/);
-  assert.match(app, /class="home-topbar home-verdict"/);
+  assert.doesNotMatch(app, /全托经营总览/);
   assert.match(app, /class="metric-matrix cols-3 home-history-matrix"/);
   assert.match(app, /class="trend-stack home-trend-stack"/);
   assert.match(app, /data-home-trend-metric=/);
@@ -119,7 +119,7 @@ test('home shell keeps the historical filter, KPI tables, vertical trends and fo
 test('full-managed homepage exposes the confirmed metrics without inventing unsupported profit fields', async () => {
   const app = await read('src/web/app.js');
   const homeStart = app.indexOf('function historyMetricRows()');
-  const homeEnd = app.indexOf('function renderHistoryHomeHeader', homeStart);
+  const homeEnd = app.indexOf('function renderHome()', homeStart);
   const homeFunctions = app.slice(homeStart, homeEnd);
 
   assert.doesNotMatch(homeFunctions, /\bGMV\b/i);
@@ -161,7 +161,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260730\\.6`));
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260730\\.7`));
   }
   assert.doesNotMatch(html, /v=20260728\.[123]/);
   for (const sheet of [styles, parityStyles]) {

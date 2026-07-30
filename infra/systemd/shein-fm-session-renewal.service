@@ -16,7 +16,11 @@ UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
 EnvironmentFile=/srv/shein-fm/secrets/webapi-experiment/database.env
-ExecStart=/usr/bin/flock -n /srv/shein-fm/runtime/store-login/renewal.lock /usr/bin/node scripts/renew_full_managed_webapi_sessions.mjs
+RuntimeDirectory=shein-fm-webapi
+RuntimeDirectoryMode=0700
+# History reads and renewal both own a Chrome Profile. Skip this renewal slot
+# when a history run is active; the next four-hour slot will retry.
+ExecStart=/usr/bin/flock -n /run/shein-fm-webapi/home-history.lock /usr/bin/flock -n /srv/shein-fm/runtime/store-login/renewal.lock /usr/bin/node scripts/renew_full_managed_webapi_sessions.mjs
 TimeoutStartSec=60min
 NoNewPrivileges=true
 PrivateTmp=true
@@ -32,6 +36,6 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadOnlyPaths=/srv/shein-fm/secrets/webapi-experiment/database.env
-ReadWritePaths=/srv/shein-fm/runtime/store-login /srv/shein-fm/runtime/webapi-locks /srv/shein-fm/webapi/profiles
+ReadWritePaths=/run/shein-fm-webapi /srv/shein-fm/runtime/store-login /srv/shein-fm/runtime/webapi-locks /srv/shein-fm/webapi/profiles
 MemoryHigh=768M
 MemoryMax=1536M

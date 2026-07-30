@@ -67,12 +67,11 @@ test('home opens with one editorial verdict band: conclusions left, scope and fa
   assert.match(header, /scopedUnits\(\{ ignoreQuery: true \}\)/);
 });
 
-test('home assembles header, KPI tables, vertical trends and rankings in order', async () => {
+test('home assembles KPI tables, vertical trends and rankings without a redundant heading block', async () => {
   const app = await read('src/web/app.js');
   const home = functionBody(app, 'renderHome');
 
   const order = [
-    'renderHistoryHomeHeader()',
     'renderHistoryKpis()',
     'renderHistoryTrends()',
     'renderHistoryRankings()',
@@ -86,6 +85,7 @@ test('home assembles header, KPI tables, vertical trends and rankings in order',
   assert.match(home, /缺失金额时回退为 OpenAPI 财务报账收入\/净额/);
   assert.match(home, /不等同消费者下单日 GMV/);
   assert.match(home, /“销量 × 最新财务单价”得到会单独标记估算/);
+  assert.doesNotMatch(app, /function renderHistoryHomeHeader\(\)/);
   const trends = functionBody(app, 'renderHistoryTrends');
   assert.ok(trends.indexOf("'日趋势'") < trends.indexOf("'月趋势'"));
   assert.match(trends, /home-history-trends/);
@@ -102,6 +102,21 @@ test('monthly trend and store quantity stay useful with explicitly labelled fina
   assert.match(period, /key === 'salesQuantity'[\s\S]*bundle\.financeDaily, 'goodsCount'/);
   assert.match(rankings, /storeQuantityBasis === 'FINANCE' \? '店铺财务明细件数排行'/);
   assert.match(rankings, /来自报账销售款明细 goodsCount/);
+});
+
+test('historical KPI cards stay row-balanced and expose only evidence-backed traffic derivations', async () => {
+  const app = await read('src/web/app.js');
+  const metrics = functionBody(app, 'historyMetricRows');
+  const kpis = functionBody(app, 'renderHistoryKpis');
+
+  assert.match(metrics, /'paymentOrderCount'/);
+  assert.match(metrics, /key: 'detailPaymentRate'/);
+  assert.match(metrics, /ratePointChange\(trafficRate, previousTrafficRate\)/);
+  assert.match(kpis, /homeMetricTable\('成交与支付'[^]*summary\.transactionRows\)/);
+  assert.match(kpis, /homeMetricTable\('流量表现'[^]*summary\.trafficRows\)/);
+  assert.match(kpis, /homeMetricTable\('供给与新客'[^]*summary\.supplyRows\)/);
+  assert.match(kpis, /Array\.from\(\{ length: 4 \}/);
+  assert.match(kpis, /销量 Top 4/);
 });
 
 test('KPI matrix is one dense real table with legal comparisons only', async () => {
@@ -398,7 +413,7 @@ test('owner scope lives inside the single store selector with no separate owner 
 
   assert.equal((html.match(/<select/g) || []).length, 1);
   assert.match(html, /<select id="scope-filter" aria-label="店铺或负责人范围"/);
-  assert.match(html, /内含负责人分组/);
+  assert.doesNotMatch(html, /内含负责人分组/);
   assert.doesNotMatch(html, /id="owner-filter"|data-filter="owner"|name="owner"/);
 
   assert.match(scopeOptions, /createElement\('optgroup'\)/);
@@ -434,8 +449,11 @@ test('limited day-grain history is stated exactly and never padded into a full s
   // The historical homepage uses only real dated rows and states the same
   // missing-day boundary in its chart empty state.
   assert.match(home, /renderHistoryTrends\(\)/);
-  const historicalChart = functionBody(app, 'historySparkline');
+  const historicalChart = functionBody(app, 'historyTrendChart');
   assert.match(historicalChart, /缺失不补零、不连线/);
+  assert.match(historicalChart, /const labelled = new Set\(\[0, points\.length - 1, maxIndex, minIndex\]\)/);
+  assert.match(historicalChart, /class="chart-value-label"/);
+  assert.match(historicalChart, /class="history-bar"/);
 
   // The banner helper stays available for callers outside home.
   assert.match(banner, /class="quality-notice/);
@@ -531,8 +549,12 @@ test('semi-managed parity keeps proportional ranking bars and reduced-motion sup
   ]);
 
   assert.doesNotMatch(html, /style="/);
-  assert.match(app, /style="--bar-color:\$\{barColor\};--rank-pct:\$\{pct\}%"/);
+  assert.match(app, /style="--bar-color:\$\{escapeHtml\(barColor\)\};--owner-color:\$\{escapeHtml\(barColor\)\};--rank-pct:\$\{pct\}%"/);
+  assert.match(app, /shortOwnerName\(row\.ownerName\)/);
+  assert.match(app, /storeHistoryRankMeta\(next, 'amount'\)/);
+  assert.match(app, /SKC 财务报账收入排行（待归并）/);
   assert.match(parity, /\.rank-item::before[\s\S]*width: var\(--rank-pct, 0\)/);
+  assert.match(parity, /color-mix\(in srgb, var\(--owner-color\)/);
   assert.match(parity, /backdrop-filter: blur\(18px\)/);
   assert.match(parity, /prefers-reduced-motion/);
 });
@@ -582,7 +604,7 @@ test('1440px homepage keeps historical sections ordered and the trend stack vert
   ]);
   const home = functionBody(app, 'renderHome');
 
-  const firstScreen = ['renderHistoryHomeHeader()', 'renderHistoryKpis()', 'renderHistoryTrends()']
+  const firstScreen = ['renderHistoryKpis()', 'renderHistoryTrends()']
     .map((marker) => home.indexOf(marker));
   assert.ok(firstScreen.every((index) => index !== -1));
   assert.deepEqual(firstScreen, [...firstScreen].sort((left, right) => left - right));
@@ -593,7 +615,6 @@ test('1440px homepage keeps historical sections ordered and the trend stack vert
   const desktopIndex = parity.indexOf('@media (min-width: 1400px)');
   assert.notEqual(desktopIndex, -1);
   const desktop = parity.slice(desktopIndex, parity.indexOf('@media', desktopIndex + 1));
-  assert.match(desktop, /\.home-topbar\s*\{[^}]*margin-bottom: 8px[^}]*padding-bottom: 9px/s);
   assert.match(desktop, /\.home-kpi\s*\{[^}]*margin-bottom: 10px/s);
   assert.match(desktop, /\.home-kpi-table th,[\s\S]*?padding: 5px 10px/);
 });

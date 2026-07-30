@@ -2198,6 +2198,36 @@ body {
   stroke-width: 2.2;
 }
 
+.home-history-chart .chart-zero {
+  stroke: rgba(70, 65, 58, 0.36);
+  stroke-width: 1;
+}
+
+.home-history-chart .chart-value-label {
+  fill: #3f3b35;
+  font-size: 11px;
+  font-weight: 820;
+  font-variant-numeric: tabular-nums;
+  paint-order: stroke;
+  stroke: #fffdf8;
+  stroke-linejoin: round;
+  stroke-width: 4px;
+}
+
+.home-history-chart .history-bar {
+  fill: var(--accent);
+  opacity: 0.78;
+  outline: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+  transform-box: fill-box;
+  transform-origin: center bottom;
+}
+
+.home-history-chart .history-bar:hover,
+.home-history-chart .history-bar:focus {
+  opacity: 1;
+}
+
 .home-history-chart .chart-axis {
   fill: #6d675f;
   font-size: 11px;
@@ -2309,14 +2339,15 @@ body {
 .rank-owner {
   display: inline-flex;
   padding: 1px 6px;
-  color: #61402e;
+  color: color-mix(in srgb, var(--owner-color) 78%, #241f19);
   font-size: 10.5px;
   font-weight: 780;
   line-height: 1.55;
   white-space: nowrap;
-  border: 1px solid #dec6b6;
+  border: 1px solid color-mix(in srgb, var(--owner-color) 42%, #fff);
   border-radius: 999px;
-  background: #f6e9df;
+  background: color-mix(in srgb, var(--owner-color) 14%, #fff);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .home-footnote {
