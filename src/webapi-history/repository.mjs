@@ -2,6 +2,7 @@ import {
   HOME_HISTORY_CONTRACT_VERSION,
   sha256Json,
 } from './home-contracts.mjs';
+import { normalizeFullManagedStoreCode } from '../config/full-managed-stores.mjs';
 
 const CAPABILITY_ROLE = 'sheinfm_webapi_loader';
 
@@ -52,10 +53,9 @@ function text(value, location, maximum, { nullable = false } = {}) {
 
 function storeCode(value) {
   const normalized = text(value, 'storeCode', 24).toUpperCase();
-  if (!['DL5477', 'MZ2406'].includes(normalized)) {
-    throw new TypeError('storeCode is outside the trial');
-  }
-  return normalized;
+  const canonical = normalizeFullManagedStoreCode(normalized);
+  if (!canonical) throw new TypeError('storeCode is outside the configured roster');
+  return canonical;
 }
 
 function sourceCodes(value) {

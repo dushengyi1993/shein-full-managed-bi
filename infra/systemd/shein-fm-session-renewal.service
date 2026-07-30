@@ -1,0 +1,37 @@
+[Unit]
+Description=Renew saved-password sessions for full-managed SHEIN Profiles
+Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
+Wants=network-online.target
+After=network-online.target shein-fm-store-login.service
+Requires=shein-fm-db.service
+RequiresMountsFor=/data /srv/shein-fm/runtime /srv/shein-fm/webapi/profiles
+ConditionPathExists=/srv/shein-fm/runtime/store-login/renewal.enabled
+ConditionPathExists=/srv/shein-fm/runtime/store-login/state.json
+
+[Service]
+Type=oneshot
+User=sheinfm
+Group=sheinfm
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+Environment=NODE_ENV=production
+EnvironmentFile=/srv/shein-fm/secrets/webapi-experiment/database.env
+ExecStart=/usr/bin/flock -n /srv/shein-fm/runtime/store-login/renewal.lock /usr/bin/node scripts/renew_full_managed_webapi_sessions.mjs
+TimeoutStartSec=60min
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/srv/shein-fm/secrets/webapi-experiment/database.env
+ReadWritePaths=/srv/shein-fm/runtime/store-login /srv/shein-fm/runtime/webapi-locks /srv/shein-fm/webapi/profiles
+MemoryHigh=768M
+MemoryMax=1536M

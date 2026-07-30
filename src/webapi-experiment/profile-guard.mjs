@@ -1,3 +1,8 @@
+import {
+  FULL_MANAGED_STORE_CODES,
+  fullManagedProfileKey,
+} from '../config/full-managed-stores.mjs';
+
 /**
  * Fail-closed launch guard for the persistent browser Profiles.
  *
@@ -11,12 +16,11 @@ export const WEBAPI_EXPERIMENT_GATE_PATH =
 
 export const WEBAPI_PROFILE_ROOT = '/srv/shein-fm/webapi/profiles';
 
-export const WEBAPI_STORE_CODES = Object.freeze(['DL5477', 'MZ2406']);
+export const WEBAPI_STORE_CODES = FULL_MANAGED_STORE_CODES;
 
-export const WEBAPI_PROFILE_KEYS = Object.freeze({
-  DL5477: 'persistent-dl5477-profile',
-  MZ2406: 'persistent-mz2406-profile',
-});
+export const WEBAPI_PROFILE_KEYS = Object.freeze(Object.fromEntries(
+  WEBAPI_STORE_CODES.map((storeCode) => [storeCode, fullManagedProfileKey(storeCode)]),
+));
 
 export const REQUIRED_LINUX_DEPENDENCIES = Object.freeze([
   'chrome',
@@ -48,7 +52,7 @@ export function resolveProfileKey(storeCode) {
   if (!WEBAPI_STORE_CODES.includes(normalized)) {
     throw new WebApiLaunchBlockedError(
       LAUNCH_REJECT_CODES.STORE_NOT_ALLOWED,
-      'only the two evidenced experiment stores are allowed',
+      'store is outside the configured full-managed roster',
     );
   }
   return WEBAPI_PROFILE_KEYS[normalized];

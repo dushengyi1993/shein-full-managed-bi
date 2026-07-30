@@ -1,0 +1,41 @@
+[Unit]
+Description=One-time SHEIN full-managed cloud Profile login portal
+Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
+Wants=network-online.target
+After=network-online.target local-fs.target
+RequiresMountsFor=/data /srv/shein-fm/runtime /srv/shein-fm/webapi/profiles
+ConditionPathExists=/srv/shein-fm/secrets/store-login/batch.json
+
+[Service]
+Type=simple
+User=sheinfm
+Group=sheinfm
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+Environment=NODE_ENV=production
+Environment=FULL_FM_STORE_LOGIN_HOST=127.0.0.1
+Environment=FULL_FM_STORE_LOGIN_PORT=8794
+ExecStart=/usr/bin/node scripts/serve_full_managed_store_login.mjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/srv/shein-fm/secrets/store-login/batch.json
+ReadWritePaths=/srv/shein-fm/runtime/store-login /srv/shein-fm/webapi/profiles
+MemoryHigh=1G
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

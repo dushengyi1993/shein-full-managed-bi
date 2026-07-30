@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { lstat, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  FULL_MANAGED_STORE_CODES,
+  fullManagedProfileKey,
+} from '../src/config/full-managed-stores.mjs';
 
 import {
   MaintenanceSafetyError,
@@ -22,10 +26,9 @@ import {
  */
 
 /** The only Profiles this tool may ever touch. */
-export const CANONICAL_PROFILES = Object.freeze([
-  'persistent-dl5477-profile',
-  'persistent-mz2406-profile',
-]);
+export const CANONICAL_PROFILES = Object.freeze(
+  FULL_MANAGED_STORE_CODES.map((storeCode) => fullManagedProfileKey(storeCode)),
+);
 
 /**
  * Exact regenerable directories, relative to a Profile root.

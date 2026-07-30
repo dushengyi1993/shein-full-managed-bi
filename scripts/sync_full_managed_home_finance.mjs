@@ -12,6 +12,7 @@ import {
 } from '../src/openapi/finance-reports.mjs';
 import { SheinOpenApiClient } from '../src/openapi/shein-client.mjs';
 import { createFinanceHomeRepository } from '../src/warehouse/finance-home-repository.mjs';
+import { normalizeFullManagedStoreCode } from '../src/config/full-managed-stores.mjs';
 
 function parseArgs(argv) {
   const args = {
@@ -38,7 +39,7 @@ function parseArgs(argv) {
     || !args.from
     || !args.to
     || args.stores.length === 0
-    || args.stores.some((store) => !['DL5477', 'MZ2406'].includes(store))
+    || args.stores.some((store) => !normalizeFullManagedStoreCode(store))
   ) {
     throw new Error('FINANCE_CLI_SCOPE_REQUIRED');
   }

@@ -23,6 +23,7 @@ import {
   assertRealProfileLaunchAllowed,
   resolveProfileKey,
 } from '../../src/webapi-experiment/profile-guard.mjs';
+import { FULL_MANAGED_STORE_CODES } from '../../src/config/full-managed-stores.mjs';
 import { createWebApiExperimentAdapter } from '../../src/webapi-experiment/adapter.mjs';
 import { assertSecretFreeOutput } from '../../src/webapi-experiment/redaction.mjs';
 import {
@@ -157,12 +158,15 @@ test('an adapter without an injected transport makes zero requests and reports B
   await assert.rejects(() => adapter.fetchWindow(), /WEBAPI_EXPERIMENT_ONLY|experiment/);
 });
 
-test('DL5477 and MZ2406 stay isolated and canonical everywhere', async () => {
-  assert.deepEqual([...WEBAPI_STORE_CODES], ['DL5477', 'MZ2406']);
+test('all 24 stores stay isolated and canonical everywhere', async () => {
+  assert.deepEqual([...WEBAPI_STORE_CODES], [...FULL_MANAGED_STORE_CODES]);
   assert.equal(WEBAPI_PROFILE_KEYS.DL5477, 'persistent-dl5477-profile');
   assert.equal(WEBAPI_PROFILE_KEYS.MZ2406, 'persistent-mz2406-profile');
   for (const bare of ['DL', 'MZ', 'dl', 'mz', '', 'DL5478']) {
-    assert.throws(() => resolveProfileKey(bare), /STORE_NOT_ALLOWED|allowed/);
+    assert.throws(
+      () => resolveProfileKey(bare),
+      (error) => error.code === LAUNCH_REJECT_CODES.STORE_NOT_ALLOWED,
+    );
   }
 
   const calls = [];
@@ -182,13 +186,12 @@ test('DL5477 and MZ2406 stay isolated and canonical everywhere', async () => {
       assert.equal(observation.storeCode, storeCode);
     }
   }
-  assert.equal(batches[0].storeCode, 'DL5477');
-  assert.equal(batches[1].storeCode, 'MZ2406');
-  assert.equal(batches[0].profileKey, 'persistent-dl5477-profile');
-  assert.equal(batches[1].profileKey, 'persistent-mz2406-profile');
-  // Distinct idempotency keys keep the two stores' evidence separate.
-  assert.notEqual(batches[0].batchKey, batches[1].batchKey);
-  assert.equal(calls.length, 2);
+  assert.equal(batches.length, FULL_MANAGED_STORE_CODES.length);
+  assert.equal(new Set(batches.map((batch) => batch.storeCode)).size, FULL_MANAGED_STORE_CODES.length);
+  assert.equal(new Set(batches.map((batch) => batch.profileKey)).size, FULL_MANAGED_STORE_CODES.length);
+  // Distinct idempotency keys keep every store's evidence separate.
+  assert.equal(new Set(batches.map((batch) => batch.batchKey)).size, FULL_MANAGED_STORE_CODES.length);
+  assert.equal(calls.length, FULL_MANAGED_STORE_CODES.length);
 });
 
 test('batch metadata and adapter output stay secret-free', async () => {

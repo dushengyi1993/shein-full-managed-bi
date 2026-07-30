@@ -22,6 +22,7 @@ import {
 } from '../../src/webapi-experiment/profile-guard.mjs';
 import { WEBAPI_ORIGIN } from '../../src/webapi-experiment/endpoint-allowlist.mjs';
 import { TRANSPORT_REJECT_CODES } from '../../src/webapi-experiment/page-transport.mjs';
+import { FULL_MANAGED_STORE_CODES } from '../../src/config/full-managed-stores.mjs';
 
 /** In-memory filesystem for lock tests. Nothing touches a real path. */
 function memoryFs(initial = {}) {
@@ -111,9 +112,9 @@ function sessionDeps(overrides = {}) {
 }
 
 test('the runtime slot allocation is deterministic and loopback-bounded per store', () => {
-  assert.deepEqual(Object.keys(STORE_RUNTIME_SLOTS).sort(), ['DL5477', 'MZ2406']);
+  assert.deepEqual(Object.keys(STORE_RUNTIME_SLOTS).sort(), [...FULL_MANAGED_STORE_CODES].sort());
   const ports = Object.values(STORE_RUNTIME_SLOTS).map((slot) => slot.debuggingPort);
-  assert.equal(new Set(ports).size, 2);
+  assert.equal(new Set(ports).size, FULL_MANAGED_STORE_CODES.length);
   for (const port of ports) {
     assert.ok(Number.isSafeInteger(port) && port > 1024 && port < 65_535, String(port));
   }
@@ -150,7 +151,7 @@ test('missing gate, dependency or Profile fails before any process could be spaw
     assert.deepEqual(spawned, [], expected);
   }
   // A non-canonical store never reaches the guard at all.
-  for (const storeCode of ['DL', 'MZ', 'FY4021', '']) {
+  for (const storeCode of ['DL', 'MZ', 'ZZ0000', '']) {
     const { spawned, deps } = sessionDeps();
     await assert.rejects(() => openExperimentSession({ storeCode, deps }));
     assert.deepEqual(spawned, [], storeCode);

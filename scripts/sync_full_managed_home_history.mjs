@@ -6,6 +6,7 @@ import { createLinuxExperimentRuntime } from '../src/webapi-experiment/linux-run
 import { createFullHomePageTransport } from '../src/webapi-history/page-transport.mjs';
 import { createFullHomeHistoryRepository } from '../src/webapi-history/repository.mjs';
 import { runFullHomeHistorySync } from '../src/webapi-history/sync.mjs';
+import { normalizeFullManagedStoreCode } from '../src/config/full-managed-stores.mjs';
 
 export const HOME_HISTORY_GATE_PATH = '/srv/shein-fm/runtime/webapi-history.enabled';
 
@@ -32,7 +33,7 @@ function parseArgs(argv) {
   if (result.stores.length === 0 || !result.from || !result.to) {
     throw new Error('HOME_CLI_SCOPE_REQUIRED');
   }
-  if (result.stores.some((store) => !['DL5477', 'MZ2406'].includes(store))) {
+  if (result.stores.some((store) => !normalizeFullManagedStoreCode(store))) {
     throw new Error('HOME_CLI_STORE_NOT_ALLOWED');
   }
   return result;
@@ -48,7 +49,7 @@ function dryRunReport(args) {
     includeProducts: args.includeProducts,
     browserSessionsOpened: 0,
     databaseConnections: 0,
-    note: 'Add --execute only after the exact two-store range has been reviewed.',
+    note: 'Add --execute only after the exact store/date scope has been reviewed.',
   };
 }
 

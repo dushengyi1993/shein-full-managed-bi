@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { normalizeFullManagedStoreCode } from '../config/full-managed-stores.mjs';
 
 export const HOME_WEBAPI_ORIGIN = 'https://sso.geiwohuo.com';
 export const HOME_HISTORY_EARLIEST_DATE = '2023-06-07';
@@ -32,7 +33,6 @@ export const HOME_ENDPOINTS = Object.freeze({
   }),
 });
 
-const STORE_CODES = new Set(['DL5477', 'MZ2406']);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DATE_TIME_HOUR_PATTERN = /^\d{10}$/;
 
@@ -71,8 +71,9 @@ function dateDistanceDays(start, end) {
 
 function canonicalStore(value) {
   const storeCode = String(value ?? '').trim().toUpperCase();
-  if (!STORE_CODES.has(storeCode)) fail('HOME_STORE_NOT_ALLOWED', 'store is outside the trial');
-  return storeCode;
+  const canonical = normalizeFullManagedStoreCode(storeCode);
+  if (!canonical) fail('HOME_STORE_NOT_ALLOWED', 'store is outside the configured roster');
+  return canonical;
 }
 
 function optionalDecimal(value) {

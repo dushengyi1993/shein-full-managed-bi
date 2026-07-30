@@ -25,6 +25,7 @@ import {
   REQUIRED_LINUX_DEPENDENCIES,
   WEBAPI_STORE_CODES,
 } from './profile-guard.mjs';
+import { fullManagedRuntimeSlot } from '../config/full-managed-stores.mjs';
 import { createCdpClient } from './cdp-client.mjs';
 import { TRANSPORT_REJECT_CODES } from './page-transport.mjs';
 
@@ -34,10 +35,9 @@ import { TRANSPORT_REJECT_CODES } from './page-transport.mjs';
  * A fixed pair per store keeps the runtime reproducible and auditable, and the
  * per-Profile lock already guarantees only one session per store exists.
  */
-export const STORE_RUNTIME_SLOTS = Object.freeze({
-  DL5477: Object.freeze({ debuggingPort: 39_541, display: ':941' }),
-  MZ2406: Object.freeze({ debuggingPort: 39_542, display: ':942' }),
-});
+export const STORE_RUNTIME_SLOTS = Object.freeze(Object.fromEntries(
+  WEBAPI_STORE_CODES.map((storeCode) => [storeCode, fullManagedRuntimeSlot(storeCode)]),
+));
 
 export const SESSION_REJECT_CODES = Object.freeze({
   STORE_NOT_ALLOWED: 'WEBAPI_SESSION_STORE_NOT_ALLOWED',
@@ -109,6 +109,33 @@ export function buildIdentityProofExpression({ origin, aliasDigits }) {
 })()`;
 }
 
+/**
+ * Saved-credential renewal is deliberately boolean-only: it may ask Chrome
+ * whether the username and password fields are already populated and click the
+ * visible submit button, but it never reads or returns either value.
+ */
+export function buildSavedCredentialSubmitExpression() {
+  return `(() => {
+  try {
+    const inputs = Array.from(document.querySelectorAll('input'));
+    const password = inputs.find((item) => String(item.type || '').toLowerCase() === 'password');
+    const account = inputs.find((item) => {
+      const type = String(item.type || '').toLowerCase();
+      return type === 'text' || type === 'email' || type === 'tel';
+    });
+    const accountReady = Boolean(account && String(account.value || '').length > 0);
+    const passwordReady = Boolean(password && String(password.value || '').length > 0);
+    const submit = document.querySelector('button[type="submit"], input[type="submit"]')
+      || Array.from(document.querySelectorAll('button')).find((item) => /登录|登錄|login/i.test(String(item.innerText || '')));
+    const submitReady = Boolean(submit && !submit.disabled);
+    if (accountReady && passwordReady && submitReady) submit.click();
+    return { accountReady, passwordReady, submitReady, clicked: accountReady && passwordReady && submitReady };
+  } catch {
+    return { accountReady: false, passwordReady: false, submitReady: false, clicked: false };
+  }
+})()`;
+}
+
 function aliasDigitsFor(storeCode) {
   const digits = String(storeCode).replace(/[^0-9]/g, '');
   return digits.slice(-4);
@@ -121,6 +148,7 @@ function chromeArguments({ profileDirectory, debuggingPort }) {
     '--remote-debugging-address=127.0.0.1',
     `--remote-debugging-port=${debuggingPort}`,
     '--profile-directory=Profile 1',
+    '--password-store=basic',
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-background-timer-throttling',
@@ -135,7 +163,7 @@ function chromeArguments({ profileDirectory, debuggingPort }) {
  * Open one experiment session for exactly one canonical store.
  *
  * @param {object} input
- * @param {string} input.storeCode `DL5477` or `MZ2406`
+ * @param {string} input.storeCode canonical store code from the 24-store roster
  * @param {object} input.deps injected runtime
  * @returns {Promise<{storeCode: string, sessionState: string, evaluate: Function, close: Function}>}
  */
@@ -143,6 +171,7 @@ export async function openExperimentSession({
   storeCode,
   deps,
   gatePath = WEBAPI_EXPERIMENT_GATE_PATH,
+  allowSavedCredentialLogin = false,
 } = {}) {
   const canonical = String(storeCode ?? '').trim().toUpperCase();
   if (!WEBAPI_STORE_CODES.includes(canonical)) {
@@ -295,7 +324,7 @@ export async function openExperimentSession({
     }
     await sleep(resolvedLimits.navigationSettleMs);
 
-    const proof = await cdp.evaluate(
+    let proof = await cdp.evaluate(
       buildIdentityProofExpression({
         origin: WEBAPI_ORIGIN,
         aliasDigits: aliasDigitsFor(canonical),
@@ -304,6 +333,22 @@ export async function openExperimentSession({
     );
     if (proof?.sameOrigin !== true) {
       throw new WebApiSessionError(SESSION_REJECT_CODES.ORIGIN_MISMATCH, canonical);
+    }
+    if (proof?.onLoginView === true && allowSavedCredentialLogin === true) {
+      const renewal = await cdp.evaluate(
+        buildSavedCredentialSubmitExpression(),
+        { timeoutMs: resolvedLimits.identityTimeoutMs },
+      );
+      if (renewal?.clicked === true) {
+        await sleep(8_000);
+        proof = await cdp.evaluate(
+          buildIdentityProofExpression({
+            origin: WEBAPI_ORIGIN,
+            aliasDigits: aliasDigitsFor(canonical),
+          }),
+          { timeoutMs: resolvedLimits.identityTimeoutMs },
+        );
+      }
     }
     if (proof?.onLoginView === true) {
       throw new WebApiSessionError(SESSION_REJECT_CODES.AUTH_EXPIRED, canonical);

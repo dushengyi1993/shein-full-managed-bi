@@ -171,8 +171,8 @@ test('templateType is required exactly when a requested endpoint accepts it', ()
   assert.deepEqual(v4.probes[0].request, { metaIndexIds: [426], templateType: 0 });
 });
 
-test('only the two canonical stores and an explicit operator are accepted', () => {
-  for (const stores of [[], ['DL'], ['MZ'], ['FY4021'], ['']]) {
+test('only the configured canonical stores and an explicit operator are accepted', () => {
+  for (const stores of [[], ['DL'], ['MZ'], ['ZZ0000'], ['']]) {
     assert.throws(() => buildWebApiExperimentPlan({ ...CATALOG_BASE, storeCodes: stores }),
       ExperimentPlanError, String(stores));
   }

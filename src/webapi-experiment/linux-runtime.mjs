@@ -30,7 +30,7 @@ import { createExperimentLockManager } from './profile-lock.mjs';
 import { createWebApiExperimentRepository } from './repository.mjs';
 
 const LOCK_DIRECTORY = '/srv/shein-fm/runtime/webapi-locks';
-const LOOPBACK_DEBUG_PATH = /^http:\/\/127\.0\.0\.1:(39541|39542)\/json\/(version|list)$/;
+const LOOPBACK_DEBUG_PATH = /^http:\/\/127\.0\.0\.1:395(?:4[1-9]|5[0-9]|6[0-4])\/json\/(version|list)$/;
 const MAX_DEBUG_RESPONSE_BYTES = 1024 * 1024;
 
 export const LINUX_EXECUTABLES = Object.freeze({
@@ -291,9 +291,10 @@ export async function createLinuxExperimentRuntime({
   const deps = Object.freeze({
     repository,
     sessionStateForFailure,
-    openSession: ({ storeCode }) => openExperimentSession({
+    openSession: ({ storeCode, allowSavedCredentialLogin = false }) => openExperimentSession({
       storeCode,
       gatePath,
+      allowSavedCredentialLogin,
       deps: {
         platform: system.platform,
         spawn: spawnTracked,

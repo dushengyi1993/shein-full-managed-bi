@@ -267,10 +267,10 @@ test('a held archive lock stops a concurrent run', async () => {
 });
 
 test('the Profile allow-list covers only regenerable caches', () => {
-  assert.deepEqual(CANONICAL_PROFILES, [
-    'persistent-dl5477-profile',
-    'persistent-mz2406-profile',
-  ]);
+  assert.equal(CANONICAL_PROFILES.length, 24);
+  assert.ok(CANONICAL_PROFILES.includes('persistent-dl5477-profile'));
+  assert.ok(CANONICAL_PROFILES.includes('persistent-mz2406-profile'));
+  assert.ok(CANONICAL_PROFILES.includes('persistent-dx2420-profile'));
   assert.deepEqual(REGENERABLE_CACHE_DIRS, [
     'cache',
     'component_crx_cache',
