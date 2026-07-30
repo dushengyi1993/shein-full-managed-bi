@@ -553,13 +553,17 @@ test('semi-managed parity keeps proportional ranking bars and reduced-motion sup
     read('src/web/styles.css'),
     read('src/web/home-parity.css'),
   ]);
+  const rankingTable = functionBody(app, 'historyRankTable');
 
   assert.doesNotMatch(html, /style="/);
-  assert.match(app, /style="--bar-color:\$\{escapeHtml\(barColor\)\};--owner-color:\$\{escapeHtml\(barColor\)\};--rank-pct:\$\{pct\}%"/);
+  assert.doesNotMatch(rankingTable, /style="/);
+  assert.match(rankingTable, /rank-item rank-fill-\$\{fillStep\} rank-tone-\$\{escapeHtml\(tone\)\}/);
+  assert.match(app, /ownerDisplayTone\(ownerKey\)/);
   assert.match(app, /shortOwnerName\(row\.ownerName\)/);
   assert.match(app, /storeHistoryRankMeta\(next, 'amount'\)/);
   assert.match(app, /SKC 财务报账收入排行（待归并）/);
-  assert.match(parity, /\.rank-item::before[\s\S]*width: var\(--rank-pct, 0\)/);
+  assert.match(parity, /\.rank-item\.rank-fill-10::before \{ width: 100%; \}/);
+  assert.match(parity, /\.rank-tone-owner-1,[\s\S]*--owner-color: #0f766e/);
   assert.match(parity, /\.rank-item::after[\s\S]*background: var\(--bar-color\)/);
   assert.match(parity, /\.rank-owner[\s\S]*background: var\(--owner-color\)/);
   assert.match(parity, /\.rank-owner[\s\S]*color: #fff/);
@@ -578,6 +582,7 @@ test('homepage range, trend labels and renewal cadence match the operating prefe
   assert.match(parity, /grid-template-columns: minmax\(220px, 250px\) minmax\(180px, 200px\) minmax\(900px, 1fr\) auto/);
   assert.match(parity, /grid-template-columns: minmax\(340px, 380px\) minmax\(540px, 1fr\)/);
   assert.match(parity, /@media \(max-width: 1650px\)[\s\S]*"range range range"/);
+  assert.match(parity, /\.metric-matrix \.matrix-cell\.head\s*\{[^}]*margin: 0;[^}]*gap: 0;/s);
   assert.doesNotMatch(chart, /point\.currency/);
   assert.match(timer, /Description=Daily full-managed SHEIN Profile session renewal/);
   assert.match(timer, /OnCalendar=\*-\*-\* 03:20:00 Asia\/Shanghai/);

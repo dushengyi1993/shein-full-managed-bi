@@ -872,29 +872,20 @@ function ownerNameForStore(store) {
   return String(store?.ownerName || store?.owner?.name || '').trim();
 }
 
-const OWNER_COLOR_PALETTE = [
-  '#0f766e',
-  '#2563a6',
-  '#a16207',
-  '#a23e57',
-  '#6d4aa2',
-  '#3f7c45',
-  '#b45f32',
-  '#39738c',
-];
+const OWNER_TONE_COUNT = 8;
 
 function shortOwnerName(value) {
   const name = String(value || '').trim();
   return [...name].length > 2 ? [...name].slice(-2).join('') : name;
 }
 
-function ownerDisplayColor(value) {
+function ownerDisplayTone(value) {
   const source = String(value || 'unassigned');
   let hash = 0;
   for (const character of source) {
     hash = ((hash * 31) + character.codePointAt(0)) >>> 0;
   }
-  return OWNER_COLOR_PALETTE[hash % OWNER_COLOR_PALETTE.length];
+  return `owner-${(hash % OWNER_TONE_COUNT) + 1}`;
 }
 
 function allOwners() {
@@ -5821,7 +5812,7 @@ function productHistoryRankMeta(row, primary) {
 function historyRankTable(title, note, rows, {
   money = false,
   estimated = false,
-  defaultColor = '#2563a6',
+  defaultTone = 'store-quantity',
 } = {}) {
   const max = Math.max(1, ...rows.map(({ value }) => Math.abs(value)));
   return `
@@ -5830,8 +5821,9 @@ function historyRankTable(title, note, rows, {
       <p class="sub">${escapeHtml(note)}</p>
       ${rows.length ? `<div class="rank-list">${rows.map((row, index) => {
         const pct = Math.max(4, Math.round((Math.abs(row.value) / max) * 100));
-        const barColor = row.color || defaultColor;
-        return `<div class="rank-item" style="--bar-color:${escapeHtml(barColor)};--owner-color:${escapeHtml(barColor)};--rank-pct:${pct}%">
+        const fillStep = Math.max(1, Math.min(10, Math.ceil(pct / 10)));
+        const tone = row.tone || defaultTone;
+        return `<div class="rank-item rank-fill-${fillStep} rank-tone-${escapeHtml(tone)}">
           <span class="rank-no">${index + 1}</span>
           <span class="rank-main">
             <span class="rank-title-line"><span class="rank-name">${escapeHtml(row.label)}</span>${row.ownerName ? `<span class="rank-owner" title="${escapeHtml(row.ownerName)}">${escapeHtml(shortOwnerName(row.ownerName))}</span>` : ''}</span>
@@ -5885,7 +5877,7 @@ function renderHistoryRankings() {
     const next = {
       ...row,
       currency: row.currency || storeAmountCurrency,
-      color: ownerDisplayColor(ownerKey),
+      tone: ownerDisplayTone(ownerKey),
     };
     return { ...next, sub: storeHistoryRankMeta(next, 'amount') };
   });
@@ -5901,7 +5893,7 @@ function renderHistoryRankings() {
     const next = {
       ...row,
       currency: homeCurrency(bundle) || rankedFinanceCurrency,
-      color: ownerDisplayColor(ownerKey),
+      tone: ownerDisplayTone(ownerKey),
     };
     return { ...next, sub: storeHistoryRankMeta(next, 'quantity') };
   });
@@ -5926,7 +5918,7 @@ function renderHistoryRankings() {
     const next = {
       ...row,
       currency: row.currency || homeCurrency(bundle) || rankedFinanceCurrency,
-      color: '#a23e57',
+      tone: 'product-amount',
     };
     return {
       ...next,
@@ -5954,7 +5946,7 @@ function renderHistoryRankings() {
     const next = {
       ...row,
       currency: homeCurrency(bundle) || rankedFinanceCurrency,
-      color: '#6d4aa2',
+      tone: 'product-quantity',
     };
     return {
       ...next,
@@ -5974,7 +5966,7 @@ function renderHistoryRankings() {
           storeAmountBasis === 'FINANCE' ? '店铺财务报账收入排行' : '店铺成交金额排行',
           storeAmountBasis === 'FINANCE' ? `${note} · 按报账明细生成日，不等同消费者下单日` : note,
           storeAmount,
-          { money: true, defaultColor: '#0f766e' },
+          { money: true, defaultTone: 'store-amount' },
         )}
         ${historyRankTable(
           storeQuantityBasis === 'FINANCE' ? '店铺财务明细件数排行' : '店铺销量排行',
@@ -5982,7 +5974,7 @@ function renderHistoryRankings() {
             ? '来自报账销售款明细 goodsCount，按报账明细生成日汇总'
             : note,
           storeQuantity,
-          { defaultColor: '#2563a6' },
+          { defaultTone: 'store-quantity' },
         )}
         ${historyRankTable(
           productAmountBasis === 'FINANCE' ? 'SKC 财务报账收入排行（待归并）' : '货号成交金额排行（估算）',
@@ -5990,7 +5982,7 @@ function renderHistoryRankings() {
             ? '按报账销售款明细生成日汇总，不冒充消费者下单日成交额'
             : '销量 × 最新财务单价证据；无匹配单价则不入榜',
           productAmount,
-          { money: true, estimated: productAmountBasis === 'ESTIMATED', defaultColor: '#a23e57' },
+          { money: true, estimated: productAmountBasis === 'ESTIMATED', defaultTone: 'product-amount' },
         )}
         ${historyRankTable(
           productQuantityBasis === 'FINANCE' ? 'SKC 财务明细件数排行（待归并）' : '货号销量排行',
@@ -5998,7 +5990,7 @@ function renderHistoryRankings() {
             ? '来自报账销售款明细 goodsCount，按报账明细生成日汇总'
             : note,
           productQuantity,
-          { defaultColor: '#6d4aa2' },
+          { defaultTone: 'product-quantity' },
         )}
       </div>
     </section>`;

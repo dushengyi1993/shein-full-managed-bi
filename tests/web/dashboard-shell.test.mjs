@@ -97,7 +97,7 @@ test('home shell keeps the historical filter, KPI tables, vertical trends and fo
   assert.match(app, /class="trend-stack home-trend-stack"/);
   assert.match(app, /data-home-trend-metric=/);
   assert.match(app, /class="rank-list"/);
-  assert.match(app, /--rank-pct:/);
+  assert.match(app, /rank-item rank-fill-\$\{fillStep\} rank-tone-/);
   assert.match(app, /class="home-footnote"/);
   assert.match(parityStyles, /\.metric-matrix\s*\{/);
   assert.match(parityStyles, /\.metric-matrix \.matrix-cell\s*\{/);
@@ -161,7 +161,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260730\\.8`));
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260730\\.9`));
   }
   assert.doesNotMatch(html, /v=20260728\.[123]/);
   for (const sheet of [styles, parityStyles]) {
