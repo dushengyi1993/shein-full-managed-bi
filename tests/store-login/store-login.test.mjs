@@ -52,5 +52,7 @@ test('store login routes never put the batch bearer into a query parameter', asy
   assert.doesNotMatch(source, /searchParams\.get\(['"]token/);
   assert.match(source, /headers\.authorization/);
   assert.match(source, /--password-store=basic/);
+  assert.match(source, /script-src 'self' 'unsafe-inline'/);
+  assert.match(source, /img-src 'self' data: blob:/);
   assert.doesNotMatch(source, /document\.cookie|localStorage\.getItem|Network\.getAllCookies/);
 });
