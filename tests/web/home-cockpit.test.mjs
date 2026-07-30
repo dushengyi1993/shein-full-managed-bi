@@ -509,7 +509,7 @@ test('truthfulness vocabulary separates real zero, unknown, not-integrated, part
   assert.match(app, /function formatUnits\(value\)[\s\S]*isUnit\(value\) \? numberFormatter\.format\(value\) : '—'/);
 });
 
-test('markup and styles carry no inline style, no gradient and no backdrop-filter', async () => {
+test('semi-managed parity keeps proportional ranking bars and reduced-motion support', async () => {
   const [html, app, styles, parity] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
@@ -518,11 +518,9 @@ test('markup and styles carry no inline style, no gradient and no backdrop-filte
   ]);
 
   assert.doesNotMatch(html, /style="/);
-  assert.doesNotMatch(app, /style="/);
-  for (const sheet of [styles, parity]) {
-    assert.doesNotMatch(sheet, /gradient\(/);
-    assert.doesNotMatch(sheet, /backdrop-filter/);
-  }
+  assert.match(app, /style="--bar-color:\$\{barColor\};--rank-pct:\$\{pct\}%"/);
+  assert.match(parity, /\.rank-item::before[\s\S]*width: var\(--rank-pct, 0\)/);
+  assert.match(parity, /backdrop-filter: blur\(18px\)/);
   assert.match(parity, /prefers-reduced-motion/);
 });
 

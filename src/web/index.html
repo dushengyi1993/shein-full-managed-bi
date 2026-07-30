@@ -4,13 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="SHEIN 全托销量矩阵、日月趋势、店铺与商品排行、运营提醒的只读驾驶舱">
-    <meta name="theme-color" content="#fafaf8">
+    <meta name="theme-color" content="#171814">
     <meta name="color-scheme" content="light">
     <title>SHEIN 全托运营驾驶舱</title>
-    <link rel="icon" href="/favicon.svg?v=20260729.12" type="image/svg+xml">
-    <link rel="stylesheet" href="/styles.css?v=20260729.12">
-    <link rel="stylesheet" href="/home-parity.css?v=20260729.12">
-    <script src="/app.js?v=20260729.12" defer></script>
+    <link rel="icon" href="/favicon.svg?v=20260730.5" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css?v=20260730.5">
+    <link rel="stylesheet" href="/home-parity.css?v=20260730.5">
+    <script src="/app.js?v=20260730.5" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#content">跳到主要内容</a>
@@ -84,27 +84,40 @@
             <div class="range-dock" role="group" aria-label="销量时间口径">
               <div class="range-toolbar">
                 <div class="range-toolbar-main">
-                  <div class="range-button" aria-hidden="true">
-                    <span>时间范围</span>
-                    <strong id="range-summary">今日 · 当日累计</strong>
+                  <button type="button" class="range-button" id="range-toggle" aria-controls="range-popover" aria-expanded="false">
+                    <span>时间筛选</span>
+                    <div>
+                      <strong id="range-summary">今日 · 当日累计</strong>
+                      <small>影响指标、趋势、排行和明细</small>
+                    </div>
+                  </button>
+                  <div class="range-preset-strip" role="group" aria-label="快捷日期范围">
+                    <button type="button" data-home-range-preset="today" aria-pressed="true">今天</button>
+                    <button type="button" data-home-range-preset="yesterday" aria-pressed="false">昨天</button>
+                    <button type="button" data-home-range-preset="last3" aria-pressed="false">近3天</button>
+                    <button type="button" data-home-range-preset="last7" aria-pressed="false">近7天</button>
+                    <button type="button" data-home-range-preset="last15" aria-pressed="false">近15天</button>
+                    <button type="button" data-home-range-preset="last30" aria-pressed="false">近30天</button>
+                    <button type="button" data-home-range-preset="thisMonth" aria-pressed="false">本月</button>
+                    <button type="button" data-home-range-preset="lastMonth" aria-pressed="false">上个月</button>
+                    <button type="button" data-home-range-preset="last3Months" aria-pressed="false">近3个月</button>
+                    <button type="button" data-home-range-preset="last6Months" aria-pressed="false">近6个月</button>
+                    <button type="button" data-home-range-preset="lastYear" aria-pressed="false">近一年</button>
                   </div>
-                  <div class="range-preset-strip">
-                    <button type="button" data-range="today" aria-pressed="true">今日</button>
-                    <button type="button" data-range="yesterday" aria-pressed="false">昨日</button>
-                    <button type="button" data-range="last7Days" aria-pressed="false">近 7 日</button>
-                    <button type="button" data-range="last30Days" aria-pressed="false">近 30 日</button>
-                  </div>
-                  <div class="date-range-fields" aria-label="自定义业务日期">
-                    <label>
-                      <span>开始</span>
+                </div>
+                <div class="range-popover" id="range-popover" role="dialog" aria-label="选择日期范围" hidden>
+                  <div class="calendar-input-row">
+                    <label class="calendar-input-card">
+                      <span>开始日期</span>
                       <input id="home-date-start" type="date" aria-label="开始日期">
                     </label>
-                    <i aria-hidden="true">—</i>
-                    <label>
-                      <span>结束</span>
+                    <label class="calendar-input-card">
+                      <span>结束日期</span>
                       <input id="home-date-end" type="date" aria-label="结束日期">
                     </label>
                   </div>
+                  <div id="home-calendar-grid" class="range-calendar-grid" aria-live="polite"></div>
+                  <div class="calendar-pick-note">先选开始日期，再选结束日期；也可以直接输入日期。快捷时间不用打开弹窗。</div>
                 </div>
               </div>
             </div>

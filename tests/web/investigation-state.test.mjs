@@ -358,7 +358,7 @@ test('filter changes mirror into the URL without navigating', async () => {
   const scopeHandler = source.slice(source.indexOf("elements.scope.addEventListener('change'"));
   assert.match(scopeHandler.slice(0, 320), /syncUrlFromState\(\)/);
   const rangeHandler = source.slice(source.lastIndexOf('elements.rangeButtons.forEach'));
-  assert.match(rangeHandler.slice(0, 440), /syncUrlFromState\(\)/);
+  assert.match(rangeHandler.slice(0, 700), /syncUrlFromState\(\)/);
   // Clear-filters resets state, focus and URL together.
   const clearHandler = source.slice(source.indexOf("elements.clearFilters.addEventListener('click'"));
   assert.match(clearHandler.slice(0, 520), /state\.focus = null/);

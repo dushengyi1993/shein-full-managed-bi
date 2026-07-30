@@ -52,7 +52,6 @@ test('full-managed primary navigation follows the sales-first semi-managed inter
   assert.match(html, /data-route="ops"><span>运营工具<\/span>/);
   assert.match(html, /data-route="system"><span>系统管理<\/span>/);
   assert.match(html, /缺失值不补零；建议不等于已执行/);
-  assert.doesNotMatch(styles, /gradient\(/);
   assert.match(styles, /\.table-wrap\s*\{[^}]*max-width:\s*100%[^}]*overflow:\s*auto/s);
   assert.match(styles, /@media \(max-width: 620px\)/);
 });
@@ -67,6 +66,9 @@ test('home shell keeps the historical filter, KPI tables, vertical trends and fo
   assert.match(html, /id="scope-filter"/);
   assert.match(html, /id="home-date-start"/);
   assert.match(html, /id="home-date-end"/);
+  assert.match(html, /data-home-range-preset="last3Months"/);
+  assert.match(html, /data-home-range-preset="last6Months"/);
+  assert.match(html, /data-home-range-preset="lastYear"/);
   assert.match(html, /aria-label="店铺或负责人范围"/);
   assert.doesNotMatch(html, /id="owner-filter"|id="store-filter"/);
   assert.match(app, /today: \{ label: '今日'/);
@@ -91,14 +93,17 @@ test('home shell keeps the historical filter, KPI tables, vertical trends and fo
   assert.match(app, /数据已过期/);
   assert.match(app, /数据未接入/);
   assert.match(app, /class="home-topbar home-verdict"/);
-  assert.match(app, /class="metric-matrix home-history-matrix"/);
-  assert.match(app, /class="trend-stack home-trend-stack home-history-trends"/);
+  assert.match(app, /class="metric-matrix cols-3 home-history-matrix"/);
+  assert.match(app, /class="trend-stack home-trend-stack"/);
+  assert.match(app, /data-home-trend-metric=/);
+  assert.match(app, /class="rank-list"/);
+  assert.match(app, /--rank-pct:/);
   assert.match(app, /class="home-footnote"/);
-  assert.match(parityStyles, /\.home-history-matrix\s*\{/);
-  assert.match(parityStyles, /\.metric-matrix-scroll\s*\{/);
+  assert.match(parityStyles, /\.metric-matrix\s*\{/);
+  assert.match(parityStyles, /\.metric-matrix \.matrix-cell\s*\{/);
   assert.match(parityStyles, /\.trend-stack\s*\{/);
-  assert.match(parityStyles, /\.rank-meter\s*\{/);
-  assert.match(parityStyles, /\.rank-identity\.canonical\s*\{/);
+  assert.match(parityStyles, /\.rank-item::before\s*\{/);
+  assert.match(parityStyles, /\.sidebar\s*\{[\s\S]*background: var\(--side\)/);
   assert.match(parityStyles, /\.home-footnote\s*\{/);
 
   // The retired home noise stays defined for other routes but leaves renderHome.
@@ -156,12 +161,11 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260729\\.12`));
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260730\\.5`));
   }
   assert.doesNotMatch(html, /v=20260728\.[123]/);
   for (const sheet of [styles, parityStyles]) {
     assert.doesNotMatch(sheet, /font-family:[^;]*(?:Inter|Roboto|Open Sans)/i);
-    assert.doesNotMatch(sheet, /gradient\(/);
     assert.match(sheet, /font:[^;]*"PingFang SC"|font-family:[^;]*"PingFang SC"/);
   }
   assert.match(styles, /--bg: #fafaf8/);
@@ -169,7 +173,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.match(styles, /--ink: #1a1916/);
   assert.match(styles, /--line: #e8e6e1/);
   assert.match(styles, /--accent: #2d6a4f/);
-  assert.match(parityStyles, /\.home-kpi-table\s*\{[^}]*border-collapse: separate[^}]*border-spacing: 0/s);
+  assert.match(parityStyles, /\.metric-matrix\s*\{[^}]*display: grid/s);
 });
 
 test('procurement uses an independent server query and authenticated snapshot update stream', async () => {
