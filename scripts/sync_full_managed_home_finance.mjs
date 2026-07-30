@@ -96,8 +96,14 @@ async function runWithConcurrency(items, concurrency, worker) {
 }
 
 function safeCode(error, fallback = 'FINANCE_SYNC_FAILED') {
-  const code = String(error?.code ?? fallback).toUpperCase();
-  return /^[A-Z][A-Z0-9_]{2,80}$/.test(code) ? code : fallback;
+  const direct = String(error?.code ?? '').toUpperCase();
+  if (/^[A-Z][A-Z0-9_]{2,80}$/.test(direct)) return direct;
+  const messageCode = String(error?.message ?? '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80);
+  return /^[A-Z][A-Z0-9_]{2,80}$/.test(messageCode) ? messageCode : fallback;
 }
 
 async function main() {
