@@ -319,6 +319,11 @@ export function createRequestHandler(options = {}) {
       return;
     }
 
+    if (auth.enabled && url.pathname !== '/api/logout') {
+      const refreshedCookie = auth.refreshCookieForRequest(request);
+      if (refreshedCookie) response.setHeader('Set-Cookie', refreshedCookie);
+    }
+
     if (url.pathname === '/api/events') {
       if (method !== 'GET') {
         response.setHeader('Allow', 'GET');

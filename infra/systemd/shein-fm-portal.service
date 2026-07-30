@@ -18,6 +18,7 @@ Environment=FULL_BI_PORT=8788
 Environment=FULL_BI_TRUST_PROXY=true
 Environment=FULL_BI_COOKIE_SECURE=true
 Environment=FULL_BI_PUBLIC_ORIGIN=https://fm.dushengyi.cc
+Environment=FULL_BI_SESSION_TTL_SECONDS=2592000
 Environment=FULL_BI_DATA_FILE=/srv/shein-fm/runtime/dashboard/dashboard.json
 Environment=FULL_BI_AUTH_FILE=/srv/shein-fm/secrets/portal/bi_users.json
 Environment=FULL_BI_SESSION_SECRET_FILE=/srv/shein-fm/secrets/portal/session-secret

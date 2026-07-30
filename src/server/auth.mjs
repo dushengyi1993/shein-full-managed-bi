@@ -8,7 +8,7 @@ import {
 import { readFileSync, statSync } from 'node:fs';
 
 const DEFAULT_COOKIE_NAME = 'fm_bi_session';
-const DEFAULT_SESSION_TTL_SECONDS = 8 * 60 * 60;
+const DEFAULT_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_RATE_LIMIT_MAX_ATTEMPTS = 5;
 const DEFAULT_MAX_BODY_BYTES = 16 * 1024;
@@ -594,7 +594,7 @@ export function createAuthService(options = {}) {
     return attributes.join('; ');
   }
 
-  function verifyToken(token, now = Date.now()) {
+  function verifySession(token, now = Date.now()) {
     const [payload, suppliedSignature, extra] = String(token || '').split('.');
     if (!payload || !suppliedSignature || extra !== undefined) return null;
 
@@ -632,6 +632,13 @@ export function createAuthService(options = {}) {
     const user = users.get(session.u.toLocaleLowerCase('en-US'));
     if (!user || user.username !== session.u || user.credentialTag !== session.c) return null;
     return {
+      session,
+      user,
+    };
+  }
+
+  function publicUser(user) {
+    return {
       username: user.username,
       displayName: user.displayName,
       employeeCode: user.employeeCode,
@@ -641,9 +648,25 @@ export function createAuthService(options = {}) {
     };
   }
 
+  function verifyToken(token, now = Date.now()) {
+    const verified = verifySession(token, now);
+    return verified ? publicUser(verified.user) : null;
+  }
+
   function authenticateRequest(request, now) {
     const token = parseCookies(request.headers.cookie).get(cookieName);
     return verifyToken(token, now);
+  }
+
+  function refreshCookieForRequest(request, now = Date.now()) {
+    const token = parseCookies(request.headers.cookie).get(cookieName);
+    const verified = verifySession(token, now);
+    if (!verified) return null;
+
+    const nowSeconds = Math.floor(now / 1000);
+    const refreshAfterSeconds = Math.max(1, Math.floor(sessionTtlSeconds / 2));
+    if (nowSeconds - verified.session.iat < refreshAfterSeconds) return null;
+    return sessionCookie(verified.user, now);
   }
 
   function pruneAttempts(now) {
@@ -759,6 +782,7 @@ export function createAuthService(options = {}) {
     cookieName,
     maxBodyBytes,
     publicOrigin,
+    refreshCookieForRequest,
     sessionCookie,
     trustProxy,
     verifyToken,

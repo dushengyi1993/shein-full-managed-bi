@@ -112,6 +112,8 @@ sudo install -d -o root -g root -m 0700 \
 
 不同组件使用独立普通文件；不得用指向更宽权限目录的符号链接。数据库 `database.env` 只包含该组件 LOGIN 的连接串。Webhook Worker 当前不会调用实际 OpenAPI 回查客户端，即使其配置中存在店铺映射。
 
+Portal 会话默认有效期为 30 天。合法会话使用超过一半有效期后，任一正常访问会签发新的 `HttpOnly / Secure / SameSite=Lax` Cookie，把有效期再延长 30 天；长期完全不访问仍会自然过期。生产 unit 必须显式设置 `FULL_BI_SESSION_TTL_SECONDS=2592000`，修改会话时长后旧 Cookie 会失效并要求重新登录一次。
+
 ## 4. 数据库密码与兼容切换
 
 复制模板：

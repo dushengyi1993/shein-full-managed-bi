@@ -249,6 +249,67 @@ test('rejects tampered and expired HMAC session tokens', async () => {
   assert.equal(auth.verifyToken(token, now + 2_000), null);
 });
 
+test('renews a valid session after half its lifetime without extending idle sessions', async () => {
+  const auth = createAuthService({
+    usersFile,
+    sessionSecret,
+    sessionTtlSeconds: 10,
+    secureCookie: false,
+  });
+  const now = Date.now();
+  const login = await auth.authenticate(
+    { socket: { remoteAddress: '127.0.0.1' } },
+    'operator',
+    'correct-test-password',
+    now,
+  );
+  assert.equal(login.ok, true);
+  const originalCookie = cookiePair(login.cookie);
+  const request = { headers: { cookie: originalCookie } };
+
+  assert.equal(auth.refreshCookieForRequest(request, now + 4_000), null);
+  const refreshedCookie = auth.refreshCookieForRequest(request, now + 6_000);
+  assert.match(refreshedCookie, /^fm_bi_session=/);
+  assert.match(refreshedCookie, /Max-Age=10/);
+
+  const refreshedToken = cookiePair(refreshedCookie).split('=', 2)[1];
+  assert.equal(auth.verifyToken(originalCookie.split('=', 2)[1], now + 11_000), null);
+  assert.deepEqual(auth.verifyToken(refreshedToken, now + 11_000), login.user);
+  assert.equal(auth.refreshCookieForRequest(request, now + 11_000), null);
+});
+
+test('adds a renewed session cookie to authenticated portal responses', async () => {
+  const refreshed = 'fm_bi_session=renewed-token; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000; Secure';
+  const renewalServer = createDashboardServer({
+    dataFile: fixture,
+    runtimeEnvironment: 'production',
+    authService: Object.freeze({
+      enabled: true,
+      authenticateRequest: () => ({
+        username: 'operator',
+        displayName: 'Test Operator',
+        employeeCode: 'operator',
+        role: 'admin',
+        allStores: true,
+        storeCodes: [],
+      }),
+      refreshCookieForRequest: () => refreshed,
+      trustProxy: false,
+      publicOrigin: '',
+    }),
+  });
+  const renewalBaseUrl = await listen(renewalServer);
+  try {
+    const response = await fetch(`${renewalBaseUrl}/api/me`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('set-cookie'), refreshed);
+  } finally {
+    await new Promise((resolve, reject) => {
+      renewalServer.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
 test('keeps health public while redirecting pages and rejecting unauthenticated APIs', async () => {
   const health = await fetch(`${baseUrl}/health`);
   assert.equal(health.status, 200);
