@@ -5219,6 +5219,13 @@ function availableMetricSum(rows, key) {
   return values.reduce((sum, value) => sum + value, 0);
 }
 
+function availableSignedMetricSum(rows, key) {
+  const values = rows.map((row) => row?.[key])
+    .filter((value) => typeof value === 'number' && Number.isFinite(value));
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0);
+}
+
 function periodMetric(bundle, key) {
   if (bundle.productMode) {
     if (key === 'salesQuantity') {
@@ -5254,6 +5261,9 @@ function periodMetric(bundle, key) {
   }
   if (key === 'netDealAmount') {
     return completeSignedMetricSum(bundle.financeDaily, 'netAmount');
+  }
+  if (key === 'salesQuantity') {
+    return completeMetricSum(bundle.financeDaily, 'goodsCount');
   }
   return null;
 }
@@ -5429,7 +5439,7 @@ function groupHistoryByDate(bundle) {
     return {
       date,
       salesQuantity: directQuantity ?? (
-        bundle.productMode && financeAvailable
+        financeAvailable
           ? completeMetricSum(financeRows, 'goodsCount')
           : null
       ),
@@ -5469,8 +5479,8 @@ function groupHistoryByMonth(rows) {
       ...Object.fromEntries(
         Object.keys(HOME_TREND_METRICS)
           .map((key) => [key, key === 'netDealAmount'
-            ? completeSignedMetricSum(item.rows, key)
-            : completeMetricSum(item.rows, key)]),
+            ? availableSignedMetricSum(item.rows, key)
+            : availableMetricSum(item.rows, key)]),
       ),
       currency: currencies.length === 1 ? currencies[0] : null,
       amountBasis: item.rows.every(({ amountBasis }) => amountBasis === 'FINANCE')
@@ -5645,7 +5655,12 @@ function renderHistoryRankings() {
       }));
     storeAmountBasis = storeAmount.length ? 'FINANCE' : 'UNAVAILABLE';
   }
-  const storeQuantity = aggregateHistoryRanking(bundle.storeDaily, storeIdentity, 'salesQuantity');
+  let storeQuantity = aggregateHistoryRanking(bundle.storeDaily, storeIdentity, 'salesQuantity');
+  let storeQuantityBasis = 'OPERATING';
+  if (!storeQuantity.length) {
+    storeQuantity = aggregateHistoryRanking(bundle.financeDaily, storeIdentity, 'goodsCount');
+    storeQuantityBasis = storeQuantity.length ? 'FINANCE' : 'UNAVAILABLE';
+  }
   let productAmount = aggregateHistoryRanking(
     bundle.productDaily,
     productIdentity,
@@ -5689,7 +5704,13 @@ function renderHistoryRankings() {
           storeAmount,
           { money: true },
         )}
-        ${historyRankTable('店铺销量排行', note, storeQuantity)}
+        ${historyRankTable(
+          storeQuantityBasis === 'FINANCE' ? '店铺财务明细件数排行' : '店铺销量排行',
+          storeQuantityBasis === 'FINANCE'
+            ? '来自报账销售款明细 goodsCount，按报账明细生成日汇总'
+            : note,
+          storeQuantity,
+        )}
         ${historyRankTable(
           productAmountBasis === 'FINANCE' ? '货号财务报账收入排行' : '货号成交金额排行（估算）',
           productAmountBasis === 'FINANCE'

@@ -91,6 +91,19 @@ test('home assembles header, KPI tables, vertical trends and rankings in order',
   assert.match(trends, /home-history-trends/);
 });
 
+test('monthly trend and store quantity stay useful with explicitly labelled finance fallback', async () => {
+  const app = await read('src/web/app.js');
+  const monthly = functionBody(app, 'groupHistoryByMonth');
+  const period = functionBody(app, 'periodMetric');
+  const rankings = functionBody(app, 'renderHistoryRankings');
+
+  assert.match(monthly, /availableMetricSum\(item\.rows, key\)/);
+  assert.match(monthly, /availableSignedMetricSum\(item\.rows, key\)/);
+  assert.match(period, /key === 'salesQuantity'[\s\S]*bundle\.financeDaily, 'goodsCount'/);
+  assert.match(rankings, /storeQuantityBasis === 'FINANCE' \? '店铺财务明细件数排行'/);
+  assert.match(rankings, /来自报账销售款明细 goodsCount/);
+});
+
 test('KPI matrix is one dense real table with legal comparisons only', async () => {
   const [app, parity] = await Promise.all([
     read('src/web/app.js'),
