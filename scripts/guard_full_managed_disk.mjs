@@ -16,7 +16,7 @@ import {
 const execFileAsync = promisify(execFile);
 
 /**
- * Root filesystem pressure guard.
+ * Full-managed filesystem pressure guard.
  *
  * This tool observes and reports only: it never scans, prunes or deletes
  * anything. Warning at 75% is journal-visible but exits 0; critical at 85% exits
@@ -103,7 +103,10 @@ async function main() {
   const usage = parseDfOutput(output);
   const severity = classifyUsage(usage.usedPercent);
   const now = Date.now();
-  const statusPath = path.posix.join(runtimeDir, 'disk-guard.json');
+  const statusName = filesystem === '/'
+    ? 'disk-guard.json'
+    : `disk-guard-${String(filesystem).replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')}.json`;
+  const statusPath = path.posix.join(runtimeDir, statusName);
 
   let previous = null;
   try {

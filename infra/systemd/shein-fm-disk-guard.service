@@ -1,5 +1,5 @@
 [Unit]
-Description=Observe SHEIN full-managed root filesystem pressure
+Description=Observe SHEIN full-managed root and data disk pressure
 Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
 
 [Service]
@@ -11,6 +11,7 @@ WorkingDirectory=/opt/shein-fm/current
 # Observe only: this unit never scans, prunes or deletes anything. A critical
 # reading (>=85%) exits non-zero so the unit is visibly failed for ops.
 ExecStart=/usr/bin/node scripts/guard_full_managed_disk.mjs
+ExecStart=/usr/bin/node scripts/guard_full_managed_disk.mjs --filesystem=/data
 ReadWritePaths=/srv/shein-fm/runtime
 ProtectSystem=strict
 ProtectHome=true
