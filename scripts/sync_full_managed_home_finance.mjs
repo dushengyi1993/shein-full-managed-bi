@@ -14,24 +14,30 @@ import { SheinOpenApiClient } from '../src/openapi/shein-client.mjs';
 import { createFinanceHomeRepository } from '../src/warehouse/finance-home-repository.mjs';
 import { normalizeFullManagedStoreCode } from '../src/config/full-managed-stores.mjs';
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const args = {
     stores: [],
     from: null,
     to: null,
     config: process.env.FULL_BI_OPENAPI_CONFIG_FILE,
     execute: false,
+    resume: true,
+    concurrency: 2,
   };
   for (const token of argv) {
     const match = /^--([a-z-]+)(?:=(.*))?$/.exec(token);
     if (!match) throw new Error('FINANCE_CLI_ARGUMENT_INVALID');
     const [, name, value] = match;
     if (name === 'execute' && value === undefined) args.execute = true;
+    else if (name === 'no-resume' && value === undefined) args.resume = false;
     else if (name === 'stores' && value) {
       args.stores = [...new Set(value.split(',').map((item) => item.trim().toUpperCase()))];
     } else if (name === 'from' && value) args.from = value;
     else if (name === 'to' && value) args.to = value;
     else if (name === 'config' && value) args.config = value;
+    else if (name === 'concurrency' && value && /^[1-4]$/.test(value)) {
+      args.concurrency = Number(value);
+    }
     else throw new Error('FINANCE_CLI_ARGUMENT_INVALID');
   }
   if (
@@ -44,6 +50,49 @@ function parseArgs(argv) {
     throw new Error('FINANCE_CLI_SCOPE_REQUIRED');
   }
   return args;
+}
+
+function windowKey(storeCode, window) {
+  return `${storeCode}\u001f${window.startDate}\u001f${window.endDate}`;
+}
+
+async function succeededWindowKeys(pool, { stores, from, to }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL ROLE sheinfm_sales_loader');
+    const result = await client.query(
+      `SELECT store_code, start_date::text, end_date::text
+       FROM ops.full_home_finance_sync_window
+       WHERE store_code = ANY($1::text[])
+         AND start_date >= $2::date
+         AND end_date <= $3::date
+         AND result_status = 'SUCCEEDED'`,
+      [stores, from, to],
+    );
+    await client.query('COMMIT');
+    return new Set(result.rows.map((row) => windowKey(row.store_code, {
+      startDate: row.start_date,
+      endDate: row.end_date,
+    })));
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function runWithConcurrency(items, concurrency, worker) {
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      await worker(items[index], index);
+    }
+  });
+  await Promise.all(workers);
 }
 
 function safeCode(error, fallback = 'FINANCE_SYNC_FAILED') {
@@ -62,6 +111,8 @@ async function main() {
       from: args.from,
       to: args.to,
       windowCount: windows.length,
+      concurrency: args.concurrency,
+      resume: args.resume,
       networkCalls: 0,
       databaseConnections: 0,
     }, null, 2));
@@ -81,13 +132,20 @@ async function main() {
   });
   const pool = new Pool({
     connectionString: databaseUrl,
-    max: 2,
+    max: args.concurrency + 2,
     application_name: 'shein_fm_home_finance',
   });
   const repository = createFinanceHomeRepository({ pool });
   const results = [];
   try {
-    for (const store of stores) {
+    const succeeded = args.resume
+      ? await succeededWindowKeys(pool, {
+        stores: stores.map(({ storeCode }) => storeCode),
+        from: args.from,
+        to: args.to,
+      })
+      : new Set();
+    await runWithConcurrency(stores, args.concurrency, async (store) => {
       const client = new SheinOpenApiClient({
         baseUrl: config.baseUrl,
         openKeyId: store.openKeyId,
@@ -96,6 +154,10 @@ async function main() {
         allowFakeBaseUrl: config.allowFakeBaseUrl,
       });
       for (const window of windows) {
+        if (succeeded.has(windowKey(store.storeCode, window))) {
+          results.push({ storeCode: store.storeCode, ...window, ok: true, skipped: true });
+          continue;
+        }
         const observedAt = new Date().toISOString();
         try {
           const fetched = await fetchFinanceWindow(client, window);
@@ -131,22 +193,38 @@ async function main() {
           });
         }
       }
-    }
+    });
   } finally {
     await pool.end();
   }
   const failed = results.filter(({ ok }) => !ok).length;
+  const skipped = results.filter(({ skipped }) => skipped).length;
+  const loaded = results.filter(({ ok, skipped: wasSkipped }) => ok && !wasSkipped).length;
+  const byStore = stores.map(({ storeCode }) => {
+    const scoped = results.filter((result) => result.storeCode === storeCode);
+    return {
+      storeCode,
+      loadedWindows: scoped.filter(({ ok, skipped: wasSkipped }) => ok && !wasSkipped).length,
+      skippedWindows: scoped.filter(({ skipped: wasSkipped }) => wasSkipped).length,
+      failedWindows: scoped.filter(({ ok }) => !ok).length,
+      firstErrorCode: scoped.find(({ ok }) => !ok)?.errorCode ?? null,
+    };
+  });
   console.log(JSON.stringify({
     ok: failed === 0,
     storeCount: stores.length,
     windowCount: windows.length,
+    loadedWindows: loaded,
+    skippedWindows: skipped,
     failedWindows: failed,
-    results,
+    stores: byStore,
   }, null, 2));
   if (failed > 0) process.exitCode = 2;
 }
 
-main().catch((error) => {
-  console.error(JSON.stringify({ ok: false, errorCode: safeCode(error) }));
-  process.exitCode = 1;
-});
+if (process.argv[1]?.replaceAll('\\', '/').endsWith('/sync_full_managed_home_finance.mjs')) {
+  main().catch((error) => {
+    console.error(JSON.stringify({ ok: false, errorCode: safeCode(error) }));
+    process.exitCode = 1;
+  });
+}
