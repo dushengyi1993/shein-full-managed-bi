@@ -1,0 +1,42 @@
+[Unit]
+Description=Backfill all verified full-managed purchase-order history
+Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
+Wants=network-online.target
+Requires=shein-fm-db.service
+After=network-online.target shein-fm-db.service shein-fm-db-migrate.service shein-fm-home-finance-backfill.service
+OnSuccess=shein-fm-dashboard-materialize.service
+RequiresMountsFor=/data /srv/shein-fm/runtime
+ConditionPathExists=/srv/shein-fm/runtime/purchase-order-history.enabled
+
+[Service]
+Type=oneshot
+User=sheinfm-supply
+Group=sheinfm-supply
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+Environment=NODE_ENV=production
+Environment=SHEIN_FM_CLOUD_EXECUTION=1
+Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/supply/openapi.json
+EnvironmentFile=/srv/shein-fm/secrets/supply/database.env
+RuntimeDirectory=shein-fm-supply
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/flock -n /run/shein-fm-supply/purchase-order-history.lock /usr/bin/node scripts/backfill_full_managed_purchase_order_history.mjs --execute --approved-manifest-hash=48fbec562c7d875e6d1335d310a177d67149d4b2d5a777e74b09dbc91d650be4
+TimeoutStartSec=72h
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/srv/shein-fm/secrets/supply/openapi.json
+ReadOnlyPaths=/srv/shein-fm/secrets/supply/database.env
+ReadWritePaths=/run/shein-fm-supply /srv/shein-fm/runtime
+MemoryHigh=1G
+MemoryMax=2G

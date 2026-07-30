@@ -84,3 +84,31 @@ test('fetch audit stores bounded hashes and counts, never a response body', asyn
   assert.equal(insert.params[7], 'b'.repeat(64));
   assert.doesNotMatch(insert.sql, /response_body\b/);
 });
+
+test('successful daily dates read only completed same-day endpoint audits', async () => {
+  const runtime = fakePool();
+  runtime.pool.connect = async () => ({
+    async query(sql, params) {
+      runtime.calls.push({ sql: String(sql), params });
+      if (/SELECT requested_start_date::text/.test(sql)) {
+        return { rows: [{ business_date: '2026-07-28' }] };
+      }
+      return { rowCount: 1, rows: [] };
+    },
+    release() {
+      runtime.calls.push({ sql: 'RELEASE' });
+    },
+  });
+  const repository = createFullHomeHistoryRepository({ pool: runtime.pool });
+  const dates = await repository.successfulDailyDates({
+    storeCode: 'DL5477',
+    endpointCode: 'REGION_RANK',
+    startDate: '2026-07-01',
+    endDate: '2026-07-31',
+  });
+  assert.deepEqual([...dates], ['2026-07-28']);
+  const select = runtime.calls.find((call) => /SELECT requested_start_date::text/.test(call.sql));
+  assert.deepEqual(select.params, ['DL5477', 'REGION_RANK', '2026-07-01', '2026-07-31']);
+  assert.match(select.sql, /result_status = 'SUCCEEDED'/);
+  assert.match(select.sql, /requested_start_date = requested_end_date/);
+});

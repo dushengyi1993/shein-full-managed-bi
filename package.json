@@ -34,6 +34,7 @@
     "materialize:dashboard": "node scripts/materialize_full_managed_dashboard.mjs",
     "backfill:plan": "node scripts/plan_full_managed_backfill.mjs",
     "backfill:run": "node scripts/run_full_managed_backfill.mjs",
+    "backfill:purchase-order-history": "node scripts/backfill_full_managed_purchase_order_history.mjs",
     "webapi:plan": "node scripts/plan_full_managed_webapi_experiment.mjs",
     "webapi:run": "node scripts/run_full_managed_webapi_experiment.mjs",
     "test:backfill": "node --test tests/backfill/*.test.mjs",

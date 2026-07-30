@@ -1,12 +1,16 @@
 import {
   buildAnalyseSearchRequest,
   buildProductDailyRequest,
+  buildRegionRankRequest,
   buildShopDailyRequest,
   buildStoreDailyHistoryRequest,
+  buildTradeOverviewRequest,
   historyWindows,
   parseProductDailyRows,
+  parseRegionRows,
   parseShopAnalysisRows,
   parseStoreDailyHistory,
+  parseTradeOverview,
   sha256Json,
 } from './home-contracts.mjs';
 
@@ -78,6 +82,17 @@ function nowIso(clock) {
   const date = current instanceof Date ? current : new Date(current);
   if (Number.isNaN(date.valueOf())) throw new TypeError('clock returned an invalid date');
   return date.toISOString();
+}
+
+function datesInWindow({ startDate, endDate }) {
+  const dates = [];
+  const cursor = new Date(`${startDate}T00:00:00.000Z`);
+  const last = new Date(`${endDate}T00:00:00.000Z`);
+  while (cursor <= last) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
 }
 
 function mergeShopRows(rows) {
@@ -179,6 +194,8 @@ async function syncStoreWindow({
   repository,
   clock,
   includeProducts,
+  completedTradeDates,
+  completedRegionDates,
 }) {
   const result = {
     storeCode,
@@ -186,6 +203,8 @@ async function syncStoreWindow({
     storeDaily: null,
     shopDaily: null,
     productDaily: null,
+    tradeDaily: null,
+    regionDaily: null,
   };
   const storeRequest = buildStoreDailyHistoryRequest(window);
   result.storeDaily = await requestAndAudit({
@@ -269,6 +288,100 @@ async function syncStoreWindow({
     result.shopDaily = shopModel;
   }
 
+  const tradeDaily = {
+    ok: true,
+    loaded: 0,
+    skipped: 0,
+    failed: 0,
+    firstErrorCode: null,
+  };
+  const regionDaily = {
+    ok: true,
+    loaded: 0,
+    skipped: 0,
+    failed: 0,
+    acceptedRows: 0,
+    firstErrorCode: null,
+  };
+  for (const businessDate of datesInWindow(window)) {
+    if (completedTradeDates.has(businessDate)) {
+      tradeDaily.skipped += 1;
+    } else {
+      const request = buildTradeOverviewRequest({
+        startDate: businessDate,
+        endDate: businessDate,
+        observedDate: businessDate,
+      });
+      const trade = await requestAndAudit({
+        transport,
+        repository,
+        storeCode,
+        endpointCode: 'TRADE_OVERVIEW',
+        request,
+        startDate: businessDate,
+        endDate: businessDate,
+        clock,
+        handle: async (body, observedAt) => {
+          const row = parseTradeOverview(body, {
+            storeCode,
+            businessDate,
+            observedAt,
+          });
+          await repository.upsertStoreDaily([row]);
+          return { accepted: 1 };
+        },
+      });
+      if (trade.ok) {
+        tradeDaily.loaded += 1;
+        completedTradeDates.add(businessDate);
+      } else {
+        tradeDaily.ok = false;
+        tradeDaily.failed += 1;
+        tradeDaily.firstErrorCode ??= trade.errorCode;
+      }
+    }
+
+    if (completedRegionDates.has(businessDate)) {
+      regionDaily.skipped += 1;
+      continue;
+    }
+    const request = buildRegionRankRequest({
+      startDate: businessDate,
+      endDate: businessDate,
+      observedDate: businessDate,
+    });
+    const region = await requestAndAudit({
+      transport,
+      repository,
+      storeCode,
+      endpointCode: 'REGION_RANK',
+      request,
+      startDate: businessDate,
+      endDate: businessDate,
+      clock,
+      handle: async (body, observedAt) => {
+        const rows = parseRegionRows(body, {
+          storeCode,
+          businessDate,
+          observedAt,
+        });
+        await repository.upsertRegions(rows);
+        return { accepted: rows.length };
+      },
+    });
+    if (region.ok) {
+      regionDaily.loaded += 1;
+      regionDaily.acceptedRows += region.accepted;
+      completedRegionDates.add(businessDate);
+    } else {
+      regionDaily.ok = false;
+      regionDaily.failed += 1;
+      regionDaily.firstErrorCode ??= region.errorCode;
+    }
+  }
+  result.tradeDaily = tradeDaily;
+  result.regionDaily = regionDaily;
+
   if (!includeProducts) return result;
 
   const productModelRequest = buildProductDailyRequest({
@@ -349,7 +462,9 @@ export async function runFullHomeHistorySync({
   for (const method of [
     'recordFetchAudit',
     'upsertStoreDaily',
+    'upsertRegions',
     'upsertProducts',
+    'successfulDailyDates',
   ]) {
     if (typeof repository?.[method] !== 'function') {
       throw new TypeError(`repository.${method} is required`);
@@ -363,6 +478,20 @@ export async function runFullHomeHistorySync({
     try {
       session = await openSession({ storeCode });
       const transport = transportFactory({ session });
+      const [completedTradeDates, completedRegionDates] = await Promise.all([
+        repository.successfulDailyDates({
+          storeCode,
+          endpointCode: 'TRADE_OVERVIEW',
+          startDate,
+          endDate,
+        }),
+        repository.successfulDailyDates({
+          storeCode,
+          endpointCode: 'REGION_RANK',
+          startDate,
+          endDate,
+        }),
+      ]);
       for (const window of windows) {
         results.push(await syncStoreWindow({
           storeCode,
@@ -371,6 +500,8 @@ export async function runFullHomeHistorySync({
           repository,
           clock,
           includeProducts,
+          completedTradeDates,
+          completedRegionDates,
         }));
       }
     } catch (error) {
@@ -389,12 +520,20 @@ export async function runFullHomeHistorySync({
     || row.storeDaily?.ok === false
     || row.shopDaily?.ok === false
   )).length;
+  const partialWindows = results.filter((row) => (
+    row.sessionErrorCode
+    || row.productDaily?.ok === false
+    || row.tradeDaily?.ok === false
+    || row.regionDaily?.ok === false
+  )).length;
   return Object.freeze({
     ok: failedWindows === 0,
+    complete: failedWindows === 0 && partialWindows === 0,
     storeCount: storeCodes.length,
     windowCount: windows.length,
     resultCount: results.length,
     failedWindows,
+    partialWindows,
     results: Object.freeze(results),
   });
 }

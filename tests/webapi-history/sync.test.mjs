@@ -75,9 +75,14 @@ test('homepage history sync processes one Profile at a time and preserves partia
       async upsertProducts(rows) {
         productRows.push(...rows);
       },
+      async upsertRegions() {},
+      async successfulDailyDates() {
+        return new Set();
+      },
     },
   });
   assert.equal(result.ok, true);
+  assert.equal(result.complete, false);
   assert.equal(activeSessions, 0);
   assert.deepEqual(events.filter((item) => item.startsWith('open:') || item.startsWith('close:')), [
     'open:DL5477',
@@ -93,5 +98,93 @@ test('homepage history sync processes one Profile at a time and preserves partia
     audits.filter((entry) => entry.sanitizedErrorCode === 'HOME_ANALYSE_MODEL_REJECTED').length,
     2,
   );
+  assert.equal(events.filter((item) => item.endsWith(':TRADE_OVERVIEW')).length, 2);
+  assert.equal(events.filter((item) => item.endsWith(':REGION_RANK')).length, 2);
   assert.ok(audits.every((entry) => !JSON.stringify(entry).includes('private platform detail')));
+});
+
+test('homepage history sync resumes successful daily trade and region requests', async () => {
+  const events = [];
+  const storeRows = [];
+  const regionRows = [];
+  const result = await runFullHomeHistorySync({
+    storeCodes: ['DL5477'],
+    startDate: '2026-07-28',
+    endDate: '2026-07-29',
+    includeProducts: false,
+    openSession: async () => ({
+      evaluate() {},
+      async close() {},
+    }),
+    transportFactory: () => async (endpointCode, request) => {
+      events.push(`${endpointCode}:${request.startDate ?? request.time?.startDate}`);
+      if (endpointCode === 'STORE_DAILY_HISTORY') {
+        return response({
+          code: '0',
+          info: [
+            { dataDate: '20260728', saleCnt1d: '4' },
+            { dataDate: '20260729', saleCnt1d: '5' },
+          ],
+        });
+      }
+      if (endpointCode === 'ANALYSE_MODEL') {
+        return response({ code: '0', info: { status: true } });
+      }
+      if (endpointCode === 'ANALYSE_SEARCH') {
+        return response({
+          code: '0',
+          info: { analyseResult: { data: [], meta: { count: 0 } } },
+        });
+      }
+      if (endpointCode === 'TRADE_OVERVIEW') {
+        return response({
+          code: '0',
+          info: {
+            sales: { newUser: '2' },
+            payOrder: { newUser: '1', cnt: '3' },
+          },
+        });
+      }
+      return response({
+        code: '0',
+        info: {
+          countryTrade: [{
+            key: 'SA',
+            name: 'Saudi Arabia',
+            saleCnt: '5',
+            saleRate: '50',
+          }],
+        },
+      });
+    },
+    repository: {
+      async recordFetchAudit() {},
+      async upsertStoreDaily(rows) {
+        storeRows.push(...rows);
+      },
+      async upsertProducts() {},
+      async upsertRegions(rows) {
+        regionRows.push(...rows);
+      },
+      async successfulDailyDates({ endpointCode }) {
+        return endpointCode === 'TRADE_OVERVIEW'
+          ? new Set(['2026-07-28'])
+          : new Set(['2026-07-29']);
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.complete, true);
+  assert.deepEqual(
+    events.filter((item) => item.startsWith('TRADE_OVERVIEW')),
+    ['TRADE_OVERVIEW:2026-07-29'],
+  );
+  assert.deepEqual(
+    events.filter((item) => item.startsWith('REGION_RANK')),
+    ['REGION_RANK:2026-07-28'],
+  );
+  assert.equal(storeRows.filter((row) => row.sourceCode === 'WEBAPI_TRADE').length, 1);
+  assert.equal(regionRows.length, 1);
+  assert.equal(result.results[0].tradeDaily.skipped, 1);
+  assert.equal(result.results[0].regionDaily.skipped, 1);
 });

@@ -325,6 +325,14 @@ use the required two-step sequence: `/sbn/analyse/model_dimension` first, then
 stale session results can never be mistaken for the requested range. Product
 analysis failures are audited independently and do not erase valid store facts.
 
+New-customer order/sales metrics and top-region evidence are not 90-day curve
+responses. The backfill therefore calls `/sbn/trade/overview` and
+`/sbn/trade/rank_top` at single-day grain, writes only that business date, and
+records a body hash plus accepted-row count. Before each Profile run it reads
+successful same-day audit keys and skips those dates. This makes the long
+24-store backfill resumable without treating an aggregate range response as a
+daily fact.
+
 ```bash
 npm run sync:home-history -- \
   --stores=DL5477,MZ2406 \

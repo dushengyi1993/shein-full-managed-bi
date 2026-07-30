@@ -434,10 +434,38 @@ export function createFullHomeHistoryRepository({ pool } = {}) {
     });
   }
 
+  async function successfulDailyDates({
+    storeCode: inputStoreCode,
+    endpointCode,
+    startDate,
+    endDate,
+  } = {}) {
+    const store = storeCode(inputStoreCode);
+    const endpoint = text(endpointCode, 'endpointCode', 40);
+    const start = date(startDate, 'startDate');
+    const end = date(endDate, 'endDate');
+    if (start > end) throw new TypeError('history date range is invalid');
+    return inCapabilityTransaction(pool, async (client) => {
+      const result = await client.query(`
+        SELECT requested_start_date::text AS business_date
+        FROM raw.webapi_home_fetch_audit
+        WHERE store_code = $1
+          AND endpoint_code = $2
+          AND requested_start_date >= $3::date
+          AND requested_end_date <= $4::date
+          AND requested_start_date = requested_end_date
+          AND result_status = 'SUCCEEDED'
+        GROUP BY requested_start_date
+        ORDER BY requested_start_date`, [store, endpoint, start, end]);
+      return new Set(result.rows.map((row) => row.business_date));
+    });
+  }
+
   return Object.freeze({
     upsertStoreDaily,
     upsertRegions,
     upsertProducts,
     recordFetchAudit,
+    successfulDailyDates,
   });
 }
