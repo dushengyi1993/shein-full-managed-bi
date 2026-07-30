@@ -117,7 +117,7 @@ test('homepage history sync resumes successful daily trade and region requests',
       async close() {},
     }),
     transportFactory: () => async (endpointCode, request) => {
-      events.push(`${endpointCode}:${request.startDate ?? request.time?.startDate}`);
+      events.push(`${endpointCode}:${request.startDate ?? request.startDt ?? request.time?.startDate}`);
       if (endpointCode === 'STORE_DAILY_HISTORY') {
         return response({
           code: '0',
@@ -177,11 +177,11 @@ test('homepage history sync resumes successful daily trade and region requests',
   assert.equal(result.complete, true);
   assert.deepEqual(
     events.filter((item) => item.startsWith('TRADE_OVERVIEW')),
-    ['TRADE_OVERVIEW:2026-07-29'],
+    ['TRADE_OVERVIEW:20260729'],
   );
   assert.deepEqual(
     events.filter((item) => item.startsWith('REGION_RANK')),
-    ['REGION_RANK:2026-07-28'],
+    ['REGION_RANK:20260728'],
   );
   assert.equal(storeRows.filter((row) => row.sourceCode === 'WEBAPI_TRADE').length, 1);
   assert.equal(regionRows.length, 1);

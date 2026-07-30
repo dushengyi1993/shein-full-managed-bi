@@ -333,6 +333,11 @@ successful same-day audit keys and skips those dates. This makes the long
 24-store backfill resumable without treating an aggregate range response as a
 daily fact.
 
+The live management-analysis page sends compact `startDt` / `endDt` values.
+Trade overview requires `dtFlag=1`; the region ranking requires `statType=2`.
+The similarly named `startDate` / `endDate` plus `queryType` shape belongs to
+the store curve contract and must not be reused for these two endpoints.
+
 ```bash
 npm run sync:home-history -- \
   --stores=DL5477,MZ2406 \

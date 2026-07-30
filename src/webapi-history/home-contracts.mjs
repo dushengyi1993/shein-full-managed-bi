@@ -205,16 +205,30 @@ export function buildStoreDailyHistoryRequest(input = {}) {
 }
 
 export function buildTradeOverviewRequest(input = {}) {
+  const common = commonRequest(input);
+  const startDt = common.startDate.replaceAll('-', '');
+  const endDt = common.endDate.replaceAll('-', '');
   return Object.freeze({
-    ...commonRequest(input),
-    queryType: 1,
+    areaCd: common.areaCd,
+    dt: common.dt,
+    countrySite: common.countrySite,
+    startDt,
+    endDt,
+    dtFlag: 1,
   });
 }
 
 export function buildRegionRankRequest(input = {}) {
+  const common = commonRequest(input);
+  const startDt = common.startDate.replaceAll('-', '');
+  const endDt = common.endDate.replaceAll('-', '');
   return Object.freeze({
-    ...commonRequest(input),
-    queryType: 1,
+    areaCd: common.areaCd,
+    dt: common.dt,
+    countrySite: common.countrySite,
+    startDt,
+    endDt,
+    statType: 2,
   });
 }
 

@@ -4,7 +4,9 @@ import test from 'node:test';
 import {
   buildAnalyseSearchRequest,
   buildProductDailyRequest,
+  buildRegionRankRequest,
   buildStoreDailyHistoryRequest,
+  buildTradeOverviewRequest,
   historyWindows,
   parseProductDailyRows,
   parseShopAnalysisRows,
@@ -45,6 +47,31 @@ test('store history request is fixed to the full-managed all-site contract', () 
     }),
     { code: 'HOME_DATE_RANGE_INVALID' },
   );
+});
+
+test('trade and region requests match the live management-analysis contracts', () => {
+  assert.deepEqual(buildTradeOverviewRequest({
+    startDate: '2026-07-28',
+    endDate: '2026-07-28',
+  }), {
+    areaCd: 'cn',
+    dt: '20260728',
+    countrySite: ['shein-all'],
+    startDt: '20260728',
+    endDt: '20260728',
+    dtFlag: 1,
+  });
+  assert.deepEqual(buildRegionRankRequest({
+    startDate: '2026-07-28',
+    endDate: '2026-07-28',
+  }), {
+    areaCd: 'cn',
+    dt: '20260728',
+    countrySite: ['shein-all'],
+    startDt: '20260728',
+    endDt: '20260728',
+    statType: 2,
+  });
 });
 
 test('historical store rows preserve unavailable values as null instead of zero', () => {

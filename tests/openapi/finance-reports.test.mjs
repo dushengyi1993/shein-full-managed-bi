@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  FINANCE_HISTORY_EARLIEST_DATE,
   fetchFinanceWindow,
   financeWindows,
   mapFinanceReportListResponse,
@@ -13,6 +14,7 @@ function response(info) {
 }
 
 test('finance history is split into platform-safe seven-calendar-day windows', () => {
+  assert.equal(FINANCE_HISTORY_EARLIEST_DATE, '2024-01-01');
   assert.deepEqual(financeWindows({
     startDate: '2026-07-01',
     endDate: '2026-07-15',
@@ -63,6 +65,13 @@ test('finance response mapper hashes report identifiers and keeps signed directi
 });
 
 test('finance mapper accepts the platform null-list sentinel only for a proven zero count', () => {
+  assert.deepEqual(mapFinanceReportListResponse(response({}), {
+    page: 1,
+    pageSize: 200,
+  }), {
+    count: 0,
+    reports: [],
+  });
   assert.deepEqual(mapFinanceReportListResponse(response({
     count: 0,
     reportOrderInfos: null,
@@ -76,6 +85,12 @@ test('finance mapper accepts the platform null-list sentinel only for a proven z
       reportOrderInfos: null,
     }), { page: 1, pageSize: 200 }),
     /reportOrderInfos must be an array/,
+  );
+  assert.throws(
+    () => mapFinanceReportListResponse(response({
+      reportOrderInfos: null,
+    }), { page: 1, pageSize: 200 }),
+    /response.info.count must be an integer/,
   );
   assert.deepEqual(mapFinanceSalesDetailResponse(response({
     count: 0,

@@ -5,7 +5,9 @@ import { SheinOpenApiError } from './shein-client.mjs';
 export const FINANCE_REPORT_LIST_PATH = '/open-api/finance/report-list';
 export const FINANCE_REPORT_SALES_DETAIL_PATH =
   '/open-api/finance/report-sales-detail';
-export const FINANCE_HISTORY_EARLIEST_DATE = '2023-06-07';
+// Live OpenAPI evidence (2026-07-30) rejects earlier report-list ranges with
+// platform code gsfs94190: 查询时间不能小于2024-01-01 00:00:00.
+export const FINANCE_HISTORY_EARLIEST_DATE = '2024-01-01';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -113,7 +115,12 @@ export function financeWindows({
 
 export function mapFinanceReportListResponse(response, { page, pageSize } = {}) {
   const info = successfulInfo(response, FINANCE_REPORT_LIST_PATH);
-  const count = integer(info.count, 'response.info.count');
+  // The production endpoint represents a valid empty report window as
+  // code=0/info={} rather than count=0/reportOrderInfos=null. Accept only the
+  // completely empty object as that sentinel; partially-shaped responses stay
+  // fail-closed so schema drift cannot be mistaken for zero business data.
+  const emptyInfo = Object.keys(info).length === 0;
+  const count = emptyInfo ? 0 : integer(info.count, 'response.info.count');
   const reportOrderInfos = count === 0 && info.reportOrderInfos == null
     ? []
     : info.reportOrderInfos;

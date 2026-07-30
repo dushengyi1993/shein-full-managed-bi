@@ -55,8 +55,10 @@ Profile，从平台最早支持日期起串行回补首页店铺日指标、货�
 
 ## OpenAPI 历史回补
 
-首页财务历史由 `shein-fm-home-finance-backfill.service` 按 7 天窗口回补。
-平台开店前返回的错误保持为失败证据，不改写为零；开店后的失败窗口必须单独复核。
+首页财务历史由 `shein-fm-home-finance-backfill.service` 从官方允许的最早日期
+`2024-01-01` 起按 7 天窗口回补。平台的合法空窗口返回 `code=0/info={}`，
+按“成功且无报表”记断点，但不生成业务事实行；平台错误仍保持为失败证据，
+不改写为零，开店后的失败窗口必须单独复核。
 
 采购单是当前除财务外唯一已验证可按更新时间完整重放的 OpenAPI 历史域。
 `shein-fm-purchase-order-history-backfill.service` 使用固定清单
