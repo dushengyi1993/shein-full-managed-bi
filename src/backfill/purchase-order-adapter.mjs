@@ -360,6 +360,12 @@ export function createPurchaseOrderBackfillAdapter({
       (entry) => entry?.domain === PURCHASE_ORDER_BACKFILL_DOMAIN,
     );
     if (domainResults.length !== 1) {
+      const upstreamCode = String(storeResult?.errorCode ?? '').trim().toUpperCase();
+      if (/^[A-Z][A-Z0-9_]{2,60}$/.test(upstreamCode)) {
+        return reject(upstreamCode, {
+          domainResultCount: domainResults.length,
+        });
+      }
       return reject(PURCHASE_ORDER_ADAPTER_REJECT_CODES.DOMAIN_RESULT_MISSING, {
         domainResultCount: domainResults.length,
       });

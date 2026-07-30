@@ -125,6 +125,10 @@ test('every incomplete delegate shape fails closed', async () => {
     }, PURCHASE_ORDER_ADAPTER_REJECT_CODES.PERSISTED_COUNT_MISMATCH],
     ['coverage false', (value) => { value.coverageGate.requestedRangeLoaded = false; },
       PURCHASE_ORDER_ADAPTER_REJECT_CODES.REQUESTED_RANGE_NOT_LOADED],
+    ['upstream store failure', (value) => {
+      value.results[0].domains = [];
+      value.results[0].errorCode = 'SUPPLY_ATTEMPT_OPEN_FAILED';
+    }, 'SUPPLY_ATTEMPT_OPEN_FAILED'],
   ];
   for (const [name, mutate, expected] of cases) {
     const summary = passingSummary();

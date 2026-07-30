@@ -8,10 +8,11 @@ import { createBackfillExecuteRuntime } from './run_full_managed_backfill.mjs';
 
 export const PURCHASE_ORDER_HISTORY_FROM = '2024-01-01';
 export const PURCHASE_ORDER_HISTORY_TO = '2026-07-30';
-export const PURCHASE_ORDER_HISTORY_MANIFEST_VERSION = 'purchase-order-history.v1';
+export const PURCHASE_ORDER_HISTORY_MANIFEST_VERSION = 'purchase-order-history.v2';
 export const PURCHASE_ORDER_HISTORY_CREATED_BY = 'codex-full-managed-history-20260730';
 export const PURCHASE_ORDER_HISTORY_STORE_BATCH_SIZE = 4;
 export const PURCHASE_ORDER_HISTORY_PERIOD_DAYS = 400;
+export const PURCHASE_ORDER_HISTORY_CONCURRENCY = 2;
 
 function date(value) {
   const parsed = new Date(`${value}T00:00:00.000Z`);
@@ -75,7 +76,7 @@ export function buildPurchaseOrderHistoryManifest({
         from: period.from,
         to: period.to,
         windowSpanDays: 1,
-        concurrency: 4,
+        concurrency: PURCHASE_ORDER_HISTORY_CONCURRENCY,
         maxAttempts: 3,
         createdBy: PURCHASE_ORDER_HISTORY_CREATED_BY,
         today: PURCHASE_ORDER_HISTORY_TO,
