@@ -1,9 +1,9 @@
 [Unit]
-Description=Four-hourly full-managed SHEIN Profile session renewal
+Description=Daily full-managed SHEIN Profile session renewal
 
 [Timer]
-OnCalendar=*-*-* 00,04,08,12,16,20:20:00 Asia/Shanghai
-RandomizedDelaySec=5m
+OnCalendar=*-*-* 03:20:00 Asia/Shanghai
+RandomizedDelaySec=10m
 Persistent=false
 Unit=shein-fm-session-renewal.service
 

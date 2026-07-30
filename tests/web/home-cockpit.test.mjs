@@ -112,11 +112,17 @@ test('historical KPI cards stay row-balanced and expose only evidence-backed tra
   assert.match(metrics, /'paymentOrderCount'/);
   assert.match(metrics, /key: 'detailPaymentRate'/);
   assert.match(metrics, /ratePointChange\(trafficRate, previousTrafficRate\)/);
-  assert.match(kpis, /homeMetricTable\('成交与支付'[^]*summary\.transactionRows\)/);
-  assert.match(kpis, /homeMetricTable\('流量表现'[^]*summary\.trafficRows\)/);
-  assert.match(kpis, /homeMetricTable\('供给与新客'[^]*summary\.supplyRows\)/);
+  assert.match(kpis, /homeMetricTable\('成交与支付'[^]*summary\.transactionRows, summary\.range, previousRange\)/);
+  assert.match(kpis, /homeMetricTable\('流量表现'[^]*summary\.trafficRows, summary\.range, previousRange\)/);
+  assert.match(kpis, /homeMetricTable\('供给与新客'[^]*summary\.supplyRows, summary\.range, previousRange\)/);
   assert.match(kpis, /Array\.from\(\{ length: 4 \}/);
   assert.match(kpis, /销量 Top 4/);
+  assert.match(kpis, /previousHomeDateRange\(summary\.range\)/);
+  const table = functionBody(app, 'homeMetricTable');
+  assert.match(table, /<strong>本期<\/strong>/);
+  assert.match(table, /<strong>前期<\/strong>/);
+  assert.match(table, />较前期</);
+  assert.doesNotMatch(table, /当前区间|上个等长区间/);
 });
 
 test('KPI matrix is one dense real table with legal comparisons only', async () => {
@@ -554,9 +560,28 @@ test('semi-managed parity keeps proportional ranking bars and reduced-motion sup
   assert.match(app, /storeHistoryRankMeta\(next, 'amount'\)/);
   assert.match(app, /SKC 财务报账收入排行（待归并）/);
   assert.match(parity, /\.rank-item::before[\s\S]*width: var\(--rank-pct, 0\)/);
-  assert.match(parity, /color-mix\(in srgb, var\(--owner-color\)/);
+  assert.match(parity, /\.rank-item::after[\s\S]*background: var\(--bar-color\)/);
+  assert.match(parity, /\.rank-owner[\s\S]*background: var\(--owner-color\)/);
+  assert.match(parity, /\.rank-owner[\s\S]*color: #fff/);
   assert.match(parity, /backdrop-filter: blur\(18px\)/);
   assert.match(parity, /prefers-reduced-motion/);
+});
+
+test('homepage range, trend labels and renewal cadence match the operating preference', async () => {
+  const [app, parity, timer] = await Promise.all([
+    read('src/web/app.js'),
+    read('src/web/home-parity.css'),
+    read('infra/systemd/shein-fm-session-renewal.timer'),
+  ]);
+  const chart = functionBody(app, 'historyTrendChart');
+
+  assert.match(parity, /grid-template-columns: minmax\(220px, 250px\) minmax\(180px, 200px\) minmax\(900px, 1fr\) auto/);
+  assert.match(parity, /grid-template-columns: minmax\(340px, 380px\) minmax\(540px, 1fr\)/);
+  assert.match(parity, /@media \(max-width: 1650px\)[\s\S]*"range range range"/);
+  assert.doesNotMatch(chart, /point\.currency/);
+  assert.match(timer, /Description=Daily full-managed SHEIN Profile session renewal/);
+  assert.match(timer, /OnCalendar=\*-\*-\* 03:20:00 Asia\/Shanghai/);
+  assert.doesNotMatch(timer, /00,04,08,12,16,20/);
 });
 
 test('390px layout has explicit page-level overflow guards', async () => {

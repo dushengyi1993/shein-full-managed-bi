@@ -5454,15 +5454,20 @@ function historyMetricRows() {
   };
 }
 
-function homeMetricTable(title, subtitle, metrics) {
+function compactRangeLabel(range) {
+  const compact = (value) => String(value || '').replace(/^\d{4}-/, '').replace('-', '/');
+  return `${compact(range.start)}–${compact(range.end)}`;
+}
+
+function homeMetricTable(title, subtitle, metrics, currentRange, previousRange) {
   return `
     <article class="overview-matrix-card home-history-card">
       <div class="matrix-card-head"><h4>${escapeHtml(title)}</h4><div class="sub">${escapeHtml(subtitle)}</div></div>
       <div class="metric-matrix cols-3 home-history-matrix" role="table" aria-label="${escapeHtml(title)}">
         <span class="matrix-cell head" role="columnheader">指标</span>
-        <span class="matrix-cell head" role="columnheader">当前区间</span>
-        <span class="matrix-cell head" role="columnheader">上个等长区间</span>
-        <span class="matrix-cell head" role="columnheader">变化</span>
+        <span class="matrix-cell head" role="columnheader"><strong>本期</strong><small>${escapeHtml(compactRangeLabel(currentRange))}</small></span>
+        <span class="matrix-cell head" role="columnheader"><strong>前期</strong><small>${escapeHtml(compactRangeLabel(previousRange))}</small></span>
+        <span class="matrix-cell head" role="columnheader">较前期</span>
         ${metrics.map((metric) => `
           <span class="matrix-cell label" role="rowheader" title="${escapeHtml(metric.note)}">${escapeHtml(metric.label)}</span>
           <span class="matrix-cell value" role="cell">${escapeHtml(metric.display)}</span>
@@ -5474,6 +5479,7 @@ function homeMetricTable(title, subtitle, metrics) {
 
 function renderHistoryKpis() {
   const summary = historyMetricRows();
+  const previousRange = previousHomeDateRange(summary.range);
   const rangeLabel = `${summary.range.start} → ${summary.range.end}`;
   const regionRows = Array.from({ length: 4 }, (_, index) => ({
     rank: index + 1,
@@ -5486,9 +5492,9 @@ function renderHistoryKpis() {
         <p>${escapeHtml(`${rangeLabel} · ${summary.current.productMode ? '货号搜索范围' : `${summary.current.storeCodes.size} 家店`} · 未返回字段保持 —`)}</p>
       </header>
       <div class="kpi-six home-history-card-grid">
-        ${homeMetricTable('成交与支付', '金额、买家与销量', summary.transactionRows)}
-        ${homeMetricTable('流量表现', '曝光、商详与支付转化', summary.trafficRows)}
-        ${homeMetricTable('供给与新客', '备货、集采与新客结构', summary.supplyRows)}
+        ${homeMetricTable('成交与支付', '金额、买家与销量', summary.transactionRows, summary.range, previousRange)}
+        ${homeMetricTable('流量表现', '曝光、商详与支付转化', summary.trafficRows, summary.range, previousRange)}
+        ${homeMetricTable('供给与新客', '备货、集采与新客结构', summary.supplyRows, summary.range, previousRange)}
         <article class="overview-matrix-card home-history-card home-region-card">
           <div class="matrix-card-head"><h4>主销地区</h4><div class="sub">销量 Top 4</div></div>
           <div class="metric-matrix cols-1" role="table" aria-label="销量 Top 主销地区">
@@ -5622,14 +5628,14 @@ function historyTrendChart(rows, key, { money = false, suffix = '' } = {}, kind 
   }));
   const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ');
   const valueLabel = (point) => money
-    ? formatMoney(point[key], point.currency)
+    ? new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(point[key])
     : `${formatUnits(point[key])}${suffix ? ` ${suffix}` : ''}`;
   const compactValue = (point) => {
     const value = new Intl.NumberFormat('zh-CN', {
       notation: 'compact',
       maximumFractionDigits: 1,
     }).format(point[key]);
-    return `${money && point.currency ? `${point.currency} ` : ''}${value}${!money && suffix ? suffix : ''}`;
+    return `${value}${!money && suffix ? suffix : ''}`;
   };
   const maxIndex = points.reduce(
     (best, point, index) => (point[key] > points[best][key] ? index : best),
