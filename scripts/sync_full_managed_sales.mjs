@@ -138,6 +138,52 @@ export function summarizeSyncResults(results) {
   };
 }
 
+export async function fetchAndLoadSalesWithDateRetry({
+  client,
+  store,
+  storeRunId,
+  permissionPackageCode,
+  inventory,
+  pool,
+  maximumAttempts = 3,
+  clock = () => new Date(),
+  fetchSales = fetchFullManagedSkuSales,
+  loadSales = loadFullManagedSalesSync,
+} = {}) {
+  if (!Number.isSafeInteger(maximumAttempts) || maximumAttempts < 1 || maximumAttempts > 3) {
+    throw new TypeError('maximumAttempts must be an integer from 1 to 3');
+  }
+  let lastError = null;
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    const sales = await fetchSales(client, {
+      storeCode: store.storeCode,
+      skuCodes: inventory.items.map(({ skuCode }) => skuCode),
+      fetchedAt: clock(),
+    });
+    try {
+      const loaded = await loadSales(pool, {
+        store,
+        runId: storeRunId,
+        permissionPackageCode,
+        inventory,
+        sales,
+      });
+      return {
+        ...loaded,
+        statisticsDateRetryCount: attempt - 1,
+      };
+    } catch (error) {
+      lastError = error;
+      const rollover = (
+        error instanceof SalesDataQualityError
+        && error.code === MIXED_STATISTICS_DATES_CODE
+      );
+      if (!rollover || attempt === maximumAttempts) throw error;
+    }
+  }
+  throw lastError ?? new Error('sales date retry ended without a result');
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const config = await loadFullManagedConfig(args.config);
@@ -189,18 +235,13 @@ async function main() {
           results.push({ storeCode: store.storeCode, status: 'pending', skuCount: 0 });
           continue;
         }
-        const fetchedAt = new Date();
-        const sales = await fetchFullManagedSkuSales(client, {
-          storeCode: store.storeCode,
-          skuCodes: inventory.items.map(({ skuCode }) => skuCode),
-          fetchedAt,
-        });
-        const loaded = await loadFullManagedSalesSync(pool, {
+        const loaded = await fetchAndLoadSalesWithDateRetry({
+          client,
           store,
-          runId: storeRunId,
+          storeRunId,
           permissionPackageCode: config.permissionPackageCode,
           inventory,
-          sales,
+          pool,
         });
         results.push({
           storeCode: store.storeCode,

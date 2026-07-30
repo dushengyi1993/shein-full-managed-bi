@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   failedProbe,
   failedResult,
+  fetchAndLoadSalesWithDateRetry,
   summarizeSyncResults,
 } from '../../scripts/sync_full_managed_sales.mjs';
 import {
@@ -66,4 +67,87 @@ test('an untyped or generic error remains an ERROR even when its message resembl
   const plainProbe = failedProbe('TEST', new Error('generic failure'));
   assert.equal(plainProbe.outcome, 'ERROR');
   assert.equal(plainProbe.platformErrorCode, 'SYNC_ERROR');
+});
+
+test('mixed statistics dates refetch the whole store before loading', async () => {
+  const fetches = [];
+  const loads = [];
+  const inventory = { items: [{ skuCode: 'SKU-1' }] };
+  const loaded = await fetchAndLoadSalesWithDateRetry({
+    client: {},
+    store: { storeCode: 'DL5477' },
+    storeRunId: 'sync-test:DL5477',
+    permissionPackageCode: 'SALES',
+    inventory,
+    pool: {},
+    clock: () => new Date('2026-07-30T07:00:00.000Z'),
+    fetchSales: async (_client, input) => {
+      fetches.push(input);
+      return { snapshots: [], batches: [] };
+    },
+    loadSales: async (_pool, input) => {
+      loads.push(input);
+      if (loads.length === 1) {
+        throw new SalesDataQualityError(
+          MIXED_STATISTICS_DATES_CODE,
+          MIXED_STATISTICS_DATES_MESSAGE,
+          { statisticsDateCount: 2 },
+        );
+      }
+      return { storeCode: 'DL5477', qualityStatus: 'PARTIAL' };
+    },
+  });
+  assert.equal(fetches.length, 2);
+  assert.equal(loads.length, 2);
+  assert.deepEqual(fetches[0].skuCodes, ['SKU-1']);
+  assert.equal(loaded.statisticsDateRetryCount, 1);
+});
+
+test('date retry never retries a generic load failure or exceeds its bound', async () => {
+  let genericFetches = 0;
+  await assert.rejects(
+    fetchAndLoadSalesWithDateRetry({
+      client: {},
+      store: { storeCode: 'DL5477' },
+      storeRunId: 'sync-test:DL5477',
+      permissionPackageCode: 'SALES',
+      inventory: { items: [{ skuCode: 'SKU-1' }] },
+      pool: {},
+      fetchSales: async () => {
+        genericFetches += 1;
+        return { snapshots: [], batches: [] };
+      },
+      loadSales: async () => {
+        throw new Error('database unavailable');
+      },
+    }),
+    /database unavailable/,
+  );
+  assert.equal(genericFetches, 1);
+
+  let rolloverFetches = 0;
+  await assert.rejects(
+    fetchAndLoadSalesWithDateRetry({
+      client: {},
+      store: { storeCode: 'DL5477' },
+      storeRunId: 'sync-test:DL5477',
+      permissionPackageCode: 'SALES',
+      inventory: { items: [{ skuCode: 'SKU-1' }] },
+      pool: {},
+      maximumAttempts: 2,
+      fetchSales: async () => {
+        rolloverFetches += 1;
+        return { snapshots: [], batches: [] };
+      },
+      loadSales: async () => {
+        throw new SalesDataQualityError(
+          MIXED_STATISTICS_DATES_CODE,
+          MIXED_STATISTICS_DATES_MESSAGE,
+          { statisticsDateCount: 2 },
+        );
+      },
+    }),
+    (error) => error.code === MIXED_STATISTICS_DATES_CODE,
+  );
+  assert.equal(rolloverFetches, 2);
 });
