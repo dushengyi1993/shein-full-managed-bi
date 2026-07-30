@@ -66,7 +66,10 @@ async function main() {
   }, null, 2));
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+if (
+  process.argv[1]
+  && path.basename(process.argv[1]) === path.basename(fileURLToPath(import.meta.url))
+) {
   main().catch((error) => {
     console.error(JSON.stringify({ ok: false, errorCode: error?.message || 'STORE_LOGIN_BATCH_FAILED' }));
     process.exitCode = 1;
