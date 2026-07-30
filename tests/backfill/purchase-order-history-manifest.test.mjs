@@ -15,7 +15,7 @@ test('purchase-order history manifest covers all 24 stores in bounded resumable 
   assert.equal(manifest.to, PURCHASE_ORDER_HISTORY_TO);
   assert.equal(manifest.storeCodes.length, 24);
   assert.equal(manifest.planCount, 18);
-  assert.equal(manifest.windowCount, 22_608);
+  assert.equal(manifest.windowCount, 22_584);
   assert.match(manifest.manifestHash, /^[0-9a-f]{64}$/);
   assert.ok(manifest.plans.every((plan) => plan.storeCodes.length <= 4));
   assert.ok(manifest.plans.every((plan) => plan.summary.plannedWindowCount <= 2_000));

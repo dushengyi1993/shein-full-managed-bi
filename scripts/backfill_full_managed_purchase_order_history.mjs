@@ -7,8 +7,11 @@ import { FULL_MANAGED_STORE_CODES } from '../src/config/full-managed-stores.mjs'
 import { createBackfillExecuteRuntime } from './run_full_managed_backfill.mjs';
 
 export const PURCHASE_ORDER_HISTORY_FROM = '2024-01-01';
-export const PURCHASE_ORDER_HISTORY_TO = '2026-07-30';
-export const PURCHASE_ORDER_HISTORY_MANIFEST_VERSION = 'purchase-order-history.v2';
+// Only backfill completed calendar days. A plan ending on the current day is
+// converted to a half-open window ending tomorrow and is correctly rejected by
+// the adapter as BACKFILL_WINDOW_END_AFTER_NOW.
+export const PURCHASE_ORDER_HISTORY_TO = '2026-07-29';
+export const PURCHASE_ORDER_HISTORY_MANIFEST_VERSION = 'purchase-order-history.v3';
 export const PURCHASE_ORDER_HISTORY_CREATED_BY = 'codex-full-managed-history-20260730';
 export const PURCHASE_ORDER_HISTORY_STORE_BATCH_SIZE = 4;
 export const PURCHASE_ORDER_HISTORY_PERIOD_DAYS = 400;
