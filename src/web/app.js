@@ -6227,9 +6227,12 @@ function salesPeriodStoreRanking(bundle) {
     },
     sub: () => '',
   };
-  let rows = aggregateHistoryRanking(bundle.storeDaily, identity, 'salesQuantity', null);
-  let basis = 'OPERATING';
-  if (!rows.length) {
+  const operatingComplete = completeMetricSum(bundle.storeDaily, 'salesQuantity') !== null;
+  let rows = operatingComplete
+    ? aggregateHistoryRanking(bundle.storeDaily, identity, 'salesQuantity', null)
+    : [];
+  let basis = operatingComplete ? 'OPERATING' : 'UNAVAILABLE';
+  if (!operatingComplete) {
     rows = aggregateHistoryRanking(bundle.financeDaily, identity, 'goodsCount', null);
     basis = rows.length ? 'FINANCE' : 'UNAVAILABLE';
   }
@@ -6256,15 +6259,14 @@ function salesPeriodSummary() {
   const metrics = historyMetricRows();
   const quantity = metrics.rows.find(({ key }) => key === 'salesQuantity');
   const storeRanking = salesPeriodStoreRanking(metrics.current);
-  const observedSource = metrics.current.productMode
-    ? (metrics.current.productDaily.length
-        ? metrics.current.productDaily
-        : metrics.current.productFinanceDaily)
-    : (metrics.current.storeDaily.length
-        ? metrics.current.storeDaily
-        : metrics.current.financeDaily);
+  const financeBasis = storeRanking.basis === 'FINANCE';
+  const observedSource = financeBasis
+    ? metrics.current.financeDaily
+    : metrics.current.productMode
+      ? metrics.current.productDaily
+      : metrics.current.storeDaily;
   const observedDays = new Set(observedSource.map(({ date }) => date).filter(Boolean)).size;
-  const activeProductsSource = metrics.current.productDaily.length
+  const activeProductsSource = !financeBasis && metrics.current.productDaily.length
     ? metrics.current.productDaily.filter(({ salesQuantity }) => finiteMetric(salesQuantity) && salesQuantity > 0)
     : metrics.current.productFinanceDaily.filter(({ goodsCount }) => finiteMetric(goodsCount) && goodsCount > 0);
   const activeProductKeys = new Set(activeProductsSource.map((row) => [
@@ -6338,7 +6340,7 @@ function salesPeriodOverview(summary, queryData) {
         </div>
       </header>
       <div class="sales-period-grid">
-        ${salesPeriodMetric('本期销量', quantityDisplay, summary.quantity?.note || '成交件数', 'primary')}
+        ${salesPeriodMetric('本期销量', quantityDisplay, summary.storeRanking.basis === 'FINANCE' ? '财务明细 goodsCount · 报账生成日' : (summary.quantity?.note || '成交件数'), 'primary')}
         ${salesPeriodMetric('前期销量', previousDisplay, `${compactRangeLabel(previousRange)} 同长度窗口`)}
         ${salesPeriodMetric('较前期', comparison, '同长度窗口对比', comparisonTone)}
         ${salesPeriodMetric('有数据日日均', summary.dailyAverage === null ? '—' : `${formatDailyAverage(summary.dailyAverage)} 件`, `${numberFormatter.format(summary.observedDays)} 个有数据日，不补缺失日`)}
@@ -6347,13 +6349,32 @@ function salesPeriodOverview(summary, queryData) {
       </div>
       <div class="sales-data-receipt">
         <span><i></i>选定日期数据已就绪</span>
-        <p>${escapeHtml(`本期返回 ${numberFormatter.format(historyRows)} 行 · 有销量货号 ${numberFormatter.format(summary.activeProducts)} 个${latestDate ? ` · 最新历史 ${latestDate}` : ''} · 未知不补 0`)}</p>
+        <p>${escapeHtml(`本期返回 ${numberFormatter.format(historyRows)} 行 · 有销量货号 ${numberFormatter.format(summary.activeProducts)} 个 · ${summary.storeRanking.basis === 'FINANCE' ? '销量使用财务明细件数' : '销量使用经营日事实'}${latestDate ? ` · 最新历史 ${latestDate}` : ''} · 未知不补 0`)}</p>
       </div>
     </section>`;
 }
 
+function salesDailySeries(summary) {
+  if (summary.storeRanking.basis !== 'FINANCE') {
+    return groupHistoryByDate(summary.current);
+  }
+  const grouped = new Map();
+  for (const row of summary.current.financeDaily) {
+    const current = grouped.get(row.date) || [];
+    current.push(row);
+    grouped.set(row.date, current);
+  }
+  return [...grouped].sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, rows]) => ({
+      date,
+      salesQuantity: completeMetricSum(rows, 'goodsCount'),
+      currency: financeCurrency(summary.current),
+      amountBasis: 'FINANCE',
+    }));
+}
+
 function salesTrendPanel(summary) {
-  const daily = groupHistoryByDate(summary.current);
+  const daily = salesDailySeries(summary);
   const known = daily.filter(({ salesQuantity }) => finiteMetric(salesQuantity));
   const peak = known.slice().sort((left, right) => right.salesQuantity - left.salesQuantity)[0];
   const latest = known.at(-1);
@@ -6365,7 +6386,7 @@ function salesTrendPanel(summary) {
     <section class="panel sales-trend-panel">
       <header class="sales-panel-head">
         <div><span class="eyebrow">PERIOD TREND</span><h2>日销量趋势</h2></div>
-        <p>${escapeHtml(`${summary.range.start} → ${summary.range.end} · 只连接有真实日粒度事实的日期`)}</p>
+        <p>${escapeHtml(`${summary.range.start} → ${summary.range.end} · ${summary.storeRanking.basis === 'FINANCE' ? '财务报账明细生成日' : '经营业务日'} · 缺失不补线`)}</p>
       </header>
       <div class="sales-trend-layout">
         ${historyTrendChart(daily, 'salesQuantity', { suffix: '件' }, 'bar')}

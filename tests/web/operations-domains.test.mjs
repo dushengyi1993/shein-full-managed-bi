@@ -228,6 +228,8 @@ test('sales analysis exposes comparable daily averages without comparing partial
   const signal = functionBody(app, 'comparableDailySignal');
   const sales = functionBody(app, 'renderSales');
   const loader = functionBody(app, 'loadSales');
+  const periodRanking = functionBody(app, 'salesPeriodStoreRanking');
+  const dailySeries = functionBody(app, 'salesDailySeries');
 
   assert.match(signal, /last7Days \/ 7/);
   assert.match(signal, /\(last30Days - last7Days\) \/ 23/);
@@ -235,6 +237,10 @@ test('sales analysis exposes comparable daily averages without comparing partial
   assert.match(app, /此前 23 日日均/);
   assert.match(loader, /Promise\.all/);
   assert.match(loader, /homeApiPath\(\)/);
+  assert.match(periodRanking, /completeMetricSum\(bundle\.storeDaily, 'salesQuantity'\) !== null/);
+  assert.match(periodRanking, /bundle\.financeDaily, identity, 'goodsCount'/);
+  assert.match(dailySeries, /summary\.storeRanking\.basis !== 'FINANCE'/);
+  assert.match(dailySeries, /completeMetricSum\(rows, 'goodsCount'\)/);
   assert.match(sales, /salesPeriodOverview/);
   assert.match(sales, /salesTrendPanel/);
   assert.match(sales, /店铺销量贡献排行/);
