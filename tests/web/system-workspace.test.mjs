@@ -62,7 +62,20 @@ test('Profile table separates onboarding registration from last renewal proof', 
   assert.match(table, /已登记.*不等于当前登录态仍有效/);
   assert.match(table, /row\.actionRequired/);
   assert.match(reason, /WEBAPI_SESSION_AUTH_EXPIRED/);
+  assert.match(reason, /最近一次续期验真通过/);
+  assert.match(table, /systemSessionReason\(row\)/);
   assert.doesNotMatch(table, /row\.(cookie|password|token|authorization)/i);
+});
+
+test('system task timing distinguishes interval timers from an absent schedule', async () => {
+  const app = await read('src/web/app.js');
+  const nextRun = functionBody(app, 'systemNextRunLabel');
+  const table = functionBody(app, 'systemServiceTable');
+
+  assert.match(nextRun, /row\.timerState === 'active'/);
+  assert.match(nextRun, /按间隔运行/);
+  assert.match(nextRun, /尚无计划时间/);
+  assert.match(table, /systemNextRunLabel\(row\)/);
 });
 
 test('system drilldowns preserve the selected owner or store scope', async () => {

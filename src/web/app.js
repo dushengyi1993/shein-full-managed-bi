@@ -17,7 +17,7 @@ const ROUTES = Object.freeze({
   finance: { title: '财务结算', code: 'FINANCE' },
   platform: { title: '平台动态', code: 'WEBHOOK' },
   ops: { title: '运营待办', code: 'AUTOMATION' },
-  system: { title: '数据健康', code: 'SYSTEM' },
+  system: { title: '系统管理', code: 'SYSTEM' },
 });
 
 const RANGE_META = Object.freeze({
@@ -8719,7 +8719,13 @@ function systemSeverityLabel(value) {
   })[value] || '未知';
 }
 
-function systemSessionReason(code) {
+function systemSessionReason(row) {
+  if (row?.state === 'active') return '最近一次续期验真通过';
+  if (row?.state === 'pending') return '等待完成店铺登录';
+  if (row?.state === 'attention') return '登录登记需处理';
+  if (row?.state === 'unverified') return '等待下一次续期验真';
+  if (row?.state === 'unknown') return '尚无续期验真证据';
+  const code = row?.errorCode;
   return ({
     WEBAPI_SESSION_AUTH_EXPIRED: '保存登录态已失效',
     WEBAPI_SESSION_IDENTITY_UNPROVEN: '店铺身份未通过',
@@ -8727,6 +8733,13 @@ function systemSessionReason(code) {
     WEBAPI_SESSION_LAUNCH_BLOCKED: 'Profile 启动受阻',
     SESSION_RENEWAL_FAILED: '续期未完成',
   })[code] || (code ? `错误码 ${code}` : '等待下一次续期验真');
+}
+
+function systemNextRunLabel(row) {
+  if (row.nextRunAt) return sourceTime(row.nextRunAt);
+  if (row.kind === 'daemon') return '持续运行';
+  if (row.timerState === 'active') return '按间隔运行';
+  return '尚无计划时间';
 }
 
 function systemRouteHref(hrefOrRoute) {
@@ -8835,7 +8848,7 @@ function systemProfileTable(queryData) {
           <tr class="${row.actionRequired ? 'needs-attention' : ''}">
             <td class="entity-column"><strong>${escapeHtml(row.storeCode)}</strong><span>${escapeHtml(row.ownerName || '负责人未知')}</span></td>
             <td><span class="row-status ${row.loginStatus === 'completed' ? 'complete' : row.loginStatus === 'needs_attention' ? 'blocked' : 'pending'}">${escapeHtml(({ completed: '已登记', pending: '未完成', needs_attention: '需处理' })[row.loginStatus] || '未知')}</span><small>${row.loginVerified ? '登记已验证' : '未标记验证'}</small></td>
-            <td><span class="row-status ${systemStatusClass(row.state)}">${escapeHtml(row.stateLabel || '待确认')}</span><small>${escapeHtml(systemSessionReason(row.errorCode))}</small></td>
+            <td><span class="row-status ${systemStatusClass(row.state)}">${escapeHtml(row.stateLabel || '待确认')}</span><small>${escapeHtml(systemSessionReason(row))}</small></td>
             <td>${escapeHtml(sourceTime(row.evidenceAt))}</td>
             <td><strong class="system-decision-text ${row.actionRequired ? 'attention' : 'healthy'}">${row.actionRequired ? '需要登录或复核' : '当前有效'}</strong></td>
           </tr>`).join('')}</tbody>
@@ -8855,7 +8868,7 @@ function systemServiceTable(queryData) {
             <td class="entity-column"><strong>${escapeHtml(row.label)}</strong><span>${escapeHtml(row.kind === 'daemon' ? '常驻服务' : '计划任务')}</span></td>
             <td><span class="row-status ${systemStatusClass(row.state)}">${escapeHtml(({ healthy: '正常', running: '运行中', scheduled: '已计划', attention: '需处理', unknown: '未知' })[row.state] || '未知')}</span></td>
             <td>${escapeHtml(sourceTime(row.lastRunAt))}</td>
-            <td>${escapeHtml(row.nextRunAt ? sourceTime(row.nextRunAt) : (row.kind === 'daemon' ? '持续运行' : '尚无计划时间'))}</td>
+            <td>${escapeHtml(systemNextRunLabel(row))}</td>
             <td class="boundary-cell"><strong>${escapeHtml(`${row.activeState || 'unknown'} / ${row.subState || 'unknown'}`)}</strong><span>${escapeHtml(`${row.result || 'unknown'}${isUnit(row.exitStatus) ? ` · exit ${row.exitStatus}` : ''}`)}</span></td>
             <td><a class="text-link" href="${escapeHtml(systemRouteHref(row.route))}">进入 →</a></td>
           </tr>`).join('')}</tbody>
