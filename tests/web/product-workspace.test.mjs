@@ -276,7 +276,7 @@ test('the workspace exposes no mutation control', async () => {
 test('static assets use the current dated cache-key family', async () => {
   const html = await read('src/web/index.html');
   for (const asset of ['app.js', 'styles.css', 'home-parity.css', 'favicon.svg']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260731\\.\\d+`), asset);
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260801\\.\\d+`), asset);
   }
   assert.doesNotMatch(html, /\?v=20260730\.9/);
 });

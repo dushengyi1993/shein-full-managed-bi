@@ -27,6 +27,10 @@ import {
   FulfilmentQueryError,
   queryFulfilmentDashboard,
 } from './fulfilment-query.mjs';
+import {
+  PlatformQueryError,
+  queryPlatformDashboard,
+} from './platform-query.mjs';
 import { createDashboardUpdateBroker } from './dashboard-update-stream.mjs';
 import {
   createAuthService,
@@ -587,6 +591,33 @@ export function createRequestHandler(options = {}) {
           error: {
             code: 'FULFILMENT_DATA_UNAVAILABLE',
             message: '交付入仓查询暂不可用',
+          },
+        }, method);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/platform') {
+      try {
+        const dashboard = await loadDashboardData(dataFile);
+        const projected = projectDashboardForUser(dashboard, signedInUser);
+        sendJson(
+          response,
+          200,
+          queryPlatformDashboard(projected, url.searchParams),
+          method,
+        );
+      } catch (error) {
+        if (error instanceof PlatformQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'PLATFORM_DATA_UNAVAILABLE',
+            message: '平台动态查询暂不可用',
           },
         }, method);
       }

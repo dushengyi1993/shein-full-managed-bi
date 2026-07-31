@@ -120,17 +120,29 @@ test('owner, store and text filters scope all store-keyed operational rows', asy
   assert.doesNotMatch(app, /canSeeTechnicalGlobal|role === 'admin'/);
 });
 
-test('platform page renders queue health, subscription readback and event timeline without empty pseudo-zeroes', async () => {
+test('platform page prioritizes operator attention and keeps technical evidence honest', async () => {
   const app = await read('src/web/app.js');
+  const render = functionBody(app, 'renderPlatform');
+  const decision = functionBody(app, 'platformDecisionOverview');
+  const disclosure = functionBody(app, 'platformEvidenceDisclosure');
+  const timeline = functionBody(app, 'webhookEventTimeline');
 
-  assert.match(app, /Webhook 队列健康/);
-  assert.match(app, /订阅回读/);
-  assert.match(app, /平台事件时间线/);
-  assert.match(app, /queueHasEvidence/);
+  assert.match(render, /platformDecisionOverview\(queryData\)/);
+  assert.match(render, /platformRankings\(queryData\)/);
+  assert.match(render, /platformEventFilters\(queryData\)/);
+  assert.match(render, /platformEvidenceDisclosure\(queryData\)/);
+  assert.doesNotMatch(render, /process-flow|验签与快速回执/);
+  assert.match(decision, /近 24 小时重点动态/);
+  assert.match(decision, /高优先 \/ 处理失败/);
+  assert.match(decision, /尚无回读记录，不等于已证明未订阅/);
+  assert.match(timeline, /当前没有需要关注的平台动态/);
+  assert.match(timeline, /普通成功回执仍可能只保留在技术审计中/);
+  assert.match(disclosure, /Webhook 队列健康/);
+  assert.match(disclosure, /订阅回读/);
+  assert.match(disclosure, /验签与快速回执/);
   assert.match(app, /没有队列快照时不显示等待数、重试数或死信数为 0/);
   assert.match(app, /没有订阅回读时不把任何事件类型标记为已订阅或未订阅/);
-  assert.match(app, /这不代表平台没有动态/);
-  assert.match(app, /safeProjectionSummary/);
+  assert.doesNotMatch(app, /safeProjectionSummary/);
 });
 
 test('operations queue is prioritized, localized, drillable and has no write control', async () => {

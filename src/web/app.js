@@ -153,6 +153,9 @@ const URL_FULFILMENT_SORTS = Object.freeze([
   'LATEST',
   'EXPECTED_RECEIPT',
 ]);
+const URL_PLATFORM_VIEWS = Object.freeze(['ATTENTION', 'BUSINESS', 'ALL']);
+const URL_PLATFORM_SEVERITIES = Object.freeze(['ALL', 'P0', 'P1', 'P2', 'P3']);
+const URL_PLATFORM_SORTS = Object.freeze(['PRIORITY', 'LATEST']);
 /** Mirrors the `MILESTONE_PATTERN`/`STATUS_PATTERN` guards on the server. */
 const URL_OPERATION_CODE_PATTERN = /^[\p{L}\p{N}._:-]{1,80}$/u;
 
@@ -338,6 +341,25 @@ function parseHashState(rawHash, inherited = {}) {
       fulfilmentPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.fulfilmentPageSize)
         ? inherited.fulfilmentPageSize
         : URL_DEFAULT_INVENTORY_PAGE_SIZE,
+      platformView: URL_PLATFORM_VIEWS.includes(inherited.platformView)
+        ? inherited.platformView
+        : 'ATTENTION',
+      platformSeverity: URL_PLATFORM_SEVERITIES.includes(inherited.platformSeverity)
+        ? inherited.platformSeverity
+        : 'ALL',
+      platformFamily: URL_OPERATION_CODE_PATTERN.test(String(inherited.platformFamily ?? ''))
+        ? inherited.platformFamily
+        : 'ALL',
+      platformStatus: URL_OPERATION_CODE_PATTERN.test(String(inherited.platformStatus ?? ''))
+        ? inherited.platformStatus
+        : 'ALL',
+      platformSort: URL_PLATFORM_SORTS.includes(inherited.platformSort)
+        ? inherited.platformSort
+        : 'PRIORITY',
+      platformPage: 1,
+      platformPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.platformPageSize)
+        ? inherited.platformPageSize
+        : URL_DEFAULT_INVENTORY_PAGE_SIZE,
       // Navigating to another surface invalidates a focus that belonged to the
       // previous one.
       focus: null,
@@ -428,6 +450,26 @@ function parseHashState(rawHash, inherited = {}) {
     ),
     fulfilmentPage: pageParam('dnPage'),
     fulfilmentPageSize: routePageSize('fulfilment', inherited.fulfilmentPageSize),
+    platformView: routeView(
+      'platform',
+      URL_PLATFORM_VIEWS,
+      'ATTENTION',
+      inherited.platformView,
+    ),
+    platformSeverity: allowListedToken(
+      params.get('eventSeverity'),
+      URL_PLATFORM_SEVERITIES,
+      'ALL',
+    ),
+    platformFamily: operationCodeParam(params.get('eventFamily')),
+    platformStatus: operationCodeParam(params.get('eventStatus')),
+    platformSort: allowListedToken(
+      params.get('eventSort'),
+      URL_PLATFORM_SORTS,
+      'PRIORITY',
+    ),
+    platformPage: pageParam('eventPage'),
+    platformPageSize: routePageSize('platform', inherited.platformPageSize),
     // A focus only applies on the surface that can prove it.
     focus: focus && FOCUS_DOMAINS[focus.domain].route === route ? focus : null,
     canonicalLink: true,
@@ -518,6 +560,29 @@ function serializeHashState(input = {}) {
     }
     const dnPageSize = pageSizeParam(input.fulfilmentPageSize);
     if (dnPageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) params.set('size', String(dnPageSize));
+  }
+  if (route === 'platform') {
+    const view = allowListedToken(input.platformView, URL_PLATFORM_VIEWS, 'ATTENTION');
+    if (view !== 'ATTENTION') params.set('view', view);
+    const severity = allowListedToken(
+      input.platformSeverity,
+      URL_PLATFORM_SEVERITIES,
+      'ALL',
+    );
+    if (severity !== 'ALL') params.set('eventSeverity', severity);
+    const family = operationCodeParam(input.platformFamily);
+    if (family !== 'ALL') params.set('eventFamily', family);
+    const status = operationCodeParam(input.platformStatus);
+    if (status !== 'ALL') params.set('eventStatus', status);
+    const sort = allowListedToken(input.platformSort, URL_PLATFORM_SORTS, 'PRIORITY');
+    if (sort !== 'PRIORITY') params.set('eventSort', sort);
+    if (Number.isSafeInteger(input.platformPage) && input.platformPage > 1) {
+      params.set('eventPage', String(Math.min(input.platformPage, 9999)));
+    }
+    const platformPageSize = pageSizeParam(input.platformPageSize);
+    if (platformPageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) {
+      params.set('size', String(platformPageSize));
+    }
   }
   const focus = input.focus && FOCUS_DOMAINS[input.focus.domain]?.route === route
     ? serializeFocusToken(input.focus)
@@ -632,6 +697,19 @@ const state = {
     page: initialHashState.fulfilmentPage || 1,
     pageSize: initialHashState.fulfilmentPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
   },
+  platform: {
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+    view: initialHashState.platformView || 'ATTENTION',
+    severity: initialHashState.platformSeverity || 'ALL',
+    family: initialHashState.platformFamily || 'ALL',
+    status: initialHashState.platformStatus || 'ALL',
+    sort: initialHashState.platformSort || 'PRIORITY',
+    page: initialHashState.platformPage || 1,
+    pageSize: initialHashState.platformPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
+  },
   sales: {
     data: null,
     loading: false,
@@ -704,6 +782,7 @@ let salesLoadTimer = null;
 let inventoryLoadTimer = null;
 let productLoadTimer = null;
 let fulfilmentLoadTimer = null;
+let platformLoadTimer = null;
 let dashboardEventSource = null;
 
 function routeFromLocation() {
@@ -2685,6 +2764,88 @@ function scheduleFulfilmentLoad({ resetPage = false, delay = 0 } = {}) {
   }, delay);
 }
 
+/* --- platform-query:start ---
+   The platform workspace reads only `/api/platform`. The materialized event
+   slice is filtered and paged on the server, while runtime health, queue and
+   subscription readback remain independent evidence. */
+
+function platformQueryUrl() {
+  const params = new URLSearchParams({
+    owner: state.owner,
+    store: state.store,
+    q: state.query,
+    view: allowListedToken(state.platform.view, URL_PLATFORM_VIEWS, 'ATTENTION'),
+    severity: allowListedToken(
+      state.platform.severity,
+      URL_PLATFORM_SEVERITIES,
+      'ALL',
+    ),
+    family: operationCodeParam(state.platform.family),
+    status: operationCodeParam(state.platform.status),
+    sort: allowListedToken(state.platform.sort, URL_PLATFORM_SORTS, 'PRIORITY'),
+    page: String(state.platform.page),
+    pageSize: String(pageSizeParam(state.platform.pageSize)),
+  });
+  return `/api/platform?${params.toString()}`;
+}
+
+async function loadPlatform({ resetPage = false } = {}) {
+  if (resetPage) state.platform.page = 1;
+  if (state.route !== 'platform') return;
+  const requestSerial = state.platform.requestSerial + 1;
+  state.platform.requestSerial = requestSerial;
+  state.platform.loading = true;
+  state.platform.error = '';
+  render();
+  try {
+    const result = await fetchJson(platformQueryUrl());
+    if (requestSerial !== state.platform.requestSerial) return;
+    if (
+      !result
+      || result.readOnly !== true
+      || !Array.isArray(result.events?.rows)
+      || !result.events?.pagination
+      || !result.summary
+      || !Array.isArray(result.summary.attentionByStore)
+      || !Array.isArray(result.summary.attentionByFamily)
+      || !result.subscription
+      || !Array.isArray(result.subscription.rows)
+      || !result.source
+    ) {
+      throw new Error('平台动态查询结构无效');
+    }
+    state.platform.data = result;
+  } catch (error) {
+    if (requestSerial !== state.platform.requestSerial) return;
+    state.platform.data = null;
+    state.platform.error = error instanceof Error
+      ? error.message
+      : '平台动态查询暂不可用';
+  } finally {
+    if (requestSerial === state.platform.requestSerial) {
+      state.platform.loading = false;
+      render();
+    }
+  }
+}
+
+function schedulePlatformLoad({ resetPage = false, delay = 0 } = {}) {
+  if (platformLoadTimer !== null) window.clearTimeout(platformLoadTimer);
+  state.platform.requestSerial += 1;
+  if (resetPage) {
+    state.platform.page = 1;
+    state.platform.data = null;
+    state.platform.error = '';
+    state.platform.loading = true;
+  }
+  if (state.route !== 'platform') return;
+  if (resetPage) render();
+  platformLoadTimer = window.setTimeout(() => {
+    platformLoadTimer = null;
+    void loadPlatform();
+  }, delay);
+}
+
 function fulfilmentQueryState(kind) {
   const error = kind === 'error';
   return `
@@ -2719,10 +2880,11 @@ function fulfilmentPagination(pagination, position) {
 
 /** Shared select control for the operational filter bars. */
 function operationSelect(kind, label, options, current) {
+  const controlId = `operation-${kind}`;
   return `
-    <label class="sales-sort-control">
+    <label class="sales-sort-control" for="${escapeHtml(controlId)}">
       <span>${escapeHtml(label)}</span>
-      <select data-operation-select="${escapeHtml(kind)}">
+      <select id="${escapeHtml(controlId)}" name="${escapeHtml(controlId)}" data-operation-select="${escapeHtml(kind)}">
         ${options.map(([value, text]) => `<option value="${escapeHtml(String(value))}" ${String(current) === String(value) ? 'selected' : ''}>${escapeHtml(text)}</option>`).join('')}
       </select>
     </label>`;
@@ -3059,10 +3221,11 @@ function inventoryViewTabs(queryData) {
 }
 
 function inventorySelect(kind, label, options, current) {
+  const controlId = `inventory-${kind}`;
   return `
-    <label class="sales-sort-control">
+    <label class="sales-sort-control" for="${escapeHtml(controlId)}">
       <span>${escapeHtml(label)}</span>
-      <select data-inventory-select="${escapeHtml(kind)}">
+      <select id="${escapeHtml(controlId)}" name="${escapeHtml(controlId)}" data-inventory-select="${escapeHtml(kind)}">
         ${options.map(([value, text]) => `<option value="${escapeHtml(String(value))}" ${String(current) === String(value) ? 'selected' : ''}>${escapeHtml(text)}</option>`).join('')}
       </select>
     </label>`;
@@ -3625,10 +3788,11 @@ function productViewTabs(queryData) {
 }
 
 function productSelect(kind, label, options, current) {
+  const controlId = `product-${kind}`;
   return `
-    <label class="sales-sort-control">
+    <label class="sales-sort-control" for="${escapeHtml(controlId)}">
       <span>${escapeHtml(label)}</span>
-      <select data-product-select="${escapeHtml(kind)}">
+      <select id="${escapeHtml(controlId)}" name="${escapeHtml(controlId)}" data-product-select="${escapeHtml(kind)}">
         ${options.map(([value, text]) => `<option value="${escapeHtml(String(value))}" ${String(current) === String(value) ? 'selected' : ''}>${escapeHtml(text)}</option>`).join('')}
       </select>
     </label>`;
@@ -7604,18 +7768,6 @@ function queueMetric(queue, key) {
   return nullableUnits(queue?.[key]);
 }
 
-function safeProjectionSummary(value) {
-  if (value === null || value === undefined) return '安全投影为空';
-  if (typeof value !== 'object') return String(value);
-  const entries = Object.entries(value).slice(0, 4);
-  if (!entries.length) return '安全投影为空';
-  return entries.map(([key, item]) => {
-    if (Array.isArray(item)) return `${key}: ${item.slice(0, 3).join('、')}`;
-    if (item && typeof item === 'object') return `${key}: [结构化数据]`;
-    return `${key}: ${String(item ?? '—')}`;
-  }).join(' · ');
-}
-
 function webhookQueueView(queue) {
   if (!queueHasEvidence(queue)) {
     return emptyEvidence(
@@ -7693,106 +7845,371 @@ function webhookSubscriptionTable(rows) {
     </div>`;
 }
 
-function webhookEventTimeline(rows) {
-  if (!rows.length) {
-    return emptyEvidence(
-      '当前筛选没有可归属的平台事件',
-      '这不代表平台没有动态；事件可能尚未接入、无法归属店铺，或未命中当前筛选。',
-    );
+const WEBHOOK_EVENT_LABELS = Object.freeze({
+  product_receive: '商品接收',
+  product_audit_all_channels: '全渠道商品审核',
+  product_audit: '商品审核',
+  product_delete_audit: '商品删除审核',
+  product_quota: '商品额度变更',
+  rrp_review: '建议零售价审核',
+  rrp_validity: '建议零售价有效期',
+  product_compliance: '商品合规变更',
+  purchase_order: '采购单',
+  delivery: '发货单变更',
+  logistics_forecast: '采购物流预报',
+  purchase_return_application: '采购退货申请',
+  purchase_return: '采购退货单',
+  shortage: '缺货需求',
+  authorization_change: '授权关系变更',
+});
+
+function webhookPriorityMeta(value) {
+  const normalized = String(value || '').toUpperCase();
+  if (['P0', 'CRITICAL'].includes(normalized)) {
+    return { label: '紧急', tone: 'blocked', rank: 4 };
   }
-  const sorted = [...rows].sort((left, right) => {
-    const leftTime = new Date(left.occurredAt || left.createdAt || 0).valueOf();
-    const rightTime = new Date(right.occurredAt || right.createdAt || 0).valueOf();
-    return rightTime - leftTime;
-  });
-  return `
-    <ol class="event-timeline">
-      ${sorted.slice(0, 60).map((event) => `
-        <li class="${sourceStatusTone(event.severity || event.status)}">
-          <div class="event-marker" aria-hidden="true"></div>
-          <article>
-            <header>
-              <div>
-                <span>${escapeHtml([event.eventFamily, event.eventCode].filter(Boolean).join(' · ') || '平台事件')}</span>
-                <strong>${escapeHtml(event.eventPath || event.businessType || '事件路径待确认')}</strong>
-              </div>
-              <time>${escapeHtml(sourceTime(event.occurredAt || event.createdAt))}</time>
-            </header>
-            <p>${escapeHtml(safeProjectionSummary(event.safeProjection))}</p>
-            <footer>
-              <span>${escapeHtml([event.storeCode, event.businessKey].filter(Boolean).join(' · ') || '技术级事件')}</span>
-              <span class="row-status ${sourceStatusTone(event.status)}">${escapeHtml(event.status || event.action || '状态未知')}</span>
-              ${event.severity ? `<span class="severity-label ${sourceStatusTone(event.severity)}">${escapeHtml(event.severity)}</span>` : ''}
-            </footer>
-          </article>
-        </li>`).join('')}
-    </ol>
-    ${sorted.length > 60 ? `<p class="table-note">当前显示最近 60 条，共命中 ${numberFormatter.format(sorted.length)} 条；请继续使用筛选缩小范围。</p>` : ''}`;
+  if (['P1', 'HIGH'].includes(normalized)) {
+    return { label: '高优先', tone: 'blocked', rank: 3 };
+  }
+  if (['P2', 'MEDIUM'].includes(normalized)) {
+    return { label: '需关注', tone: 'partial', rank: 2 };
+  }
+  if (['P3', 'LOW'].includes(normalized)) {
+    return { label: '普通', tone: 'complete', rank: 1 };
+  }
+  return { label: '待评估', tone: 'unknown', rank: 0 };
 }
 
-function renderPlatform() {
-  const platform = platformDomain();
-  const queue = platform.queue && typeof platform.queue === 'object' ? platform.queue : null;
-  const subscriptions = domainRows(platform, 'subscriptions');
-  const allEvents = domainRows(platform, 'events');
-  const events = scopedOperationRows(allEvents);
-  const runtimeHealthy = platform.health?.ok === true;
-  const runtimeDegraded = platform.health?.ok === false;
-  const receiverReady = platform.health?.receiver?.fresh === true;
-  const workerReady = platform.health?.worker?.fresh === true;
-  const connected = platformAvailable();
-  const evidenceLabels = [
-    allEvents.length ? `${numberFormatter.format(allEvents.length)} 条事件` : null,
-    subscriptions.length ? `${numberFormatter.format(subscriptions.length)} 条订阅回读` : null,
-    queueHasEvidence(queue) ? '队列仓库快照可见' : null,
-    platform.health?.receiver ? webhookRuntimeLabel(platform.health.receiver, 'Receiver') : null,
-    platform.health?.worker ? webhookRuntimeLabel(platform.health.worker, 'Worker') : null,
+function webhookEventLabel(event) {
+  const projection = productRecord(event?.safeProjection);
+  return projection.eventLabel
+    || WEBHOOK_EVENT_LABELS[event?.eventFamily]
+    || event?.businessType
+    || '平台事件';
+}
+
+function webhookIdentifierParts(event) {
+  const identifiers = productRecord(productRecord(event?.safeProjection).identifiers);
+  return [
+    ['SPU', identifiers.spu],
+    ['SKC', identifiers.skc],
+    ['SKU', identifiers.sku],
+    ['单据', identifiers.document],
+  ].filter(([, value]) => value).map(([label, value]) => `${label} ${value}`);
+}
+
+function webhookEventSummary(event) {
+  const familyCopy = {
+    purchase_order: '平台采购单发生变化，系统已记录并等待独立只读补查。',
+    delivery: '发货或交付节点发生变化，请结合交付入仓页继续核对。',
+    logistics_forecast: '采购物流预报发生变化，请核对预约、揽收与收货节点。',
+    shortage: '平台推送缺货需求，请结合库存与备货页核对可用库存和建议量。',
+    product_receive: '商品接收状态发生变化，请核对商品中心的最新平台状态。',
+    product_audit: '商品审核状态发生变化，请核对审核结果与受影响商品。',
+    product_audit_all_channels: '全渠道商品审核状态发生变化，请核对受影响渠道。',
+    product_delete_audit: '商品删除审核发生变化，请确认商品是否仍可运营。',
+    product_quota: '商品额度发生变化，请关注剩余额度和受影响店铺。',
+    rrp_review: '建议零售价审核状态发生变化，请核对驳回或待处理项。',
+    rrp_validity: '建议零售价有效期发生变化，请核对即将到期或已到期商品。',
+    product_compliance: '商品合规状态发生变化，请优先核对可能影响在售的商品。',
+    purchase_return_application: '采购退货申请发生变化，请核对当前处理节点。',
+    purchase_return: '采购退货单状态发生变化，请核对退货与入仓影响。',
+    authorization_change: '店铺授权关系发生变化，系统安全闸门可能受到影响。',
+  };
+  const details = [
+    event?.businessKey ? `业务对象 ${event.businessKey}` : null,
+    ...webhookIdentifierParts(event),
+    event?.status ? `平台状态 ${event.status}` : null,
   ].filter(Boolean);
+  return [
+    familyCopy[event?.eventFamily] || '平台业务状态发生变化，请根据对象和状态继续核对。',
+    details.join(' · '),
+  ].filter(Boolean).join(' ');
+}
+
+function platformQueryState(kind) {
+  const error = kind === 'error';
+  return `
+    <section class="panel procurement-query-state${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}">
+      <span class="eyebrow">PLATFORM QUERY</span>
+      <h2>${error ? '平台动态查询暂不可用' : '正在读取平台重点动态'}</h2>
+      <p>${error
+        ? escapeHtml(state.platform.error || '请稍后重试。')
+        : '队列、运行心跳、订阅回读和事件明细分别读取；加载失败不会显示成 0。'}</p>
+      ${error
+        ? '<button type="button" class="clear-button" data-platform-retry="1">重新查询</button>'
+        : '<div class="query-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>'}
+    </section>`;
+}
+
+function platformPagination(pagination, position = 'bottom') {
+  if (!pagination || !isUnit(pagination.page) || !isUnit(pagination.pageSize)) return '';
+  const matched = isUnit(pagination.matchedMaterializedRows)
+    ? pagination.matchedMaterializedRows
+    : 0;
+  const pageCount = isUnit(pagination.pageCount) ? pagination.pageCount : 0;
+  const displayedPage = pageCount === 0 ? 0 : pagination.page;
+  return `
+    <nav class="table-pagination ${position === 'top' ? 'pagination-top' : ''}" aria-label="平台动态分页（${position === 'top' ? '列表上方' : '列表下方'}）">
+      <p>当前条件命中 ${numberFormatter.format(matched)} 条 · 第 ${numberFormatter.format(displayedPage)} / ${numberFormatter.format(pageCount)} 页</p>
+      <div>
+        <button type="button" data-platform-page="${Math.max(1, pagination.page - 1)}" ${pagination.hasPrevious ? '' : 'disabled'}>上一页</button>
+        <button type="button" data-platform-page="${pagination.page + 1}" ${pagination.hasNext ? '' : 'disabled'}>下一页</button>
+      </div>
+    </nav>`;
+}
+
+function platformDecisionOverview(queryData) {
+  const health = productRecord(queryData.health);
+  const queue = productRecord(queryData.queue);
+  const summary = productRecord(queryData.summary);
+  const subscription = productRecord(queryData.subscription);
+  const materialized = productRecord(queryData.source?.eventMaterialization);
+  const runtime = health.ok === true
+    ? 'Receiver / Worker 在线'
+    : health.ok === false
+      ? '运行态需关注'
+      : '运行态未知';
+  const queuePending = isUnit(queue.queued) && isUnit(queue.running)
+    ? queue.queued + queue.running
+    : null;
+  const queueRisk = isUnit(queue.retry) && isUnit(queue.deadLetter)
+    ? `${numberFormatter.format(queue.retry)} / ${numberFormatter.format(queue.deadLetter)}`
+    : '未知';
+  const subscriptionNote = isUnit(subscription.readbackCount) && subscription.readbackCount === 0
+    ? '尚无回读记录，不等于已证明未订阅'
+    : `不一致 ${nullableUnits(subscription.mismatchedCount)} · 回调失败 ${nullableUnits(subscription.callbackFailedCount)}`;
+  const runtimeNote = [
+    health.receiver ? webhookRuntimeLabel(health.receiver, 'Receiver') : null,
+    health.worker ? webhookRuntimeLabel(health.worker, 'Worker') : null,
+  ].filter(Boolean).join(' · ') || '尚无 Receiver / Worker 心跳证据';
+  return `
+    <section class="sales-period-overview platform-decision-overview" aria-label="平台动态经营概览">
+      <header class="sales-workspace-head">
+        <div>
+          <span class="eyebrow">PLATFORM OPERATING PULSE</span>
+          <h1>平台动态</h1>
+          <p>只把会影响经营、履约、商品可售状态或自动化能力的动态放到主视图；普通技术回执下沉到证据区。</p>
+        </div>
+        <div class="sales-range-receipt">
+          <span>事件范围 / 当前店铺</span>
+          <strong>${escapeHtml(inventoryScopeLabel())}</strong>
+          <small>${escapeHtml(`${runtime} · 评估 ${sourceTime(queryData.source?.healthEvaluatedAt)}`)}</small>
+        </div>
+      </header>
+      <div class="sales-period-grid platform-decision-grid">
+        ${salesPeriodMetric('事件链路', runtime, runtimeNote, health.ok === true ? 'primary' : '')}
+        ${salesPeriodMetric('待处理任务', queuePending === null ? '未知' : `${numberFormatter.format(queuePending)} 条`, `等待 ${queueMetric(queue, 'queued')} · 处理中 ${queueMetric(queue, 'running')}`)}
+        ${salesPeriodMetric('重试 / 死信', queueRisk, '两类异常分开统计；未知不补零')}
+        ${salesPeriodMetric('近 24 小时重点动态', isUnit(summary.last24hAttentionCount) ? `${numberFormatter.format(summary.last24hAttentionCount)} 条` : '未知', '仅统计运营重点动态，不包含普通验证回调')}
+        ${salesPeriodMetric('高优先 / 处理失败', `${nullableUnits(summary.highPriorityCount)} / ${nullableUnits(summary.failureEventCount)}`, `影响 ${nullableUnits(summary.impactedStoreCount)} 家店`)}
+        ${salesPeriodMetric('订阅回读', `${nullableUnits(subscription.readbackCount)} 条`, subscriptionNote)}
+      </div>
+      <div class="sales-data-receipt">
+        <span><i></i>平台事件证据</span>
+        <p>${escapeHtml(`物化 ${nullableUnits(materialized.returned)} / 上限 ${nullableUnits(materialized.limit)} 条${materialized.truncated === true ? ' · 已截断' : materialized.truncated === false ? ' · 未截断' : ' · 截断状态未知'} · 最近事件 ${sourceTime(queryData.source?.latestEventAt)} · 最近收件 ${sourceTime(queue.lastReceivedAt)}`)}</p>
+      </div>
+    </section>`;
+}
+
+function platformRankings(queryData) {
+  const storeRows = Array.isArray(queryData.summary?.attentionByStore)
+    ? queryData.summary.attentionByStore
+    : [];
+  const familyRows = Array.isArray(queryData.summary?.attentionByFamily)
+    ? queryData.summary.attentionByFamily
+    : [];
+  const stores = storeRows.slice(0, 8).map((row) => {
+    const store = baseStores().find(({ code }) => code === row.key);
+    const ownerName = ownerNameForStore(store);
+    return {
+      key: row.key,
+      label: row.key,
+      ownerName,
+      tone: ownerDisplayTone(ownerKeyForStore(store) || ownerName),
+      value: row.count,
+      sub: `最新重点动态 ${sourceTime(row.latestAt)}`,
+    };
+  });
+  const families = familyRows.slice(0, 8).map((row) => ({
+    key: row.key,
+    label: row.label || WEBHOOK_EVENT_LABELS[row.key] || row.key,
+    tone: 'product-quantity',
+    value: row.count,
+    sub: `${row.key} · 最新 ${sourceTime(row.latestAt)}`,
+  }));
+  return `
+    <section class="rank-grid operation-risk-rankings platform-risk-rankings" aria-label="平台重点动态排行">
+      ${historyRankTable(
+        '重点动态店铺排行',
+        '当前店铺范围 · Top 8 · 只统计需运营关注的事件',
+        stores,
+        { defaultTone: 'store-quantity', unit: '条' },
+      )}
+      ${historyRankTable(
+        '重点动态类型排行',
+        '当前店铺范围 · Top 8 · 普通验证回调不进入排行',
+        families,
+        { defaultTone: 'product-quantity', unit: '条' },
+      )}
+    </section>`;
+}
+
+function platformEventFilters(queryData) {
+  const familyOptions = [
+    ['ALL', '全部业务类型'],
+    ...(Array.isArray(queryData.filters?.families) ? queryData.filters.families : [])
+      .map((item) => [item.code, item.name || item.code]),
+  ];
+  const statusOptions = [
+    ['ALL', '全部平台状态'],
+    ...(Array.isArray(queryData.filters?.statuses) ? queryData.filters.statuses : [])
+      .map((item) => [item.code, item.name || item.code]),
+  ];
+  return `
+    <div class="operation-controls platform-filter-bar">
+      ${operationSelect('platformView', '动态范围', [
+        ['ATTENTION', '只看需要关注'],
+        ['BUSINESS', '全部业务动态'],
+        ['ALL', '含技术验证'],
+      ], state.platform.view)}
+      ${operationSelect('platformSeverity', '重要程度', [
+        ['ALL', '全部等级'],
+        ['P0', 'P0 · 紧急'],
+        ['P1', 'P1 · 高优先'],
+        ['P2', 'P2 · 需关注'],
+        ['P3', 'P3 · 普通'],
+      ], state.platform.severity)}
+      ${operationSelect('platformFamily', '业务类型', familyOptions, state.platform.family)}
+      ${operationSelect('platformStatus', '平台状态', statusOptions, state.platform.status)}
+      ${operationSelect('platformSort', '排序', [
+        ['PRIORITY', '重要程度优先'],
+        ['LATEST', '发生时间最新'],
+      ], state.platform.sort)}
+      ${operationSelect('platformPageSize', '每页', [
+        ['25', '25 条'],
+        ['50', '50 条'],
+        ['100', '100 条'],
+      ], String(state.platform.pageSize))}
+      ${operationSearchControls('platform')}
+    </div>`;
+}
+
+function webhookEventTimeline(rows, hasEvidence) {
+  if (!rows.length) {
+    return emptyEvidence(
+      '当前没有需要关注的平台动态',
+      hasEvidence
+        ? '事件仓库已完成读取；当前筛选没有命中重点动态。普通成功回执仍可能只保留在技术审计中。'
+        : '事件可能尚未接入或订阅回读尚未建立，不能把空列表解释为平台没有变化。',
+    );
+  }
+  return `
+    <div class="platform-event-list">
+      ${rows.map((event) => {
+        const priority = webhookPriorityMeta(event.severity);
+        const store = baseStores().find(({ code }) => code === event.storeCode);
+        const ownerName = ownerNameForStore(store);
+        const technical = event.deliveryScope === 'APP_ONLY';
+        return `
+          <article class="platform-event-card ${priority.tone}">
+            <header>
+              <div class="platform-event-title">
+                <span class="row-status ${priority.tone}">${escapeHtml(priority.label)}</span>
+                ${event.storeCode
+                  ? `<strong>${escapeHtml(event.storeCode)}</strong>${ownerName ? `<span class="rank-owner" title="${escapeHtml(ownerName)}">${escapeHtml(shortOwnerName(ownerName))}</span>` : ''}`
+                  : '<strong>应用级验证</strong>'}
+              </div>
+              <time>${escapeHtml(sourceTime(event.occurredAt || event.safeProjection?.receivedAt || event.createdAt))}</time>
+            </header>
+            <h3>${escapeHtml(webhookEventLabel(event))}</h3>
+            <p>${escapeHtml(webhookEventSummary(event))}</p>
+            <footer>
+              <span>${escapeHtml(technical ? '技术验证回调' : '店铺业务事件')}</span>
+              ${event.status ? `<span class="row-status ${sourceStatusTone(event.status)}">${escapeHtml(event.status)}</span>` : '<span class="row-status unknown">平台状态未知</span>'}
+              ${event.businessKey ? `<span class="platform-business-key">${escapeHtml(event.businessKey)}</span>` : ''}
+            </footer>
+          </article>`;
+      }).join('')}
+    </div>`;
+}
+
+function platformEvidenceDisclosure(queryData) {
+  const health = productRecord(queryData.health);
+  const queue = queryData.queue && typeof queryData.queue === 'object'
+    ? queryData.queue
+    : null;
+  const subscriptions = Array.isArray(queryData.subscription?.rows)
+    ? queryData.subscription.rows
+    : [];
+  const receiverReady = health.receiver?.fresh === true;
+  const workerReady = health.worker?.fresh === true;
   const eventGroups = [
-    ['商品与合规', '商品接收、审核、删除、额度、建议零售价、合规失效'],
+    ['商品与合规', '商品接收、审核、删除、额度、建议零售价、合规变更'],
     ['采购与履约', '采购单、发货单、物流预报、缺货需求'],
-    ['采购退货', '退货申请、退货单、报废单'],
+    ['采购退货', '退货申请、退货单'],
     ['授权关系', '店铺授权关系变化'],
   ];
   return `
+    <details class="panel product-boundary-disclosure operation-evidence-disclosure platform-evidence-disclosure">
+      <summary>
+        <span class="eyebrow">TECHNICAL EVIDENCE</span>
+        <strong>队列、订阅回读与事件处理链路</strong>
+        <small>展开查看技术运行证据；主视图不堆验签和密文流程</small>
+      </summary>
+      <div class="inventory-disclosure-body">
+        ${panelHeading('QUEUE HEALTH', 'Webhook 队列健康', health.ok === true ? 'Receiver / Worker 心跳均在有效期内' : health.ok === false ? '至少一个运行进程心跳失效' : '运行态未知，不补充健康结论')}
+        ${webhookQueueView(queue)}
+        <section class="platform-subscription-evidence">
+          ${panelHeading('SUBSCRIPTION READBACK', '订阅回读', subscriptions.length ? `${subscriptions.length} 条真实回读` : '没有回读记录，不等于已证明未订阅')}
+          ${webhookSubscriptionTable(subscriptions)}
+        </section>
+        ${panelHeading('EVENT PIPELINE', '事件处理链路', '快速回执，业务处理不阻塞回调')}
+        <ol class="process-flow four-steps">
+          <li class="${receiverReady ? 'pipeline-ready' : ''}"><span>01</span><div><strong>验签与快速回执</strong><p>Receiver 校验应用身份、时间戳和签名，只保存加密 eventData。</p></div><b>${receiverReady ? 'Receiver 在线' : health.receiver ? '心跳失效' : '待心跳'}</b></li>
+          <li class="${queueHasEvidence(queue) ? 'pipeline-ready' : ''}"><span>02</span><div><strong>Receipt 与队列</strong><p>原始回执、幂等键与队列消息同事务保存并快速返回 2xx。</p></div><b>${queueHasEvidence(queue) ? '运行态可见' : '待证据'}</b></li>
+          <li class="${workerReady ? 'pipeline-ready' : ''}"><span>03</span><div><strong>解密与规范化</strong><p>Worker 只写白名单事件，需要详情时生成只读补查指令。</p></div><b>${workerReady ? 'Worker 在线' : health.worker ? '心跳失效' : '待心跳'}</b></li>
+          <li class="${subscriptions.length || queryData.source?.eventMaterialization?.returned > 0 ? 'pipeline-ready' : ''}"><span>04</span><div><strong>回读与独立补漏</strong><p>订阅状态必须回读；定时同步器独立补齐事实，事件本身不等于详情已入仓。</p></div><b>${subscriptions.length || queryData.source?.eventMaterialization?.returned > 0 ? '证据可见' : '待证据'}</b></li>
+        </ol>
+        <div class="inventory-boundary-grid">
+          ${eventGroups.map(([title, detail]) => `<article><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span></article>`).join('')}
+        </div>
+      </div>
+    </details>`;
+}
+
+function renderPlatform() {
+  if (state.platform.loading && !state.platform.data) {
+    return `${sampleNotice()}${platformQueryState('loading')}`;
+  }
+  if (state.platform.error && !state.platform.data) {
+    return `${sampleNotice()}${platformQueryState('error')}`;
+  }
+  const queryData = state.platform.data;
+  if (!queryData) return `${sampleNotice()}${platformQueryState('loading')}`;
+  const events = Array.isArray(queryData.events?.rows) ? queryData.events.rows : [];
+  const materialized = productRecord(queryData.source?.eventMaterialization);
+  const hasEvidence = materialized.truncated === false
+    || isUnit(materialized.returned)
+    || platformAvailable();
+  return `
     ${sampleNotice()}
-    ${pageIntro(
-      'WEBHOOK EVENTS',
-      '平台动态',
-      'Webhook 负责及时通知“发生变化”；Worker 只解密并生成白名单事件和补查指令，详情由独立只读同步器补齐。',
-      `<span>事件链路</span><strong>${runtimeHealthy ? 'Receiver / Worker 在线' : runtimeDegraded ? '已接入 · 运行态需关注' : connected ? '仓库证据已接入 · Runtime 待回读' : '尚未接入'}</strong><small>${escapeHtml(connected ? (evidenceLabels.join(' · ') || '已有仓库证据，业务数量仍未知') : '没有事件统计时不显示 0')}</small>`,
-    )}
-    <section class="process-panel">
-      ${panelHeading('EVENT PIPELINE', '事件处理链路', '快速回执，业务处理不阻塞回调')}
-      <ol class="process-flow four-steps">
-        <li class="${receiverReady ? 'pipeline-ready' : ''}"><span>01</span><div><strong>验签与快速回执</strong><p>Receiver 校验应用身份、时间戳和签名，只保存加密 eventData。</p></div><b>${receiverReady ? 'Receiver 在线' : platform.health?.receiver ? '心跳失效' : '待心跳'}</b></li>
-        <li class="${queueHasEvidence(queue) ? 'pipeline-ready' : ''}"><span>02</span><div><strong>Receipt 与队列</strong><p>原始回执、幂等键与队列消息同事务保存并快速返回 2xx。</p></div><b>${queueHasEvidence(queue) ? '运行态可见' : '待证据'}</b></li>
-        <li class="${workerReady ? 'pipeline-ready' : ''}"><span>03</span><div><strong>解密与规范化</strong><p>Worker 解密后只写白名单事件；需要详情时生成待补查指令，不直接调用 OpenAPI。</p></div><b>${workerReady ? 'Worker 在线' : platform.health?.worker ? '心跳失效' : '待心跳'}</b></li>
-        <li class="${events.length || subscriptions.length ? 'pipeline-ready' : ''}"><span>04</span><div><strong>回读与独立补漏</strong><p>订阅状态必须回读；定时同步器独立补齐事实，事件本身不等于详情已入仓。</p></div><b>${events.length || subscriptions.length ? '证据可见' : '待证据'}</b></li>
-      </ol>
+    ${platformDecisionOverview(queryData)}
+    ${platformRankings(queryData)}
+    <section class="table-section inventory-workspace platform-workspace">
+      ${panelHeading(
+        'OPERATOR ATTENTION',
+        '需要关注的平台动态',
+        `服务端筛选与分页 · 当前物化 ${nullableUnits(materialized.returned)} 条${materialized.truncated === true ? ' · 源明细已截断' : ''}`,
+      )}
+      ${platformEventFilters(queryData)}
+      ${platformPagination(queryData.events?.pagination, 'top')}
+      ${webhookEventTimeline(events, hasEvidence)}
+      ${platformPagination(queryData.events?.pagination, 'bottom')}
+      ${state.platform.loading ? '<p class="query-refresh-note" role="status">正在刷新当前平台动态筛选结果…</p>' : ''}
+      ${materialized.truncated === true ? '<p class="table-note warning-note">当前 Dashboard 只物化最近 100 条平台事件；筛选结果不是仓库全量历史。请缩小店铺或条件，并以事件仓库为最终证据。</p>' : ''}
     </section>
-    <section class="table-section">
-      ${panelHeading('QUEUE HEALTH', 'Webhook 队列健康', runtimeHealthy ? 'Receiver / Worker 心跳均在有效期内' : runtimeDegraded ? '至少一个运行进程心跳失效，请检查服务、死信与受阻店铺' : '仅有仓库/队列证据；Receiver / Worker 运行态未知，不补充健康结论')}
-      ${webhookQueueView(queue)}
-    </section>
-    <div class="split-grid">
-      <section class="panel">
-        ${panelHeading('SUBSCRIPTION READBACK', '订阅回读', subscriptions.length ? `${subscriptions.length} 条真实回读` : '最终以 DL 应用后台可订阅清单为准')}
-        ${subscriptions.length
-          ? webhookSubscriptionTable(subscriptions)
-          : `<ul class="condition-list">${eventGroups.map(([title, detail]) => `<li><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span></li>`).join('')}</ul>`}
-      </section>
-      <section class="panel">
-        ${panelHeading('EVENT DIRECTORY', '全托重点事件目录', '目录不是订阅成功证据')}
-        <ul class="condition-list">
-          ${eventGroups.map(([title, detail]) => `<li><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span></li>`).join('')}
-        </ul>
-      </section>
-    </div>
-    <section class="table-section event-section">
-      ${panelHeading('EVENT TIMELINE', '平台事件时间线', operationScopeNote(events, '平台事件'))}
-      ${webhookEventTimeline(events)}
-    </section>`;
+    ${platformEvidenceDisclosure(queryData)}`;
 }
 
 function actionCandidateTable(rows) {
@@ -8432,6 +8849,9 @@ async function loadDashboard(options = {}) {
   if (state.data && state.route === 'fulfilment') {
     scheduleFulfilmentLoad();
   }
+  if (state.data && state.route === 'platform') {
+    schedulePlatformLoad();
+  }
 }
 
 function connectDashboardUpdates() {
@@ -8513,6 +8933,13 @@ function currentHashState() {
     fulfilmentSort: state.fulfilment.sort,
     fulfilmentPage: state.fulfilment.page,
     fulfilmentPageSize: state.fulfilment.pageSize,
+    platformView: state.platform.view,
+    platformSeverity: state.platform.severity,
+    platformFamily: state.platform.family,
+    platformStatus: state.platform.status,
+    platformSort: state.platform.sort,
+    platformPage: state.platform.page,
+    platformPageSize: state.platform.pageSize,
   };
 }
 
@@ -8568,6 +8995,25 @@ function applyHashState(parsed) {
   state.fulfilment.sort = parsed.fulfilmentSort || 'PRIORITY';
   state.fulfilment.page = parsed.fulfilmentPage || 1;
   state.fulfilment.pageSize = pageSizeParam(parsed.fulfilmentPageSize);
+  state.platform.view = allowListedToken(
+    parsed.platformView,
+    URL_PLATFORM_VIEWS,
+    'ATTENTION',
+  );
+  state.platform.severity = allowListedToken(
+    parsed.platformSeverity,
+    URL_PLATFORM_SEVERITIES,
+    'ALL',
+  );
+  state.platform.family = operationCodeParam(parsed.platformFamily);
+  state.platform.status = operationCodeParam(parsed.platformStatus);
+  state.platform.sort = allowListedToken(
+    parsed.platformSort,
+    URL_PLATFORM_SORTS,
+    'PRIORITY',
+  );
+  state.platform.page = parsed.platformPage || 1;
+  state.platform.pageSize = pageSizeParam(parsed.platformPageSize);
   if (parsed.quick === 'ALL') delete state.quickFilters[parsed.route];
   else state.quickFilters[parsed.route] = parsed.quick;
 }
@@ -8616,6 +9062,12 @@ function syncRouteFromLocation() {
     state.fulfilment.requestSerial += 1;
     state.fulfilment.loading = false;
   }
+  if (state.route === 'platform') {
+    schedulePlatformLoad({ resetPage: routeChanged });
+  } else if (routeChanged) {
+    state.platform.requestSerial += 1;
+    state.platform.loading = false;
+  }
   if (routeChanged && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -8631,6 +9083,7 @@ elements.search.addEventListener('input', (event) => {
   scheduleInventoryLoad({ resetPages: true, delay: 220 });
   scheduleProductLoad({ resetPages: true, delay: 220 });
   scheduleFulfilmentLoad({ resetPage: true, delay: 220 });
+  schedulePlatformLoad({ resetPage: true, delay: 220 });
 });
 
 elements.scope.addEventListener('change', (event) => {
@@ -8645,6 +9098,7 @@ elements.scope.addEventListener('change', (event) => {
   scheduleInventoryLoad({ resetPages: true, delay: 120 });
   scheduleProductLoad({ resetPages: true, delay: 120 });
   scheduleFulfilmentLoad({ resetPage: true, delay: 120 });
+  schedulePlatformLoad({ resetPage: true, delay: 120 });
 });
 
 elements.rangeButtons.forEach((button) => {
@@ -8777,6 +9231,11 @@ elements.view.addEventListener('click', (event) => {
     void loadFulfilment();
     return;
   }
+  const platformRetry = event.target.closest?.('[data-platform-retry]');
+  if (platformRetry && elements.view.contains(platformRetry)) {
+    void loadPlatform();
+    return;
+  }
   const fulfilmentPage = event.target.closest?.('[data-fulfilment-page]');
   if (fulfilmentPage && elements.view.contains(fulfilmentPage)) {
     const nextPage = Number(fulfilmentPage.dataset.fulfilmentPage);
@@ -8784,6 +9243,16 @@ elements.view.addEventListener('click', (event) => {
       state.fulfilment.page = nextPage;
       syncUrlFromState();
       void loadFulfilment();
+    }
+    return;
+  }
+  const platformPage = event.target.closest?.('[data-platform-page]');
+  if (platformPage && elements.view.contains(platformPage)) {
+    const nextPage = Number(platformPage.dataset.platformPage);
+    if (Number.isSafeInteger(nextPage) && nextPage >= 1 && !platformPage.disabled) {
+      state.platform.page = nextPage;
+      syncUrlFromState();
+      void loadPlatform();
     }
     return;
   }
@@ -8795,6 +9264,7 @@ elements.view.addEventListener('click', (event) => {
     syncUrlFromState();
     if (kind === 'procurement') scheduleProcurementLoad({ resetPage: true });
     if (kind === 'fulfilment') scheduleFulfilmentLoad({ resetPage: true });
+    if (kind === 'platform') schedulePlatformLoad({ resetPage: true });
     return;
   }
   const operationReset = event.target.closest?.('[data-operation-reset]');
@@ -8818,6 +9288,16 @@ elements.view.addEventListener('click', (event) => {
       state.fulfilment.pageSize = URL_DEFAULT_INVENTORY_PAGE_SIZE;
       syncUrlFromState();
       scheduleFulfilmentLoad({ resetPage: true });
+    }
+    if (kind === 'platform') {
+      state.platform.view = 'ATTENTION';
+      state.platform.severity = 'ALL';
+      state.platform.family = 'ALL';
+      state.platform.status = 'ALL';
+      state.platform.sort = 'PRIORITY';
+      state.platform.pageSize = URL_DEFAULT_INVENTORY_PAGE_SIZE;
+      syncUrlFromState();
+      schedulePlatformLoad({ resetPage: true });
     }
     return;
   }
@@ -8982,6 +9462,22 @@ elements.view.addEventListener('change', (event) => {
       state.fulfilment.sort = allowListedToken(raw, URL_FULFILMENT_SORTS, 'PRIORITY');
     } else if (kind === 'fulfilmentPageSize') {
       state.fulfilment.pageSize = pageSizeParam(raw);
+    } else if (kind === 'platformView') {
+      state.platform.view = allowListedToken(raw, URL_PLATFORM_VIEWS, 'ATTENTION');
+    } else if (kind === 'platformSeverity') {
+      state.platform.severity = allowListedToken(
+        raw,
+        URL_PLATFORM_SEVERITIES,
+        'ALL',
+      );
+    } else if (kind === 'platformFamily') {
+      state.platform.family = operationCodeParam(raw);
+    } else if (kind === 'platformStatus') {
+      state.platform.status = operationCodeParam(raw);
+    } else if (kind === 'platformSort') {
+      state.platform.sort = allowListedToken(raw, URL_PLATFORM_SORTS, 'PRIORITY');
+    } else if (kind === 'platformPageSize') {
+      state.platform.pageSize = pageSizeParam(raw);
     } else {
       return;
     }
@@ -8989,7 +9485,8 @@ elements.view.addEventListener('change', (event) => {
     // requested against the new one.
     syncUrlFromState();
     if (kind.startsWith('procurement')) scheduleProcurementLoad({ resetPage: true });
-    else scheduleFulfilmentLoad({ resetPage: true });
+    else if (kind.startsWith('fulfilment')) scheduleFulfilmentLoad({ resetPage: true });
+    else schedulePlatformLoad({ resetPage: true });
     return;
   }
   const productSelectControl = event.target.closest?.('[data-product-select]');
@@ -9042,6 +9539,7 @@ elements.clearFilters.addEventListener('click', () => {
   scheduleInventoryLoad({ resetPages: true });
   scheduleProductLoad({ resetPages: true });
   scheduleFulfilmentLoad({ resetPage: true });
+  schedulePlatformLoad({ resetPage: true });
   elements.search.focus();
 });
 

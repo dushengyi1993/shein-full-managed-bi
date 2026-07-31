@@ -29,9 +29,12 @@ const EMPTY_PLATFORM = Object.freeze({
   status: 'pending',
   health: null,
   queue: null,
+  eventMeta: null,
   subscriptions: Object.freeze([]),
   events: Object.freeze([]),
 });
+
+const WEBHOOK_EVENT_MATERIALIZATION_LIMIT = 100;
 
 function instant(value) {
   if (value === null || value === undefined) return null;
@@ -597,12 +600,15 @@ export async function readOperationsDashboard(pool) {
       const repository = createFullManagedWebhookRepository({
         pool: repositoryPoolForClient(client),
       });
-      const events = await repository.listOperationalEvents({
+      const eventRows = await repository.listOperationalEvents({
         allowedStores: '*',
-        limit: 100,
+        // One look-ahead row proves whether the bounded Dashboard slice was
+        // truncated without materializing an unbounded event history.
+        limit: WEBHOOK_EVENT_MATERIALIZATION_LIMIT + 1,
         includeTechnical: true,
         includeUnknown: false,
       });
+      const events = eventRows.slice(0, WEBHOOK_EVENT_MATERIALIZATION_LIMIT);
       const subscriptions = await repository.listSubscriptionState();
       const queue = await repository.getQueueHealth();
       const schemaHealth = await repository.health();
@@ -614,6 +620,11 @@ export async function readOperationsDashboard(pool) {
           ...runtimeHealth,
         }),
         queue: Object.freeze(queue),
+        eventMeta: Object.freeze({
+          returned: events.length,
+          limit: WEBHOOK_EVENT_MATERIALIZATION_LIMIT,
+          truncated: eventRows.length > WEBHOOK_EVENT_MATERIALIZATION_LIMIT,
+        }),
         subscriptions: Object.freeze(subscriptions),
         events: Object.freeze(events),
       });

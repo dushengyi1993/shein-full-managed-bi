@@ -17,7 +17,7 @@ function functionBody(source, functionName) {
 }
 
 /**
- * Static source contracts for the procurement and fulfilment workspaces. They
+ * Static source contracts for the procurement, fulfilment and platform workspaces. They
  * prove each surface is wired to its own server query rather than filtering the
  * whole Dashboard snapshot; they do not replace visual acceptance.
  */
@@ -26,9 +26,11 @@ test('each workspace consumes only its own independent endpoint', async () => {
   const app = await read('src/web/app.js');
   const procurementUrl = functionBody(app, 'procurementQueryUrl');
   const fulfilmentUrl = functionBody(app, 'fulfilmentQueryUrl');
+  const platformUrl = functionBody(app, 'platformQueryUrl');
 
   assert.match(procurementUrl, /`\/api\/procurement\?\$\{params\.toString\(\)\}`/);
   assert.match(fulfilmentUrl, /`\/api\/fulfilment\?\$\{params\.toString\(\)\}`/);
+  assert.match(platformUrl, /`\/api\/platform\?\$\{params\.toString\(\)\}`/);
   for (const parameter of ['owner', 'store', 'q', 'status', 'quick', 'sort', 'page', 'pageSize']) {
     assert.match(procurementUrl, new RegExp(`${parameter}:`), parameter);
   }
@@ -37,6 +39,11 @@ test('each workspace consumes only its own independent endpoint', async () => {
   ]) {
     assert.match(fulfilmentUrl, new RegExp(`${parameter}:`), parameter);
   }
+  for (const parameter of [
+    'owner', 'store', 'q', 'view', 'severity', 'family', 'status', 'sort', 'page', 'pageSize',
+  ]) {
+    assert.match(platformUrl, new RegExp(`${parameter}:`), parameter);
+  }
   // Every value is re-checked against an allow-list before it leaves the client.
   assert.match(procurementUrl, /allowListedToken\(state\.procurement\.sort, URL_PROCUREMENT_SORTS, 'PRIORITY'\)/);
   assert.match(procurementUrl, /operationCodeParam\(state\.procurement\.status\)/);
@@ -44,13 +51,20 @@ test('each workspace consumes only its own independent endpoint', async () => {
   assert.match(fulfilmentUrl, /allowListedToken\(state\.fulfilment\.sort, URL_FULFILMENT_SORTS, 'PRIORITY'\)/);
   assert.match(fulfilmentUrl, /operationCodeParam\(state\.fulfilment\.milestone\)/);
   assert.match(fulfilmentUrl, /pageSizeParam\(state\.fulfilment\.pageSize\)/);
+  assert.match(platformUrl, /allowListedToken\(state\.platform\.view, URL_PLATFORM_VIEWS, 'ATTENTION'\)/);
+  assert.match(platformUrl, /allowListedToken\(\s*state\.platform\.severity,\s*URL_PLATFORM_SEVERITIES,\s*'ALL'/);
+  assert.match(platformUrl, /operationCodeParam\(state\.platform\.family\)/);
+  assert.match(platformUrl, /operationCodeParam\(state\.platform\.status\)/);
+  assert.match(platformUrl, /pageSizeParam\(state\.platform\.pageSize\)/);
 
   // Neither workspace filters the full Dashboard snapshot any more.
   const procurement = functionBody(app, 'renderProcurement');
   const fulfilment = functionBody(app, 'renderFulfilment');
+  const platform = functionBody(app, 'renderPlatform');
   assert.match(procurement, /state\.procurement\.data/);
   assert.match(fulfilment, /state\.fulfilment\.data/);
-  for (const body of [procurement, fulfilment]) {
+  assert.match(platform, /state\.platform\.data/);
+  for (const body of [procurement, fulfilment, platform]) {
     assert.doesNotMatch(body, /scopedOperationRows\(|domainRows\(supply|attentionRows\(/);
     assert.doesNotMatch(body, /matchesQuickFilter\(/);
     assert.doesNotMatch(body, /slice\(0, ?100\)/);
@@ -65,6 +79,9 @@ test('each workspace consumes only its own independent endpoint', async () => {
   assert.match(fulfilment, /fulfilmentStoreRankings\(queryData\)/);
   assert.match(fulfilment, /fulfilmentEvidenceDisclosure\(queryData\)/);
   assert.match(functionBody(app, 'fulfilmentEvidenceDisclosure'), /milestoneOverview/);
+  assert.match(platform, /platformDecisionOverview\(queryData\)/);
+  assert.match(platform, /platformRankings\(queryData\)/);
+  assert.match(platform, /platformEvidenceDisclosure\(queryData\)/);
 });
 
 test('quick filter tokens are narrowed to each endpoint vocabulary', async () => {
@@ -140,6 +157,33 @@ test('fulfilment guards stale responses and exposes loading, error and retry', a
   assert.match(dashboardLoad, /state\.route === 'procurement'[\s\S]*scheduleProcurementLoad\(\)/);
 });
 
+test('platform guards stale responses and exposes loading, error, retry and bounded evidence', async () => {
+  const app = await read('src/web/app.js');
+  const load = functionBody(app, 'loadPlatform');
+  const schedule = functionBody(app, 'schedulePlatformLoad');
+  const queryState = functionBody(app, 'platformQueryState');
+  const render = functionBody(app, 'renderPlatform');
+
+  assert.match(load, /const requestSerial = state\.platform\.requestSerial \+ 1/);
+  assert.ok(
+    (load.match(/if \(requestSerial !== state\.platform\.requestSerial\) return;/g) || []).length >= 2,
+  );
+  assert.match(load, /if \(requestSerial === state\.platform\.requestSerial\)/);
+  assert.match(load, /result\.readOnly !== true/);
+  assert.match(load, /Array\.isArray\(result\.events\?\.rows\)/);
+  assert.match(load, /Array\.isArray\(result\.summary\.attentionByStore\)/);
+  assert.match(load, /Array\.isArray\(result\.subscription\.rows\)/);
+  assert.match(load, /平台动态查询结构无效/);
+  assert.match(schedule, /window\.clearTimeout\(platformLoadTimer\)/);
+  assert.match(schedule, /state\.platform\.requestSerial \+= 1/);
+  assert.match(queryState, /data-platform-retry="1"/);
+  assert.match(queryState, /加载失败不会显示成 0/);
+  assert.match(render, /materialized\.truncated === true/);
+  assert.match(render, /筛选结果不是仓库全量历史/);
+  assert.match(app, /state\.platform\.requestSerial \+= 1;\s*\n\s*state\.platform\.loading = false/);
+  assert.match(functionBody(app, 'loadDashboard'), /state\.route === 'platform'[\s\S]*schedulePlatformLoad\(\)/);
+});
+
 test('workspace URL state round-trips through allow-listed hash parameters', async () => {
   const app = await read('src/web/app.js');
   const parse = functionBody(app, 'parseHashState');
@@ -187,6 +231,8 @@ test('workspace URL state round-trips through allow-listed hash parameters', asy
   for (const key of [
     'procurementStatus', 'procurementSort', 'procurementPage', 'procurementPageSize',
     'fulfilmentMilestone', 'fulfilmentSort', 'fulfilmentPage', 'fulfilmentPageSize',
+    'platformView', 'platformSeverity', 'platformFamily', 'platformStatus',
+    'platformSort', 'platformPage', 'platformPageSize',
   ]) {
     assert.match(current, new RegExp(`${key}:`), key);
     assert.match(apply, new RegExp(`parsed\\.${key}`), key);
@@ -194,6 +240,7 @@ test('workspace URL state round-trips through allow-listed hash parameters', asy
   // Page size stays the closed 25/50/100 set on both workspaces.
   assert.match(apply, /state\.procurement\.pageSize = pageSizeParam\(parsed\.procurementPageSize\)/);
   assert.match(apply, /state\.fulfilment\.pageSize = pageSizeParam\(parsed\.fulfilmentPageSize\)/);
+  assert.match(apply, /state\.platform\.pageSize = pageSizeParam\(parsed\.platformPageSize\)/);
   assert.match(app, /const URL_INVENTORY_PAGE_SIZES = Object\.freeze\(\[25, 50, 100\]\)/);
 });
 
@@ -204,17 +251,24 @@ test('filter and page controls update the URL and reset paging', async () => {
   assert.match(app, /const operationSelectControl = event\.target\.closest\?\.\('\[data-operation-select\]'\)/);
   assert.match(app, /state\.procurement\.status = operationCodeParam\(raw\)/);
   assert.match(app, /state\.fulfilment\.milestone = operationCodeParam\(raw\)/);
+  assert.match(app, /state\.platform\.view = allowListedToken\(raw, URL_PLATFORM_VIEWS, 'ATTENTION'\)/);
+  assert.match(app, /state\.platform\.family = operationCodeParam\(raw\)/);
   assert.match(app, /state\.procurement\.pageSize = pageSizeParam\(raw\)/);
   assert.match(app, /state\.fulfilment\.pageSize = pageSizeParam\(raw\)/);
+  assert.match(app, /state\.platform\.pageSize = pageSizeParam\(raw\)/);
   assert.match(
     app,
-    /syncUrlFromState\(\);\s*\n\s*if \(kind\.startsWith\('procurement'\)\) scheduleProcurementLoad\(\{ resetPage: true \}\);\s*\n\s*else scheduleFulfilmentLoad\(\{ resetPage: true \}\)/,
+    /syncUrlFromState\(\);\s*\n\s*if \(kind\.startsWith\('procurement'\)\) scheduleProcurementLoad\(\{ resetPage: true \}\);\s*\n\s*else if \(kind\.startsWith\('fulfilment'\)\) scheduleFulfilmentLoad\(\{ resetPage: true \}\);\s*\n\s*else schedulePlatformLoad\(\{ resetPage: true \}\)/,
   );
 
   // Paging syncs the URL before fetching, so a shared link matches the view.
   assert.match(
     app,
     /state\.fulfilment\.page = nextPage;\s*\n\s*syncUrlFromState\(\);\s*\n\s*void loadFulfilment\(\)/,
+  );
+  assert.match(
+    app,
+    /state\.platform\.page = nextPage;\s*\n\s*syncUrlFromState\(\);\s*\n\s*void loadPlatform\(\)/,
   );
 
   // Explicit search and reset controls exist and keep global state coherent.
@@ -225,6 +279,7 @@ test('filter and page controls update the URL and reset paging', async () => {
   assert.match(app, /delete state\.quickFilters\[kind\]/);
   assert.match(app, /state\.procurement\.status = 'ALL'/);
   assert.match(app, /state\.fulfilment\.milestone = 'ALL'/);
+  assert.match(app, /state\.platform\.view = 'ATTENTION'/);
 
   // Quick filters reload the matching workspace only.
   assert.match(app, /if \(route === 'procurement'\) scheduleProcurementLoad\(\{ resetPage: true \}\)/);

@@ -861,6 +861,20 @@ function normalizeWebhookRuntimeComponent(value) {
   };
 }
 
+function normalizeWebhookEventMeta(value, events) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = record(value);
+  const returned = optionalNonNegativeInteger(source.returned);
+  const limit = optionalNonNegativeInteger(source.limit);
+  const truncated = optionalBoolean(source.truncated);
+  if (returned === null && limit === null && truncated === null) return null;
+  return {
+    returned: returned === null ? events.length : returned,
+    limit,
+    truncated,
+  };
+}
+
 function normalizePlatform(value) {
   const source = record(value);
   const healthSource = record(source.health);
@@ -872,16 +886,18 @@ function normalizePlatform(value) {
     worker: normalizeWebhookRuntimeComponent(healthSource.worker),
   };
   const hasHealthEvidence = Object.values(health).some((item) => item !== null);
+  const events = Array.isArray(source.events)
+    ? source.events.map(normalizeOperationalEvent).filter(Boolean).slice(0, 500)
+    : [];
   return {
     status: operationStatus(source.status),
     health: hasHealthEvidence ? health : null,
     queue: normalizeQueue(source.queue),
+    eventMeta: normalizeWebhookEventMeta(source.eventMeta, events),
     subscriptions: Array.isArray(source.subscriptions)
       ? source.subscriptions.map(normalizeSubscription).filter(Boolean).slice(0, 500)
       : [],
-    events: Array.isArray(source.events)
-      ? source.events.map(normalizeOperationalEvent).filter(Boolean).slice(0, 500)
-      : [],
+    events,
   };
 }
 

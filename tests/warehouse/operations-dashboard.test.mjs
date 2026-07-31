@@ -46,6 +46,7 @@ test('missing operational migrations remain pending without invented zero facts'
   assert.equal(dashboard.platform.status, 'pending');
   assert.equal(dashboard.platform.health, null);
   assert.equal(dashboard.platform.queue, null);
+  assert.equal(dashboard.platform.eventMeta, null);
   assert.equal(dashboard.actionPool.writeEnabled, false);
   assert.deepEqual(dashboard.actionPool.candidates, []);
   assert.deepEqual(dashboard.actionPool.meta, {

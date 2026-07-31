@@ -169,6 +169,52 @@ test('inventory workspace state survives a safe canonical link', async () => {
   assert.equal(unsafe.inventoryPageSize, 25);
 });
 
+test('platform workspace state survives a safe canonical link', async () => {
+  const { parseHashState, serializeHashState } = await loadHashStateContract();
+  const href = serializeHashState({
+    route: 'platform',
+    owner: 'ALL',
+    store: 'DL5477',
+    range: 'today',
+    query: 'PO-1',
+    platformView: 'BUSINESS',
+    platformSeverity: 'P1',
+    platformFamily: 'purchase_order',
+    platformStatus: 'FAILED',
+    platformSort: 'LATEST',
+    platformPage: 3,
+    platformPageSize: 50,
+  });
+
+  assert.match(href, /view=BUSINESS/);
+  assert.match(href, /eventSeverity=P1/);
+  assert.match(href, /eventFamily=PURCHASE_ORDER/);
+  assert.match(href, /eventStatus=FAILED/);
+  assert.match(href, /eventSort=LATEST/);
+  assert.match(href, /eventPage=3/);
+  assert.match(href, /size=50/);
+  const parsed = parseHashState(href);
+  assert.equal(parsed.platformView, 'BUSINESS');
+  assert.equal(parsed.platformSeverity, 'P1');
+  assert.equal(parsed.platformFamily, 'PURCHASE_ORDER');
+  assert.equal(parsed.platformStatus, 'FAILED');
+  assert.equal(parsed.platformSort, 'LATEST');
+  assert.equal(parsed.platformPage, 3);
+  assert.equal(parsed.platformPageSize, 50);
+
+  const unsafe = parseHashState(
+    '#platform?view=DROP&eventSeverity=P9&eventFamily=%3Cscript%3E'
+      + '&eventStatus=bad%20status&eventSort=DROP&eventPage=0&size=99',
+  );
+  assert.equal(unsafe.platformView, 'ATTENTION');
+  assert.equal(unsafe.platformSeverity, 'ALL');
+  assert.equal(unsafe.platformFamily, 'ALL');
+  assert.equal(unsafe.platformStatus, 'ALL');
+  assert.equal(unsafe.platformSort, 'PRIORITY');
+  assert.equal(unsafe.platformPage, 1);
+  assert.equal(unsafe.platformPageSize, 25);
+});
+
 test('invalid hash input falls back safely and cannot inject markup', async () => {
   const { parseHashState, parseScopeToken, parseFocusToken } = await loadHashStateContract();
 

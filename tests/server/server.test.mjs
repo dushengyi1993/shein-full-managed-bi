@@ -337,6 +337,54 @@ test('fulfilment query rejects duplicates, bad bounds and mutation methods', asy
   }
 });
 
+test('GET /api/platform is a bounded read-only platform event surface', async () => {
+  const response = await fetch(
+    `${baseUrl}/api/platform?owner=ALL&store=ALL&view=ATTENTION&severity=ALL`
+    + '&family=ALL&status=ALL&sort=PRIORITY&page=1&pageSize=50',
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.schemaVersion, 1);
+  assert.equal(payload.readOnly, true);
+  assert.equal(payload.query.view, 'ATTENTION');
+  assert.equal(payload.query.pageSize, 50);
+  assert.ok(Array.isArray(payload.events.rows));
+  assert.ok(Array.isArray(payload.summary.attentionByStore));
+  assert.ok(Array.isArray(payload.summary.attentionByFamily));
+  assert.ok(Array.isArray(payload.subscription.rows));
+  assert.deepEqual(payload.filters.pageSizes, [25, 50, 100]);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+
+  const head = await fetch(`${baseUrl}/api/platform`, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+  assert.equal(head.headers.get('cache-control'), 'no-store');
+});
+
+test('platform query rejects duplicates, unknown filters and mutation methods', async () => {
+  const duplicate = await fetch(`${baseUrl}/api/platform?q=a&q=b`);
+  assert.equal(duplicate.status, 400);
+  assert.match(await duplicate.text(), /QUERY_PARAMETER_DUPLICATED/);
+
+  const badPageSize = await fetch(`${baseUrl}/api/platform?pageSize=30`);
+  assert.equal(badPageSize.status, 400);
+  assert.match(await badPageSize.text(), /QUERY_PARAMETER_OUT_OF_RANGE/);
+
+  const unknownView = await fetch(`${baseUrl}/api/platform?view=DROP`);
+  assert.equal(unknownView.status, 400);
+  assert.match(await unknownView.text(), /QUERY_PARAMETER_INVALID/);
+
+  const unknownParameter = await fetch(`${baseUrl}/api/platform?raw=1`);
+  assert.equal(unknownParameter.status, 400);
+  assert.match(await unknownParameter.text(), /QUERY_PARAMETER_UNKNOWN/);
+
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const mutation = await fetch(`${baseUrl}/api/platform`, { method });
+    assert.equal(mutation.status, 405, method);
+    assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
+  }
+});
+
 test('procurement exposes exact page sizes, explicit quick filters and a compact status summary', async () => {
   const response = await fetch(`${baseUrl}/api/procurement?pageSize=100&quick=DEFECTIVE`);
   assert.equal(response.status, 200);
@@ -452,9 +500,9 @@ test('serves the local dashboard and its static assets', async () => {
   assert.match(pageResponse.headers.get('content-type'), /^text\/html/);
   const pageHtml = await pageResponse.text();
   assert.match(pageHtml, /全托运营驾驶舱/);
-  assert.match(pageHtml, /\/app\.js\?v=20260731\.\d+/);
-  assert.match(pageHtml, /\/styles\.css\?v=20260731\.\d+/);
-  assert.match(pageHtml, /\/home-parity\.css\?v=20260731\.\d+/);
+  assert.match(pageHtml, /\/app\.js\?v=20260801\.\d+/);
+  assert.match(pageHtml, /\/styles\.css\?v=20260801\.\d+/);
+  assert.match(pageHtml, /\/home-parity\.css\?v=20260801\.\d+/);
 
   assert.equal(scriptResponse.status, 200);
   assert.match(scriptResponse.headers.get('content-type'), /^text\/javascript/);

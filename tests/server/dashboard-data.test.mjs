@@ -411,6 +411,12 @@ test('preserves strict operational whitelists without exposing secrets or enabli
         hydrationPending: 0,
         blockedStores: 0,
       },
+      eventMeta: {
+        returned: 1,
+        limit: 100,
+        truncated: false,
+        secret: 'drop-me',
+      },
       subscriptions: [{
         appFingerprint: 'abc123',
         eventCode: '3001435',
@@ -472,6 +478,11 @@ test('preserves strict operational whitelists without exposing secrets or enabli
   assert.equal(dashboard.platform.health.receiver, null);
   assert.equal(dashboard.platform.health.worker, null);
   assert.equal(dashboard.platform.queue.queued, 0);
+  assert.deepEqual(dashboard.platform.eventMeta, {
+    returned: 1,
+    limit: 100,
+    truncated: false,
+  });
   assert.deepEqual(
     dashboard.platform.events[0].safeProjection.identifiers,
     { sku: 'SKU-1' },
