@@ -74,6 +74,8 @@ function validateStateFile(value) {
     for (const store of batch.stores) {
       if (
         !STORE_CODES.test(String(store.storeCode || '')) ||
+        (store.applicationStoreCode != null
+          && !STORE_CODES.test(String(store.applicationStoreCode || ''))) ||
         !STORE_STATUSES.has(store.status) ||
         !Number.isSafeInteger(store.attemptCount) ||
         store.attemptCount < 0
@@ -113,6 +115,7 @@ function publicBatch(batch, now) {
   const isExpired = Date.parse(batch.expiresAt) <= now.getTime();
   const stores = batch.stores.map((store) => ({
     storeCode: store.storeCode,
+    applicationStoreCode: store.applicationStoreCode || null,
     status: isExpired && store.status === 'AUTHORIZING' ? 'ERROR' : store.status,
     attemptCount: store.attemptCount,
     authorizedAt: store.authorizedAt || null,
@@ -282,6 +285,7 @@ export class FileAuthorizationStore {
     label,
     tokenHash,
     storeCodes,
+    applicationStoreCodesByStore = null,
     createdAt,
     expiresAt,
   }) {
@@ -292,6 +296,22 @@ export class FileAuthorizationStore {
     const normalizedCodes = [...new Set(storeCodes.map((value) => String(value).toUpperCase()))];
     if (normalizedCodes.length !== storeCodes.length || normalizedCodes.some((code) => !STORE_CODES.test(code))) {
       throw new TypeError('storeCodes must be unique valid store codes');
+    }
+    const routes = applicationStoreCodesByStore == null
+      ? null
+      : Object.fromEntries(Object.entries(applicationStoreCodesByStore).map(([storeCode, owner]) => [
+        String(storeCode).toUpperCase(),
+        String(owner).toUpperCase(),
+      ]));
+    if (
+      routes
+      && (
+        Object.keys(routes).length !== normalizedCodes.length
+        || normalizedCodes.some((storeCode) => !STORE_CODES.test(routes[storeCode] || ''))
+        || Object.keys(routes).some((storeCode) => !normalizedCodes.includes(storeCode))
+      )
+    ) {
+      throw new TypeError('application store routing must cover the batch exactly');
     }
     const now = new Date(createdAt);
     const expiry = new Date(expiresAt);
@@ -312,6 +332,7 @@ export class FileAuthorizationStore {
         completedAt: null,
         stores: normalizedCodes.map((storeCode) => ({
           storeCode,
+          applicationStoreCode: routes?.[storeCode] || null,
           status: 'NOT_STARTED',
           attemptCount: 0,
           authorizedAt: null,
@@ -395,6 +416,7 @@ export class FileAuthorizationStore {
         stateHash,
         batchId: batch.batchId,
         storeCode: normalizedStoreCode,
+        applicationStoreCode: store.applicationStoreCode || null,
         status: 'PENDING',
         createdAt: now.toISOString(),
         expiresAt: expiry.toISOString(),
@@ -409,6 +431,7 @@ export class FileAuthorizationStore {
       return {
         batchId: batch.batchId,
         storeCode: normalizedStoreCode,
+        applicationStoreCode: store.applicationStoreCode || null,
         expiresAt: expiry.toISOString(),
       };
     });
@@ -451,6 +474,7 @@ export class FileAuthorizationStore {
       return {
         batchId: item.batchId,
         storeCode: item.storeCode,
+        applicationStoreCode: item.applicationStoreCode || null,
         stateCreatedAt: item.createdAt,
       };
     });

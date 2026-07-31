@@ -44,22 +44,35 @@ const LIST_PATH = '/backstage/mange-applictions';
 const DETAIL_PATH = `${LIST_PATH}/detail`;
 
 function parseArgs(argv) {
-  const args = { output: defaultOutput };
+  const args = { output: defaultOutput, headed: false };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (['--store', '--port', '--output'].includes(token)) {
-      args[token.slice(2)] = argv[index + 1];
+    if (token === '--headed') {
+      args.headed = true;
+      continue;
+    }
+    if (['--store', '--port', '--output', '--profile-root'].includes(token)) {
+      args[token === '--profile-root' ? 'profileRoot' : token.slice(2)] = argv[index + 1];
       index += 1;
       continue;
     }
     throw new Error(`Unknown argument: ${token}`);
   }
   args.store = String(args.store || '').trim().toUpperCase();
-  args.port = Number(args.port);
   args.output = path.resolve(args.output);
   if (!/^[A-Z0-9]+$/.test(args.store)) throw new Error('Missing or invalid --store.');
-  if (!Number.isInteger(args.port) || args.port < 1 || args.port > 65535) {
-    throw new Error('Missing or invalid --port.');
+  if (args.profileRoot) {
+    args.profileRoot = path.resolve(args.profileRoot);
+    const expected = `persistent-${args.store.toLowerCase()}-profile`;
+    if (path.basename(args.profileRoot).toLowerCase() !== expected) {
+      throw new Error('Profile root does not match the requested store.');
+    }
+    if (args.port !== undefined) throw new Error('Use either --port or --profile-root, not both.');
+  } else {
+    args.port = Number(args.port);
+    if (!Number.isInteger(args.port) || args.port < 1 || args.port > 65535) {
+      throw new Error('Missing or invalid --port.');
+    }
   }
   if (!args.output.endsWith('.secret.json')) {
     throw new Error('Credential output must use an ignored *.secret.json path.');
@@ -81,16 +94,29 @@ async function clickFirstVisible(locator, description) {
 
 async function loginIfNeeded(page) {
   if (!new URL(page.url()).pathname.includes('/login')) return;
-  const passwordInput = page.locator('input[placeholder="请输入登录密码"]');
+  await page.waitForFunction(() => (
+    Boolean(document.querySelector('input[type="password"]'))
+    || /使用密码登录|Login with password/i.test(document.body?.innerText || '')
+  ), null, { timeout: 25_000 });
+  const passwordInput = page.locator(
+    'input[type="password"], input[placeholder="请输入登录密码"], input[placeholder="Password"]',
+  ).first();
   if (!(await passwordInput.isVisible().catch(() => false))) {
-    await clickFirstVisible(page.getByText('使用密码登录', { exact: true }), 'password login switch');
+    await clickFirstVisible(
+      page.getByText(/使用密码登录|Login with password/i),
+      'password login switch',
+    );
   }
   await page.waitForFunction(() => {
-    const phone = document.querySelector('input[placeholder="手机号"]');
-    const password = document.querySelector('input[placeholder="请输入登录密码"]');
-    return Boolean(phone?.value?.length && password?.value?.length);
+    const password = document.querySelector('input[type="password"]');
+    const identity = [...document.querySelectorAll('input')]
+      .find((input) => input !== password && input.value?.length);
+    return Boolean(identity && password?.value?.length);
   }, null, { timeout: 10_000 });
-  await clickFirstVisible(page.getByRole('button', { name: '登 录', exact: true }), 'login button');
+  await clickFirstVisible(
+    page.getByRole('button', { name: /登\s*录|Log In/i }),
+    'login button',
+  );
   await page.waitForURL((url) => url.pathname.replace(/\/$/, '') === LIST_PATH, { timeout: 45_000 });
 }
 
@@ -197,34 +223,55 @@ async function saveCredential(args, application, credentials) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${args.port}`);
-  const context = browser.contexts()[0];
+  let ownedContext = null;
+  const browser = args.profileRoot
+    ? null
+    : await chromium.connectOverCDP(`http://127.0.0.1:${args.port}`);
+  const context = args.profileRoot
+    ? await chromium.launchPersistentContext(args.profileRoot, {
+      channel: 'chrome',
+      headless: !args.headed,
+      locale: 'zh-CN',
+      args: [
+        '--profile-directory=Profile 1',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--password-store=basic',
+      ],
+    })
+    : browser.contexts()[0];
+  if (args.profileRoot) ownedContext = context;
   if (!context) throw new Error(`No browser context on CDP port ${args.port}.`);
-  const page = context.pages().find((candidate) => candidate.url().includes('open.sheincorp.com'))
-    || context.pages()[0];
-  if (!page) throw new Error(`No browser page on CDP port ${args.port}.`);
 
-  await page.bringToFront();
-  await openApplicationList(page);
-  const application = await findApplicationCard(page, args.store);
-  await clickFirstVisible(
-    application.card.getByRole('button', { name: '查看详情', exact: true }),
-    'full-managed app details button',
-  );
-  await page.waitForURL((url) => url.pathname.replace(/\/$/, '') === DETAIL_PATH, { timeout: 30_000 });
-  await clickFirstVisible(page.getByRole('tab', { name: '基本信息', exact: true }), 'basic information tab');
-  const credentials = await readCredentialPanel(page);
-  await saveCredential(args, application, credentials);
+  try {
+    const page = context.pages().find((candidate) => candidate.url().includes('open.sheincorp.com'))
+      || context.pages()[0]
+      || await context.newPage();
 
-  console.log(JSON.stringify({
-    ok: true,
-    storeCode: args.store,
-    appName: application.appName,
-    appIdCaptured: true,
-    appSecretKeyCaptured: true,
-    savedTo: path.relative(projectRoot, args.output).replace(/\\/g, '/'),
-    capturedAt: new Date().toISOString(),
-  }, null, 2));
+    await page.bringToFront();
+    await openApplicationList(page);
+    const application = await findApplicationCard(page, args.store);
+    await clickFirstVisible(
+      application.card.getByRole('button', { name: '查看详情', exact: true }),
+      'full-managed app details button',
+    );
+    await page.waitForURL((url) => url.pathname.replace(/\/$/, '') === DETAIL_PATH, { timeout: 30_000 });
+    await clickFirstVisible(page.getByRole('tab', { name: '基本信息', exact: true }), 'basic information tab');
+    const credentials = await readCredentialPanel(page);
+    await saveCredential(args, application, credentials);
+
+    console.log(JSON.stringify({
+      ok: true,
+      storeCode: args.store,
+      appName: application.appName,
+      appIdCaptured: true,
+      appSecretKeyCaptured: true,
+      savedTo: path.relative(projectRoot, args.output).replace(/\\/g, '/'),
+      capturedAt: new Date().toISOString(),
+    }, null, 2));
+  } finally {
+    await ownedContext?.close();
+  }
 }
 
 main().catch((error) => {

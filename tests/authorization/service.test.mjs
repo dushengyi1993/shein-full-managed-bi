@@ -29,6 +29,11 @@ const TEMP_TOKEN = 'temporary-token-for-service-test';
 async function makeHarness(context, {
   querySupplierId = 'supplier-100',
   beforeStoreInfoResponse,
+  targetStoreCode = 'DL',
+  applicationStoreCode = null,
+  applicationOwner = 'DL',
+  appId = APP_ID,
+  appSecret = APP_SECRET,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'fm-authorization-service-'));
   context.after(() => rm(directory, { recursive: true, force: true }));
@@ -39,10 +44,10 @@ async function makeHarness(context, {
     schemaVersion: 1,
     cooperationMode: 'FULL_MANAGED',
     applications: [{
-      storeCode: 'DL',
-      appName: 'DL Full Managed Test',
-      appId: APP_ID,
-      appSecretKey: APP_SECRET,
+      storeCode: applicationOwner,
+      appName: `${applicationOwner} Full Managed Test`,
+      appId,
+      appSecretKey: appSecret,
     }],
   })}\n`, { encoding: 'utf8', mode: 0o600 });
   const store = new FileAuthorizationStore({ file: stateFile });
@@ -50,13 +55,16 @@ async function makeHarness(context, {
     batchId: 'batch-service-test',
     label: 'Service test batch',
     tokenHash: sha256(BATCH_TOKEN),
-    storeCodes: ['DL'],
+    storeCodes: [targetStoreCode],
+    applicationStoreCodesByStore: applicationStoreCode
+      ? { [targetStoreCode]: applicationStoreCode }
+      : null,
     createdAt: CREATED_AT,
     expiresAt: new Date(CREATED_AT.getTime() + 86_400_000),
   });
 
   const calls = [];
-  const encryptedSecretKey = encryptSheinSecretKeyForTest(STORE_SECRET, APP_SECRET);
+  const encryptedSecretKey = encryptSheinSecretKeyForTest(STORE_SECRET, appSecret);
   const fetchImpl = async (url, init) => {
     calls.push({ url, init });
     if (url.endsWith('/open-api/auth/get-by-token')) {
@@ -64,7 +72,7 @@ async function makeHarness(context, {
         code: 0,
         msg: 'OK',
         info: {
-          appid: APP_ID,
+          appid: appId,
           state: CALLBACK_STATE,
           supplierId: 'supplier-100',
           supplierBusinessMode: 'FULL_MANAGED',
@@ -113,17 +121,38 @@ async function makeHarness(context, {
   };
 }
 
-async function startAuthorization(service) {
+async function startAuthorization(service, storeCode = 'DL') {
   const session = await service.createSession(BATCH_TOKEN);
   const cookie = session.setCookie.split(';', 1)[0];
-  const started = await service.begin(cookie, 'DL');
-  assert.equal(started.storeCode, 'DL');
+  const started = await service.begin(cookie, storeCode);
+  assert.equal(started.storeCode, storeCode);
   assert.equal(
     new URL(started.authorizationUrl).hash.includes(CALLBACK_STATE),
     true,
   );
   return { cookie, session, started };
 }
+
+test('routes a store authorization and callback through the batch legal-entity application', async (context) => {
+  const harness = await makeHarness(context, {
+    targetStoreCode: 'CX4412',
+    applicationStoreCode: 'CX',
+    applicationOwner: 'CX',
+    appId: 'full-managed-cx-app',
+    appSecret: '0123456789abcdef-cx-app-secret',
+  });
+  await startAuthorization(harness.service, 'CX4412');
+  await harness.service.complete({
+    state: CALLBACK_STATE,
+    tempToken: TEMP_TOKEN,
+  });
+
+  const [receiptName] = await readdir(harness.receiptDirectory);
+  const receipt = JSON.parse(await readFile(join(harness.receiptDirectory, receiptName), 'utf8'));
+  assert.equal(receipt.storeCode, 'CX4412');
+  assert.equal(receipt.applicationStoreCode, 'CX');
+  assert.equal(receipt.appId, 'full-managed-cx-app');
+});
 
 async function directoryEntries(directory) {
   try {

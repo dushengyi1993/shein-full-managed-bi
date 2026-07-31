@@ -67,6 +67,52 @@ test('persists only hashes for batch tokens and one-time authorization states', 
   assert.equal(Object.hasOwn(persisted.states[0], 'state'), false);
 });
 
+test('a multi-entity batch binds every store and callback state to its application owner', async (context) => {
+  const { store } = await temporaryStore(context);
+  const batchToken = Buffer.alloc(32, 21).toString('base64url');
+  const state = Buffer.alloc(32, 22).toString('base64url');
+  await store.createBatch({
+    batchId: 'multi-entity-batch',
+    label: 'Multi-entity authorization',
+    tokenHash: sha256(batchToken),
+    storeCodes: ['DL5477', 'CX4412'],
+    applicationStoreCodesByStore: {
+      DL5477: 'DL',
+      CX4412: 'CX',
+    },
+    createdAt: new Date('2026-07-26T00:00:00.000Z'),
+    expiresAt: new Date('2026-07-27T00:00:00.000Z'),
+  });
+
+  const batch = await store.getBatchByTokenHash(
+    sha256(batchToken),
+    new Date('2026-07-26T01:00:00.000Z'),
+  );
+  assert.deepEqual(
+    batch.stores.map(({ storeCode, applicationStoreCode }) => ({
+      storeCode,
+      applicationStoreCode,
+    })),
+    [
+      { storeCode: 'DL5477', applicationStoreCode: 'DL' },
+      { storeCode: 'CX4412', applicationStoreCode: 'CX' },
+    ],
+  );
+
+  await store.beginState({
+    tokenHash: sha256(batchToken),
+    storeCode: 'CX4412',
+    stateHash: sha256(state),
+    createdAt: new Date('2026-07-26T01:00:00.000Z'),
+    expiresAt: new Date('2026-07-26T01:10:00.000Z'),
+  });
+  const claim = await store.claimState({
+    stateHash: sha256(state),
+    claimedAt: new Date('2026-07-26T01:01:00.000Z'),
+  });
+  assert.equal(claim.applicationStoreCode, 'CX');
+});
+
 test('expires old states and rejects a completed state replay', async (context) => {
   const { file, store } = await temporaryStore(context);
   const batchToken = Buffer.alloc(32, 3).toString('base64url');

@@ -63,7 +63,7 @@ async function loadApplication(file, ownerStoreCode) {
   const appId = String(application?.appId || '').trim();
   const appSecretKey = String(application?.appSecretKey || '').trim();
   if (!appId || !appSecretKey) {
-    fail('AUTHORIZATION_CONFIGURATION_ERROR', 'DL application credentials are incomplete');
+    fail('AUTHORIZATION_CONFIGURATION_ERROR', 'application credentials are incomplete');
   }
   return Object.freeze({
     ownerStoreCode,
@@ -283,7 +283,11 @@ export function createFullManagedAuthorizationService({
       if (!TOKEN_PATTERN.test(state)) fail('RANDOM_SOURCE_FAILURE', 'state generation failed');
       const startedAt = now();
       const expiresAt = new Date(startedAt.getTime() + stateTtlSeconds * 1000);
-      const application = await loadApplication(applicationFile, ownerStoreCode);
+      const batch = await batchForToken(token);
+      const target = batch.stores.find((candidate) => candidate.storeCode === normalizedStoreCode);
+      if (!target) fail('STORE_NOT_IN_BATCH', 'store is not part of this batch');
+      const applicationStoreCode = target.applicationStoreCode || ownerStoreCode;
+      const application = await loadApplication(applicationFile, applicationStoreCode);
       await store.beginState({
         tokenHash: sha256(token),
         storeCode: normalizedStoreCode,
@@ -314,7 +318,10 @@ export function createFullManagedAuthorizationService({
       const claimedAt = now();
       const claim = await store.claimState({ stateHash, claimedAt });
       try {
-        const application = await loadApplication(applicationFile, ownerStoreCode);
+        const application = await loadApplication(
+          applicationFile,
+          claim.applicationStoreCode || ownerStoreCode,
+        );
         const bootstrapClient = new SheinOpenApiClient({
           baseUrl,
           openKeyId: application.appId,

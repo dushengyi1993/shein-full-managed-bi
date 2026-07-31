@@ -117,6 +117,10 @@ function renderBatch(batch) {
     code.className = 'store-code';
     code.textContent = store.storeCode;
 
+    const application = document.createElement('span');
+    application.className = 'application-code';
+    application.textContent = `${store.applicationStoreCode || 'DL'} 主体应用`;
+
     const content = document.createElement('div');
     content.className = 'store-content';
 
@@ -137,7 +141,7 @@ function renderBatch(batch) {
       action.addEventListener('click', () => beginAuthorization(store.storeCode, action));
     }
 
-    content.append(status, detail, action);
+    content.append(application, status, detail, action);
     row.append(code, content);
     list.append(row);
   }

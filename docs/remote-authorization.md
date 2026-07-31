@@ -2,7 +2,9 @@
 
 ## 目标
 
-由全托同事在自己的电脑上登录 24 家店铺并确认授权。系统统一使用 DL 的全托 OpenAPI 应用，但每家店铺独立换取并保存自己的 `openKeyId / secretKey`。
+由全托同事在自己的电脑上登录全托店铺并确认授权。系统按公司主体选择对应的全托
+OpenAPI 应用；同主体多店共用一个应用，但每家店铺仍独立换取并保存自己的
+`openKeyId / secretKey`。
 
 店铺内部代码统一采用“公司简称拼音首字母 + 店铺账号后四位”，例如公司简称为
 `CX`、账号后四位为 `4412` 时，对应代码为 `CX4412`。系统不保存或展示完整店铺账号。
@@ -25,7 +27,7 @@
 1. 打开管理员发送的完整链接，确认域名是 `fm.dushengyi.cc`。
 2. 页面会显示 24 家店铺清单。每次只选择一家。
 3. 点击“开始授权”，在新窗口核对域名是 SHEIN 官方授权域名。
-4. 登录该店对应的全托账号，核对页面展示的是 DL 全托应用及权限范围。
+4. 登录该店对应的全托账号，核对页面展示的是该店所属公司主体的全托应用及权限范围。
 5. 由本人点击确认授权，等待自动跳回结果页。
 6. 结果页显示“等待管理员核验”后，关闭该页，回到原清单刷新状态。
 7. 切换下一店前退出旧账号，或使用明确隔离的浏览器 Profile。
@@ -44,7 +46,8 @@
 3. 口令通过 HTTPS 请求体建立 `HttpOnly / Secure / SameSite=Lax` 的短期授权会话。
 4. 点击单店按钮后，服务器生成 256 位一次性 `state`，只保存 SHA-256，最长有效 10 分钟。
 5. SHEIN 回调必须同时包含且只包含一个 `state` 和一个 `tempToken`。缺失、重复、过期、未知或已消费的 `state` 全部拒绝。
-6. 服务器立即用 DL 应用级凭据调用 `/open-api/auth/get-by-token`，并严格核对返回的 `appid` 与原样 `state`。
+6. 服务器按批次中的主体路由选择应用级凭据，调用 `/open-api/auth/get-by-token`，
+   并严格核对返回的 `appid` 与原样 `state`。
 7. 用新换取的店铺凭据调用 `/open-api/openapi-business-backend/query-store-info`，要求其 `supplierId` 与换证结果唯一且一致。
 8. 通过双重核对后，凭据只写入独立的 `REVIEW_REQUIRED` 收件箱，不写正式 `openapi.json`，也不自动启用。
 9. 管理员从独立来源确认目标店铺与 `supplierId`，写入一对一权威映射后，使用显式确认命令晋级。
@@ -68,8 +71,13 @@ sudo -u sheinfm-auth env \
   FULL_AUTH_PUBLIC_ORIGIN=https://fm.dushengyi.cc \
   node scripts/create_full_managed_authorization_batch.mjs \
   --output /srv/shein-fm-auth/runtime/current-batch.secret.json \
+  --include-entities CX,XL,QY,DX,NM,LQ,TS,DL,FY,QH,JY,ZL,MZ,YJ \
   --valid-hours 24
 ```
+
+`--include-entities` 只选择已经注册并已取得全托应用凭据的主体。尚未注册的
+GJ、RH、WY 不得临时回退到 DL 应用；注册、应用审核和权限包完成后再生成下一批。
+平台原有 DL 对 24 店授权不撤销，旧凭据单独保留作回滚，不作为新批次的主体路由。
 
 脚本标准输出只显示批次编号、店铺数、有效期和文件位置，不打印交接链接。
 

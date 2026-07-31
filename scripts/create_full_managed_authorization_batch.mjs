@@ -16,6 +16,8 @@ function parseArgs(argv) {
     output: path.join(projectRoot, 'state', 'full-managed-authorization-batch.secret.json'),
     origin: process.env.FULL_AUTH_PUBLIC_ORIGIN || 'https://fm.dushengyi.cc',
     storesFile: path.join(projectRoot, 'config', 'stores.example.json'),
+    entitiesFile: path.join(projectRoot, 'config', 'full-managed-legal-entities.json'),
+    includeEntities: '',
     validHours: 24,
     label: '24 家全托店铺授权',
   };
@@ -24,6 +26,8 @@ function parseArgs(argv) {
     '--output',
     '--origin',
     '--stores-file',
+    '--entities-file',
+    '--include-entities',
     '--valid-hours',
     '--label',
   ]);
@@ -69,6 +73,46 @@ async function loadStoreCodes(file) {
   return storeCodes;
 }
 
+async function loadEntityRouting(file, availableStoreCodes, includeEntities) {
+  const config = JSON.parse(await readFile(file, 'utf8'));
+  if (config?.schemaVersion !== 1 || !Array.isArray(config.entities)) {
+    throw new Error('Legal-entity routing file is incompatible.');
+  }
+  const requested = String(includeEntities || '')
+    .split(',')
+    .map((value) => value.trim().toUpperCase())
+    .filter(Boolean);
+  const requestedSet = new Set(requested);
+  if (requestedSet.size !== requested.length) {
+    throw new Error('--include-entities contains duplicates.');
+  }
+  const knownEntities = new Set(config.entities.map((entity) => String(entity.entityKey || '').toUpperCase()));
+  if (requested.some((entityKey) => !knownEntities.has(entityKey))) {
+    throw new Error('--include-entities contains an unknown legal entity.');
+  }
+  const allowedStores = new Set(availableStoreCodes);
+  const routes = {};
+  for (const entity of config.entities) {
+    const entityKey = String(entity.entityKey || '').toUpperCase();
+    if (requested.length && !requestedSet.has(entityKey)) continue;
+    if (!/^[A-Z0-9_-]{1,24}$/.test(entityKey) || !Array.isArray(entity.stores)) {
+      throw new Error('Legal-entity routing contains an invalid entity.');
+    }
+    for (const rawStoreCode of entity.stores) {
+      const storeCode = String(rawStoreCode || '').toUpperCase();
+      if (!allowedStores.has(storeCode) || routes[storeCode]) {
+        throw new Error('Legal-entity routing contains an invalid or duplicate store.');
+      }
+      routes[storeCode] = entityKey;
+    }
+  }
+  if (!Object.keys(routes).length) throw new Error('Legal-entity routing selected no stores.');
+  if (!requested.length && Object.keys(routes).length !== availableStoreCodes.length) {
+    throw new Error('Legal-entity routing does not cover the store inventory.');
+  }
+  return routes;
+}
+
 async function writeSecret(file, payload) {
   const directory = path.dirname(file);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -85,7 +129,15 @@ async function writeSecret(file, payload) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const storeCodes = await loadStoreCodes(args.storesFile);
+  const availableStoreCodes = await loadStoreCodes(args.storesFile);
+  const applicationStoreCodesByStore = await loadEntityRouting(
+    args.entitiesFile,
+    availableStoreCodes,
+    args.includeEntities,
+  );
+  const storeCodes = availableStoreCodes.filter(
+    (storeCode) => applicationStoreCodesByStore[storeCode],
+  );
   const createdAt = new Date();
   const expiresAt = new Date(createdAt.getTime() + args.validHours * 60 * 60 * 1000);
   const token = crypto.randomBytes(32).toString('base64url');
@@ -96,6 +148,7 @@ async function main() {
     label: args.label,
     tokenHash: sha256(token),
     storeCodes,
+    applicationStoreCodesByStore,
     createdAt,
     expiresAt,
   });
