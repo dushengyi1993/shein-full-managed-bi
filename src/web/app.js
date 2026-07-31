@@ -3042,8 +3042,8 @@ function inventoryViewTabs(queryData) {
     ? queryData.advice.pagination.matchedMaterializedRows
     : 0;
   const tabs = [
-    ['INVENTORY', '库存风险', inventoryMatched],
-    ['ADVICE', '备货建议', adviceMatched],
+    ['INVENTORY', '库存缺货', inventoryMatched],
+    ['ADVICE', '备货与急采', adviceMatched],
   ];
   return `
     <div class="segmented-tabs" role="tablist" aria-label="库存与备货工作台视图">
@@ -3105,41 +3105,194 @@ function inventoryMetricCard(label, metric, unit, { decimal = false } = {}) {
   };
 }
 
+function inventoryTypeRows(queryData, type) {
+  const rows = Array.isArray(queryData?.inventory?.storeSummaryRows)
+    ? queryData.inventory.storeSummaryRows
+    : [];
+  return rows.filter((row) => String(row.inventoryTypeCode || '').toUpperCase() === type);
+}
+
+function inventoryCoverageSum(rows, coverageKey, variants) {
+  const parts = rows.map((row) => coverageParts(row?.[coverageKey], variants));
+  if (!rows.length || parts.some((item) => item === null)) return null;
+  return parts.reduce((summary, item) => ({
+    known: summary.known + item.known,
+    total: summary.total + item.total,
+  }), { known: 0, total: 0 });
+}
+
+function inventoryScopeLabel() {
+  const store = selectedStore();
+  if (store) return store.code;
+  const owner = selectedOwner();
+  if (owner) return `负责人 · ${shortOwnerName(owner.name)}`;
+  return '全部店铺';
+}
+
 function inventorySummaryCards(queryData) {
-  const overview = queryData.overview;
-  const inventoryView = state.inventory.view === 'INVENTORY';
+  const overview = queryData.overview || {};
+  const jiRows = inventoryTypeRows(queryData, 'JI');
+  const piRows = inventoryTypeRows(queryData, 'PI');
+  const adviceRows = Array.isArray(queryData?.advice?.storeSummaryRows)
+    ? queryData.advice.storeSummaryRows
+    : [];
+  const jiInventory = completeNullableSum(jiRows, 'inventoryQuantity');
+  const jiUsable = completeNullableSum(jiRows, 'usableInventory');
+  const piInventory = completeNullableSum(piRows, 'inventoryQuantity');
+  const shortageSku = completeCoveredNullableSum(
+    jiRows,
+    'shortageSkuCount',
+    'shortageCoverage',
+    [['knownSkuCount', 'totalSkuCount', 'SKU']],
+  );
+  const shortageQuantity = completeCoveredNullableSum(
+    jiRows,
+    'shortageQuantity',
+    'shortageCoverage',
+    [['knownSkuCount', 'totalSkuCount', 'SKU']],
+  );
+  const urgentQuantity = completeCoveredNullableSum(
+    adviceRows,
+    'plannedUrgentQuantity',
+    'plannedUrgentCoverage',
+    [['knownSkuCount', 'totalSkuCount', 'SKU']],
+  );
+  const adviceCoverage = inventoryCoverageSum(
+    adviceRows,
+    'advisedOrderCoverage',
+    [['knownSkuCount', 'totalSkuCount', 'SKU']],
+  );
+  const inventoryCoverage = queryData.source?.coverage?.inventory || {};
+  const observedStores = new Set(jiRows.map(({ storeCode }) => storeCode).filter(Boolean)).size;
+  const adviceKnownLabel = adviceCoverage
+    ? `${numberFormatter.format(adviceCoverage.known)} / ${numberFormatter.format(adviceCoverage.total)} SKU`
+    : '覆盖未知';
+  const shortageLabel = isUnit(shortageSku) && isUnit(shortageQuantity)
+    ? `${numberFormatter.format(shortageSku)} SKU / ${numberFormatter.format(shortageQuantity)} 件`
+    : '未知';
+  const adviceImpact = overview.advised || {};
+  return `
+    <section class="sales-period-overview inventory-decision-overview" aria-label="库存与备货经营概览">
+      <header class="sales-workspace-head">
+        <div>
+          <span class="eyebrow">INVENTORY ANALYSIS</span>
+          <h1>库存与备货</h1>
+          <p>先看全盘库存、缺货和急采结论，再进入 SKU 清单处理；JI、PI、VI 始终分开，不把未知补成 0。</p>
+        </div>
+        <div class="sales-range-receipt">
+          <span>库存业务日 / 当前范围</span>
+          <strong>${escapeHtml(`${queryData.source?.businessDate || '业务日未知'} · ${inventoryScopeLabel()}`)}</strong>
+          <small>${escapeHtml(`${numberFormatter.format(observedStores)} 家店有 JI 汇总 · 顶部日期不改写当前库存快照`)}</small>
+        </div>
+      </header>
+      <div class="sales-period-grid inventory-decision-grid">
+        ${salesPeriodMetric('JI 库存', isUnit(jiInventory) ? `${numberFormatter.format(jiInventory)} 件` : '未知', `${numberFormatter.format(jiRows.length)} 个店铺快照 · 平台库存类型原值`, 'primary')}
+        ${salesPeriodMetric('JI 可用库存', isUnit(jiUsable) ? `${numberFormatter.format(jiUsable)} 件` : '未知', '只汇总字段完整的 JI 店铺快照')}
+        ${salesPeriodMetric('PI 库存', isUnit(piInventory) ? `${numberFormatter.format(piInventory)} 件` : '未知', `${numberFormatter.format(piRows.length)} 个店铺快照 · 不与 JI 相加`)}
+        ${salesPeriodMetric('缺货需求', shortageLabel, `涉及 ${nullableUnits(overview.shortage?.affectedStoreCount, '未知')} 家店`)}
+        ${salesPeriodMetric('计划急采', isUnit(urgentQuantity) ? `${numberFormatter.format(urgentQuantity)} 件` : '未知', `${nullableUnits(overview.urgent?.positiveRowCount, '未知')} 个 SKU 有急采量`)}
+        ${salesPeriodMetric('建议量字段覆盖', adviceKnownLabel, isUnit(adviceImpact.unknownCount) && adviceImpact.unknownCount > 0 ? `风险队列仍有 ${numberFormatter.format(adviceImpact.unknownCount)} 行建议量未知` : '建议量字段完整')}
+      </div>
+      <div class="sales-data-receipt">
+        <span><i></i>库存快照覆盖</span>
+        <p>${escapeHtml(`${nullableUnits(inventoryCoverage.succeededStores, '未知')} / ${nullableUnits(inventoryCoverage.totalStores, '未知')} 家成功 · 最新来源 ${sourceTime(queryData.source?.latestSourceFetchedAt)} · ${inventoryCoverage.reason || '覆盖说明待确认'}`)}</p>
+      </div>
+    </section>`;
+}
+
+function inventoryPriorityCards(queryData) {
+  const overview = queryData.overview || {};
+  const shortage = overview.shortage || {};
+  const urgent = overview.urgent || {};
+  const advised = overview.advised || {};
   const reconciliation = overview.reconciliation || {};
-  const freshness = queryData.source?.latestSourceFetchedAt;
-  const primary = inventoryView
-    ? inventoryMetricCard('当前范围缺货数量', overview.shortage, '件')
-    : inventoryMetricCard('平台建议下单量', overview.advised, '件');
-  const secondary = inventoryView
-    ? inventoryMetricCard('当前范围可用库存', overview.usable, '件')
-    : inventoryMetricCard('平台计划急采量', overview.urgent, '件');
-  const attention = inventoryView
-    ? {
-        label: '库存对账待复核',
-        value: `${numberFormatter.format(isUnit(reconciliation.rowCount) ? reconciliation.rowCount : 0)} 行`,
-        note: `涉及 ${numberFormatter.format(isUnit(reconciliation.affectedStoreCount) ? reconciliation.affectedStoreCount : 0)} 家店铺；对账状态保留平台原值`,
-        tone: (isUnit(reconciliation.rowCount) && reconciliation.rowCount > 0) ? 'partial' : 'available',
-      }
-    : {
-        label: '平台预警 SKU',
-        value: `${numberFormatter.format(isUnit(overview.warningRowCount) ? overview.warningRowCount : 0)} 行`,
-        note: '仅统计平台明确标记为预警的行；未知预警状态不计入',
-        tone: (isUnit(overview.warningRowCount) && overview.warningRowCount > 0) ? 'partial' : 'available',
-      };
+  const advisedValue = isUnit(advised.total)
+    ? `${numberFormatter.format(advised.total)} 件`
+    : isUnit(advised.knownSum)
+      ? `≥ ${numberFormatter.format(advised.knownSum)} 件`
+      : '未知';
   return operationSummaryCards([
-    primary,
-    secondary,
-    attention,
     {
-      label: '最新来源快照',
-      value: freshness ? formatDateTime(freshness) : '未知',
-      note: '来源抓取时间，不冒充库存业务时点',
-      tone: freshness ? 'available' : 'partial',
+      label: '先处理 · 缺货',
+      value: `${nullableUnits(shortage.positiveRowCount, '未知')} 个 SKU`,
+      note: `${nullableUnits(shortage.affectedStoreCount, '未知')} 家店 · 缺货 ${isUnit(shortage.total) ? numberFormatter.format(shortage.total) : '未知'} 件`,
+      tone: isUnit(shortage.positiveRowCount) && shortage.positiveRowCount > 0 ? 'blocked' : 'available',
+    },
+    {
+      label: '再复核 · 急采',
+      value: `${nullableUnits(urgent.positiveRowCount, '未知')} 个 SKU`,
+      note: `${nullableUnits(urgent.affectedStoreCount, '未知')} 家店 · 计划急采 ${isUnit(urgent.total) ? numberFormatter.format(urgent.total) : '未知'} 件`,
+      tone: isUnit(urgent.positiveRowCount) && urgent.positiveRowCount > 0 ? 'partial' : 'available',
+    },
+    {
+      label: '平台建议量',
+      value: advisedValue,
+      note: isUnit(advised.unknownCount) && advised.unknownCount > 0
+        ? `${numberFormatter.format(advised.knownCount)} 行已知 · ${numberFormatter.format(advised.unknownCount)} 行未知`
+        : '当前风险队列建议量字段完整',
+      tone: isUnit(advised.unknownCount) && advised.unknownCount > 0 ? 'partial' : 'available',
+    },
+    {
+      label: '对账异常',
+      value: `${nullableUnits(reconciliation.rowCount, '未知')} 行`,
+      note: isUnit(reconciliation.rowCount) && reconciliation.rowCount > 0
+        ? `涉及 ${nullableUnits(reconciliation.affectedStoreCount, '未知')} 家店，进入差异筛查`
+        : 'RECONCILED 视为已对账，不再误报为异常',
+      tone: isUnit(reconciliation.rowCount) && reconciliation.rowCount > 0 ? 'blocked' : 'available',
     },
   ]);
+}
+
+function inventoryStoreRankings(queryData) {
+  const jiRows = inventoryTypeRows(queryData, 'JI');
+  const adviceRows = Array.isArray(queryData?.advice?.storeSummaryRows)
+    ? queryData.advice.storeSummaryRows
+    : [];
+  const rankedRow = (row, value, sub) => {
+    const store = baseStores().find(({ code }) => code === row.storeCode);
+    const ownerName = ownerNameForStore(store);
+    return {
+      key: row.storeCode,
+      label: row.storeCode,
+      ownerName,
+      tone: ownerDisplayTone(ownerKeyForStore(store) || ownerName),
+      value,
+      sub,
+    };
+  };
+  const shortage = jiRows
+    .filter((row) => isUnit(row.shortageQuantity) && row.shortageQuantity > 0)
+    .map((row) => rankedRow(
+      row,
+      row.shortageQuantity,
+      `缺货 ${nullableUnits(row.shortageSkuCount, '未知')} SKU · JI 可用 ${nullableUnits(row.usableInventory, '未知')} 件`,
+    ))
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+    .slice(0, 8);
+  const urgent = adviceRows
+    .filter((row) => isUnit(row.plannedUrgentQuantity) && row.plannedUrgentQuantity > 0)
+    .map((row) => rankedRow(
+      row,
+      row.plannedUrgentQuantity,
+      `${fieldCoverageLabel(row.plannedUrgentCoverage, [['knownSkuCount', 'totalSkuCount', 'SKU']])} · 总 SKU ${nullableUnits(row.totalSkuCount, '未知')}`,
+    ))
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+    .slice(0, 8);
+  return `
+    <section class="rank-grid inventory-risk-rankings" aria-label="库存与急采店铺排行">
+      ${historyRankTable(
+        '缺货数量店铺排行',
+        'JI 缺货需求 · Top 8 · 先处理缺货数量高的店铺',
+        shortage,
+        { defaultTone: 'store-quantity' },
+      )}
+      ${historyRankTable(
+        '计划急采店铺排行',
+        '平台急采数量 · Top 8 · 只使用字段完整的店铺快照',
+        urgent,
+        { defaultTone: 'product-quantity' },
+      )}
+    </section>`;
 }
 
 /** Truthful source line: materialized rows are never called a warehouse total. */
@@ -3279,6 +3432,32 @@ function inventoryStoreSummary(queryData) {
       </table>
     </div>
     <p class="table-note">店铺级第二层总览，共 ${numberFormatter.format(rows.length)} 行；库存、可用、在途、缺货和建议是不同口径。“—”表示未知并同时展示覆盖率；明确 0 才展示为 0。</p>`;
+}
+
+function inventoryEvidenceDisclosure(queryData) {
+  const inventoryView = state.inventory.view === 'INVENTORY';
+  return `
+    <details class="panel product-boundary-disclosure inventory-evidence-disclosure">
+      <summary>
+        <span class="eyebrow">DETAIL & BOUNDARY</span>
+        <strong>店铺汇总与口径说明</strong>
+        <small>${escapeHtml(inventoryView ? '展开查看店铺 × 库存类型完整汇总' : '展开查看店铺级备货字段覆盖')}</small>
+      </summary>
+      <div class="inventory-disclosure-body">
+        ${panelHeading(
+          inventoryView ? 'STORE INVENTORY SUMMARY' : 'STORE ADVICE SUMMARY',
+          inventoryView ? '店铺 × 库存类型汇总' : '店铺级平台备货建议汇总',
+          '服务端已按当前负责人、店铺和搜索范围筛选',
+        )}
+        ${inventoryStoreSummary(queryData)}
+        <div class="inventory-boundary-grid">
+          <article><strong>库存类型</strong><span>JI、PI、VI 保留平台原值，任何页面合计都不把三种类型混在一起。</span></article>
+          <article><strong>未知值</strong><span>字段缺失以“—”和覆盖率表达，不参与合计，也不冒充业务 0。</span></article>
+          <article><strong>平台建议</strong><span>建议量、急采量和预警是只读事实，不等于采购动作已经执行。</span></article>
+          <article><strong>顶部日期</strong><span>当前库存使用最新快照；顶部日期只影响有历史事实的页面，不改写库存业务日。</span></article>
+        </div>
+      </div>
+    </details>`;
 }
 /* --- inventory-query:end --- */
 
@@ -3834,7 +4013,7 @@ function sourceTime(value) {
 
 function sourceStatusTone(status) {
   const normalized = String(status || '').toLocaleLowerCase('zh-CN');
-  if (/(complete|success|received|inbound|active|enabled|granted|processed|healthy|ok)/.test(normalized)) return 'complete';
+  if (/(complete|success|received|inbound|active|enabled|granted|processed|reconciled|healthy|ok)/.test(normalized)) return 'complete';
   if (/(failed|error|blocked|dead|expired|disabled|denied|cancel)/.test(normalized)) return 'blocked';
   return 'partial';
 }
@@ -7112,17 +7291,20 @@ function renderInventory() {
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
-    ${pageIntro(
-      'INVENTORY',
-      '库存与供给',
-      '库存、缺货需求、待交付、在途与已入库数量分开表达；销量只能作为供给速度参考。',
-      `<span>供给事实</span><strong>${escapeHtml(String(queryData.source?.supplyStatus === 'available' ? '真实快照已接入' : '覆盖不完整'))}</strong><small>${escapeHtml(inventorySourceLine(queryData))}</small>`,
-    )}
     ${inventorySummaryCards(queryData)}
+    <section class="inventory-priority-section">
+      ${panelHeading(
+        'ACTION FIRST',
+        '先处理这些',
+        '缺货、急采、建议量缺口和对账异常分开表达；数字只来自当前筛选范围',
+      )}
+      ${inventoryPriorityCards(queryData)}
+    </section>
+    ${inventoryStoreRankings(queryData)}
     <section class="table-section inventory-workspace">
       ${panelHeading(
         'SUPPLY RISK WORKSPACE',
-        '库存风险与备货工作台',
+        inventoryView ? '库存缺货处理清单' : '平台备货与急采清单',
         `服务端筛选、排序与分页 · ${inventorySourceLine(queryData)}`,
       )}
       ${inventoryViewTabs(queryData)}
@@ -7164,23 +7346,7 @@ function renderInventory() {
       ${state.inventory.loading ? '<p class="query-refresh-note" role="status">正在刷新当前库存与备货筛选结果…</p>' : ''}
       ${activeList.source?.truncated === true ? '<p class="table-note warning-note">当前筛选只覆盖物化到 Dashboard 的风险明细；源结果已截断，命中数不是 SHEIN 仓库全量。</p>' : ''}
     </section>
-    <section class="table-section inventory-store-summary">
-      ${panelHeading(
-        inventoryView ? 'STORE INVENTORY SUMMARY' : 'STORE ADVICE SUMMARY',
-        inventoryView ? '店铺×库存类型汇总' : '店铺级平台备货建议汇总',
-        '第二层总览 · 服务端已按当前负责人、店铺和搜索筛选',
-      )}
-      ${inventoryStoreSummary(queryData)}
-    </section>
-    <section class="panel condition-panel">
-      ${panelHeading('READ-ONLY BOUNDARY', '只读能力边界', '供给事实可读，库存写操作仍关闭')}
-      <ul class="condition-list">
-        <li><strong>库存事实</strong><span>实际、可用、在途与缺货按来源字段分开</span></li>
-        <li><strong>未知值</strong><span>以 null 和覆盖率表达，不参与合计</span></li>
-        <li><strong>建议事实</strong><span>平台备货建议是只读事实，不等于已执行的采购动作</span></li>
-        <li><strong>执行能力</strong><span>任何提交按钮和写接口仍保持禁用</span></li>
-      </ul>
-    </section>`;
+    ${inventoryEvidenceDisclosure(queryData)}`;
 }
 
 function renderReturns() {

@@ -179,7 +179,7 @@ function severityRank(value) {
 function isReconciliationMismatch(row) {
   const status = String(row.reconciliationStatus ?? '').toUpperCase();
   if (status === '') return false;
-  return !/^(MATCH|MATCHED|OK|CONSISTENT|BALANCED)$/.test(status);
+  return !/^(MATCH|MATCHED|RECONCILED|OK|CONSISTENT|BALANCED)$/.test(status);
 }
 
 function matchesInventoryQuick(row, quick) {

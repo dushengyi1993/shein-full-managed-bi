@@ -41,11 +41,14 @@ test('inventory workspace renders one server-paged decision table at a time', as
 
   assert.match(render, /inventoryViewTabs\(queryData\)/);
   assert.match(render, /inventorySummaryCards\(queryData\)/);
+  assert.match(render, /inventoryPriorityCards\(queryData\)/);
+  assert.match(render, /inventoryStoreRankings\(queryData\)/);
   assert.match(render, /inventoryPagination\(pagination, paginationKind, paginationLabel, 'top'\)/);
   assert.match(render, /inventoryPagination\(pagination, paginationKind, paginationLabel, 'bottom'\)/);
   assert.match(render, /inventoryRiskQueryTable\(queryData\.inventory\.rows\)/);
   assert.match(render, /stockAdviceQueryTable\(queryData\.advice\.rows\)/);
-  assert.match(render, /inventoryStoreSummary\(queryData\)/);
+  assert.match(render, /inventoryEvidenceDisclosure\(queryData\)/);
+  assert.match(functionBody(app, 'inventoryEvidenceDisclosure'), /inventoryStoreSummary\(queryData\)/);
   assert.doesNotMatch(render, /inventoryRiskTable|stockAdviceRiskTable/);
   assert.doesNotMatch(inventoryTable, /\.slice\(/);
   assert.doesNotMatch(adviceTable, /\.slice\(/);
@@ -82,6 +85,8 @@ test('inventory workspace keeps the warm editorial and mobile containment rules'
   ]);
   assert.match(styles, /\.segmented-tabs\s*\{/);
   assert.match(styles, /\.inventory-controls\s*\{/);
+  assert.match(styles, /\.inventory-risk-rankings\s*\{/);
+  assert.match(styles, /\.inventory-boundary-grid\s*\{/);
   assert.match(styles, /\.query-skeleton\s*\{/);
   assert.match(styles, /max-width:\s*100%/);
   assert.match(styles, /\.table-wrap/);

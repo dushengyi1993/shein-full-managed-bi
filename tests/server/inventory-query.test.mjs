@@ -229,6 +229,31 @@ test('inventory type, quick filter and text search run server-side', () => {
   assert.equal(searched.inventory.pagination.pageCount, 0);
 });
 
+test('a reconciled inventory row is not presented as an accounting mismatch', () => {
+  const dashboard = structuredClone(DASHBOARD);
+  dashboard.supply.inventoryRisks.push({
+    storeCode: 'DL5477',
+    storeName: 'DL',
+    skuCode: 'SKU-RECONCILED',
+    inventoryTypeCode: 'JI',
+    totalInventory: 12,
+    usableInventory: 12,
+    shortageQuantity: 1,
+    reconciliationStatus: 'RECONCILED',
+    severity: 'critical',
+    latestSourceFetchedAt: '2026-07-29T01:40:00.000Z',
+  });
+  const result = queryInventoryDashboard(
+    dashboard,
+    new URLSearchParams({ quick: 'RECONCILIATION' }),
+  );
+  assert.deepEqual(
+    result.inventory.rows.map((row) => row.skuCode),
+    ['SKU-MISMATCH'],
+  );
+  assert.equal(result.overview.reconciliation.rowCount, 1);
+});
+
 test('inventory and advice sorts and pages stay independent and deterministic', () => {
   const shortageSorted = queryInventoryDashboard(
     DASHBOARD,

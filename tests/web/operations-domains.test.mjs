@@ -29,7 +29,7 @@ test('supply pages consume real purchase, delivery, inventory and stock-advice c
   assert.match(app, /采购单关注队列/);
   assert.match(app, /交付入仓关注队列/);
   assert.match(app, /SKU 风险与备货筛查/);
-  assert.match(app, /店铺×库存类型汇总/);
+  assert.match(app, /店铺 × 库存类型汇总/);
   // Procurement and fulfilment no longer render an unbounded per-store table.
   // Both now aggregate the scoped snapshot into a compact overview instead.
   assert.match(app, /采购单状态紧凑总览/);

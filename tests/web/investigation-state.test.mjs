@@ -309,7 +309,6 @@ test('the focused-evidence panel is read-only, honest and clearable', async () =
   for (const intro of [
     'PURCHASE ORDERS',
     'DELIVERY & INBOUND',
-    'INVENTORY',
     'CONTROLLED AUTOMATION',
   ]) {
     assert.match(
@@ -321,6 +320,10 @@ test('the focused-evidence panel is read-only, honest and clearable', async () =
   assert.match(
     source,
     /\$\{focusEvidencePanel\(\)\}\s*\n\s*\$\{productDecisionSummary\(queryData\)\}/,
+  );
+  assert.match(
+    source,
+    /\$\{focusEvidencePanel\(\)\}\s*\n\s*\$\{inventorySummaryCards\(queryData\)\}/,
   );
 });
 

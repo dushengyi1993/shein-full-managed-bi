@@ -1087,6 +1087,69 @@ a {
   font-size: 0.78rem;
 }
 
+.inventory-priority-section {
+  margin-bottom: 14px;
+}
+
+.inventory-priority-section .panel-heading {
+  margin-bottom: 10px;
+}
+
+.inventory-risk-rankings {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.inventory-risk-rankings > .panel {
+  min-width: 0;
+  margin: 0;
+}
+
+.inventory-evidence-disclosure {
+  margin-top: 14px;
+}
+
+.inventory-disclosure-body {
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.inventory-disclosure-body > .panel-heading {
+  margin-top: 15px;
+}
+
+.inventory-boundary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.inventory-boundary-grid article {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-soft);
+}
+
+.inventory-boundary-grid strong,
+.inventory-boundary-grid span {
+  display: block;
+}
+
+.inventory-boundary-grid strong {
+  color: var(--ink);
+  font-size: 0.72rem;
+}
+
+.inventory-boundary-grid span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.5;
+}
+
 @media (max-width: 640px) {
   .segmented-tabs button {
     padding: 6px 10px;
@@ -1099,6 +1162,11 @@ a {
   .inventory-controls .sales-sort-control {
     flex: 1 0 100%;
     justify-content: space-between;
+  }
+
+  .inventory-risk-rankings,
+  .inventory-boundary-grid {
+    grid-template-columns: 1fr;
   }
 
   .table-pagination {
