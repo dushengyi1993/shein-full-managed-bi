@@ -5655,7 +5655,13 @@ function historyTrendChart(rows, key, { money = false, suffix = '' } = {}, kind 
     (best, point, index) => (point[key] < points[best][key] ? index : best),
     0,
   );
-  const labelled = new Set([0, points.length - 1, maxIndex, minIndex]);
+  const labelled = new Set();
+  const minimumLabelGap = points.length > 12 ? 2 : 1;
+  for (const index of [maxIndex, minIndex, 0, points.length - 1]) {
+    if ([...labelled].every((existing) => Math.abs(existing - index) >= minimumLabelGap)) {
+      labelled.add(index);
+    }
+  }
   const gridValues = [max, min + span / 2, min];
   const axis = gridValues.map((value) => {
     const y = yFor(value);

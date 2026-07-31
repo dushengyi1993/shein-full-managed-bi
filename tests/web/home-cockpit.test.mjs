@@ -481,7 +481,8 @@ test('limited day-grain history is stated exactly and never padded into a full s
   assert.match(home, /renderHistoryTrends\(\)/);
   const historicalChart = functionBody(app, 'historyTrendChart');
   assert.match(historicalChart, /缺失不补零、不连线/);
-  assert.match(historicalChart, /const labelled = new Set\(\[0, points\.length - 1, maxIndex, minIndex\]\)/);
+  assert.match(historicalChart, /for \(const index of \[maxIndex, minIndex, 0, points\.length - 1\]\)/);
+  assert.match(historicalChart, /minimumLabelGap/);
   assert.match(historicalChart, /class="chart-value-label"/);
   assert.match(historicalChart, /class="history-bar"/);
 
@@ -608,6 +609,8 @@ test('homepage range, trend labels and renewal cadence match the operating prefe
   assert.match(parity, /@media \(max-width: 1650px\)[\s\S]*"range range range"/);
   assert.match(parity, /\.metric-matrix \.matrix-cell\.head\s*\{[^}]*margin: 0;[^}]*gap: 0;/s);
   assert.doesNotMatch(chart, /point\.currency/);
+  assert.match(chart, /minimumLabelGap/);
+  assert.match(chart, /Math\.abs\(existing - index\) >= minimumLabelGap/);
   assert.match(timer, /Description=Daily full-managed SHEIN Profile session renewal/);
   assert.match(timer, /OnCalendar=\*-\*-\* 03:20:00 Asia\/Shanghai/);
   assert.doesNotMatch(timer, /00,04,08,12,16,20/);
