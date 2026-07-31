@@ -80,6 +80,20 @@ test('GET /api/dashboard returns only the permitted volume dashboard shape', asy
   );
 });
 
+test('GET /api/home is a bounded date-scoped homepage surface', async () => {
+  const response = await fetch(
+    `${baseUrl}/api/home?start=2026-07-31&end=2026-07-31&owner=ALL&store=ALL`,
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.schemaVersion, 1);
+  assert.equal(payload.readOnly, true);
+  assert.equal(payload.query.start, '2026-07-31');
+  assert.equal(payload.query.previousStart, '2026-07-30');
+  assert.ok(Array.isArray(payload.home.storeDaily));
+  assert.ok(Array.isArray(payload.home.productFinanceDaily));
+});
+
 test('GET /api/procurement is a bounded read-only query surface', async () => {
   const response = await fetch(
     `${baseUrl}/api/procurement?page=1&pageSize=25&quick=ALL&sort=PRIORITY`,

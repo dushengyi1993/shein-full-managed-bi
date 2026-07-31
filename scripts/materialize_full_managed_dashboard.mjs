@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { Pool } from 'pg';
+import path from 'node:path';
 
 import { loadFullManagedConfig } from '../src/openapi/full-managed-config.mjs';
 import {
   atomicWriteJson,
   materializeDashboardFromDatabase,
+  splitDashboardArtifacts,
 } from '../src/warehouse/dashboard-materializer.mjs';
 
 function parseArgs(argv) {
@@ -36,10 +38,18 @@ async function main() {
     const dashboard = await materializeDashboardFromDatabase(pool, {
       storeCatalog: config?.stores ?? [],
     });
-    const written = await atomicWriteJson(output, dashboard);
+    const parsedOutput = path.parse(output);
+    const homeOutput = path.join(
+      parsedOutput.dir,
+      `${parsedOutput.name.replace(/\.next$/, '')}.home${parsedOutput.name.endsWith('.next') ? '.next' : ''}${parsedOutput.ext}`,
+    );
+    const artifacts = splitDashboardArtifacts(dashboard);
+    const homeWritten = await atomicWriteJson(homeOutput, artifacts.home);
+    const written = await atomicWriteJson(output, artifacts.core);
     console.log(JSON.stringify({
       ok: true,
       output: written,
+      homeOutput: homeWritten,
       datasetStatus: dashboard.datasetStatus,
       updatedAt: dashboard.updatedAt,
       storeCount: dashboard.permission.totalStores,

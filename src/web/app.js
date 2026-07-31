@@ -600,6 +600,12 @@ const state = {
   // Read-only investigation target restored from the canonical link.
   focus: initialHashState.focus,
   data: null,
+  home: {
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+  },
   health: null,
   healthError: '',
   loading: true,
@@ -5091,7 +5097,7 @@ function finiteMetric(value) {
 }
 
 function homeHistory() {
-  const source = state.data?.home;
+  const source = state.home.data?.home ?? state.data?.home;
   return source && typeof source === 'object'
     ? source
     : {
@@ -6001,6 +6007,12 @@ function renderHistoryRankings() {
    口径脚注与业务入口。首页噪音（pulse、supply radar、运营提醒）不再参与组装，
    相关函数保留给其他路由使用。 */
 function renderHome() {
+  if (state.home.loading && !state.home.data) {
+    return `<section class="panel empty-state" aria-live="polite"><h3>正在加载首页经营数据</h3><p>只读取当前日期、店铺和搜索范围，不再下载整份历史明细。</p></section>`;
+  }
+  if (state.home.error && !state.home.data) {
+    return `<section class="panel empty-state" role="alert"><h3>首页经营数据加载失败</h3><p>${escapeHtml(state.home.error)}</p></section>`;
+  }
   return `
     ${renderHistoryKpis()}
     ${renderHistoryTrends()}
@@ -7617,6 +7629,57 @@ async function fetchJson(path) {
   return response.json();
 }
 
+function homeApiPath() {
+  const range = selectedHomeDateRange();
+  const params = new URLSearchParams({
+    start: range.start,
+    end: range.end,
+    owner: state.owner,
+    store: state.store,
+  });
+  if (state.query.trim()) params.set('q', state.query.trim());
+  return `/api/home?${params.toString()}`;
+}
+
+async function loadHome() {
+  if (!state.data || state.route !== 'home') return;
+  const serial = state.home.requestSerial + 1;
+  state.home.requestSerial = serial;
+  state.home.loading = true;
+  state.home.error = '';
+  try {
+    const result = await fetchJson(homeApiPath());
+    if (serial !== state.home.requestSerial) return;
+    state.home.data = result;
+  } catch (error) {
+    if (serial !== state.home.requestSerial) return;
+    state.home.error = error instanceof Error ? error.message : '首页经营数据暂不可用';
+  } finally {
+    if (serial === state.home.requestSerial) {
+      state.home.loading = false;
+      render();
+    }
+  }
+}
+
+let homeLoadTimer = null;
+function scheduleHomeLoad({ delay = 0 } = {}) {
+  if (homeLoadTimer) clearTimeout(homeLoadTimer);
+  if (state.route !== 'home') {
+    state.home.requestSerial += 1;
+    state.home.loading = false;
+    return;
+  }
+  state.home.data = null;
+  state.home.loading = true;
+  state.home.error = '';
+  render();
+  homeLoadTimer = setTimeout(() => {
+    homeLoadTimer = null;
+    void loadHome();
+  }, delay);
+}
+
 async function loadDashboard() {
   state.loading = true;
   state.error = '';
@@ -7650,6 +7713,9 @@ async function loadDashboard() {
 
   state.loading = false;
   render();
+  if (state.data && state.route === 'home') {
+    scheduleHomeLoad();
+  }
   if (state.data && state.route === 'procurement') {
     scheduleProcurementLoad();
   }
@@ -7811,6 +7877,12 @@ function syncRouteFromLocation() {
   applyHashState(parsed);
   syncUrlFromState();
   render();
+  if (state.route === 'home') {
+    scheduleHomeLoad();
+  } else if (routeChanged) {
+    state.home.requestSerial += 1;
+    state.home.loading = false;
+  }
   if (state.route === 'procurement') {
     scheduleProcurementLoad({ resetPage: routeChanged });
   } else if (routeChanged) {
@@ -7852,6 +7924,7 @@ elements.search.addEventListener('input', (event) => {
   state.query = event.currentTarget.value;
   syncUrlFromState();
   render();
+  scheduleHomeLoad({ delay: 220 });
   scheduleProcurementLoad({ resetPage: true, delay: 220 });
   scheduleSalesLoad({ resetPages: true, delay: 220 });
   scheduleInventoryLoad({ resetPages: true, delay: 220 });
@@ -7865,6 +7938,7 @@ elements.scope.addEventListener('change', (event) => {
   state.store = value.startsWith('STORE:') ? value.slice(6) : 'ALL';
   syncUrlFromState();
   render();
+  scheduleHomeLoad({ delay: 120 });
   scheduleProcurementLoad({ resetPage: true });
   scheduleSalesLoad({ resetPages: true });
   scheduleInventoryLoad({ resetPages: true, delay: 120 });
@@ -7885,6 +7959,7 @@ elements.rangeButtons.forEach((button) => {
     state.homeCalendarAnchor = homePresetDateRange(presetKey).start.slice(0, 7) + '-01';
     syncUrlFromState();
     render();
+    scheduleHomeLoad();
     // The product query ranks and filters by the selected range on the server.
     scheduleProductLoad({ resetPages: true });
   });
@@ -7923,6 +7998,7 @@ elements.rangePopover?.addEventListener('click', (event) => {
   state.homeDateCustom = true;
   state.homeRangePreset = 'custom';
   render();
+  scheduleHomeLoad({ delay: 120 });
 });
 
 for (const element of [elements.homeDateStart, elements.homeDateEnd]) {
@@ -7936,6 +8012,7 @@ for (const element of [elements.homeDateStart, elements.homeDateEnd]) {
     state.homeRangePreset = 'custom';
     state.homeCalendarAnchor = `${state.homeDateStart.slice(0, 7)}-01`;
     render();
+    scheduleHomeLoad();
   });
 }
 
@@ -8123,6 +8200,7 @@ elements.view.addEventListener('click', (event) => {
     state.query = nextQuery;
     syncUrlFromState();
     render();
+    scheduleHomeLoad({ delay: 120 });
     return;
   }
   const button = event.target.closest?.('[data-quick-route][data-quick-value]');
@@ -8133,6 +8211,7 @@ elements.view.addEventListener('click', (event) => {
   state.quickFilters[route] = value;
   syncUrlFromState();
   render();
+  scheduleHomeLoad();
   if (route === 'procurement') scheduleProcurementLoad({ resetPage: true });
   if (route === 'sales') scheduleSalesLoad({ resetPages: true });
   if (route === 'inventory') scheduleInventoryLoad({ resetPages: true });
@@ -8233,6 +8312,7 @@ elements.clearFilters.addEventListener('click', () => {
   populateScopeOptions();
   syncUrlFromState();
   render();
+  scheduleHomeLoad();
   scheduleProcurementLoad({ resetPage: true });
   scheduleSalesLoad({ resetPages: true });
   scheduleInventoryLoad({ resetPages: true });

@@ -1,9 +1,11 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 export const DEFAULT_DASHBOARD_DATA_FILE = fileURLToPath(
   new URL('../../tests/fixtures/dashboard.json', import.meta.url),
 );
+
+const FILE_CACHE = new Map();
 
 const PERMISSION_LABELS = Object.freeze({
   granted: '销量查询权限已授权',
@@ -1280,7 +1282,7 @@ function normalizeHomeProductFinanceDaily(item) {
   };
 }
 
-function normalizeHome(value) {
+export function normalizeHome(value) {
   const source = record(value);
   const storeDaily = Array.isArray(source.storeDaily)
     ? source.storeDaily.map(normalizeHomeStoreDaily).filter(Boolean)
@@ -1442,6 +1444,47 @@ export async function loadDashboardData(
     throw new TypeError('FULL_BI_DATA_FILE is required in production.');
   }
   const selectedFile = dataFile || DEFAULT_DASHBOARD_DATA_FILE;
-  const content = await readFile(selectedFile, 'utf8');
-  return normalizeDashboardData(JSON.parse(content));
+  return loadCachedJson(selectedFile, 'dashboard', (input) => normalizeDashboardData(input));
+}
+
+export async function loadHomeHistoryData(
+  dataFile = process.env.FULL_BI_HOME_DATA_FILE,
+  { runtimeEnvironment = process.env.NODE_ENV || 'development' } = {},
+) {
+  if (!dataFile && String(runtimeEnvironment).toLowerCase() === 'production') {
+    throw new TypeError('FULL_BI_HOME_DATA_FILE is required in production.');
+  }
+  const selectedFile = dataFile || DEFAULT_DASHBOARD_DATA_FILE;
+  return loadCachedJson(selectedFile, 'home', (input) => {
+    const source = input && typeof input === 'object' && !Array.isArray(input)
+      ? input
+      : {};
+    return Object.freeze({
+      schemaVersion: 1,
+      updatedAt: isoInstant(source.updatedAt),
+      home: normalizeHome(source.home ?? source),
+    });
+  });
+}
+
+async function loadCachedJson(file, namespace, normalize) {
+  const metadata = await stat(file);
+  const key = `${namespace}:${file}`;
+  const signature = `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeMs}:${metadata.ctimeMs}`;
+  const cached = FILE_CACHE.get(key);
+  if (cached?.signature === signature && cached.value) return cached.value;
+  if (cached?.signature === signature && cached.promise) return cached.promise;
+
+  const promise = readFile(file, 'utf8')
+    .then((content) => normalize(JSON.parse(content)))
+    .then((value) => {
+      FILE_CACHE.set(key, { signature, value });
+      return value;
+    })
+    .catch((error) => {
+      if (FILE_CACHE.get(key)?.promise === promise) FILE_CACHE.delete(key);
+      throw error;
+    });
+  FILE_CACHE.set(key, { signature, promise });
+  return promise;
 }

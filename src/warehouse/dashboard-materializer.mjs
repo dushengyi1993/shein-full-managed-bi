@@ -1635,3 +1635,28 @@ export async function atomicWriteJson(filePath, value) {
   }
   return resolved;
 }
+
+export function splitDashboardArtifacts(dashboardValue) {
+  const dashboard = dashboardValue && typeof dashboardValue === 'object'
+    && !Array.isArray(dashboardValue)
+    ? dashboardValue
+    : {};
+  const home = dashboard.home && typeof dashboard.home === 'object'
+    && !Array.isArray(dashboard.home)
+    ? dashboard.home
+    : {};
+  return Object.freeze({
+    core: Object.freeze({
+      ...dashboard,
+      home: Object.freeze({
+        status: home.status ?? 'unavailable',
+        coverage: home.coverage ?? {},
+      }),
+    }),
+    home: Object.freeze({
+      schemaVersion: 1,
+      updatedAt: dashboard.updatedAt ?? null,
+      home,
+    }),
+  });
+}

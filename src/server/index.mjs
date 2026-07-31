@@ -28,6 +28,7 @@ function optionalBoolean(name) {
 
 const server = createDashboardServer({
   dataFile: process.env.FULL_BI_DATA_FILE,
+  homeDataFile: process.env.FULL_BI_HOME_DATA_FILE,
   host,
   runtimeEnvironment,
   auth: {

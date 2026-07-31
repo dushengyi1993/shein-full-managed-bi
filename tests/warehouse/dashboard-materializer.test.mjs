@@ -8,6 +8,7 @@ import {
   atomicWriteJson,
   buildDashboardFromProjectionInput,
   readDashboardProjectionInput,
+  splitDashboardArtifacts,
 } from '../../src/warehouse/dashboard-materializer.mjs';
 import {
   MIXED_STATISTICS_DATES_CODE,
@@ -990,4 +991,25 @@ test('atomically writes dashboard JSON with a trailing newline', async () => {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('splits the small dashboard core from the homepage history section', () => {
+  const artifacts = splitDashboardArtifacts({
+    datasetStatus: 'live',
+    updatedAt: '2026-07-31T00:00:00.000Z',
+    storeRanking: [{ code: 'DL5477' }],
+    home: {
+      status: 'available',
+      coverage: { storeDailyRows: 1 },
+      storeDaily: [{ storeCode: 'DL5477', date: '2026-07-31' }],
+      productFinanceDaily: [{ productKey: 'SKC-1' }],
+    },
+  });
+  assert.deepEqual(artifacts.core.home, {
+    status: 'available',
+    coverage: { storeDailyRows: 1 },
+  });
+  assert.equal('storeDaily' in artifacts.core.home, false);
+  assert.equal(artifacts.home.home.storeDaily.length, 1);
+  assert.equal(artifacts.home.updatedAt, '2026-07-31T00:00:00.000Z');
 });

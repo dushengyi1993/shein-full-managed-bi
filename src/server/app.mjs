@@ -2,9 +2,11 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 
-import { loadDashboardData } from './dashboard-data.mjs';
+import { loadDashboardData, loadHomeHistoryData } from './dashboard-data.mjs';
 import { projectDashboardForUser } from './dashboard-access.mjs';
+import { HomeQueryError, queryHomeDashboard } from './home-query.mjs';
 import {
   ProcurementQueryError,
   queryProcurementDashboard,
@@ -72,15 +74,18 @@ function send(response, statusCode, body, contentType, method = 'GET') {
   response.end(payload);
 }
 
-function sendJson(response, statusCode, value, method) {
+function sendJson(response, statusCode, value, method, request = null) {
   response.setHeader('Cache-Control', 'no-store');
-  send(
-    response,
-    statusCode,
-    `${JSON.stringify(value)}\n`,
-    'application/json; charset=utf-8',
-    method,
-  );
+  const payload = Buffer.from(`${JSON.stringify(value)}\n`);
+  const acceptsGzip = /\bgzip\b/i.test(String(request?.headers?.['accept-encoding'] || ''));
+  if (acceptsGzip && payload.byteLength >= 1024) {
+    const compressed = gzipSync(payload, { level: 6 });
+    response.setHeader('Content-Encoding', 'gzip');
+    response.setHeader('Vary', 'Accept-Encoding');
+    send(response, statusCode, compressed, 'application/json; charset=utf-8', method);
+    return;
+  }
+  send(response, statusCode, payload, 'application/json; charset=utf-8', method);
 }
 
 function redirect(response, location, method = 'GET') {
@@ -155,6 +160,7 @@ function staticFilePath(pathname, webRoot) {
 
 export function createRequestHandler(options = {}) {
   const dataFile = options.dataFile;
+  const homeDataFile = options.homeDataFile;
   const webRoot = options.webRoot || DEFAULT_WEB_ROOT;
   const updateBroker = options.updateBroker || null;
   const runtimeEnvironment = options.runtimeEnvironment || options.auth?.runtimeEnvironment || 'development';
@@ -390,7 +396,13 @@ export function createRequestHandler(options = {}) {
     if (url.pathname === '/api/dashboard') {
       try {
         const dashboard = await loadDashboardData(dataFile);
-        sendJson(response, 200, projectDashboardForUser(dashboard, signedInUser), method);
+        sendJson(
+          response,
+          200,
+          projectDashboardForUser(dashboard, signedInUser),
+          method,
+          request,
+        );
       } catch {
         sendJson(
           response,
@@ -403,6 +415,37 @@ export function createRequestHandler(options = {}) {
           },
           method,
         );
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/home') {
+      try {
+        const [dashboard, history] = await Promise.all([
+          loadDashboardData(dataFile),
+          loadHomeHistoryData(homeDataFile || dataFile, { runtimeEnvironment }),
+        ]);
+        const projected = projectDashboardForUser(dashboard, signedInUser);
+        sendJson(
+          response,
+          200,
+          queryHomeDashboard(projected, history, url.searchParams),
+          method,
+          request,
+        );
+      } catch (error) {
+        if (error instanceof HomeQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'HOME_DATA_UNAVAILABLE',
+            message: '首页经营数据暂不可用',
+          },
+        }, method);
       }
       return;
     }

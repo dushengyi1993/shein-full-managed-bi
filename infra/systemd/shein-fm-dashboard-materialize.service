@@ -16,8 +16,11 @@ Environment=NODE_ENV=production
 Environment=FULL_BI_DATA_FILE=/srv/shein-fm/runtime/dashboard/dashboard.next.json
 EnvironmentFile=/srv/shein-fm/secrets/materializer/database.env
 ExecStart=/usr/bin/node scripts/materialize_full_managed_dashboard.mjs
+ExecStartPost=/usr/bin/chgrp sheinfm-dashboard /srv/shein-fm/runtime/dashboard/dashboard.home.next.json
+ExecStartPost=/usr/bin/chmod 0640 /srv/shein-fm/runtime/dashboard/dashboard.home.next.json
 ExecStartPost=/usr/bin/chgrp sheinfm-dashboard /srv/shein-fm/runtime/dashboard/dashboard.next.json
 ExecStartPost=/usr/bin/chmod 0640 /srv/shein-fm/runtime/dashboard/dashboard.next.json
+ExecStartPost=/usr/bin/mv -f /srv/shein-fm/runtime/dashboard/dashboard.home.next.json /srv/shein-fm/runtime/dashboard/dashboard.home.json
 ExecStartPost=/usr/bin/mv -f /srv/shein-fm/runtime/dashboard/dashboard.next.json /srv/shein-fm/runtime/dashboard/dashboard.json
 TimeoutStartSec=10min
 NoNewPrivileges=true
