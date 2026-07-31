@@ -537,6 +537,43 @@ test('finalizer backs up and atomically enables only the confirmed store before 
   }
 });
 
+test('finalizer accepts the exact non-DL application routed by the authorization batch', async () => {
+  const files = await fixture();
+  try {
+    await privateJson(files.stateFile, authorizationState({
+      store: { applicationStoreCode: 'DX' },
+    }));
+    await privateJson(
+      path.join(files.receiptDirectory, RECEIPT_NAME),
+      receipt({ applicationStoreCode: 'DX' }),
+    );
+    await privateJson(files.applicationFile, applicationConfig([{
+      storeCode: 'DX',
+      appName: 'DX 全托应用',
+      appId: APP_ID,
+      appSecretKey: APP_SECRET_KEY,
+      materializedAt: '2026-07-26T01:00:00.000Z',
+    }]));
+
+    const result = await finalizeAuthorizationReceipt({
+      argv: [
+        '--store', 'DX',
+        '--supplier-id', SUPPLIER_ID,
+        '--confirm', 'SHEIN_FULL_AUTH_APPROVE',
+      ],
+      environment: files.environment,
+      now: REVIEWED_AT,
+      platform: 'win32',
+      cloudExecution: '1',
+    });
+    assert.equal(result.status, 'APPROVED');
+    const config = JSON.parse(await readFile(files.configFile, 'utf8'));
+    assert.equal(config.stores.find((store) => store.storeCode === 'DX').appId, APP_ID);
+  } finally {
+    await rm(files.directory, { recursive: true, force: true });
+  }
+});
+
 test('finalizer output never prints a credential, receipt name, or private path', async () => {
   const files = await fixture();
   try {

@@ -437,7 +437,7 @@ async function expectedSupplierIdForStore(identityMapFile, storeCode, candidateS
   return expectedSupplierId;
 }
 
-async function expectedApplicationId(applicationFile) {
+async function expectedApplicationId(applicationFile, applicationStoreCode) {
   const value = await parsePrivateJson(applicationFile, 'INVALID_APPLICATION_FILE');
   if (
     !value
@@ -449,11 +449,17 @@ async function expectedApplicationId(applicationFile) {
   ) {
     fail('INVALID_APPLICATION_FILE', 'application credential file schema is invalid');
   }
+  const expectedStoreCode = String(applicationStoreCode || '').trim().toUpperCase();
+  if (!STORE_CODE.test(expectedStoreCode)) {
+    fail('INVALID_APPLICATION_FILE', 'application owner is invalid');
+  }
   const matches = value.applications.filter(
-    (application) => String(application?.storeCode || '').trim().toUpperCase() === 'DL',
+    (application) => (
+      String(application?.storeCode || '').trim().toUpperCase() === expectedStoreCode
+    ),
   );
   if (matches.length !== 1) {
-    fail('INVALID_APPLICATION_FILE', 'application credential file must contain one DL app');
+    fail('INVALID_APPLICATION_FILE', 'application credential file must contain one routed app');
   }
   const application = matches[0];
   const appId = cleanRequiredString(application.appId, {
@@ -465,11 +471,11 @@ async function expectedApplicationId(applicationFile) {
     maximum: 2048,
   });
   if (
-    String(application.storeCode) !== 'DL'
+    String(application.storeCode) !== expectedStoreCode
     || appId !== appId.trim()
     || application.appSecretKey !== String(application.appSecretKey).trim()
   ) {
-    fail('INVALID_APPLICATION_FILE', 'DL application credentials are not canonical');
+    fail('INVALID_APPLICATION_FILE', 'routed application credentials are not canonical');
   }
   return appId;
 }
@@ -535,6 +541,7 @@ function validateReceipt(receipt, {
   authorizedAt,
   credentialFingerprint,
   expectedAppId,
+  expectedApplicationStoreCode,
 }) {
   if (
     !receipt
@@ -545,7 +552,7 @@ function validateReceipt(receipt, {
     || receipt.status !== 'REVIEW_REQUIRED'
     || receipt.batchId !== batchId
     || receipt.storeCode !== storeCode
-    || receipt.applicationStoreCode !== 'DL'
+    || receipt.applicationStoreCode !== expectedApplicationStoreCode
     || receipt.authorizedAt !== authorizedAt
     || String(receipt.identity?.supplierId) !== supplierId
   ) {
@@ -558,7 +565,7 @@ function validateReceipt(receipt, {
     fail('INVALID_RECEIPT', 'receipt credential fingerprint does not match');
   }
   if (appId !== expectedAppId) {
-    fail('APPLICATION_ID_MISMATCH', 'receipt app does not match the root-controlled DL app');
+    fail('APPLICATION_ID_MISMATCH', 'receipt app does not match the root-controlled routed app');
   }
   return Object.freeze({ appId, openKeyId, secretKey });
 }
@@ -844,7 +851,11 @@ export async function finalizeAuthorizationReceipt({
     );
     const receiptFile = await resolveReceipt(args.receiptDirectory, rawStore.receiptFile);
     const receipt = await parsePrivateJson(receiptFile.file, 'INVALID_RECEIPT');
-    const applicationId = await expectedApplicationId(args.applicationFile);
+    const applicationStoreCode = String(rawStore.applicationStoreCode || 'DL').toUpperCase();
+    const applicationId = await expectedApplicationId(
+      args.applicationFile,
+      applicationStoreCode,
+    );
     const credentials = validateReceipt(receipt, {
       batchId,
       storeCode: args.storeCode,
@@ -852,6 +863,7 @@ export async function finalizeAuthorizationReceipt({
       authorizedAt: rawStore.authorizedAt,
       credentialFingerprint: rawStore.credentialFingerprint,
       expectedAppId: applicationId,
+      expectedApplicationStoreCode: applicationStoreCode,
     });
     const expectedSupplierId = await expectedSupplierIdForStore(
       args.identityMap,
