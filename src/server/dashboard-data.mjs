@@ -1438,18 +1438,29 @@ export function normalizeDashboardData(input) {
 
 export async function loadDashboardData(
   dataFile = process.env.FULL_BI_DATA_FILE,
-  { runtimeEnvironment = process.env.NODE_ENV || 'development' } = {},
+  {
+    runtimeEnvironment = process.env.NODE_ENV || 'development',
+    forceRefresh = false,
+  } = {},
 ) {
   if (!dataFile && String(runtimeEnvironment).toLowerCase() === 'production') {
     throw new TypeError('FULL_BI_DATA_FILE is required in production.');
   }
   const selectedFile = dataFile || DEFAULT_DASHBOARD_DATA_FILE;
-  return loadCachedJson(selectedFile, 'dashboard', (input) => normalizeDashboardData(input));
+  return loadCachedJson(
+    selectedFile,
+    'dashboard',
+    (input) => normalizeDashboardData(input),
+    { forceRefresh },
+  );
 }
 
 export async function loadHomeHistoryData(
   dataFile = process.env.FULL_BI_HOME_DATA_FILE,
-  { runtimeEnvironment = process.env.NODE_ENV || 'development' } = {},
+  {
+    runtimeEnvironment = process.env.NODE_ENV || 'development',
+    forceRefresh = false,
+  } = {},
 ) {
   if (!dataFile && String(runtimeEnvironment).toLowerCase() === 'production') {
     throw new TypeError('FULL_BI_HOME_DATA_FILE is required in production.');
@@ -1464,15 +1475,20 @@ export async function loadHomeHistoryData(
       updatedAt: isoInstant(source.updatedAt),
       home: normalizeHome(source.home ?? source),
     });
-  });
+  }, { forceRefresh });
 }
 
-async function loadCachedJson(file, namespace, normalize) {
+async function loadCachedJson(
+  file,
+  namespace,
+  normalize,
+  { forceRefresh = false } = {},
+) {
   const metadata = await stat(file);
   const key = `${namespace}:${file}`;
   const signature = `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeMs}:${metadata.ctimeMs}`;
   const cached = FILE_CACHE.get(key);
-  if (cached?.signature === signature && cached.value) return cached.value;
+  if (!forceRefresh && cached?.signature === signature && cached.value) return cached.value;
   if (cached?.signature === signature && cached.promise) return cached.promise;
 
   const promise = readFile(file, 'utf8')

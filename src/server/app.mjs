@@ -395,7 +395,11 @@ export function createRequestHandler(options = {}) {
 
     if (url.pathname === '/api/dashboard') {
       try {
-        const dashboard = await loadDashboardData(dataFile);
+        const forceRefresh = url.searchParams.get('refresh') === '1';
+        const dashboard = await loadDashboardData(dataFile, {
+          runtimeEnvironment,
+          forceRefresh,
+        });
         sendJson(
           response,
           200,
@@ -421,9 +425,13 @@ export function createRequestHandler(options = {}) {
 
     if (url.pathname === '/api/home') {
       try {
+        const forceRefresh = url.searchParams.get('refresh') === '1';
         const [dashboard, history] = await Promise.all([
-          loadDashboardData(dataFile),
-          loadHomeHistoryData(homeDataFile || dataFile, { runtimeEnvironment }),
+          loadDashboardData(dataFile, { runtimeEnvironment, forceRefresh }),
+          loadHomeHistoryData(homeDataFile || dataFile, {
+            runtimeEnvironment,
+            forceRefresh,
+          }),
         ]);
         const projected = projectDashboardForUser(dashboard, signedInUser);
         sendJson(

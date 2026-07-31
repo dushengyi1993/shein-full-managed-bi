@@ -91,6 +91,28 @@ test('home assembles KPI tables, vertical trends and rankings without a redundan
   assert.match(trends, /home-history-trends/);
 });
 
+test('home names every loading group and offers an explicit cache refresh', async () => {
+  const [app, html, styles] = await Promise.all([
+    read('src/web/app.js'),
+    read('src/web/index.html'),
+    read('src/web/styles.css'),
+  ]);
+  const home = functionBody(app, 'renderHome');
+  const homePath = functionBody(app, 'homeApiPath');
+  const dashboardLoad = functionBody(app, 'loadDashboard');
+  assert.match(home, /店铺经营日数据/);
+  assert.match(home, /财务日报与净成交额/);
+  assert.match(home, /主销地区与销量趋势/);
+  assert.match(home, /货号金额 \/ 销量排行候选/);
+  assert.match(home, /data-home-force-refresh/);
+  assert.match(home, /首页数据已就绪/);
+  assert.match(html, /id="force-refresh"[^>]*>强制刷新缓存<\/button>/);
+  assert.match(homePath, /if \(force\) params\.set\('refresh', '1'\)/);
+  assert.match(dashboardLoad, /\/api\/dashboard\?refresh=1/);
+  assert.match(styles, /\.home-loading-list\s*\{/);
+  assert.match(styles, /\.home-cache-status\s*\{/);
+});
+
 test('monthly trend and store quantity stay useful with explicitly labelled finance fallback', async () => {
   const app = await read('src/web/app.js');
   const monthly = functionBody(app, 'groupHistoryByMonth');

@@ -605,6 +605,8 @@ const state = {
     loading: false,
     error: '',
     requestSerial: 0,
+    forceRefresh: false,
+    lastLoadedAt: null,
   },
   health: null,
   healthError: '',
@@ -683,6 +685,7 @@ const elements = {
   homeDateStart: document.querySelector('#home-date-start'),
   homeDateEnd: document.querySelector('#home-date-end'),
   clearFilters: document.querySelector('#clear-filters'),
+  forceRefresh: document.querySelector('#force-refresh'),
   datasetBadge: document.querySelector('#dataset-badge'),
   liveUpdateBadge: document.querySelector('#live-update-badge'),
   updatedAt: document.querySelector('#updated-at'),
@@ -6008,12 +6011,37 @@ function renderHistoryRankings() {
    相关函数保留给其他路由使用。 */
 function renderHome() {
   if (state.home.loading && !state.home.data) {
-    return `<section class="panel empty-state" aria-live="polite"><h3>正在加载首页经营数据</h3><p>只读取当前日期、店铺和搜索范围，不再下载整份历史明细。</p></section>`;
+    const loadingTitle = state.home.forceRefresh
+      ? '正在强制刷新首页缓存'
+      : '正在加载首页经营数据';
+    return `<section class="panel home-loading-panel" aria-live="polite">
+      <header><span class="home-loading-spinner" aria-hidden="true"></span><div><h3>${escapeHtml(loadingTitle)}</h3><p>只读取当前日期、店铺和搜索范围；不会一次下载整份历史明细。</p></div></header>
+      <div class="home-loading-list" role="list" aria-label="首页数据加载进度">
+        <div role="listitem" class="ready"><span></span><strong>核心范围与店铺权限</strong><em>已就绪</em></div>
+        <div role="listitem"><span></span><strong>店铺经营日数据</strong><em>加载中</em></div>
+        <div role="listitem"><span></span><strong>财务日报与净成交额</strong><em>加载中</em></div>
+        <div role="listitem"><span></span><strong>主销地区与销量趋势</strong><em>加载中</em></div>
+        <div role="listitem"><span></span><strong>货号金额 / 销量排行候选</strong><em>加载中</em></div>
+      </div>
+      <p class="home-loading-foot">首次读取服务器分片通常需要数秒；完成后页面会自动显示，不需要重复点击。</p>
+    </section>`;
   }
   if (state.home.error && !state.home.data) {
-    return `<section class="panel empty-state" role="alert"><h3>首页经营数据加载失败</h3><p>${escapeHtml(state.home.error)}</p></section>`;
+    return `<section class="panel empty-state" role="alert"><h3>首页经营数据加载失败</h3><p>${escapeHtml(state.home.error)}</p><button type="button" class="refresh-cache-button" data-home-force-refresh>强制刷新缓存并重试</button></section>`;
   }
+  const returnedRows = state.home.data?.source?.returnedRows || {};
+  const loadedSummary = [
+    `经营日 ${numberFormatter.format(returnedRows.storeDaily || 0)}`,
+    `财务日 ${numberFormatter.format(returnedRows.financeDaily || 0)}`,
+    `地区 ${numberFormatter.format(returnedRows.regionDaily || 0)}`,
+    `货号财务 ${numberFormatter.format(returnedRows.productFinanceDaily || 0)}`,
+  ].join(' · ');
   return `
+    <section class="home-cache-status" aria-label="首页数据缓存状态">
+      <span class="home-cache-ready"><i></i>首页数据已就绪</span>
+      <span>${escapeHtml(loadedSummary)} · 页面读取 ${escapeHtml(formatDateTime(state.home.lastLoadedAt))}</span>
+      <button type="button" class="refresh-cache-button" data-home-force-refresh>强制刷新缓存</button>
+    </section>
     ${renderHistoryKpis()}
     ${renderHistoryTrends()}
     ${renderHistoryRankings()}
@@ -7501,6 +7529,11 @@ function updateFilters() {
     || state.range !== 'today'
     || state.homeDateCustom;
   elements.clearFilters.disabled = !hasFilters;
+  if (elements.forceRefresh) {
+    const refreshing = state.loading || state.home.loading;
+    elements.forceRefresh.disabled = refreshing;
+    elements.forceRefresh.textContent = refreshing ? '刷新中…' : '强制刷新缓存';
+  }
 }
 
 function updateDatasetChrome() {
@@ -7629,7 +7662,7 @@ async function fetchJson(path) {
   return response.json();
 }
 
-function homeApiPath() {
+function homeApiPath({ force = false } = {}) {
   const range = selectedHomeDateRange();
   const params = new URLSearchParams({
     start: range.start,
@@ -7638,32 +7671,36 @@ function homeApiPath() {
     store: state.store,
   });
   if (state.query.trim()) params.set('q', state.query.trim());
+  if (force) params.set('refresh', '1');
   return `/api/home?${params.toString()}`;
 }
 
-async function loadHome() {
+async function loadHome({ force = false } = {}) {
   if (!state.data || state.route !== 'home') return;
   const serial = state.home.requestSerial + 1;
   state.home.requestSerial = serial;
   state.home.loading = true;
   state.home.error = '';
+  state.home.forceRefresh = force;
   try {
-    const result = await fetchJson(homeApiPath());
+    const result = await fetchJson(homeApiPath({ force }));
     if (serial !== state.home.requestSerial) return;
     state.home.data = result;
+    state.home.lastLoadedAt = new Date().toISOString();
   } catch (error) {
     if (serial !== state.home.requestSerial) return;
     state.home.error = error instanceof Error ? error.message : '首页经营数据暂不可用';
   } finally {
     if (serial === state.home.requestSerial) {
       state.home.loading = false;
+      state.home.forceRefresh = false;
       render();
     }
   }
 }
 
 let homeLoadTimer = null;
-function scheduleHomeLoad({ delay = 0 } = {}) {
+function scheduleHomeLoad({ delay = 0, force = false } = {}) {
   if (homeLoadTimer) clearTimeout(homeLoadTimer);
   if (state.route !== 'home') {
     state.home.requestSerial += 1;
@@ -7673,14 +7710,16 @@ function scheduleHomeLoad({ delay = 0 } = {}) {
   state.home.data = null;
   state.home.loading = true;
   state.home.error = '';
+  state.home.forceRefresh = force;
   render();
   homeLoadTimer = setTimeout(() => {
     homeLoadTimer = null;
-    void loadHome();
+    void loadHome({ force });
   }, delay);
 }
 
-async function loadDashboard() {
+async function loadDashboard(options = {}) {
+  const force = options?.force === true;
   state.loading = true;
   state.error = '';
   state.healthError = '';
@@ -7691,7 +7730,7 @@ async function loadDashboard() {
     .catch((error) => ({ ok: false, error }));
 
   try {
-    const dashboard = await fetchJson('/api/dashboard');
+    const dashboard = await fetchJson(force ? '/api/dashboard?refresh=1' : '/api/dashboard');
     if (!dashboard || typeof dashboard !== 'object' || !dashboard.dataset) {
       throw new Error('销量数据结构无效');
     }
@@ -7714,7 +7753,7 @@ async function loadDashboard() {
   state.loading = false;
   render();
   if (state.data && state.route === 'home') {
-    scheduleHomeLoad();
+    scheduleHomeLoad({ force });
   }
   if (state.data && state.route === 'procurement') {
     scheduleProcurementLoad();
@@ -8017,6 +8056,11 @@ for (const element of [elements.homeDateStart, elements.homeDateEnd]) {
 }
 
 elements.view.addEventListener('click', (event) => {
+  const homeForceRefresh = event.target.closest?.('[data-home-force-refresh]');
+  if (homeForceRefresh && elements.view.contains(homeForceRefresh)) {
+    void loadDashboard({ force: true });
+    return;
+  }
   const trendMetric = event.target.closest?.('[data-home-trend-metric]');
   if (trendMetric && elements.view.contains(trendMetric)) {
     const metric = String(trendMetric.dataset.homeTrendMetric || '');
@@ -8319,6 +8363,10 @@ elements.clearFilters.addEventListener('click', () => {
   scheduleProductLoad({ resetPages: true });
   scheduleFulfilmentLoad({ resetPage: true });
   elements.search.focus();
+});
+
+elements.forceRefresh?.addEventListener('click', () => {
+  void loadDashboard({ force: true });
 });
 
 elements.retryButton.addEventListener('click', loadDashboard);

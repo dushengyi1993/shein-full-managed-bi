@@ -94,6 +94,18 @@ test('GET /api/home is a bounded date-scoped homepage surface', async () => {
   assert.ok(Array.isArray(payload.home.productFinanceDaily));
 });
 
+test('dashboard and home allow an authenticated read-only cache bypass', async () => {
+  const dashboard = await fetch(`${baseUrl}/api/dashboard?refresh=1`);
+  assert.equal(dashboard.status, 200);
+  assert.equal((await dashboard.json()).readOnly, true);
+
+  const home = await fetch(
+    `${baseUrl}/api/home?start=2026-07-31&end=2026-07-31&owner=ALL&store=ALL&refresh=1`,
+  );
+  assert.equal(home.status, 200);
+  assert.equal((await home.json()).readOnly, true);
+});
+
 test('GET /api/procurement is a bounded read-only query surface', async () => {
   const response = await fetch(
     `${baseUrl}/api/procurement?page=1&pageSize=25&quick=ALL&sort=PRIORITY`,
@@ -440,9 +452,9 @@ test('serves the local dashboard and its static assets', async () => {
   assert.match(pageResponse.headers.get('content-type'), /^text\/html/);
   const pageHtml = await pageResponse.text();
   assert.match(pageHtml, /全托运营驾驶舱/);
-  assert.match(pageHtml, /\/app\.js\?v=20260730\.9/);
-  assert.match(pageHtml, /\/styles\.css\?v=20260730\.9/);
-  assert.match(pageHtml, /\/home-parity\.css\?v=20260730\.9/);
+  assert.match(pageHtml, /\/app\.js\?v=20260731\.3/);
+  assert.match(pageHtml, /\/styles\.css\?v=20260731\.3/);
+  assert.match(pageHtml, /\/home-parity\.css\?v=20260731\.3/);
 
   assert.equal(scriptResponse.status, 200);
   assert.match(scriptResponse.headers.get('content-type'), /^text\/javascript/);
