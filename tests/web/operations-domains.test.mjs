@@ -62,11 +62,12 @@ test('nullable operational quantities stay unknown and expose field coverage', a
   // dead client-side helper and its coverage pair are gone for good.
   assert.doesNotMatch(app, /deliveryQuantityCoverage/);
   assert.doesNotMatch(app, /knownLineCount', 'totalLineCount'/);
-  const fulfilment = functionBody(app, 'renderFulfilment');
-  assert.match(fulfilment, /summary\.snapshotDeliveryQuantity/);
-  assert.match(fulfilment, /summary\.snapshotDeliveryCount/);
-  assert.match(fulfilment, /stageMetricValue\(summary\.snapshotDeliveryQuantity, '件'\)/);
-  assert.match(fulfilment, /stageMetricNote\(summary\.snapshotDeliveryQuantity\)/);
+  const fulfilment = functionBody(app, 'fulfilmentDecisionOverview');
+  assert.match(fulfilment, /productRecord\(summary\.snapshotDeliveryCount\)/);
+  assert.match(fulfilment, /productRecord\(summary\.attentionDeliveryQuantity\)/);
+  assert.match(fulfilment, /stageMetricValue\(total, '单'\)/);
+  assert.match(fulfilment, /stageMetricValue\(attentionQuantity, '件'\)/);
+  assert.match(fulfilment, /stageMetricNote\(attentionQuantity\)/);
   // Unknown stays unknown on the rendered path.
   assert.doesNotMatch(fulfilment, /\|\| 0\b|\?\? 0\b/);
   const metricValue = functionBody(app, 'stageMetricValue');
@@ -306,7 +307,7 @@ test('supply coverage distinguishes a complete empty business window from missin
 
   assert.match(connectionState, /coverage\.every\(\(item\) => item\.status === 'complete'\)/);
   assert.match(connectionState, /coverage\.some\(\(item\) => item\.status === 'blocked'\)/);
-  assert.match(app, /接口覆盖完整 · 当前窗口无事实行/);
+  assert.match(app, /接口已有覆盖 · 当前筛选无事实行/);
   assert.match(coverageTable, /最新同步尝试、覆盖和时效证据/);
   assert.match(coverageTable, /历史成功不能掩盖当前失败/);
   assert.match(coverageTable, /业务数量为 0/);

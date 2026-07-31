@@ -2646,6 +2646,7 @@ async function loadFulfilment({ resetPage = false } = {}) {
       || !Array.isArray(result.attention?.rows)
       || !Array.isArray(result.milestoneOverview)
       || !result.summary
+      || !Array.isArray(result.summary.attentionByStore)
       || !result.source
     ) {
       throw new Error('交付入仓查询结构无效');
@@ -6069,6 +6070,7 @@ function historyRankTable(title, note, rows, {
   money = false,
   estimated = false,
   defaultTone = 'store-quantity',
+  unit = '件',
 } = {}) {
   const max = Math.max(1, ...rows.map(({ value }) => Math.abs(value)));
   return `
@@ -6085,7 +6087,7 @@ function historyRankTable(title, note, rows, {
             <span class="rank-title-line"><span class="rank-name">${escapeHtml(row.label)}</span>${row.ownerName ? `<span class="rank-owner" title="${escapeHtml(row.ownerName)}">${escapeHtml(shortOwnerName(row.ownerName))}</span>` : ''}</span>
             <span class="rank-meta">${escapeHtml(row.sub || '')}</span>
           </span>
-          <span class="rank-value">${escapeHtml(money ? formatMoney(row.value, row.currency) : formatUnits(row.value))}<small>${estimated ? '估算' : money ? '' : '件'}</small></span>
+          <span class="rank-value">${escapeHtml(money ? formatMoney(row.value, row.currency) : formatUnits(row.value))}<small>${estimated ? '估算' : money ? '' : escapeHtml(unit)}</small></span>
         </div>`;
       }).join('')}</div>` : emptyEvidence('当前排行暂无数据', '所选日期和范围内没有完整可排序事实。')}
     </article>`;
@@ -7043,7 +7045,7 @@ function procurementStoreRankings(queryData) {
         '采购单关注量店铺排行',
         '当前关注队列 · Top 8 · 先定位积压单据最多的店铺',
         attention,
-        { defaultTone: 'store-quantity' },
+        { defaultTone: 'store-quantity', unit: '张' },
       )}
       ${historyRankTable(
         '待入库数量店铺排行',
@@ -7129,7 +7131,6 @@ function renderProcurement() {
   const attentionAvailable = sourceMeta.available === true
     || attention.length > 0
     || sourceMeta.truncated === true;
-  const summary = productRecord(queryData.summary);
   const coverageLine = operationCoverageLine(queryData.source);
   const statusOptions = [
     ['ALL', '全部状态'],
@@ -7211,6 +7212,179 @@ function deliveryAttentionTable(rows, hasEvidence) {
     <p class="table-note">当前页显示 ${numberFormatter.format(visible.length)} 条，排序与分页由服务端决定，页面不再按优先级重排当前页。预计收货时间缺失时保持未知，不用其他时间冒充。</p>`;
 }
 
+function fulfilmentAttentionCount(summary, ...codes) {
+  const rows = Array.isArray(summary?.attentionCodes) ? summary.attentionCodes : [];
+  return codes.reduce((total, code) => {
+    const row = rows.find((item) => item.code === code);
+    return total + (isUnit(row?.count) ? row.count : 0);
+  }, 0);
+}
+
+function fulfilmentMilestoneValue(queryData, code, field) {
+  const rows = Array.isArray(queryData.milestoneOverview)
+    ? queryData.milestoneOverview
+    : [];
+  const row = rows.find((item) => item.milestoneCode === code);
+  return isUnit(row?.[field]) ? row[field] : null;
+}
+
+function fulfilmentDecisionOverview(queryData) {
+  const summary = productRecord(queryData.summary);
+  const coverage = productRecord(queryData.source?.coverage);
+  const total = productRecord(summary.snapshotDeliveryCount);
+  const attentionQuantity = productRecord(summary.attentionDeliveryQuantity);
+  const received = fulfilmentMilestoneValue(queryData, 'RECEIVED', 'deliveryCount');
+  const created = fulfilmentAttentionCount(summary, 'DELIVERY_CREATED_PENDING');
+  const reserved = fulfilmentAttentionCount(summary, 'PICKUP_RESERVED_PENDING');
+  const inTransit = fulfilmentAttentionCount(
+    summary,
+    'IN_TRANSIT_PENDING_RECEIPT',
+    'RECEIPT_OVERDUE',
+  );
+  const coverageNote = [
+    isUnit(coverage.failedStores) && coverage.failedStores > 0
+      ? `失败 ${coverage.failedStoreCodes?.join('、') || `${coverage.failedStores} 家`}`
+      : null,
+    isUnit(coverage.inProgressStores) && coverage.inProgressStores > 0
+      ? `同步中 ${coverage.inProgressStoreCodes?.join('、') || `${coverage.inProgressStores} 家`}`
+      : null,
+  ].filter(Boolean).join(' · ');
+  return `
+    <section class="sales-period-overview fulfilment-decision-overview" aria-label="交付入仓经营概览">
+      <header class="sales-workspace-head">
+        <div>
+          <span class="eyebrow">DELIVERY & INBOUND ANALYSIS</span>
+          <h1>交付入仓</h1>
+          <p>先看待预约、待揽收和运输中单据，再进入交付单明细；预计收货时间缺失时保持未知。</p>
+        </div>
+        <div class="sales-range-receipt">
+          <span>交付业务日 / 当前范围</span>
+          <strong>${escapeHtml(`${queryData.source?.businessDate || '业务日未知'} · ${inventoryScopeLabel()}`)}</strong>
+          <small>${escapeHtml(`${nullableUnits(coverage.succeededStores, '未知')} / ${nullableUnits(coverage.totalStores, '未知')} 家成功${coverageNote ? ` · ${coverageNote}` : ''}`)}</small>
+        </div>
+      </header>
+      <div class="sales-period-grid fulfilment-decision-grid">
+        ${salesPeriodMetric('交付单快照', stageMetricValue(total, '单'), '当前里程碑快照的交付单数', 'primary')}
+        ${salesPeriodMetric('已收货', received === null ? '未知' : `${numberFormatter.format(received)} 单`, 'RECEIVED 当前快照，不据此推导履约率')}
+        ${salesPeriodMetric('待预约', `${numberFormatter.format(created)} 单`, '交付单已创建，尚未完成预约')}
+        ${salesPeriodMetric('待揽收', `${numberFormatter.format(reserved)} 单`, '已预约，物流尚未揽收')}
+        ${salesPeriodMetric('运输中', `${numberFormatter.format(inTransit)} 单`, '尚未收货，包含逾期待收货')}
+        ${salesPeriodMetric('未收货交付数量', stageMetricValue(attentionQuantity, '件'), `${stageMetricNote(attentionQuantity)} · 只统计关注队列`)}
+      </div>
+      <div class="sales-data-receipt">
+        <span><i></i>交付快照覆盖</span>
+        <p>${escapeHtml(`${nullableUnits(coverage.succeededStores, '未知')} / ${nullableUnits(coverage.totalStores, '未知')} 家成功 · 最新来源 ${sourceTime(queryData.source?.latestSourceFetchedAt)} · ${coverage.reason || '覆盖说明待确认'}`)}</p>
+      </div>
+    </section>`;
+}
+
+function fulfilmentStoreRankings(queryData) {
+  const rows = Array.isArray(queryData.summary?.attentionByStore)
+    ? queryData.summary.attentionByStore
+    : [];
+  const rankRow = (row, value, sub) => {
+    const store = baseStores().find(({ code }) => code === row.storeCode);
+    const ownerName = ownerNameForStore(store);
+    return {
+      key: row.storeCode,
+      label: row.storeCode,
+      ownerName,
+      tone: ownerDisplayTone(ownerKeyForStore(store) || ownerName),
+      value,
+      sub,
+    };
+  };
+  const countRows = rows
+    .filter((row) => isUnit(row.attentionCount) && row.attentionCount > 0)
+    .map((row) => rankRow(
+      row,
+      row.attentionCount,
+      `待预约 ${nullableUnits(row.createdCount, '未知')} · 待揽收 ${nullableUnits(row.pickupReservedCount, '未知')} · 运输中 ${nullableUnits(row.inTransitCount, '未知')}${row.receiptOverdueCount ? ` · 逾期 ${numberFormatter.format(row.receiptOverdueCount)}` : ''}`,
+    ))
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+    .slice(0, 8);
+  const quantityRows = rows
+    .map((row) => {
+      const metric = productRecord(row.deliveryQuantity);
+      const value = isUnit(metric.total)
+        ? metric.total
+        : isUnit(metric.knownSum)
+          ? metric.knownSum
+          : 0;
+      const oldest = row.oldestInTransitTakenAt
+        ? `最早揽收 ${formatDateTime(row.oldestInTransitTakenAt)}`
+        : '暂无运输中揽收时间';
+      return rankRow(
+        row,
+        value,
+        `${oldest}${isUnit(metric.unknownCount) && metric.unknownCount > 0 ? ` · ${numberFormatter.format(metric.unknownCount)} 单数量未知` : ' · 数量字段完整'}`,
+      );
+    })
+    .filter((row) => row.value > 0)
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+    .slice(0, 8);
+  return `
+    <section class="rank-grid operation-risk-rankings" aria-label="交付入仓店铺排行">
+      ${historyRankTable(
+        '未收货交付单店铺排行',
+        '当前关注队列 · Top 8 · 先定位积压单据最多的店铺',
+        countRows,
+        { defaultTone: 'store-quantity', unit: '单' },
+      )}
+      ${historyRankTable(
+        '未收货交付数量店铺排行',
+        '当前关注队列交付数量 · Top 8 · 未知数量不补零',
+        quantityRows,
+        { defaultTone: 'product-quantity' },
+      )}
+    </section>`;
+}
+
+function fulfilmentEvidenceDisclosure(queryData) {
+  const overview = Array.isArray(queryData.milestoneOverview) ? queryData.milestoneOverview : [];
+  return `
+    <details class="panel product-boundary-disclosure operation-evidence-disclosure">
+      <summary>
+        <span class="eyebrow">DETAIL & BOUNDARY</span>
+        <strong>里程碑总览与口径说明</strong>
+        <small>展开查看全部里程碑、交付数量和只读边界</small>
+      </summary>
+      <div class="inventory-disclosure-body">
+        ${panelHeading(
+          'MILESTONE SNAPSHOT',
+          '交付里程碑紧凑总览',
+          '当前交付里程碑快照（含已收货）· 交付单数与交付数量单位不同，不可相加 · 不是转化漏斗',
+        )}
+        ${overview.length ? `
+          <div class="table-wrap">
+            <table class="data-table operational-table">
+              <thead><tr><th scope="col">履约里程碑</th><th scope="col" class="number-column">交付单数</th><th scope="col" class="number-column">交付数量</th><th scope="col" class="number-column">覆盖店铺</th></tr></thead>
+              <tbody>${overview.map((row) => `
+                <tr>
+                  <td><span class="row-status ${sourceStatusTone(row.milestoneCode)}">${escapeHtml(row.milestoneCode)}</span></td>
+                  <td class="number-column ${isUnit(row.deliveryCount) ? '' : 'missing-value'}">${nullableUnits(row.deliveryCount)}</td>
+                  <td class="number-column ${isUnit(row.deliveryQuantity) ? '' : 'missing-value'}">${nullableUnits(row.deliveryQuantity)}</td>
+                  <td class="number-column">${nullableUnits(row.storeCount)}</td>
+                </tr>`).join('')}</tbody>
+            </table>
+          </div>
+          <p class="table-note">里程碑只表示单据当前阶段，不据此推导履约率或准时率；单数与数量各自独立判空。</p>`
+          : emptyEvidence(
+            '当前筛选没有交付里程碑行',
+            `${['complete', 'partial'].includes(String(productRecord(queryData.source?.coverage).status || ''))
+              ? '接口已有覆盖 · 当前筛选无事实行'
+              : '尚未完成可信接入'}；请调整负责人、店铺、里程碑或搜索条件。`,
+          )}
+        <div class="inventory-boundary-grid">
+          <article><strong>单位口径</strong><span>交付单数与交付数量是两个单位，不相加也不算比率。</span></article>
+          <article><strong>预计收货</strong><span>来源缺失时保持未知，不用预约或揽收时间冒充。</span></article>
+          <article><strong>里程碑</strong><span>只表示单据当前阶段，不构成转化漏斗或履约率。</span></article>
+          <article><strong>写操作</strong><span>当前页面与服务仍为只读，不提交任何交付动作。</span></article>
+        </div>
+      </div>
+    </details>`;
+}
+
 function renderFulfilment() {
   if (state.fulfilment.loading && !state.fulfilment.data) {
     return `${sampleNotice()}${focusEvidencePanel()}${fulfilmentQueryState('loading')}`;
@@ -7225,12 +7399,7 @@ function renderFulfilment() {
   const attentionAvailable = sourceMeta.available === true
     || attention.length > 0
     || sourceMeta.truncated === true;
-  const summary = productRecord(queryData.summary);
-  const overview = Array.isArray(queryData.milestoneOverview) ? queryData.milestoneOverview : [];
   const coverageLine = operationCoverageLine(queryData.source);
-  const expectedKnown = isUnit(summary.expectedReceiptKnownCount)
-    ? summary.expectedReceiptKnownCount
-    : 0;
   const milestoneOptions = [
     ['ALL', '全部里程碑'],
     ...(Array.isArray(queryData.filters?.milestones) ? queryData.filters.milestones : [])
@@ -7239,72 +7408,8 @@ function renderFulfilment() {
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
-    ${pageIntro(
-      'DELIVERY & INBOUND',
-      '交付与入仓',
-      '跟踪发货、物流预报、送达、收货、查验、入库和残次节点；每个节点只认平台单据事实。',
-      `<span>交付证据</span><strong>${escapeHtml(`已物化范围命中 ${numberFormatter.format(isUnit(summary.matchedMaterializedAttentionCount) ? summary.matchedMaterializedAttentionCount : 0)} 条`)}</strong><small>${escapeHtml(coverageLine)}</small>`,
-    )}
-    ${operationSummaryCards([
-      {
-        label: '快照交付单数',
-        value: stageMetricValue(summary.snapshotDeliveryCount, '单'),
-        note: `${stageMetricNote(summary.snapshotDeliveryCount)}；交付单数与交付数量单位不同，不可相加`,
-        tone: 'partial',
-      },
-      {
-        label: '快照交付数量',
-        value: stageMetricValue(summary.snapshotDeliveryQuantity, '件'),
-        note: stageMetricNote(summary.snapshotDeliveryQuantity),
-        tone: 'partial',
-      },
-      {
-        label: '关注范围交付数量',
-        value: stageMetricValue(summary.attentionDeliveryQuantity, '件'),
-        note: `${stageMetricNote(summary.attentionDeliveryQuantity)}；仅统计未收货的关注单据`,
-        tone: 'partial',
-      },
-      {
-        label: '预计收货时间已知',
-        value: `${numberFormatter.format(expectedKnown)} 条`,
-        note: expectedKnown === 0
-          ? '当前来源没有提供预计收货时间，保持未知，不用其他时间冒充'
-          : '仅统计来源明确给出预计收货时间的单据',
-        tone: expectedKnown === 0 ? 'partial' : 'available',
-      },
-    ])}
-    <section class="table-section">
-      ${panelHeading(
-        'MILESTONE SNAPSHOT',
-        '交付里程碑紧凑总览',
-        // This overview is the whole scoped milestone snapshot, including
-        // RECEIVED, so it must not borrow the attention-scope caption: the
-        // attention queue below only holds unreceived deliveries.
-        '当前交付里程碑快照（含已收货）· 交付单数与交付数量单位不同，不可相加 · 不是转化漏斗',
-      )}
-      ${overview.length ? `
-        <div class="table-wrap">
-          <table class="data-table operational-table">
-            <thead><tr><th scope="col">履约里程碑</th><th scope="col" class="number-column">交付单数</th><th scope="col" class="number-column">交付数量</th><th scope="col" class="number-column">覆盖店铺</th></tr></thead>
-            <tbody>${overview.map((row) => `
-              <tr>
-                <td><span class="row-status ${sourceStatusTone(row.milestoneCode)}">${escapeHtml(row.milestoneCode)}</span></td>
-                <td class="number-column ${isUnit(row.deliveryCount) ? '' : 'missing-value'}">${nullableUnits(row.deliveryCount)}</td>
-                <td class="number-column ${isUnit(row.deliveryQuantity) ? '' : 'missing-value'}">${nullableUnits(row.deliveryQuantity)}</td>
-                <td class="number-column">${nullableUnits(row.storeCount)}</td>
-              </tr>`).join('')}</tbody>
-          </table>
-        </div>
-        <p class="table-note">里程碑是单据当前所处阶段，不是转化漏斗，也不据此推导履约率或准时率。交付单数与交付数量各自独立判空，任一店铺未知即保持“—”。</p>`
-        : emptyEvidence(
-          '当前筛选没有交付里程碑行',
-          // A covered domain with no rows is a different fact from a domain that
-          // was never integrated, so the two are never collapsed into one label.
-          `${['complete', 'partial'].includes(String(productRecord(queryData.source?.coverage).status || ''))
-            ? '接口覆盖完整 · 当前窗口无事实行'
-            : '尚未完成可信接入'}；这不代表没有发货或入仓，请调整负责人、店铺、里程碑或搜索条件。`,
-        )}
-    </section>
+    ${fulfilmentDecisionOverview(queryData)}
+    ${fulfilmentStoreRankings(queryData)}
     <section class="table-section inventory-workspace">
       ${panelHeading(
         'DELIVERY ATTENTION',
@@ -7337,15 +7442,7 @@ function renderFulfilment() {
       ${state.fulfilment.loading ? '<p class="query-refresh-note" role="status">正在刷新当前交付筛选结果…</p>' : ''}
       ${sourceMeta.truncated === true ? '<p class="table-note warning-note">当前接口只筛选物化到页面的单据级关注记录；源明细已截断，因此筛选结果不是仓库全量交付单数量。</p>' : ''}
     </section>
-    <section class="panel condition-panel">
-      ${panelHeading('DATA BOUNDARY', '交付入仓数据边界', '事实接入不等于写能力开放')}
-      <ul class="condition-list">
-        <li><strong>单位口径</strong><span>交付单数与交付数量是两个单位，不相加也不算比率</span></li>
-        <li><strong>预计收货</strong><span>来源缺失时保持未知，不用预约或揽收时间冒充</span></li>
-        <li><strong>里程碑</strong><span>只表示单据当前阶段，不构成转化漏斗或履约率</span></li>
-        <li><strong>写操作</strong><span>当前页面与服务仍为只读，不提交任何交付动作</span></li>
-      </ul>
-    </section>`;
+    ${fulfilmentEvidenceDisclosure(queryData)}`;
 }
 
 function renderInventory() {

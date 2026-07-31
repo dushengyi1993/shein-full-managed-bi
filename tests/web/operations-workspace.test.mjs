@@ -61,7 +61,10 @@ test('each workspace consumes only its own independent endpoint', async () => {
   assert.match(procurement, /procurementEvidenceDisclosure\(queryData\)/);
   assert.match(functionBody(app, 'procurementEvidenceDisclosure'), /statusOverview/);
   assert.doesNotMatch(procurement, /queryData\.statusRows/);
-  assert.match(fulfilment, /milestoneOverview/);
+  assert.match(fulfilment, /fulfilmentDecisionOverview\(queryData\)/);
+  assert.match(fulfilment, /fulfilmentStoreRankings\(queryData\)/);
+  assert.match(fulfilment, /fulfilmentEvidenceDisclosure\(queryData\)/);
+  assert.match(functionBody(app, 'fulfilmentEvidenceDisclosure'), /milestoneOverview/);
 });
 
 test('quick filter tokens are narrowed to each endpoint vocabulary', async () => {
@@ -113,6 +116,7 @@ test('fulfilment guards stale responses and exposes loading, error and retry', a
   assert.match(load, /result\.readOnly !== true/);
   assert.match(load, /Array\.isArray\(result\.attention\?\.rows\)/);
   assert.match(load, /Array\.isArray\(result\.milestoneOverview\)/);
+  assert.match(load, /Array\.isArray\(result\.summary\.attentionByStore\)/);
 
   // The debounce invalidates in-flight work immediately, not when it fires.
   assert.match(schedule, /window\.clearTimeout\(fulfilmentLoadTimer\)/);
@@ -275,14 +279,16 @@ test('coverage, truncation and quantity wording stay honest', async () => {
   const procurementEvidence = functionBody(app, 'procurementEvidenceDisclosure');
   assert.match(procurementEvidence, /不是转化漏斗/);
   assert.match(procurementEvidence, /不构成转化漏斗，也不据此推导完成率或百分比/);
-  assert.match(fulfilment, /不是转化漏斗，也不据此推导履约率或准时率/);
+  const fulfilmentEvidence = functionBody(app, 'fulfilmentEvidenceDisclosure');
+  assert.match(fulfilmentEvidence, /不据此推导履约率或准时率/);
   // Counts and quantities are labelled as different units.
-  assert.match(fulfilment, /交付单数与交付数量单位不同，不可相加/);
+  assert.match(fulfilmentEvidence, /交付单数与交付数量单位不同，不可相加/);
   assert.match(functionBody(app, 'procurementDecisionOverview'), /来自当前平台状态快照，不等于关注队列/);
   // A missing expectedReceiptAt stays unknown and is never fabricated.
-  assert.match(fulfilment, /expectedReceiptKnownCount/);
-  assert.match(fulfilment, /当前来源没有提供预计收货时间，保持未知，不用其他时间冒充/);
-  assert.match(fulfilment, /来源缺失时保持未知，不用预约或揽收时间冒充/);
+  const deliveryTable = functionBody(app, 'deliveryAttentionTable');
+  assert.match(deliveryTable, /expectedReceiptAt/);
+  assert.match(deliveryTable, /预计收货时间缺失时保持未知，不用其他时间冒充/);
+  assert.match(functionBody(app, 'fulfilmentEvidenceDisclosure'), /来源缺失时保持未知，不用预约或揽收时间冒充/);
 
   // Read-only: no SHEIN write control on either surface. Assert on markup and
   // request verbs, not on prose, since the boundary copy legitimately says
@@ -300,7 +306,7 @@ test('coverage, truncation and quantity wording stay honest', async () => {
     }
   }
   assert.match(functionBody(app, 'procurementEvidenceDisclosure'), /不提交任何采购单动作/);
-  assert.match(fulfilment, /不提交任何交付动作/);
+  assert.match(functionBody(app, 'fulfilmentEvidenceDisclosure'), /不提交任何交付动作/);
 });
 
 test('operational styles keep dense filters inside the viewport', async () => {
@@ -492,7 +498,7 @@ test('the shared view parameter binds only to the active route', async () => {
 
 test('the milestone snapshot caption describes the snapshot, not the attention scope', async () => {
   const app = await read('src/web/app.js');
-  const fulfilment = functionBody(app, 'renderFulfilment');
+  const fulfilment = functionBody(app, 'fulfilmentEvidenceDisclosure');
   const caption = fulfilment.slice(fulfilment.indexOf("'MILESTONE SNAPSHOT'"));
   const heading = caption.slice(0, caption.indexOf(')}'));
 

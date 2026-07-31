@@ -202,6 +202,24 @@ test('fulfilment query is read-only and scopes both lists by owner', () => {
     ['RECEIVED', 'IN_TRANSIT', 'PICKUP_RESERVED', 'CREATED'],
   );
   assert.equal(result.summary.storeCount, 1);
+  assert.deepEqual(result.summary.attentionByStore, [{
+    storeCode: 'DL5477',
+    storeName: 'DL5477',
+    attentionCount: 4,
+    createdCount: 1,
+    pickupReservedCount: 1,
+    inTransitCount: 2,
+    receiptOverdueCount: 1,
+    deliveryQuantity: {
+      knownSum: 75,
+      total: null,
+      knownCount: 3,
+      unknownCount: 1,
+      rowCount: 4,
+    },
+    oldestInTransitTakenAt: '2026-07-25T06:00:00.000Z',
+    latestSourceFetchedAt: '2026-07-29T00:45:19.000Z',
+  }]);
 
   const scopedByStore = queryFulfilmentDashboard(
     DASHBOARD,

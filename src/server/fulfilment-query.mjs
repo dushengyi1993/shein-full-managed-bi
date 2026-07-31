@@ -276,6 +276,49 @@ function attentionCodeCounts(inputRows) {
     .map(([code, count]) => ({ code, count }));
 }
 
+function earliestInstant(inputRows, field) {
+  const values = inputRows
+    .map((row) => comparableInstant(row[field], Number.NaN))
+    .filter(Number.isFinite);
+  return values.length === 0 ? null : new Date(Math.min(...values)).toISOString();
+}
+
+function attentionByStore(inputRows) {
+  const grouped = new Map();
+  for (const row of inputRows) {
+    const storeCode = String(row.storeCode ?? '').toUpperCase();
+    if (!STORE_PATTERN.test(storeCode)) continue;
+    const group = grouped.get(storeCode) ?? [];
+    group.push(row);
+    grouped.set(storeCode, group);
+  }
+  return [...grouped]
+    .map(([storeCode, storeRows]) => {
+      const codes = attentionCodeCounts(storeRows);
+      const count = (code) => codes.find((item) => item.code === code)?.count ?? 0;
+      const inTransitRows = storeRows.filter((row) => (
+        ['IN_TRANSIT_PENDING_RECEIPT', 'RECEIPT_OVERDUE']
+          .includes(String(row.attentionCode ?? '').toUpperCase())
+      ));
+      return {
+        storeCode,
+        storeName: storeRows.find((row) => row.storeName)?.storeName || storeCode,
+        attentionCount: storeRows.length,
+        createdCount: count('DELIVERY_CREATED_PENDING'),
+        pickupReservedCount: count('PICKUP_RESERVED_PENDING'),
+        inTransitCount: count('IN_TRANSIT_PENDING_RECEIPT') + count('RECEIPT_OVERDUE'),
+        receiptOverdueCount: count('RECEIPT_OVERDUE'),
+        deliveryQuantity: nullableSum(storeRows, 'deliveryQuantity'),
+        oldestInTransitTakenAt: earliestInstant(inTransitRows, 'takenAt'),
+        latestSourceFetchedAt: latestInstant(storeRows),
+      };
+    })
+    .sort((left, right) => (
+      right.attentionCount - left.attentionCount
+      || compareText(left.storeCode, right.storeCode)
+    ));
+}
+
 function latestInstant(inputRows) {
   const values = inputRows
     .map((row) => comparableInstant(row.latestSourceFetchedAt, Number.NaN))
@@ -424,6 +467,7 @@ export function queryFulfilmentDashboard(dashboardValue, paramsValue = new URLSe
         (row) => Boolean(row.expectedReceiptAt),
       ).length,
       attentionCodes: Object.freeze(attentionCodeCounts(matchedAttentionRows)),
+      attentionByStore: Object.freeze(attentionByStore(matchedAttentionRows)),
     }),
     filters: Object.freeze({
       owners: Object.freeze(rows(dashboard.owners).map((item) => ({
