@@ -3308,6 +3308,11 @@ function productQuickValue() {
     : 'ALL';
 }
 
+function queryRangeForProductImpact() {
+  const range = state.products.data?.query?.range;
+  return URL_RANGE_KEYS.includes(range) ? range : URL_DEFAULT_RANGE;
+}
+
 function productQueryUrl() {
   const params = new URLSearchParams({
     owner: state.owner,
@@ -3465,34 +3470,37 @@ function productDecisionSummary(queryData) {
     : isUnit(impact.knownSum)
       ? `≥ ${numberFormatter.format(impact.knownSum)} 件`
       : '未知';
-  return operationSummaryCards([
-    {
-      label: '活跃目录身份覆盖',
-      value: `${nullableUnits(catalog.confirmedSkus, '未知')} / ${nullableUnits(catalog.totalSkus, '未知')}`,
-      note: `覆盖率 ${coverageValue} · 缺少平台 SPU ${nullableUnits(catalog.missingSpuSkus, '未知')} 个；这是全量活跃目录口径，不依赖销量业务日。未确认 ${nullableUnits(catalog.unconfirmedSkus, '未知')} 个`,
-      tone: catalog.coverageRate === 1 ? 'available' : 'partial',
-    },
-    {
-      label: '证据覆盖（最新密封 run）',
-      value: `${nullableUnits(evidence.sealedSetCount, '未知')} 组 / ${nullableUnits(evidence.observedStoreCount, '未知')} 店`,
-      note: `标识符成员 ${nullableUnits(evidence.identifierMemberCount, '未知')} 条 · 最新密封 ${sourceTime(evidence.latestSealedAt)}`,
-      tone: pipeline.status === 'available' ? 'available' : 'partial',
-    },
-    {
-      label: '已确认归并与标准商品',
-      value: `${nullableUnits(assignments.currentConfirmedCount, '未知')} / ${nullableUnits(canonical.globalActiveProductCount, '未知')}`,
-      note: `当前生效 GLOBAL 归并数 / GLOBAL ACTIVE 标准商品数 · 活跃变体 ${nullableUnits(canonical.activeVariantCount, '未知')}`,
-      tone: pipeline.status === 'available' ? 'available' : 'partial',
-    },
-    {
-      label: '销量物化待归并队列',
-      value: `${numberFormatter.format(isUnit(summary.matchedMaterializedPendingRows) ? summary.matchedMaterializedPendingRows : 0)} 条`,
-      note: `${RANGE_META[state.range].label}影响 ${impactValue}${isUnit(impact.unknownCount) && impact.unknownCount > 0 ? `（${numberFormatter.format(impact.unknownCount)} 行未知，拒绝补零）` : ''} · 源物化 ${nullableUnits(pendingSource.returned, '未知')} / ${nullableUnits(pendingSource.total, '未知')}${pendingSource.truncated === true ? '，已截断' : ''}`,
-      tone: isUnit(summary.matchedMaterializedPendingRows) && summary.matchedMaterializedPendingRows > 0
-        ? 'partial'
-        : 'available',
-    },
-  ]);
+  const pendingRows = isUnit(summary.matchedMaterializedPendingRows)
+    ? numberFormatter.format(summary.matchedMaterializedPendingRows)
+    : '未知';
+  const fixedRange = RANGE_META[queryData.query?.range]?.label || '固定窗口';
+  return `
+    <section class="sales-period-overview product-decision-overview" aria-label="商品身份经营概览">
+      <header class="sales-workspace-head">
+        <div>
+          <span class="eyebrow">PRODUCT ANALYSIS</span>
+          <h1>商品分析</h1>
+          <p>先按销量影响处理待归并货号，再查看标准商品的跨店覆盖；店内身份不会被裸 SKU 误合并。</p>
+        </div>
+        <div class="sales-range-receipt">
+          <span>身份盘点 / 销量影响窗口</span>
+          <strong>${escapeHtml(`${queryData.source?.businessDate || '业务日未知'} · ${fixedRange}`)}</strong>
+          <small>身份覆盖不依赖顶部日期；销量影响只使用平台已接入的固定窗口</small>
+        </div>
+      </header>
+      <div class="sales-period-grid product-decision-grid">
+        ${salesPeriodMetric('活跃目录 SKU', nullableUnits(catalog.totalSkus, '未知'), '这是全量活跃目录口径，不依赖销量业务日', 'primary')}
+        ${salesPeriodMetric('已确认身份', nullableUnits(catalog.confirmedSkus, '未知'), `覆盖率 ${coverageValue} · 未确认 ${nullableUnits(catalog.unconfirmedSkus, '未知')}`)}
+        ${salesPeriodMetric('标准商品', `${nullableUnits(canonical.globalActiveProductCount, '未知')} 个`, `当前生效归并 ${nullableUnits(assignments.currentConfirmedCount, '未知')} 条`)}
+        ${salesPeriodMetric('待归并队列', `${pendingRows} 条`, `涉及 ${nullableUnits(summary.pendingStoreCount, '未知')} 家店`)}
+        ${salesPeriodMetric(`${fixedRange}待归并影响`, impactValue, isUnit(impact.unknownCount) && impact.unknownCount > 0 ? `${numberFormatter.format(impact.unknownCount)} 行未知，已按 ≥ 展示` : '销量窗口完整')}
+        ${salesPeriodMetric('缺少平台 SPU', `${nullableUnits(catalog.missingSpuSkus, '未知')} 个`, '缺少店内强标识，优先补证据')}
+      </div>
+      <div class="sales-data-receipt">
+        <span><i></i>证据覆盖（最新密封 run）</span>
+        <p>${escapeHtml(`${nullableUnits(evidence.sealedSetCount, '未知')} 组 / ${nullableUnits(evidence.observedStoreCount, '未知')} 店 · 标识符成员 ${nullableUnits(evidence.identifierMemberCount, '未知')} 条 · 最新密封 ${sourceTime(evidence.latestSealedAt)} · 源物化 ${nullableUnits(pendingSource.returned, '未知')} / ${nullableUnits(pendingSource.total, '未知')}${pendingSource.truncated === true ? '，已截断' : ''}`)}</p>
+      </div>
+    </section>`;
 }
 
 /** The real read-only pipeline: sealed evidence → candidate → decision → product. */
@@ -3534,15 +3542,15 @@ function productPipelineFlow(queryData) {
     ],
   ];
   return `
-    <section class="process-panel">
+    <section class="panel product-pipeline-panel">
       ${panelHeading(
         'IDENTITY RESOLUTION',
-        '身份归并流水线（只读）',
+        '归并进度',
         unknown
           ? '身份归并证据当前不可用，四个阶段数量均显示未知，不显示 0'
-          : `真实聚合计数 · ${String(pipeline.note || '')}`,
+          : `身份归并流水线（只读） · 真实聚合计数 · ${String(pipeline.note || '')}`,
       )}
-      <ol class="process-flow four-steps">
+      <ol class="process-flow four-steps product-pipeline-rail">
         ${stages.map(([title, description, value, freshness], index) => `
           <li>
             <span>${String(index + 1).padStart(2, '0')}</span>
@@ -3557,6 +3565,41 @@ function productPipelineFlow(queryData) {
     </section>`;
 }
 
+function productPendingStoreRanking(queryData) {
+  const rows = Array.isArray(queryData.summary?.pendingByStore)
+    ? queryData.summary.pendingByStore
+    : [];
+  const ranked = rows.map((item) => {
+    const store = baseStores().find(({ code }) => code === item.storeCode);
+    const ownerName = ownerNameForStore(store);
+    const value = isUnit(item.impact?.total)
+      ? item.impact.total
+      : isUnit(item.impact?.knownSum)
+        ? item.impact.knownSum
+        : 0;
+    const unknown = isUnit(item.impact?.unknownCount) ? item.impact.unknownCount : null;
+    return {
+      key: item.storeCode,
+      label: item.storeCode,
+      ownerName,
+      tone: ownerDisplayTone(ownerKeyForStore(store) || ownerName),
+      value,
+      sub: [
+        `待归并 ${nullableUnits(item.pendingRows, '未知')} 条`,
+        `有销量 ${nullableUnits(item.withSalesRows, '未知')} 条`,
+        item.missingSpuRows ? `缺 SPU ${numberFormatter.format(item.missingSpuRows)} 条` : null,
+        unknown ? `${numberFormatter.format(unknown)} 条销量未知` : null,
+      ].filter(Boolean).join(' · '),
+    };
+  });
+  return historyRankTable(
+    '待归并销量影响店铺排行',
+    `${RANGE_META[queryData.query?.range]?.label || '固定窗口'} · Top 8 · 先处理高影响店铺；条形长度代表当前榜内相对规模`,
+    ranked.slice(0, 8),
+    { defaultTone: 'product-quantity' },
+  );
+}
+
 function productPendingTable(rows) {
   if (!rows.length) {
     return emptyEvidence(
@@ -3567,24 +3610,25 @@ function productPendingTable(rows) {
   const visible = orderRowsForFocus(rows, 'product');
   return `
     <div class="table-wrap">
-      <table class="data-table product-table pending-mapping-table" id="product-workspace-table" role="tabpanel" aria-labelledby="product-tab-PENDING">
+      <table class="data-table product-table pending-mapping-table product-decision-table" id="product-workspace-table" role="tabpanel" aria-labelledby="product-tab-PENDING">
         <caption class="sr-only">当前筛选命中的已物化待归并店内货号</caption>
-        <thead><tr><th scope="col">店铺 / 负责人</th><th scope="col">店内货号</th><th scope="col">SPU / SKC / SKU</th><th scope="col">商品名称</th>${WINDOW_KEYS.map((key) => `<th scope="col" class="number-column">${escapeHtml(RANGE_META[key].label)}</th>`).join('')}<th scope="col" class="number-column">当前窗口影响</th><th scope="col">归并状态</th><th scope="col">身份边界</th><th scope="col">定位</th></tr></thead>
-        <tbody>${visible.map((item) => `
+        <thead><tr><th scope="col">序号</th><th scope="col">店铺</th><th scope="col">店内货号 / 商品</th><th scope="col">SPU / SKC / SKU</th><th scope="col" class="number-column">今日</th><th scope="col" class="number-column">近 7 日</th><th scope="col" class="number-column">近 30 日</th><th scope="col" class="number-column">当前窗口影响</th><th scope="col">归并状态</th><th scope="col">定位</th></tr></thead>
+        <tbody>${visible.map((item, index) => `
           <tr class="${isFocusedRow(item, 'product') ? 'focused-row' : ''}">
-            <td class="entity-column"><strong>${escapeHtml(item.storeCode || '店铺待确认')}</strong><span>${escapeHtml(`负责人 ${ownerNameForStoreCode(item.storeCode) || '待分配'}`)}</span></td>
-            <td class="entity-column"><strong>${escapeHtml(item.supplierCode || item.supplierSku || item.productKey || '店内货号待确认')}</strong><span>${escapeHtml(item.supplierSku || '')}</span></td>
+            <td class="row-index">${String(index + 1).padStart(2, '0')}</td>
+            <td class="entity-column"><strong>${escapeHtml(item.storeCode || '店铺待确认')}</strong><span>${escapeHtml(shortOwnerName(ownerNameForStoreCode(item.storeCode)) || '负责人待分配')}</span></td>
+            <td class="entity-column product-name-cell"><strong>${escapeHtml(item.supplierCode || item.supplierSku || item.productKey || '店内货号待确认')}</strong><span>${escapeHtml([productName(item), item.supplierSku].filter(Boolean).join(' · '))}</span></td>
             <td class="entity-column"><strong>${escapeHtml(item.sku || 'SKU 待确认')}</strong><span>${escapeHtml([item.skc || 'SKC 待确认', item.productKey].filter(Boolean).join(' · '))}</span></td>
-            <td>${escapeHtml(productName(item))}</td>
-            ${WINDOW_KEYS.map((key) => `<td class="number-column">${formatUnits(item?.unitsSold?.[key])}</td>`).join('')}
-            <td class="number-column">${formatUnits(item?.unitsSold?.[state.range])}</td>
+            <td class="number-column">${formatUnits(item?.unitsSold?.today)}</td>
+            <td class="number-column">${formatUnits(item?.unitsSold?.last7Days)}</td>
+            <td class="number-column">${formatUnits(item?.unitsSold?.last30Days)}</td>
+            <td class="number-column selected-column"><strong>${formatUnits(item?.unitsSold?.[queryRangeForProductImpact()])}</strong></td>
             <td><span class="row-status partial">${escapeHtml(mappingStatusLabel(item.mappingStatus))}</span></td>
-            <td class="boundary-cell"><span class="rank-identity local">店内身份</span><span>平台 SPU/SKC/SKU 仅在本店为强标识，禁止跨店按裸 SKU 合并</span></td>
             <td>${rowFocusLink(item, 'product')}</td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
-    <p class="table-note">当前页显示 ${numberFormatter.format(visible.length)} 条，排序与分页由服务端决定。“—”表示该窗口未知而非 0；这些行始终保留“店铺 + 店内货号 / SKC / SKU”身份，不参与跨店标准商品合计。</p>`;
+    <p class="table-note">当前页显示 ${numberFormatter.format(visible.length)} 条，排序与分页由服务端决定。“—”表示该窗口未知而非 0；平台 SPU/SKC/SKU 仅在本店为强标识，禁止跨店按裸 SKU 合并，不参与跨店标准商品合计。</p>`;
 }
 
 function productCanonicalTable(rows) {
@@ -3597,22 +3641,26 @@ function productCanonicalTable(rows) {
   const visible = orderRowsForFocus(rows, 'product');
   return `
     <div class="table-wrap">
-      <table class="data-table product-table" id="product-workspace-table" role="tabpanel" aria-labelledby="product-tab-CANONICAL">
+      <table class="data-table product-table product-decision-table canonical-product-table" id="product-workspace-table" role="tabpanel" aria-labelledby="product-tab-CANONICAL">
         <caption class="sr-only">当前筛选命中的已确认跨店标准商品</caption>
-        <thead><tr><th scope="col">标准商品</th><th scope="col">覆盖店铺</th>${WINDOW_KEYS.map((key) => `<th scope="col" class="number-column">${escapeHtml(RANGE_META[key].label)}</th>`).join('')}<th scope="col">可比动量</th><th scope="col">确认边界</th><th scope="col">定位</th></tr></thead>
-        <tbody>${visible.map((item) => {
+        <thead><tr><th scope="col">序号</th><th scope="col">标准商品</th><th scope="col">覆盖店铺</th><th scope="col" class="number-column">今日</th><th scope="col" class="number-column">近 7 日</th><th scope="col" class="number-column">近 30 日</th><th scope="col" class="number-column">当前窗口影响</th><th scope="col">可比动量</th><th scope="col">确认状态</th><th scope="col">定位</th></tr></thead>
+        <tbody>${visible.map((item, index) => {
           const scopedCount = isUnit(item.scopedStoreCount) ? item.scopedStoreCount : null;
           const totalCount = isUnit(item.totalStoreCount) ? item.totalStoreCount : null;
           const breakdown = Array.isArray(item.storeBreakdown) ? item.storeBreakdown : [];
           return `
           <tr class="${isFocusedRow(item, 'product') ? 'focused-row' : ''}">
+            <td class="row-index">${String(index + 1).padStart(2, '0')}</td>
             <td class="entity-column"><strong>${escapeHtml(item.standardProductCode || item.canonicalProductId || '标准商品待编号')}</strong><span>${escapeHtml(productName(item))}</span></td>
             <td class="entity-column"><strong>${escapeHtml(scopedCount === null ? '店铺数未知' : `${numberFormatter.format(scopedCount)} 家店`)}</strong><span>${escapeHtml(breakdown.slice(0, 4).map(({ storeCode }) => storeCode).join(' · ') || '店铺明细未知')}${breakdown.length > 4 ? ' …' : ''}</span></td>
-            ${WINDOW_KEYS.map((key) => `<td class="number-column">${formatUnits(item?.unitsSold?.[key])}</td>`).join('')}
+            <td class="number-column">${formatUnits(item?.unitsSold?.today)}</td>
+            <td class="number-column">${formatUnits(item?.unitsSold?.last7Days)}</td>
+            <td class="number-column">${formatUnits(item?.unitsSold?.last30Days)}</td>
+            <td class="number-column selected-column"><strong>${formatUnits(item?.unitsSold?.[queryRangeForProductImpact()])}</strong></td>
             ${homeMomentumCell(item)}
-            <td class="boundary-cell"><span class="rank-identity canonical">GLOBAL 已确认</span><span>${escapeHtml(item.scopeRecomputed === true
-              ? `已按当前范围重算：${scopedCount === null ? '店铺数未知' : `${numberFormatter.format(scopedCount)}`} / 全量 ${totalCount === null ? '未知' : numberFormatter.format(totalCount)} 家店`
-              : '仅 GLOBAL + CONFIRMED 归并允许跨店合计')}</span></td>
+            <td><span class="rank-identity canonical">GLOBAL 已确认</span><small class="product-scope-note">${escapeHtml(item.scopeRecomputed === true
+              ? `范围内 ${scopedCount === null ? '未知' : numberFormatter.format(scopedCount)} / 全量 ${totalCount === null ? '未知' : numberFormatter.format(totalCount)} 店`
+              : '允许跨店合计')}</small></td>
             <td>${rowFocusLink(item, 'product')}</td>
           </tr>`;
         }).join('')}</tbody>
@@ -3624,8 +3672,8 @@ function productCanonicalTable(rows) {
 /** The scientific rules, stated as boundaries rather than fake process steps. */
 function productIdentityBoundaries() {
   return `
-    <section class="panel condition-panel">
-      ${panelHeading('IDENTITY BOUNDARY', '身份判定边界（只读）', '强证据、召回信号与冲突阻断项分开表达；本页不提供任何合并、审批或编辑入口')}
+    <details class="panel product-boundary-disclosure">
+      <summary><span>IDENTITY BOUNDARY</span><strong>查看身份判定边界（只读）</strong><small>强证据、召回信号与冲突阻断项；本页没有合并、审批或编辑入口</small></summary>
       <ul class="condition-list">
         <li><strong>店内强标识</strong><span>平台 SPU、SKC、SKU 只在同一店铺内是强标识，跨店不成立</span></li>
         <li><strong>仅召回信号</strong><span>供应商编码、商家 SKU、标题与图片 URL 只用于生成候选，不作为归并证据</span></li>
@@ -3634,7 +3682,7 @@ function productIdentityBoundaries() {
         <li><strong>聚合边界</strong><span>只有 GLOBAL + CONFIRMED 归并可跨店聚合，店内行始终隔离</span></li>
         <li><strong>写入能力</strong><span>本批不写 SHEIN，也不写归并与决策；所有控件保持只读</span></li>
       </ul>
-    </section>`;
+    </details>`;
 }
 /* --- product-query:end --- */
 
@@ -6524,7 +6572,6 @@ function renderProducts() {
   const pagination = activeList.pagination;
   const paginationKind = pendingView ? 'pending' : 'canonical';
   const paginationLabel = pendingView ? '待归并队列' : '标准商品';
-  const catalog = productRecord(queryData.source?.activeCatalogCoverage);
   const source = productRecord(activeList.source);
   const quickOptions = pendingView
     ? [
@@ -6544,28 +6591,29 @@ function renderProducts() {
     source.truncated === true ? '源结果已截断，非 SHEIN 全量目录' : '源物化未截断',
     `业务日期 ${queryData.source?.businessDate || '未知'}`,
   ].join(' · ');
+  const impactRange = queryData.query?.range || URL_DEFAULT_RANGE;
+  const canonicalCoverage = productRecord(queryData.summary?.canonicalCoverage);
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
-    ${pageIntro(
-      'PRODUCT IDENTITY',
-      '商品分析',
-      '店内货号、SKC、SKU 与标准商品分层保存；只有 GLOBAL + CONFIRMED 归并才能跨店聚合。',
-      `<span>活跃目录身份覆盖</span><strong>${escapeHtml(`${nullableUnits(catalog.confirmedSkus, '未知')} / ${nullableUnits(catalog.totalSkus, '未知')}`)}</strong><small>${escapeHtml(`缺少平台 SPU ${nullableUnits(catalog.missingSpuSkus, '未知')} 个 · 与销量物化范围是两个不同口径`)}</small>`,
-    )}
     ${productDecisionSummary(queryData)}
-    ${productPipelineFlow(queryData)}
+    <section class="product-decision-workbench">
+      ${productPendingStoreRanking(queryData)}
+      ${productPipelineFlow(queryData)}
+    </section>
     <section class="table-section inventory-workspace">
       ${panelHeading(
         'IDENTITY WORKSPACE',
-        '商品身份工作台',
-        `服务端筛选、排序与分页 · ${sourceLine}`,
+        pendingView ? '待归并处理清单' : '标准商品覆盖清单',
+        pendingView
+          ? `按销量影响确定处理顺序 · ${sourceLine}`
+          : `跨店标准商品 ${nullableUnits(canonicalCoverage.rowCount, '未知')} 个 · 多店覆盖 ${nullableUnits(canonicalCoverage.multiStoreRows, '未知')} 个 · ${sourceLine}`,
       )}
       ${productViewTabs(queryData)}
       ${quickFilterBar('products', pendingView ? '待归并快速筛查' : '标准商品快速筛查', quickOptions)}
       <div class="inventory-controls">
         ${productSelect('sort', '排序', [
-          ['IMPACT_DESC', `${RANGE_META[state.range].label}影响`],
+          ['IMPACT_DESC', `${RANGE_META[impactRange].label}影响`],
           ['LAST30_DESC', '近 30 日销量'],
           ['LAST7_DESC', '近 7 日销量'],
           ['TODAY_DESC', '今日销量'],

@@ -197,6 +197,31 @@ test('the workspace shows the real evidence pipeline and both identity universes
   assert.doesNotMatch(summary, /\|\| 0\b|\?\? 0\b/);
 });
 
+test('the product page prioritizes decisions before technical identity detail', async () => {
+  const [app, styles] = await Promise.all([
+    read('src/web/app.js'),
+    read('src/web/styles.css'),
+  ]);
+  const render = functionBody(app, 'renderProducts');
+  const pending = functionBody(app, 'productPendingTable');
+  const ranking = functionBody(app, 'productPendingStoreRanking');
+
+  assert.match(render, /productDecisionSummary\(queryData\)/);
+  assert.match(render, /productPendingStoreRanking\(queryData\)/);
+  assert.match(render, /productPipelineFlow\(queryData\)/);
+  assert.match(render, /待归并处理清单/);
+  assert.match(render, /标准商品覆盖清单/);
+  assert.match(ranking, /pendingByStore/);
+  assert.match(ranking, /待归并销量影响店铺排行/);
+  assert.match(ranking, /ranked\.slice\(0, 8\)/);
+  assert.doesNotMatch(pending, /boundary-cell/);
+  assert.match(pending, /店内货号 \/ 商品/);
+  assert.match(pending, /当前窗口影响/);
+  assert.match(styles, /\.product-decision-workbench\s*\{/);
+  assert.match(styles, /\.product-pipeline-rail\s*\{/);
+  assert.match(styles, /\.product-boundary-disclosure\s*\{/);
+});
+
 test('source wording stays honest about the materialized scope', async () => {
   const app = await read('src/web/app.js');
   const render = functionBody(app, 'renderProducts');

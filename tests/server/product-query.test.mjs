@@ -159,6 +159,50 @@ test('product query is read-only and separates the pending queue from standard p
   assert.equal(result.summary.confirmedStoreSkuRows, 1);
   assert.equal(result.summary.missingSpuStoreSkuRows, 1);
   assert.equal(result.summary.pendingStoreCount, 2);
+  assert.deepEqual(
+    result.summary.pendingByStore.map((row) => ({
+      storeCode: row.storeCode,
+      pendingRows: row.pendingRows,
+      withSalesRows: row.withSalesRows,
+      missingSpuRows: row.missingSpuRows,
+      impact: row.impact,
+    })),
+    [
+      {
+        storeCode: 'DL5477',
+        pendingRows: 2,
+        withSalesRows: 1,
+        missingSpuRows: 1,
+        impact: {
+          rowCount: 2,
+          knownCount: 2,
+          unknownCount: 0,
+          knownSum: 9,
+          total: 9,
+        },
+      },
+      {
+        storeCode: 'MZ2406',
+        pendingRows: 1,
+        withSalesRows: 1,
+        missingSpuRows: 0,
+        impact: {
+          rowCount: 1,
+          knownCount: 1,
+          unknownCount: 0,
+          knownSum: 3,
+          total: 3,
+        },
+      },
+    ],
+  );
+  assert.deepEqual(result.summary.canonicalCoverage, {
+    rowCount: 2,
+    knownStoreCountRows: 2,
+    multiStoreRows: 1,
+    singleStoreRows: 1,
+    coveredStoreLinks: 3,
+  });
 });
 
 test('owner and store scope recompute canonical quantities from storeBreakdown', () => {
@@ -216,6 +260,9 @@ test('an unknown constituent window keeps the cross-store total null', () => {
   assert.equal(last30.summary.pendingImpact.knownCount, 2);
   assert.equal(last30.summary.pendingImpact.knownSum, 160);
   assert.equal(last30.summary.canonicalImpact.total, 252);
+  assert.equal(last30.summary.pendingByStore[0].storeCode, 'DL5477');
+  assert.equal(last30.summary.pendingByStore[0].impact.total, null);
+  assert.equal(last30.summary.pendingByStore[0].impact.knownSum, 100);
 });
 
 test('text search, quick filters and sort run server-side per list', () => {

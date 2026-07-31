@@ -309,6 +309,54 @@ function impactMetric(inputRows, range) {
   };
 }
 
+function pendingStoreSummary(inputRows, range) {
+  const grouped = new Map();
+  for (const row of inputRows) {
+    const storeCode = String(row.storeCode ?? '').toUpperCase();
+    if (!STORE_PATTERN.test(storeCode)) continue;
+    const current = grouped.get(storeCode) || {
+      storeCode,
+      rows: [],
+      withSalesRows: 0,
+      missingSpuRows: 0,
+    };
+    current.rows.push(row);
+    const value = record(row.unitsSold)[range];
+    if (isUnit(value) && value > 0) current.withSalesRows += 1;
+    if (String(row.mappingStatus ?? '').toUpperCase() === 'MISSING_SPU_ID') {
+      current.missingSpuRows += 1;
+    }
+    grouped.set(storeCode, current);
+  }
+  return [...grouped.values()].map((item) => ({
+    storeCode: item.storeCode,
+    pendingRows: item.rows.length,
+    withSalesRows: item.withSalesRows,
+    missingSpuRows: item.missingSpuRows,
+    impact: impactMetric(item.rows, range),
+  })).sort((left, right) => {
+    const leftImpact = left.impact.total ?? left.impact.knownSum ?? -1;
+    const rightImpact = right.impact.total ?? right.impact.knownSum ?? -1;
+    return rightImpact - leftImpact
+      || right.pendingRows - left.pendingRows
+      || left.storeCode.localeCompare(right.storeCode);
+  });
+}
+
+function canonicalCoverageSummary(inputRows) {
+  const knownCounts = inputRows.map((row) => row.scopedStoreCount)
+    .filter(isUnit);
+  return {
+    rowCount: inputRows.length,
+    knownStoreCountRows: knownCounts.length,
+    multiStoreRows: knownCounts.filter((value) => value > 1).length,
+    singleStoreRows: knownCounts.filter((value) => value === 1).length,
+    coveredStoreLinks: knownCounts.length === inputRows.length
+      ? knownCounts.reduce((sum, value) => sum + value, 0)
+      : null,
+  };
+}
+
 function storeOptions(dashboard) {
   const names = new Map();
   for (const row of rows(dashboard.storeRanking)) {
@@ -462,6 +510,13 @@ export function queryProductDashboard(dashboardValue, paramsValue = new URLSearc
       pendingStoreCount: new Set(pendingRows.map((row) => row.storeCode).filter(Boolean)).size,
       pendingImpact: Object.freeze(impactMetric(pendingRows, range)),
       canonicalImpact: Object.freeze(impactMetric(canonicalRows, range)),
+      pendingByStore: Object.freeze(
+        pendingStoreSummary(pendingRows, range).map((item) => Object.freeze({
+          ...item,
+          impact: Object.freeze(item.impact),
+        })),
+      ),
+      canonicalCoverage: Object.freeze(canonicalCoverageSummary(canonicalRows)),
     }),
     filters: Object.freeze({
       owners: Object.freeze(rows(dashboard.owners).map((item) => ({

@@ -3016,6 +3016,164 @@ body[data-dataset="sample"] .metric-item > strong {
   min-width: 980px;
 }
 
+.product-decision-overview .sales-period-metric {
+  min-height: 100px;
+}
+
+.product-decision-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(430px, 0.65fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.product-decision-workbench > .panel {
+  min-width: 0;
+  margin: 0;
+  padding: 17px;
+}
+
+.product-pipeline-panel .panel-heading {
+  align-items: start;
+}
+
+.product-pipeline-rail {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper-soft);
+}
+
+.product-pipeline-rail li {
+  display: grid;
+  grid-template-columns: 29px minmax(0, 1fr) auto;
+  min-height: 84px;
+  align-items: start;
+  gap: 10px;
+  padding: 11px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.product-pipeline-rail li:last-child {
+  border-bottom: 0;
+}
+
+.product-pipeline-rail li::after {
+  display: none;
+}
+
+.product-pipeline-rail li > div {
+  min-width: 0;
+  margin: 0;
+}
+
+.product-pipeline-rail p {
+  display: -webkit-box;
+  margin: 3px 0 4px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.product-pipeline-rail b {
+  align-self: center;
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.product-pipeline-rail .stage-freshness {
+  color: var(--muted);
+  font-size: 0.58rem;
+}
+
+.product-decision-table {
+  min-width: 1240px;
+}
+
+.product-decision-table th:first-child,
+.product-decision-table td:first-child {
+  width: 52px;
+}
+
+.product-decision-table .product-name-cell {
+  min-width: 210px;
+}
+
+.product-decision-table td strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.product-scope-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.6rem;
+  line-height: 1.35;
+}
+
+.product-boundary-disclosure {
+  margin-bottom: 14px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.product-boundary-disclosure summary {
+  display: grid;
+  grid-template-columns: auto minmax(180px, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
+  padding: 13px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.product-boundary-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.product-boundary-disclosure summary::after {
+  content: "+";
+  justify-self: end;
+  color: var(--muted);
+  font-size: 1rem;
+}
+
+.product-boundary-disclosure[open] summary::after {
+  content: "−";
+}
+
+.product-boundary-disclosure summary > span {
+  color: var(--accent);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.product-boundary-disclosure summary > strong {
+  font-size: 0.78rem;
+}
+
+.product-boundary-disclosure summary > small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-boundary-disclosure .condition-list {
+  margin: 0 16px 12px;
+}
+
 .integration-gate {
   display: grid;
   grid-template-columns: minmax(230px, 0.58fr) minmax(420px, 1.42fr);
@@ -3870,6 +4028,22 @@ body[data-dataset="sample"] .metric-item > strong {
     grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
   }
 
+  .product-decision-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .product-pipeline-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .product-pipeline-rail li:nth-child(odd) {
+    border-right: 1px solid var(--line);
+  }
+
+  .product-pipeline-rail li:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
   .home-analysis-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -4036,6 +4210,40 @@ body[data-dataset="sample"] .metric-item > strong {
 
   .sales-trend-insights > div:last-child {
     border-right: 0;
+  }
+
+  .product-pipeline-rail {
+    grid-template-columns: 1fr;
+  }
+
+  .product-pipeline-rail li:nth-child(n) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .product-pipeline-rail li:last-child {
+    border-bottom: 0;
+  }
+
+  .product-boundary-disclosure summary {
+    grid-template-columns: 1fr auto;
+  }
+
+  .product-boundary-disclosure summary > span {
+    grid-column: 1;
+  }
+
+  .product-boundary-disclosure summary > strong {
+    grid-column: 1;
+  }
+
+  .product-boundary-disclosure summary > small {
+    display: none;
+  }
+
+  .product-boundary-disclosure summary::after {
+    grid-column: 2;
+    grid-row: 1 / span 2;
   }
 
   .command-bar {
