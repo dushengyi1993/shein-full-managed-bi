@@ -106,14 +106,14 @@ test('home shell keeps the historical filter, KPI tables, vertical trends and fo
   assert.match(parityStyles, /\.sidebar\s*\{[\s\S]*background: var\(--side\)/);
   assert.match(parityStyles, /\.home-footnote\s*\{/);
 
-  // The retired home noise stays defined for other routes but leaves renderHome.
+  // The retired home noise leaves renderHome and is no longer mounted on another route.
   const homeStart = app.indexOf('function renderHome()');
   const homeEnd = app.indexOf('\nfunction ', homeStart + 1);
   const home = app.slice(homeStart, homeEnd);
   assert.doesNotMatch(home, /homeBusinessPulse|supplyRadar|renderOperationalPriorities/);
   assert.match(app, /function homeBusinessPulse\(/);
   assert.match(app, /function supplyRadar\(/);
-  assert.match(app, /\$\{renderOperationalPriorities\(\)\}/);
+  assert.doesNotMatch(app, /\$\{renderOperationalPriorities\(\)\}/);
 });
 
 test('full-managed homepage exposes the confirmed metrics without inventing unsupported profit fields', async () => {

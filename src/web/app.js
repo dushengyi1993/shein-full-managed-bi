@@ -156,6 +156,20 @@ const URL_FULFILMENT_SORTS = Object.freeze([
 const URL_PLATFORM_VIEWS = Object.freeze(['ATTENTION', 'BUSINESS', 'ALL']);
 const URL_PLATFORM_SEVERITIES = Object.freeze(['ALL', 'P0', 'P1', 'P2', 'P3']);
 const URL_PLATFORM_SORTS = Object.freeze(['PRIORITY', 'LATEST']);
+const URL_OPS_VIEWS = Object.freeze(['PRIORITY', 'ALL']);
+const URL_OPS_SEVERITIES = Object.freeze(['ALL', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW']);
+const URL_OPS_DOMAINS = Object.freeze([
+  'ALL',
+  'PROCUREMENT',
+  'FULFILMENT',
+  'INVENTORY',
+  'SUPPLY',
+  'PRODUCTS',
+  'PLATFORM',
+  'SYSTEM',
+  'OTHER',
+]);
+const URL_OPS_SORTS = Object.freeze(['PRIORITY', 'LATEST', 'DEADLINE', 'STORE']);
 /** Mirrors the `MILESTONE_PATTERN`/`STATUS_PATTERN` guards on the server. */
 const URL_OPERATION_CODE_PATTERN = /^[\p{L}\p{N}._:-]{1,80}$/u;
 
@@ -360,6 +374,22 @@ function parseHashState(rawHash, inherited = {}) {
       platformPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.platformPageSize)
         ? inherited.platformPageSize
         : URL_DEFAULT_INVENTORY_PAGE_SIZE,
+      opsView: URL_OPS_VIEWS.includes(inherited.opsView)
+        ? inherited.opsView
+        : 'PRIORITY',
+      opsSeverity: URL_OPS_SEVERITIES.includes(inherited.opsSeverity)
+        ? inherited.opsSeverity
+        : 'ALL',
+      opsDomain: URL_OPS_DOMAINS.includes(inherited.opsDomain)
+        ? inherited.opsDomain
+        : 'ALL',
+      opsSort: URL_OPS_SORTS.includes(inherited.opsSort)
+        ? inherited.opsSort
+        : 'PRIORITY',
+      opsPage: 1,
+      opsPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.opsPageSize)
+        ? inherited.opsPageSize
+        : URL_DEFAULT_INVENTORY_PAGE_SIZE,
       // Navigating to another surface invalidates a focus that belonged to the
       // previous one.
       focus: null,
@@ -470,6 +500,16 @@ function parseHashState(rawHash, inherited = {}) {
     ),
     platformPage: pageParam('eventPage'),
     platformPageSize: routePageSize('platform', inherited.platformPageSize),
+    opsView: routeView('ops', URL_OPS_VIEWS, 'PRIORITY', inherited.opsView),
+    opsSeverity: allowListedToken(
+      params.get('opsSeverity'),
+      URL_OPS_SEVERITIES,
+      'ALL',
+    ),
+    opsDomain: allowListedToken(params.get('opsDomain'), URL_OPS_DOMAINS, 'ALL'),
+    opsSort: allowListedToken(params.get('opsSort'), URL_OPS_SORTS, 'PRIORITY'),
+    opsPage: pageParam('opsPage'),
+    opsPageSize: routePageSize('ops', inherited.opsPageSize),
     // A focus only applies on the surface that can prove it.
     focus: focus && FOCUS_DOMAINS[focus.domain].route === route ? focus : null,
     canonicalLink: true,
@@ -582,6 +622,23 @@ function serializeHashState(input = {}) {
     const platformPageSize = pageSizeParam(input.platformPageSize);
     if (platformPageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) {
       params.set('size', String(platformPageSize));
+    }
+  }
+  if (route === 'ops') {
+    const view = allowListedToken(input.opsView, URL_OPS_VIEWS, 'PRIORITY');
+    if (view !== 'PRIORITY') params.set('view', view);
+    const severity = allowListedToken(input.opsSeverity, URL_OPS_SEVERITIES, 'ALL');
+    if (severity !== 'ALL') params.set('opsSeverity', severity);
+    const domain = allowListedToken(input.opsDomain, URL_OPS_DOMAINS, 'ALL');
+    if (domain !== 'ALL') params.set('opsDomain', domain);
+    const sort = allowListedToken(input.opsSort, URL_OPS_SORTS, 'PRIORITY');
+    if (sort !== 'PRIORITY') params.set('opsSort', sort);
+    if (Number.isSafeInteger(input.opsPage) && input.opsPage > 1) {
+      params.set('opsPage', String(Math.min(input.opsPage, 9999)));
+    }
+    const opsPageSize = pageSizeParam(input.opsPageSize);
+    if (opsPageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) {
+      params.set('size', String(opsPageSize));
     }
   }
   const focus = input.focus && FOCUS_DOMAINS[input.focus.domain]?.route === route
@@ -710,6 +767,18 @@ const state = {
     page: initialHashState.platformPage || 1,
     pageSize: initialHashState.platformPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
   },
+  ops: {
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+    view: initialHashState.opsView || 'PRIORITY',
+    severity: initialHashState.opsSeverity || 'ALL',
+    domain: initialHashState.opsDomain || 'ALL',
+    sort: initialHashState.opsSort || 'PRIORITY',
+    page: initialHashState.opsPage || 1,
+    pageSize: initialHashState.opsPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
+  },
   sales: {
     data: null,
     loading: false,
@@ -783,6 +852,7 @@ let inventoryLoadTimer = null;
 let productLoadTimer = null;
 let fulfilmentLoadTimer = null;
 let platformLoadTimer = null;
+let opsLoadTimer = null;
 let dashboardEventSource = null;
 
 function routeFromLocation() {
@@ -2846,6 +2916,91 @@ function schedulePlatformLoad({ resetPage = false, delay = 0 } = {}) {
   }, delay);
 }
 
+/* --- ops-query:start ---
+   The operations workspace reads a bounded server-side worklist. The browser
+   receives only one page of rows, while summary metrics and rankings keep the
+   full current owner/store scope. */
+
+function opsQuickValue() {
+  const active = quickFilterValue('ops');
+  return ['HIGH', 'OVERDUE', 'SHORTAGE', 'URGENT', 'SYNC'].includes(active)
+    ? active
+    : 'ALL';
+}
+
+function opsQueryUrl() {
+  const params = new URLSearchParams({
+    owner: state.owner,
+    store: state.store,
+    q: state.query,
+    view: allowListedToken(state.ops.view, URL_OPS_VIEWS, 'PRIORITY'),
+    severity: allowListedToken(state.ops.severity, URL_OPS_SEVERITIES, 'ALL'),
+    domain: allowListedToken(state.ops.domain, URL_OPS_DOMAINS, 'ALL'),
+    quick: opsQuickValue(),
+    sort: allowListedToken(state.ops.sort, URL_OPS_SORTS, 'PRIORITY'),
+    page: String(state.ops.page),
+    pageSize: String(pageSizeParam(state.ops.pageSize)),
+  });
+  return `/api/ops?${params.toString()}`;
+}
+
+async function loadOps({ resetPage = false } = {}) {
+  if (resetPage) state.ops.page = 1;
+  if (state.route !== 'ops') return;
+  const requestSerial = state.ops.requestSerial + 1;
+  state.ops.requestSerial = requestSerial;
+  state.ops.loading = true;
+  state.ops.error = '';
+  render();
+  try {
+    const result = await fetchJson(opsQueryUrl());
+    if (requestSerial !== state.ops.requestSerial) return;
+    if (
+      !result
+      || result.readOnly !== true
+      || !Array.isArray(result.worklist?.rows)
+      || !result.worklist?.pagination
+      || !result.summary
+      || !Array.isArray(result.summary.attentionByStore)
+      || !Array.isArray(result.summary.attentionByDomain)
+      || !result.source
+      || !result.automation
+    ) {
+      throw new Error('运营待办查询结构无效');
+    }
+    state.ops.data = result;
+  } catch (error) {
+    if (requestSerial !== state.ops.requestSerial) return;
+    state.ops.data = null;
+    state.ops.error = error instanceof Error
+      ? error.message
+      : '运营待办查询暂不可用';
+  } finally {
+    if (requestSerial === state.ops.requestSerial) {
+      state.ops.loading = false;
+      render();
+    }
+  }
+}
+
+function scheduleOpsLoad({ resetPage = false, delay = 0 } = {}) {
+  if (opsLoadTimer !== null) window.clearTimeout(opsLoadTimer);
+  state.ops.requestSerial += 1;
+  if (resetPage) {
+    state.ops.page = 1;
+    state.ops.data = null;
+    state.ops.error = '';
+    state.ops.loading = true;
+  }
+  if (state.route !== 'ops') return;
+  if (resetPage) render();
+  opsLoadTimer = window.setTimeout(() => {
+    opsLoadTimer = null;
+    void loadOps();
+  }, delay);
+}
+/* --- ops-query:end --- */
+
 function fulfilmentQueryState(kind) {
   const error = kind === 'error';
   return `
@@ -4487,7 +4642,10 @@ const ALERT_GROUP_FOCUS_DOMAINS = Object.freeze({
 function alertFocusHref(item) {
   const domain = item?.focusDomain
     ?? ALERT_GROUP_FOCUS_DOMAINS[String(item?.group ?? '')];
-  if (!domain) return item?.href || '#ops';
+  const routeFallback = URL_ROUTE_KEYS.includes(String(item?.route || ''))
+    ? `#${item.route}`
+    : '#ops';
+  if (!domain) return item?.href || routeFallback;
   const explicit = String(item?.focusCode ?? '').trim();
   const code = explicit !== '' && URL_CODE_PATTERN.test(explicit)
     ? explicit
@@ -4495,7 +4653,7 @@ function alertFocusHref(item) {
       const fallback = String(item?.objectCode ?? item?.entityCode ?? '').trim();
       return URL_CODE_PATTERN.test(fallback) ? fallback : '';
     })();
-  if (code === '') return item?.href || '#ops';
+  if (code === '') return item?.href || routeFallback;
   const storeCode = String(item?.storeCode ?? '').trim().toUpperCase();
   return canonicalHref({
     route: FOCUS_DOMAINS[domain].route,
@@ -8212,75 +8370,245 @@ function renderPlatform() {
     ${platformEvidenceDisclosure(queryData)}`;
 }
 
-function actionCandidateTable(rows) {
-  const normalized = rows.map((candidate) => {
-    const meta = CANDIDATE_TYPE_META[candidate.type] || {
-      label: candidate.title || '运营复核',
-      nextStep: '打开对应业务页核对事实',
-      href: '#ops',
-      group: 'other',
-    };
+function opsQueryState(kind) {
+  const error = kind === 'error';
+  return `
+    <section class="panel procurement-query-state${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}">
+      <span class="eyebrow">OPERATIONS QUERY</span>
+      <h2>${error ? '运营待办查询暂不可用' : '正在汇总当前运营优先事项'}</h2>
+      <p>${error
+        ? escapeHtml(state.ops.error || '请稍后重试。')
+        : '采购、交付、缺货、急采和同步质量分开取证；筛选与分页在服务端执行。'}</p>
+      ${error
+        ? '<button type="button" class="clear-button" data-ops-retry="1">重新查询</button>'
+        : '<div class="query-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>'}
+    </section>`;
+}
+
+function opsPagination(pagination, position = 'bottom') {
+  if (!pagination || !isUnit(pagination.page) || !isUnit(pagination.pageSize)) return '';
+  const matched = isUnit(pagination.matchedRows) ? pagination.matchedRows : 0;
+  const pageCount = isUnit(pagination.pageCount) ? pagination.pageCount : 0;
+  const displayedPage = pageCount === 0 ? 0 : pagination.page;
+  return `
+    <nav class="table-pagination ${position === 'top' ? 'pagination-top' : ''}" aria-label="运营待办分页（${position === 'top' ? '表格上方' : '表格下方'}）">
+      <p>当前条件命中 ${numberFormatter.format(matched)} 条 · 第 ${numberFormatter.format(displayedPage)} / ${numberFormatter.format(pageCount)} 页</p>
+      <div>
+        <button type="button" data-ops-page="${Math.max(1, pagination.page - 1)}" ${pagination.hasPrevious ? '' : 'disabled'}>上一页</button>
+        <button type="button" data-ops-page="${pagination.page + 1}" ${pagination.hasNext ? '' : 'disabled'}>下一页</button>
+      </div>
+    </nav>`;
+}
+
+function opsDecisionOverview(queryData) {
+  const summary = productRecord(queryData.summary);
+  const source = productRecord(queryData.source);
+  const automation = productRecord(queryData.automation);
+  const priorityCount = isUnit(summary.priorityCount)
+    ? `${numberFormatter.format(summary.priorityCount)} 条`
+    : '未知';
+  const totalCount = isUnit(summary.scopedCount)
+    ? `${numberFormatter.format(summary.scopedCount)} 条`
+    : '未知';
+  const writeBoundary = automation.writeEnabled === false
+    ? '只读工作台'
+    : automation.writeEnabled === true ? '写闸异常开启' : '写闸状态未知';
+  const windows = productRecord(source.businessWindows);
+  const windowLabels = [
+    ['采购', windows.purchaseOrders],
+    ['交付', windows.deliveries],
+    ['库存', windows.inventoryRisks],
+    ['备货', windows.stockAdviceRisks],
+  ].map(([label, value]) => {
+    const item = productRecord(value);
+    const returned = nullableUnits(item.returned);
+    const total = nullableUnits(item.total);
+    return `${label} ${returned}/${total}${item.truncated === true ? ' 截断' : ''}`;
+  });
+  return `
+    <section class="sales-period-overview ops-decision-overview" aria-label="运营优先事项概览">
+      <header class="sales-workspace-head">
+        <div>
+          <span class="eyebrow">OPERATIONS CONTROL DESK</span>
+          <h1>运营待办</h1>
+          <p>把采购、交付、库存、备货和数据质量问题按严重度排成可筛查、可下钻的工作清单。</p>
+        </div>
+        <div class="sales-range-receipt">
+          <span>当前范围 / 执行边界</span>
+          <strong>${escapeHtml(inventoryScopeLabel())}</strong>
+          <small>${escapeHtml(`${writeBoundary} · 快照 ${sourceTime(source.dashboardUpdatedAt)}`)}</small>
+        </div>
+      </header>
+      <div class="sales-period-grid ops-decision-grid">
+        ${salesPeriodMetric('优先处理', priorityCount, `当前范围共 ${totalCount}`, 'primary')}
+        ${salesPeriodMetric('紧急 / 高优先', `${nullableUnits(summary.criticalCount)} / ${nullableUnits(summary.highPriorityCount)} 条`, '两类严重度分开统计')}
+        ${salesPeriodMetric('逾期单据', `${nullableUnits(summary.overdueCount)} 条`, '只统计明确带逾期证据的采购或交付事项')}
+        ${salesPeriodMetric('缺货 SKU', `${nullableUnits(summary.shortageCount)} 个`, '按独立库存风险明细统计')}
+        ${salesPeriodMetric('急采 SKU', `${nullableUnits(summary.urgentCount)} 个`, '按平台备货建议与急采事实统计')}
+        ${salesPeriodMetric('涉及店铺', `${nullableUnits(summary.impactedStoreCount)} 家`, '跨店系统项不虚构店铺归属')}
+      </div>
+      <div class="sales-data-receipt">
+        <span><i></i>运营事实证据</span>
+        <p>${escapeHtml(`${windowLabels.join(' · ')} · ${source.businessWindowTruncated === true ? '至少一个业务窗口已截断' : source.businessWindowTruncated === false ? '四类业务窗口未截断' : '截断状态未知'}`)}</p>
+      </div>
+    </section>`;
+}
+
+function opsRankings(queryData) {
+  const storeRows = Array.isArray(queryData.summary?.attentionByStore)
+    ? queryData.summary.attentionByStore
+    : [];
+  const domainRows = Array.isArray(queryData.summary?.attentionByDomain)
+    ? queryData.summary.attentionByDomain
+    : [];
+  const stores = storeRows.slice(0, 6).map((row) => {
+    const store = baseStores().find(({ code }) => code === row.key);
+    const ownerName = ownerNameForStore(store);
     return {
-      ...candidate,
-      group: meta.group,
-      title: meta.label,
-      impact: candidate.reason,
-      objectCode: candidate.entityCode,
-      nextStep: meta.nextStep,
-      href: meta.href,
+      key: row.key,
+      label: row.key,
+      ownerName,
+      tone: ownerDisplayTone(ownerKeyForStore(store) || ownerName),
+      value: row.count,
+      sub: `紧急 ${nullableUnits(row.criticalCount)} · 高优先 ${nullableUnits(row.highCount)} · 最新 ${sourceTime(row.latestAt)}`,
     };
-  }).sort(comparePriority);
-  return priorityWorklistTable(normalized);
+  });
+  const domains = domainRows.slice(0, 6).map((row) => ({
+    key: row.key,
+    label: row.label || row.key,
+    tone: 'product-quantity',
+    value: row.count,
+    sub: `紧急 ${nullableUnits(row.criticalCount)} · 高优先 ${nullableUnits(row.highCount)} · 最新 ${sourceTime(row.latestAt)}`,
+  }));
+  return `
+    <section class="rank-grid operation-risk-rankings ops-risk-rankings" aria-label="运营优先事项排行">
+      ${historyRankTable(
+        '优先事项店铺排行',
+        '当前店铺范围 · Top 6 · 按紧急、高优先和事项数排序',
+        stores,
+        { defaultTone: 'store-quantity', unit: '条' },
+      )}
+      ${historyRankTable(
+        '优先事项类型排行',
+        '当前店铺范围 · Top 6 · 采购、交付、库存、备货和数据质量分开',
+        domains,
+        { defaultTone: 'product-quantity', unit: '条' },
+      )}
+    </section>`;
+}
+
+function opsFilters(queryData) {
+  const domainOptions = Array.isArray(queryData.filters?.domains)
+    ? queryData.filters.domains.map((item) => [item.code, item.name || item.code])
+    : [['ALL', '全部业务类型']];
+  return `
+    ${quickFilterBar('ops', '快速筛查', [
+      ['ALL', '全部'],
+      ['HIGH', '高优先'],
+      ['OVERDUE', '逾期单据'],
+      ['SHORTAGE', '缺货'],
+      ['URGENT', '急采'],
+      ['SYNC', '同步 / 质量'],
+    ])}
+    <div class="operation-controls ops-filter-bar">
+      ${operationSelect('opsView', '清单范围', [
+        ['PRIORITY', '只看优先事项'],
+        ['ALL', '全部运营事项'],
+      ], state.ops.view)}
+      ${operationSelect('opsSeverity', '严重度', [
+        ['ALL', '全部等级'],
+        ['CRITICAL', '紧急'],
+        ['HIGH', '高优先'],
+        ['MEDIUM', '中优先'],
+        ['LOW', '低优先'],
+      ], state.ops.severity)}
+      ${operationSelect('opsDomain', '业务类型', domainOptions, state.ops.domain)}
+      ${operationSelect('opsSort', '排序', [
+        ['PRIORITY', '严重度优先'],
+        ['LATEST', '证据时间最新'],
+        ['DEADLINE', '要求时间最早'],
+        ['STORE', '店铺顺序'],
+      ], state.ops.sort)}
+      ${operationSelect('opsPageSize', '每页', [
+        ['25', '25 条'],
+        ['50', '50 条'],
+        ['100', '100 条'],
+      ], String(state.ops.pageSize))}
+      ${operationSearchControls('ops')}
+    </div>`;
+}
+
+function opsEvidenceDisclosure(queryData) {
+  const source = productRecord(queryData.source);
+  const automation = productRecord(queryData.automation);
+  const candidate = productRecord(source.candidateWindow);
+  const windows = productRecord(source.businessWindows);
+  const cards = [
+    ['采购单', windows.purchaseOrders],
+    ['交付入仓', windows.deliveries],
+    ['库存风险', windows.inventoryRisks],
+    ['备货风险', windows.stockAdviceRisks],
+  ];
+  return `
+    <details class="panel product-boundary-disclosure operation-evidence-disclosure ops-evidence-disclosure">
+      <summary>
+        <span class="eyebrow">EVIDENCE & AUTOMATION BOUNDARY</span>
+        <strong>数据范围与自动化边界</strong>
+        <small>展开查看四类明细覆盖、候选池截断状态和写动作总闸</small>
+      </summary>
+      <div class="inventory-disclosure-body">
+        <div class="inventory-boundary-grid">
+          ${cards.map(([label, value]) => {
+            const item = productRecord(value);
+            return `<article><strong>${escapeHtml(label)}</strong><span>${escapeHtml(`返回 ${nullableUnits(item.returned)} / ${nullableUnits(item.total)} 条 · ${item.truncated === true ? '已截断' : item.truncated === false ? '未截断' : '截断状态未知'}`)}</span></article>`;
+          }).join('')}
+        </div>
+        <section class="focus-strip ops-boundary-strip">
+          <div><span>候选池</span><strong>${escapeHtml(`返回 ${nullableUnits(candidate.returned)} / ${nullableUnits(candidate.total)} 条`)}</strong></div>
+          <p><b>${candidate.truncated === true ? '候选池已截断' : '候选池状态可读'}</b>${escapeHtml(candidate.note || '候选池只作补充，不替代业务明细。')}</p>
+          <span class="row-status ${automation.writeEnabled === false ? 'complete' : 'blocked'}">${automation.writeEnabled === false ? '写动作关闭' : '写闸需检查'}</span>
+        </section>
+      </div>
+    </details>`;
 }
 
 function renderOps() {
-  const actionPool = actionPoolDomain();
-  const items = operationPriorityItems();
-  const coverage = operationPriorityCoverage(items);
-  const high = items.filter((item) => severityMeta(item.severity).rank >= severityMeta('high').rank).length;
-  const stores = new Set(items.map(({ storeCode }) => storeCode).filter(Boolean)).size;
-  const queueLabel = coverage.incomplete
-    ? `已载入 ${numberFormatter.format(items.length)} 条${coverage.totalAtLeast > items.length ? ` · 全量至少 ${numberFormatter.format(coverage.totalAtLeast)} 条` : ''}`
-    : items.length ? `${numberFormatter.format(items.length)} 条待复核` : '暂无可证明事项';
+  if (state.ops.loading && !state.ops.data) {
+    return `${sampleNotice()}${opsQueryState('loading')}`;
+  }
+  if (state.ops.error && !state.ops.data) {
+    return `${sampleNotice()}${opsQueryState('error')}`;
+  }
+  const queryData = state.ops.data;
+  if (!queryData) return `${sampleNotice()}${opsQueryState('loading')}`;
+  const rows = Array.isArray(queryData.worklist?.rows) ? queryData.worklist.rows : [];
+  const pagination = queryData.worklist?.pagination;
+  const coverageNote = queryData.source?.businessWindowTruncated === true
+    ? '至少一个独立业务明细窗口已截断，未命中不能解释为无风险。'
+    : '四类独立业务明细窗口未截断；候选池只用于补充系统项。';
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
-    ${pageIntro(
-      'CONTROLLED AUTOMATION',
-      '运营待办',
-      '把单据异常、缺货、急采、建议备货和同步失败按优先级汇成只读工作队列，直接下钻到事实页。',
-      `<span>当前队列</span><strong>${escapeHtml(queueLabel)}</strong><small>${escapeHtml(`${coverage.note} ${actionPool.writeEnabled === false ? '只读工作台 · 无 SHEIN 写入口' : '写能力不可用'}`)}</small>`,
-    )}
-    ${operationSummaryCards([
-      {
-        label: '高优先事项',
-        value: items.length ? (coverage.incomplete ? `已载入 ${numberFormatter.format(high)}` : numberFormatter.format(high)) : '证据待接入',
-        note: coverage.incomplete ? '仅统计当前返回窗口；紧急和高优先事项排在前面' : '紧急和高优先事项排在队列前面',
-        tone: high > 0 ? 'blocked' : '',
-      },
-      {
-        label: '涉及店铺',
-        value: items.length ? `${numberFormatter.format(stores)} 家` : '证据待接入',
-        note: '员工可查看全部店铺，归属仅用于筛选',
-      },
-      {
-        label: '事实来源',
-        value: supplyAvailable() ? '供给 / 履约可读' : '部分待接入',
-        note: '单据、SKU 风险和系统覆盖分别取证',
-      },
-      {
-        label: '执行边界',
-        value: '只读',
-        note: '本页没有提交、预演或平台写按钮',
-        tone: 'available',
-      },
-    ])}
-    ${renderOperationalPriorities()}
-    <section class="focus-strip">
-      <div><span>工作方式</span><strong>筛查 → 下钻 → 人工复核</strong></div>
-      <p><b>无平台写入口</b>当前队列只组织证据和下一步，不会生成或发送 SHEIN 写请求。</p>
-      ${sourceChip()}
-    </section>`;
+    ${opsDecisionOverview(queryData)}
+    ${opsRankings(queryData)}
+    <section class="table-section ops-workspace">
+      ${panelHeading(
+        'OPERATOR WORKLIST',
+        '运营优先事项清单',
+        `服务端筛选与分页 · 当前范围 ${nullableUnits(queryData.summary?.scopedCount)} 条`,
+      )}
+      ${opsFilters(queryData)}
+      ${opsPagination(pagination, 'top')}
+      ${priorityWorklistTable(rows, {
+        limit: pageSizeParam(state.ops.pageSize),
+        totalCount: pagination?.matchedRows,
+        totalAtLeast: false,
+        coverageNote,
+      })}
+      ${opsPagination(pagination, 'bottom')}
+      ${state.ops.loading ? '<p class="query-refresh-note" role="status">正在刷新当前运营待办筛选结果…</p>' : ''}
+    </section>
+    ${opsEvidenceDisclosure(queryData)}`;
 }
 
 function datasetOverview() {
@@ -8852,6 +9180,9 @@ async function loadDashboard(options = {}) {
   if (state.data && state.route === 'platform') {
     schedulePlatformLoad();
   }
+  if (state.data && state.route === 'ops') {
+    scheduleOpsLoad();
+  }
 }
 
 function connectDashboardUpdates() {
@@ -8940,6 +9271,12 @@ function currentHashState() {
     platformSort: state.platform.sort,
     platformPage: state.platform.page,
     platformPageSize: state.platform.pageSize,
+    opsView: state.ops.view,
+    opsSeverity: state.ops.severity,
+    opsDomain: state.ops.domain,
+    opsSort: state.ops.sort,
+    opsPage: state.ops.page,
+    opsPageSize: state.ops.pageSize,
   };
 }
 
@@ -9014,6 +9351,12 @@ function applyHashState(parsed) {
   );
   state.platform.page = parsed.platformPage || 1;
   state.platform.pageSize = pageSizeParam(parsed.platformPageSize);
+  state.ops.view = allowListedToken(parsed.opsView, URL_OPS_VIEWS, 'PRIORITY');
+  state.ops.severity = allowListedToken(parsed.opsSeverity, URL_OPS_SEVERITIES, 'ALL');
+  state.ops.domain = allowListedToken(parsed.opsDomain, URL_OPS_DOMAINS, 'ALL');
+  state.ops.sort = allowListedToken(parsed.opsSort, URL_OPS_SORTS, 'PRIORITY');
+  state.ops.page = parsed.opsPage || 1;
+  state.ops.pageSize = pageSizeParam(parsed.opsPageSize);
   if (parsed.quick === 'ALL') delete state.quickFilters[parsed.route];
   else state.quickFilters[parsed.route] = parsed.quick;
 }
@@ -9068,6 +9411,12 @@ function syncRouteFromLocation() {
     state.platform.requestSerial += 1;
     state.platform.loading = false;
   }
+  if (state.route === 'ops') {
+    scheduleOpsLoad({ resetPage: routeChanged });
+  } else if (routeChanged) {
+    state.ops.requestSerial += 1;
+    state.ops.loading = false;
+  }
   if (routeChanged && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -9084,6 +9433,7 @@ elements.search.addEventListener('input', (event) => {
   scheduleProductLoad({ resetPages: true, delay: 220 });
   scheduleFulfilmentLoad({ resetPage: true, delay: 220 });
   schedulePlatformLoad({ resetPage: true, delay: 220 });
+  scheduleOpsLoad({ resetPage: true, delay: 220 });
 });
 
 elements.scope.addEventListener('change', (event) => {
@@ -9099,6 +9449,7 @@ elements.scope.addEventListener('change', (event) => {
   scheduleProductLoad({ resetPages: true, delay: 120 });
   scheduleFulfilmentLoad({ resetPage: true, delay: 120 });
   schedulePlatformLoad({ resetPage: true, delay: 120 });
+  scheduleOpsLoad({ resetPage: true, delay: 120 });
 });
 
 elements.rangeButtons.forEach((button) => {
@@ -9236,6 +9587,11 @@ elements.view.addEventListener('click', (event) => {
     void loadPlatform();
     return;
   }
+  const opsRetry = event.target.closest?.('[data-ops-retry]');
+  if (opsRetry && elements.view.contains(opsRetry)) {
+    void loadOps();
+    return;
+  }
   const fulfilmentPage = event.target.closest?.('[data-fulfilment-page]');
   if (fulfilmentPage && elements.view.contains(fulfilmentPage)) {
     const nextPage = Number(fulfilmentPage.dataset.fulfilmentPage);
@@ -9256,6 +9612,16 @@ elements.view.addEventListener('click', (event) => {
     }
     return;
   }
+  const opsPage = event.target.closest?.('[data-ops-page]');
+  if (opsPage && elements.view.contains(opsPage)) {
+    const nextPage = Number(opsPage.dataset.opsPage);
+    if (Number.isSafeInteger(nextPage) && nextPage >= 1 && !opsPage.disabled) {
+      state.ops.page = nextPage;
+      syncUrlFromState();
+      void loadOps();
+    }
+    return;
+  }
   const operationSearch = event.target.closest?.('[data-operation-search]');
   if (operationSearch && elements.view.contains(operationSearch)) {
     // The endpoint already reads the shared global query, so an explicit search
@@ -9265,6 +9631,7 @@ elements.view.addEventListener('click', (event) => {
     if (kind === 'procurement') scheduleProcurementLoad({ resetPage: true });
     if (kind === 'fulfilment') scheduleFulfilmentLoad({ resetPage: true });
     if (kind === 'platform') schedulePlatformLoad({ resetPage: true });
+    if (kind === 'ops') scheduleOpsLoad({ resetPage: true });
     return;
   }
   const operationReset = event.target.closest?.('[data-operation-reset]');
@@ -9298,6 +9665,15 @@ elements.view.addEventListener('click', (event) => {
       state.platform.pageSize = URL_DEFAULT_INVENTORY_PAGE_SIZE;
       syncUrlFromState();
       schedulePlatformLoad({ resetPage: true });
+    }
+    if (kind === 'ops') {
+      state.ops.view = 'PRIORITY';
+      state.ops.severity = 'ALL';
+      state.ops.domain = 'ALL';
+      state.ops.sort = 'PRIORITY';
+      state.ops.pageSize = URL_DEFAULT_INVENTORY_PAGE_SIZE;
+      syncUrlFromState();
+      scheduleOpsLoad({ resetPage: true });
     }
     return;
   }
@@ -9421,6 +9797,7 @@ elements.view.addEventListener('click', (event) => {
   if (route === 'inventory') scheduleInventoryLoad({ resetPages: true });
   if (route === 'products') scheduleProductLoad({ resetPages: true });
   if (route === 'fulfilment') scheduleFulfilmentLoad({ resetPage: true });
+  if (route === 'ops') scheduleOpsLoad({ resetPage: true });
 });
 
 elements.view.addEventListener('change', (event) => {
@@ -9478,6 +9855,16 @@ elements.view.addEventListener('change', (event) => {
       state.platform.sort = allowListedToken(raw, URL_PLATFORM_SORTS, 'PRIORITY');
     } else if (kind === 'platformPageSize') {
       state.platform.pageSize = pageSizeParam(raw);
+    } else if (kind === 'opsView') {
+      state.ops.view = allowListedToken(raw, URL_OPS_VIEWS, 'PRIORITY');
+    } else if (kind === 'opsSeverity') {
+      state.ops.severity = allowListedToken(raw, URL_OPS_SEVERITIES, 'ALL');
+    } else if (kind === 'opsDomain') {
+      state.ops.domain = allowListedToken(raw, URL_OPS_DOMAINS, 'ALL');
+    } else if (kind === 'opsSort') {
+      state.ops.sort = allowListedToken(raw, URL_OPS_SORTS, 'PRIORITY');
+    } else if (kind === 'opsPageSize') {
+      state.ops.pageSize = pageSizeParam(raw);
     } else {
       return;
     }
@@ -9486,6 +9873,7 @@ elements.view.addEventListener('change', (event) => {
     syncUrlFromState();
     if (kind.startsWith('procurement')) scheduleProcurementLoad({ resetPage: true });
     else if (kind.startsWith('fulfilment')) scheduleFulfilmentLoad({ resetPage: true });
+    else if (kind.startsWith('ops')) scheduleOpsLoad({ resetPage: true });
     else schedulePlatformLoad({ resetPage: true });
     return;
   }
@@ -9616,6 +10004,7 @@ window.addEventListener('hashchange', syncRouteFromLocation);
 window.addEventListener('beforeunload', () => {
   if (procurementLoadTimer !== null) window.clearTimeout(procurementLoadTimer);
   if (salesLoadTimer !== null) window.clearTimeout(salesLoadTimer);
+  if (opsLoadTimer !== null) window.clearTimeout(opsLoadTimer);
   dashboardEventSource?.close();
 });
 

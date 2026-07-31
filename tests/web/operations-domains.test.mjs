@@ -145,35 +145,40 @@ test('platform page prioritizes operator attention and keeps technical evidence 
   assert.doesNotMatch(app, /safeProjectionSummary/);
 });
 
-test('operations queue is prioritized, localized, drillable and has no write control', async () => {
+test('operations queue is server-paged, prioritized, localized, drillable and has no write control', async () => {
   const app = await read('src/web/app.js');
+  const serverQuery = await read('src/server/ops-query.mjs');
   const ops = functionBody(app, 'renderOps');
-  const candidateTable = functionBody(app, 'actionCandidateTable');
-  const coverage = functionBody(app, 'operationPriorityCoverage');
-  const worklist = functionBody(app, 'operationPriorityItems');
+  const overview = functionBody(app, 'opsDecisionOverview');
+  const filters = functionBody(app, 'opsFilters');
+  const evidence = functionBody(app, 'opsEvidenceDisclosure');
+  const pagination = functionBody(app, 'opsPagination');
 
   assert.match(ops, /运营待办/);
-  assert.match(ops, /高优先事项/);
-  assert.match(ops, /筛查 → 下钻 → 人工复核/);
-  assert.match(ops, /writeEnabled/);
-  assert.match(app, /SHORTAGE_REVIEW:[\s\S]*label: '缺货复核'/);
-  assert.match(app, /URGENT_SUPPLY_REVIEW:[\s\S]*label: '急采复核'/);
-  assert.match(app, /SUPPLY_SYNC_FAILURE_REVIEW:[\s\S]*label: '同步失败'/);
-  assert.match(app, /PURCHASE_ORDER_OVERDUE:[\s\S]*href: '#procurement'/);
-  assert.match(app, /DELIVERY_OVERDUE:[\s\S]*href: '#fulfilment'/);
-  assert.match(app, /SKU_SHORTAGE_REVIEW:[\s\S]*href: '#inventory'/);
-  assert.match(app, /SKU_URGENT_SUPPLY_REVIEW:[\s\S]*href: '#inventory'/);
-  assert.match(worklist, /detailedPurchase/);
-  assert.match(worklist, /detailedDelivery/);
-  assert.match(worklist, /SKU_RESTOCK_ADVICE_REVIEW/);
-  assert.match(coverage, /meta\.total - meta\.returned/);
-  assert.match(coverage, /未命中不能解释为无风险/);
-  assert.match(app, /priorityWorklistTable/);
-  assert.match(app, /全量至少/);
+  assert.match(ops, /opsDecisionOverview\(queryData\)/);
+  assert.match(ops, /opsRankings\(queryData\)/);
+  assert.match(ops, /opsPagination\(pagination, 'top'\)/);
+  assert.match(overview, /紧急 \/ 高优先/);
+  assert.match(overview, /逾期单据/);
+  assert.match(overview, /缺货 SKU/);
+  assert.match(overview, /急采 SKU/);
+  assert.match(filters, /只看优先事项/);
+  assert.match(filters, /同步 \/ 质量/);
+  assert.match(evidence, /候选池只作补充/);
+  assert.match(evidence, /writeEnabled/);
+  assert.match(pagination, /当前条件命中/);
+  assert.match(serverQuery, /SHORTAGE_REVIEW:[\s\S]*title: '缺货复核'/);
+  assert.match(serverQuery, /URGENT_SUPPLY_REVIEW:[\s\S]*title: '急采复核'/);
+  assert.match(serverQuery, /SUPPLY_SYNC_FAILURE_REVIEW:[\s\S]*title: '同步失败'/);
+  assert.match(serverQuery, /PURCHASE_ORDER_OVERDUE:[\s\S]*domain: 'PROCUREMENT'/);
+  assert.match(serverQuery, /DELIVERY_OVERDUE:[\s\S]*domain: 'FULFILMENT'/);
+  assert.match(serverQuery, /SKU_SHORTAGE_REVIEW:[\s\S]*domain: 'INVENTORY'/);
+  assert.match(serverQuery, /SKU_URGENT_SUPPLY_REVIEW:[\s\S]*domain: 'SUPPLY'/);
+  assert.match(serverQuery, /businessWindowTruncated/);
   assert.match(app, /查看事实 →/);
-  assert.doesNotMatch(candidateTable, /candidateKey/);
   assert.doesNotMatch(ops, /<button/);
   assert.doesNotMatch(ops, /fetch\(|XMLHttpRequest|method:\s*['"]POST['"]/);
+  assert.doesNotMatch(serverQuery, /method:\s*['"](POST|PUT|PATCH|DELETE)['"]/);
 });
 
 test('operating alerts aggregate supply, identity, webhook and data-quality evidence read-only', async () => {

@@ -17,7 +17,8 @@ function functionBody(source, functionName) {
 }
 
 /**
- * Static source contracts for the procurement, fulfilment and platform workspaces. They
+ * Static source contracts for the procurement, fulfilment, platform and operations
+ * workspaces. They
  * prove each surface is wired to its own server query rather than filtering the
  * whole Dashboard snapshot; they do not replace visual acceptance.
  */
@@ -27,10 +28,12 @@ test('each workspace consumes only its own independent endpoint', async () => {
   const procurementUrl = functionBody(app, 'procurementQueryUrl');
   const fulfilmentUrl = functionBody(app, 'fulfilmentQueryUrl');
   const platformUrl = functionBody(app, 'platformQueryUrl');
+  const opsUrl = functionBody(app, 'opsQueryUrl');
 
   assert.match(procurementUrl, /`\/api\/procurement\?\$\{params\.toString\(\)\}`/);
   assert.match(fulfilmentUrl, /`\/api\/fulfilment\?\$\{params\.toString\(\)\}`/);
   assert.match(platformUrl, /`\/api\/platform\?\$\{params\.toString\(\)\}`/);
+  assert.match(opsUrl, /`\/api\/ops\?\$\{params\.toString\(\)\}`/);
   for (const parameter of ['owner', 'store', 'q', 'status', 'quick', 'sort', 'page', 'pageSize']) {
     assert.match(procurementUrl, new RegExp(`${parameter}:`), parameter);
   }
@@ -44,6 +47,11 @@ test('each workspace consumes only its own independent endpoint', async () => {
   ]) {
     assert.match(platformUrl, new RegExp(`${parameter}:`), parameter);
   }
+  for (const parameter of [
+    'owner', 'store', 'q', 'view', 'severity', 'domain', 'quick', 'sort', 'page', 'pageSize',
+  ]) {
+    assert.match(opsUrl, new RegExp(`${parameter}:`), parameter);
+  }
   // Every value is re-checked against an allow-list before it leaves the client.
   assert.match(procurementUrl, /allowListedToken\(state\.procurement\.sort, URL_PROCUREMENT_SORTS, 'PRIORITY'\)/);
   assert.match(procurementUrl, /operationCodeParam\(state\.procurement\.status\)/);
@@ -56,15 +64,21 @@ test('each workspace consumes only its own independent endpoint', async () => {
   assert.match(platformUrl, /operationCodeParam\(state\.platform\.family\)/);
   assert.match(platformUrl, /operationCodeParam\(state\.platform\.status\)/);
   assert.match(platformUrl, /pageSizeParam\(state\.platform\.pageSize\)/);
+  assert.match(opsUrl, /allowListedToken\(state\.ops\.view, URL_OPS_VIEWS, 'PRIORITY'\)/);
+  assert.match(opsUrl, /allowListedToken\(state\.ops\.severity, URL_OPS_SEVERITIES, 'ALL'\)/);
+  assert.match(opsUrl, /allowListedToken\(state\.ops\.domain, URL_OPS_DOMAINS, 'ALL'\)/);
+  assert.match(opsUrl, /pageSizeParam\(state\.ops\.pageSize\)/);
 
   // Neither workspace filters the full Dashboard snapshot any more.
   const procurement = functionBody(app, 'renderProcurement');
   const fulfilment = functionBody(app, 'renderFulfilment');
   const platform = functionBody(app, 'renderPlatform');
+  const ops = functionBody(app, 'renderOps');
   assert.match(procurement, /state\.procurement\.data/);
   assert.match(fulfilment, /state\.fulfilment\.data/);
   assert.match(platform, /state\.platform\.data/);
-  for (const body of [procurement, fulfilment, platform]) {
+  assert.match(ops, /state\.ops\.data/);
+  for (const body of [procurement, fulfilment, platform, ops]) {
     assert.doesNotMatch(body, /scopedOperationRows\(|domainRows\(supply|attentionRows\(/);
     assert.doesNotMatch(body, /matchesQuickFilter\(/);
     assert.doesNotMatch(body, /slice\(0, ?100\)/);
@@ -82,12 +96,16 @@ test('each workspace consumes only its own independent endpoint', async () => {
   assert.match(platform, /platformDecisionOverview\(queryData\)/);
   assert.match(platform, /platformRankings\(queryData\)/);
   assert.match(platform, /platformEvidenceDisclosure\(queryData\)/);
+  assert.match(ops, /opsDecisionOverview\(queryData\)/);
+  assert.match(ops, /opsRankings\(queryData\)/);
+  assert.match(ops, /opsEvidenceDisclosure\(queryData\)/);
 });
 
 test('quick filter tokens are narrowed to each endpoint vocabulary', async () => {
   const app = await read('src/web/app.js');
   const procurementQuick = functionBody(app, 'procurementQuickValue');
   const fulfilmentQuick = functionBody(app, 'fulfilmentQuickValue');
+  const opsQuick = functionBody(app, 'opsQuickValue');
 
   assert.match(
     procurementQuick,
@@ -99,6 +117,8 @@ test('quick filter tokens are narrowed to each endpoint vocabulary', async () =>
     /\['HIGH', 'CREATED', 'PICKUP_RESERVED', 'IN_TRANSIT', 'PENDING_RECEIPT'\]/,
   );
   assert.match(fulfilmentQuick, /: 'ALL'/);
+  assert.match(opsQuick, /\['HIGH', 'OVERDUE', 'SHORTAGE', 'URGENT', 'SYNC'\]/);
+  assert.match(opsQuick, /: 'ALL'/);
 
   // The rendered quick bars offer exactly the server's semantics.
   const procurement = functionBody(app, 'renderProcurement');
@@ -113,6 +133,10 @@ test('quick filter tokens are narrowed to each endpoint vocabulary', async () =>
     'ALL', 'HIGH', 'CREATED', 'PICKUP_RESERVED', 'IN_TRANSIT', 'PENDING_RECEIPT',
   ]) {
     assert.match(fulfilment, new RegExp(`\\['${value}',`), value);
+  }
+  const opsFilters = functionBody(app, 'opsFilters');
+  for (const value of ['ALL', 'HIGH', 'OVERDUE', 'SHORTAGE', 'URGENT', 'SYNC']) {
+    assert.match(opsFilters, new RegExp(`\\['${value}',`), value);
   }
 });
 
@@ -184,6 +208,33 @@ test('platform guards stale responses and exposes loading, error, retry and boun
   assert.match(functionBody(app, 'loadDashboard'), /state\.route === 'platform'[\s\S]*schedulePlatformLoad\(\)/);
 });
 
+test('operations guards stale responses and exposes loading, error, retry and bounded evidence', async () => {
+  const app = await read('src/web/app.js');
+  const load = functionBody(app, 'loadOps');
+  const schedule = functionBody(app, 'scheduleOpsLoad');
+  const queryState = functionBody(app, 'opsQueryState');
+  const render = functionBody(app, 'renderOps');
+
+  assert.match(load, /const requestSerial = state\.ops\.requestSerial \+ 1/);
+  assert.ok(
+    (load.match(/if \(requestSerial !== state\.ops\.requestSerial\) return;/g) || []).length >= 2,
+  );
+  assert.match(load, /if \(requestSerial === state\.ops\.requestSerial\)/);
+  assert.match(load, /result\.readOnly !== true/);
+  assert.match(load, /Array\.isArray\(result\.worklist\?\.rows\)/);
+  assert.match(load, /Array\.isArray\(result\.summary\.attentionByStore\)/);
+  assert.match(load, /Array\.isArray\(result\.summary\.attentionByDomain\)/);
+  assert.match(load, /运营待办查询结构无效/);
+  assert.match(schedule, /window\.clearTimeout\(opsLoadTimer\)/);
+  assert.match(schedule, /state\.ops\.requestSerial \+= 1/);
+  assert.match(queryState, /data-ops-retry="1"/);
+  assert.match(queryState, /筛选与分页在服务端执行/);
+  assert.match(render, /businessWindowTruncated === true/);
+  assert.match(render, /候选池只用于补充系统项/);
+  assert.match(app, /state\.ops\.requestSerial \+= 1;\s*\n\s*state\.ops\.loading = false/);
+  assert.match(functionBody(app, 'loadDashboard'), /state\.route === 'ops'[\s\S]*scheduleOpsLoad\(\)/);
+});
+
 test('workspace URL state round-trips through allow-listed hash parameters', async () => {
   const app = await read('src/web/app.js');
   const parse = functionBody(app, 'parseHashState');
@@ -233,6 +284,7 @@ test('workspace URL state round-trips through allow-listed hash parameters', asy
     'fulfilmentMilestone', 'fulfilmentSort', 'fulfilmentPage', 'fulfilmentPageSize',
     'platformView', 'platformSeverity', 'platformFamily', 'platformStatus',
     'platformSort', 'platformPage', 'platformPageSize',
+    'opsView', 'opsSeverity', 'opsDomain', 'opsSort', 'opsPage', 'opsPageSize',
   ]) {
     assert.match(current, new RegExp(`${key}:`), key);
     assert.match(apply, new RegExp(`parsed\\.${key}`), key);
@@ -241,6 +293,7 @@ test('workspace URL state round-trips through allow-listed hash parameters', asy
   assert.match(apply, /state\.procurement\.pageSize = pageSizeParam\(parsed\.procurementPageSize\)/);
   assert.match(apply, /state\.fulfilment\.pageSize = pageSizeParam\(parsed\.fulfilmentPageSize\)/);
   assert.match(apply, /state\.platform\.pageSize = pageSizeParam\(parsed\.platformPageSize\)/);
+  assert.match(apply, /state\.ops\.pageSize = pageSizeParam\(parsed\.opsPageSize\)/);
   assert.match(app, /const URL_INVENTORY_PAGE_SIZES = Object\.freeze\(\[25, 50, 100\]\)/);
 });
 
@@ -256,9 +309,10 @@ test('filter and page controls update the URL and reset paging', async () => {
   assert.match(app, /state\.procurement\.pageSize = pageSizeParam\(raw\)/);
   assert.match(app, /state\.fulfilment\.pageSize = pageSizeParam\(raw\)/);
   assert.match(app, /state\.platform\.pageSize = pageSizeParam\(raw\)/);
+  assert.match(app, /state\.ops\.pageSize = pageSizeParam\(raw\)/);
   assert.match(
     app,
-    /syncUrlFromState\(\);\s*\n\s*if \(kind\.startsWith\('procurement'\)\) scheduleProcurementLoad\(\{ resetPage: true \}\);\s*\n\s*else if \(kind\.startsWith\('fulfilment'\)\) scheduleFulfilmentLoad\(\{ resetPage: true \}\);\s*\n\s*else schedulePlatformLoad\(\{ resetPage: true \}\)/,
+    /syncUrlFromState\(\);\s*\n\s*if \(kind\.startsWith\('procurement'\)\) scheduleProcurementLoad\(\{ resetPage: true \}\);\s*\n\s*else if \(kind\.startsWith\('fulfilment'\)\) scheduleFulfilmentLoad\(\{ resetPage: true \}\);\s*\n\s*else if \(kind\.startsWith\('ops'\)\) scheduleOpsLoad\(\{ resetPage: true \}\);\s*\n\s*else schedulePlatformLoad\(\{ resetPage: true \}\)/,
   );
 
   // Paging syncs the URL before fetching, so a shared link matches the view.
@@ -270,6 +324,10 @@ test('filter and page controls update the URL and reset paging', async () => {
     app,
     /state\.platform\.page = nextPage;\s*\n\s*syncUrlFromState\(\);\s*\n\s*void loadPlatform\(\)/,
   );
+  assert.match(
+    app,
+    /state\.ops\.page = nextPage;\s*\n\s*syncUrlFromState\(\);\s*\n\s*void loadOps\(\)/,
+  );
 
   // Explicit search and reset controls exist and keep global state coherent.
   const controls = functionBody(app, 'operationSearchControls');
@@ -280,29 +338,39 @@ test('filter and page controls update the URL and reset paging', async () => {
   assert.match(app, /state\.procurement\.status = 'ALL'/);
   assert.match(app, /state\.fulfilment\.milestone = 'ALL'/);
   assert.match(app, /state\.platform\.view = 'ATTENTION'/);
+  assert.match(app, /state\.ops\.view = 'PRIORITY'/);
 
   // Quick filters reload the matching workspace only.
   assert.match(app, /if \(route === 'procurement'\) scheduleProcurementLoad\(\{ resetPage: true \}\)/);
   assert.match(app, /if \(route === 'fulfilment'\) scheduleFulfilmentLoad\(\{ resetPage: true \}\)/);
+  assert.match(app, /if \(route === 'ops'\) scheduleOpsLoad\(\{ resetPage: true \}\)/);
 });
 
-test('both queues page above and below the table', async () => {
+test('all independent worklists page above and below the table', async () => {
   const app = await read('src/web/app.js');
   const procurement = functionBody(app, 'renderProcurement');
   const fulfilment = functionBody(app, 'renderFulfilment');
   const procurementPagination = functionBody(app, 'procurementPagination');
   const fulfilmentPagination = functionBody(app, 'fulfilmentPagination');
+  const ops = functionBody(app, 'renderOps');
+  const opsPagination = functionBody(app, 'opsPagination');
 
   assert.match(procurement, /procurementPagination\(queryData, 'top'\)/);
   assert.match(procurement, /procurementPagination\(queryData, 'bottom'\)/);
   assert.match(fulfilment, /fulfilmentPagination\(queryData\.attention\.pagination, 'top'\)/);
   assert.match(fulfilment, /fulfilmentPagination\(queryData\.attention\.pagination, 'bottom'\)/);
+  assert.match(ops, /opsPagination\(pagination, 'top'\)/);
+  assert.match(ops, /opsPagination\(pagination, 'bottom'\)/);
   for (const body of [procurementPagination, fulfilmentPagination]) {
     assert.match(body, /pagination\.hasPrevious \? '' : 'disabled'/);
     assert.match(body, /pagination\.hasNext \? '' : 'disabled'/);
     assert.match(body, /已物化范围命中/);
     assert.match(body, /pagination-top/);
   }
+  assert.match(opsPagination, /pagination\.hasPrevious \? '' : 'disabled'/);
+  assert.match(opsPagination, /pagination\.hasNext \? '' : 'disabled'/);
+  assert.match(opsPagination, /当前条件命中/);
+  assert.match(opsPagination, /pagination-top/);
 });
 
 test('coverage, truncation and quantity wording stay honest', async () => {
@@ -494,18 +562,22 @@ test('the shared size parameter binds only to the active route', async () => {
   const { parseHashState } = await loadHashStateContract();
 
   // Every workspace serializes its page size as `size`, so parsing it into all
-  // four fields let a procurement link contaminate the other workspaces.
+  // fields let a procurement link contaminate the other workspaces.
   const inherited = {
     inventoryPageSize: 25,
     productPageSize: 25,
     procurementPageSize: 25,
     fulfilmentPageSize: 25,
+    platformPageSize: 25,
+    opsPageSize: 25,
   };
   const procurement = parseHashState('#procurement?size=50', inherited);
   assert.equal(procurement.procurementPageSize, 50);
   assert.equal(procurement.fulfilmentPageSize, 25, 'fulfilment size must not be contaminated');
   assert.equal(procurement.inventoryPageSize, 25);
   assert.equal(procurement.productPageSize, 25);
+  assert.equal(procurement.platformPageSize, 25);
+  assert.equal(procurement.opsPageSize, 25);
 
   // A later bare navigation inherits the untouched fulfilment size.
   const bareFulfilment = parseHashState('#fulfilment', procurement);
@@ -516,6 +588,7 @@ test('the shared size parameter binds only to the active route', async () => {
   const fulfilment = parseHashState('#fulfilment?size=100', inherited);
   assert.equal(fulfilment.fulfilmentPageSize, 100);
   assert.equal(fulfilment.procurementPageSize, 25);
+  assert.equal(fulfilment.opsPageSize, 25);
   assert.equal(parseHashState('#procurement', fulfilment).procurementPageSize, 25);
 
   // Inventory and products own `size` on their own routes only.
@@ -526,6 +599,10 @@ test('the shared size parameter binds only to the active route', async () => {
   const products = parseHashState('#products?size=50', inherited);
   assert.equal(products.productPageSize, 50);
   assert.equal(products.inventoryPageSize, 25);
+  const ops = parseHashState('#ops?size=100', inherited);
+  assert.equal(ops.opsPageSize, 100);
+  assert.equal(ops.procurementPageSize, 25);
+  assert.equal(ops.platformPageSize, 25);
 
   // An off-list size still degrades to the default on its own route.
   assert.equal(parseHashState('#procurement?size=30', inherited).procurementPageSize, 25);
@@ -536,8 +613,13 @@ test('the shared size parameter binds only to the active route', async () => {
 test('the shared view parameter binds only to the active route', async () => {
   const { parseHashState } = await loadHashStateContract();
 
-  // Inventory and products both serialize their tab as `view`.
-  const inherited = { inventoryView: 'INVENTORY', productView: 'PENDING' };
+  // Inventory, products, platform and operations serialize their view as `view`.
+  const inherited = {
+    inventoryView: 'INVENTORY',
+    productView: 'PENDING',
+    platformView: 'ATTENTION',
+    opsView: 'PRIORITY',
+  };
   const inventory = parseHashState('#inventory?view=ADVICE', inherited);
   assert.equal(inventory.inventoryView, 'ADVICE');
   assert.equal(inventory.productView, 'PENDING', 'product view must not be contaminated');
@@ -545,10 +627,17 @@ test('the shared view parameter binds only to the active route', async () => {
   const products = parseHashState('#products?view=CANONICAL', inherited);
   assert.equal(products.productView, 'CANONICAL');
   assert.equal(products.inventoryView, 'INVENTORY');
+  assert.equal(products.opsView, 'PRIORITY');
+
+  const ops = parseHashState('#ops?view=ALL', inherited);
+  assert.equal(ops.opsView, 'ALL');
+  assert.equal(ops.platformView, 'ATTENTION');
+  assert.equal(ops.inventoryView, 'INVENTORY');
 
   // A value valid for the other route is not accepted here.
   assert.equal(parseHashState('#inventory?view=CANONICAL', inherited).inventoryView, 'INVENTORY');
   assert.equal(parseHashState('#products?view=ADVICE', inherited).productView, 'PENDING');
+  assert.equal(parseHashState('#ops?view=BUSINESS', inherited).opsView, 'PRIORITY');
 });
 
 test('the milestone snapshot caption describes the snapshot, not the attention scope', async () => {

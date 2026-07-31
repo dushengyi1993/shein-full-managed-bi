@@ -31,6 +31,10 @@ import {
   PlatformQueryError,
   queryPlatformDashboard,
 } from './platform-query.mjs';
+import {
+  OpsQueryError,
+  queryOpsDashboard,
+} from './ops-query.mjs';
 import { createDashboardUpdateBroker } from './dashboard-update-stream.mjs';
 import {
   createAuthService,
@@ -618,6 +622,33 @@ export function createRequestHandler(options = {}) {
           error: {
             code: 'PLATFORM_DATA_UNAVAILABLE',
             message: '平台动态查询暂不可用',
+          },
+        }, method);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/ops') {
+      try {
+        const dashboard = await loadDashboardData(dataFile);
+        const projected = projectDashboardForUser(dashboard, signedInUser);
+        sendJson(
+          response,
+          200,
+          queryOpsDashboard(projected, url.searchParams),
+          method,
+        );
+      } catch (error) {
+        if (error instanceof OpsQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'OPS_DATA_UNAVAILABLE',
+            message: '运营待办查询暂不可用',
           },
         }, method);
       }

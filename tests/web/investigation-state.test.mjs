@@ -215,6 +215,51 @@ test('platform workspace state survives a safe canonical link', async () => {
   assert.equal(unsafe.platformPageSize, 25);
 });
 
+test('operations workspace state survives a safe canonical link', async () => {
+  const { parseHashState, serializeHashState } = await loadHashStateContract();
+  const href = serializeHashState({
+    route: 'ops',
+    owner: 'ALL',
+    store: 'DL5477',
+    query: 'PO-1',
+    quick: 'OVERDUE',
+    opsView: 'ALL',
+    opsSeverity: 'HIGH',
+    opsDomain: 'PROCUREMENT',
+    opsSort: 'DEADLINE',
+    opsPage: 4,
+    opsPageSize: 50,
+  });
+
+  assert.match(href, /quick=OVERDUE/);
+  assert.match(href, /view=ALL/);
+  assert.match(href, /opsSeverity=HIGH/);
+  assert.match(href, /opsDomain=PROCUREMENT/);
+  assert.match(href, /opsSort=DEADLINE/);
+  assert.match(href, /opsPage=4/);
+  assert.match(href, /size=50/);
+  const parsed = parseHashState(href);
+  assert.equal(parsed.quick, 'OVERDUE');
+  assert.equal(parsed.opsView, 'ALL');
+  assert.equal(parsed.opsSeverity, 'HIGH');
+  assert.equal(parsed.opsDomain, 'PROCUREMENT');
+  assert.equal(parsed.opsSort, 'DEADLINE');
+  assert.equal(parsed.opsPage, 4);
+  assert.equal(parsed.opsPageSize, 50);
+  assert.equal(serializeHashState(parsed), href);
+
+  const unsafe = parseHashState(
+    '#ops?view=DROP&opsSeverity=P0&opsDomain=DELETE'
+      + '&opsSort=DROP&opsPage=0&size=99',
+  );
+  assert.equal(unsafe.opsView, 'PRIORITY');
+  assert.equal(unsafe.opsSeverity, 'ALL');
+  assert.equal(unsafe.opsDomain, 'ALL');
+  assert.equal(unsafe.opsSort, 'PRIORITY');
+  assert.equal(unsafe.opsPage, 1);
+  assert.equal(unsafe.opsPageSize, 25);
+});
+
 test('invalid hash input falls back safely and cannot inject markup', async () => {
   const { parseHashState, parseScopeToken, parseFocusToken } = await loadHashStateContract();
 
@@ -351,16 +396,11 @@ test('the focused-evidence panel is read-only, honest and clearable', async () =
   assert.match(block, /nullableUnits\(value, '—'\)/);
   assert.doesNotMatch(block, /\?\? 0\b|\|\| 0\b/);
 
-  // The panel is mounted on every surface that can prove a fact.
-  for (const intro of [
-    'CONTROLLED AUTOMATION',
-  ]) {
-    assert.match(
-      source,
-      new RegExp(`\\$\\{focusEvidencePanel\\(\\)\\}\\s*\\n\\s*\\$\\{pageIntro\\(\\s*\\n\\s*'${intro.replace('&', '&')}'`),
-      intro,
-    );
-  }
+  // The panel is mounted before the operator-first operations overview.
+  assert.match(
+    source,
+    /\$\{focusEvidencePanel\(\)\}\s*\n\s*\$\{opsDecisionOverview\(queryData\)\}/,
+  );
   assert.match(
     source,
     /\$\{focusEvidencePanel\(\)\}\s*\n\s*\$\{productDecisionSummary\(queryData\)\}/,

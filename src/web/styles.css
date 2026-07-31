@@ -3933,6 +3933,36 @@ body[data-dataset="sample"] .metric-item > strong {
   min-width: 0;
 }
 
+.ops-filter-bar {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+.ops-filter-bar .sales-sort-control {
+  min-width: 0;
+}
+
+.ops-workspace > .range-filter {
+  margin: 2px 0 8px;
+}
+
+.ops-decision-overview,
+.ops-risk-rankings {
+  margin-bottom: 14px;
+}
+
+.ops-evidence-disclosure {
+  margin-top: 14px;
+}
+
+.ops-boundary-strip {
+  margin: 12px 0 0;
+}
+
+.ops-boundary-strip .row-status {
+  flex: 0 0 auto;
+}
+
 .platform-event-list {
   display: grid;
   gap: 8px;

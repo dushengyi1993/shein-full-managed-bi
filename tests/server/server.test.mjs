@@ -385,6 +385,55 @@ test('platform query rejects duplicates, unknown filters and mutation methods', 
   }
 });
 
+test('GET /api/ops is a bounded read-only operations worklist surface', async () => {
+  const response = await fetch(
+    `${baseUrl}/api/ops?owner=ALL&store=ALL&view=PRIORITY&severity=ALL`
+    + '&domain=ALL&quick=ALL&sort=PRIORITY&page=1&pageSize=50',
+  );
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.schemaVersion, 1);
+  assert.equal(payload.readOnly, true);
+  assert.equal(payload.query.view, 'PRIORITY');
+  assert.equal(payload.query.pageSize, 50);
+  assert.ok(Array.isArray(payload.worklist.rows));
+  assert.ok(Array.isArray(payload.summary.attentionByStore));
+  assert.ok(Array.isArray(payload.summary.attentionByDomain));
+  assert.ok(Array.isArray(payload.filters.domains));
+  assert.deepEqual(payload.filters.pageSizes, [25, 50, 100]);
+  assert.equal(payload.automation.writeEnabled, false);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+
+  const head = await fetch(`${baseUrl}/api/ops`, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+  assert.equal(head.headers.get('cache-control'), 'no-store');
+});
+
+test('ops query rejects duplicates, unknown filters and mutation methods', async () => {
+  const duplicate = await fetch(`${baseUrl}/api/ops?q=a&q=b`);
+  assert.equal(duplicate.status, 400);
+  assert.match(await duplicate.text(), /QUERY_PARAMETER_DUPLICATED/);
+
+  const badPageSize = await fetch(`${baseUrl}/api/ops?pageSize=30`);
+  assert.equal(badPageSize.status, 400);
+  assert.match(await badPageSize.text(), /QUERY_PARAMETER_OUT_OF_RANGE/);
+
+  const unknownQuick = await fetch(`${baseUrl}/api/ops?quick=EXECUTE`);
+  assert.equal(unknownQuick.status, 400);
+  assert.match(await unknownQuick.text(), /QUERY_PARAMETER_INVALID/);
+
+  const unknownParameter = await fetch(`${baseUrl}/api/ops?raw=1`);
+  assert.equal(unknownParameter.status, 400);
+  assert.match(await unknownParameter.text(), /QUERY_PARAMETER_UNKNOWN/);
+
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const mutation = await fetch(`${baseUrl}/api/ops`, { method });
+    assert.equal(mutation.status, 405, method);
+    assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
+  }
+});
+
 test('procurement exposes exact page sizes, explicit quick filters and a compact status summary', async () => {
   const response = await fetch(`${baseUrl}/api/procurement?pageSize=100&quick=DEFECTIVE`);
   assert.equal(response.status, 200);
