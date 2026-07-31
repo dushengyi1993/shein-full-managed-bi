@@ -227,11 +227,18 @@ test('sales analysis exposes comparable daily averages without comparing partial
   const app = await read('src/web/app.js');
   const signal = functionBody(app, 'comparableDailySignal');
   const sales = functionBody(app, 'renderSales');
+  const loader = functionBody(app, 'loadSales');
 
   assert.match(signal, /last7Days \/ 7/);
   assert.match(signal, /\(last30Days - last7Days\) \/ 23/);
   assert.match(app, /近 7 日日均/);
   assert.match(app, /此前 23 日日均/);
+  assert.match(loader, /Promise\.all/);
+  assert.match(loader, /homeApiPath\(\)/);
+  assert.match(sales, /salesPeriodOverview/);
+  assert.match(sales, /salesTrendPanel/);
+  assert.match(sales, /店铺销量贡献排行/);
+  assert.match(sales, /固定窗口销量动量，不随顶部任意日期伪装变化/);
   assert.match(sales, /今日是实时累计，不与完整昨日直接作因果比较/);
   assert.match(sales, /完整商品口径/);
   assert.match(sales, /标准商品排行/);

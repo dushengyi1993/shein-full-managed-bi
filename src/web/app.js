@@ -2810,7 +2810,10 @@ async function loadSales({ resetPages = false } = {}) {
   state.sales.error = '';
   render();
   try {
-    const result = await fetchJson(salesQueryUrl());
+    const [result, history] = await Promise.all([
+      fetchJson(salesQueryUrl()),
+      fetchJson(homeApiPath()),
+    ]);
     if (requestSerial !== state.sales.requestSerial) return;
     if (
       !result
@@ -2818,10 +2821,13 @@ async function loadSales({ resetPages = false } = {}) {
       || !Array.isArray(result.stores?.rows)
       || !Array.isArray(result.products?.rows)
       || !Array.isArray(result.standardProducts?.rows)
+      || history?.readOnly !== true
+      || !Array.isArray(history.home?.storeDaily)
+      || !Array.isArray(history.home?.productDaily)
     ) {
       throw new Error('销量查询结构无效');
     }
-    state.sales.data = result;
+    state.sales.data = { ...result, history };
   } catch (error) {
     if (requestSerial !== state.sales.requestSerial) return;
     state.sales.data = null;
@@ -5100,7 +5106,11 @@ function finiteMetric(value) {
 }
 
 function homeHistory() {
-  const source = state.home.data?.home ?? state.data?.home;
+  const source = (
+    state.route === 'sales'
+      ? state.sales.data?.history?.home
+      : state.home.data?.home
+  ) ?? state.data?.home;
   return source && typeof source === 'object'
     ? source
     : {
@@ -5745,7 +5755,7 @@ function renderHistoryTrends() {
     </section>`;
 }
 
-function aggregateHistoryRanking(rows, identity, metricKey) {
+function aggregateHistoryRanking(rows, identity, metricKey, limit = HOME_RANK_LIMIT) {
   const grouped = new Map();
   for (const row of rows) {
     const key = identity.key(row);
@@ -5760,12 +5770,14 @@ function aggregateHistoryRanking(rows, identity, metricKey) {
     item.rows.push(row);
     grouped.set(key, item);
   }
-  return [...grouped.values()].map((item) => ({
+  const ranked = [...grouped.values()].map((item) => ({
     ...item,
     value: completeMetricSum(item.rows, metricKey),
   })).filter(({ value }) => finiteMetric(value))
-    .sort((left, right) => right.value - left.value)
-    .slice(0, HOME_RANK_LIMIT);
+    .sort((left, right) => right.value - left.value);
+  return Number.isSafeInteger(limit) && limit >= 0
+    ? ranked.slice(0, limit)
+    : ranked;
 }
 
 function rankingKnownSum(rows, keys) {
@@ -6170,13 +6182,20 @@ function salesTable(kind, rowsOverride = null, pagination = null) {
         <tbody>
           ${visibleRows.map((item, index) => {
             const signal = comparableDailySignal(item);
+            const storeOwner = isStore ? ownerNameForStore(item) : '';
+            const storeSubline = isStore
+              ? [
+                  item.name && item.name !== item.code ? item.name : null,
+                  storeOwner ? shortOwnerName(storeOwner) : '负责人未分配',
+                ].filter(Boolean).join(' · ')
+              : '';
             return `
             <tr>
               <td class="row-index">${String(index + 1).padStart(2, '0')}</td>
               <td class="entity-column">
-                <strong>${escapeHtml(isStore ? (item.name || item.code) : productCode(item, isStandard || isCanonicalProduct(item)))}</strong>
+                <strong>${escapeHtml(isStore ? item.code : productCode(item, isStandard || isCanonicalProduct(item)))}</strong>
                 <span>${escapeHtml(isStore
-                  ? [item.code, ownerNameForStore(item) || '负责人未分配'].join(' · ')
+                  ? storeSubline
                   : [productName(item), item.storeCode, isCanonicalProduct(item) ? '标准身份' : '店内身份'].filter(Boolean).join(' · '))}</span>
               </td>
               <td>${isStore
@@ -6197,6 +6216,201 @@ function salesTable(kind, rowsOverride = null, pagination = null) {
     <p class="table-note">* 破折号表示该窗口未接入或不完整，不表示销量为 0。日均变化使用“近 7 日日均”对比“此前 23 日日均”；低基数增长不展示夸张百分比。当前页显示 ${numberFormatter.format(visibleRows.length)} 条${pagination && isUnit(pagination.matchedMaterializedRows) ? `，已物化范围命中 ${numberFormatter.format(pagination.matchedMaterializedRows)} 条` : ''}；店内商品身份不会跨店按裸 SKU 合并。</p>`;
 }
 
+function salesPeriodStoreRanking(bundle) {
+  const identity = {
+    key: (row) => row.storeCode,
+    label: (row) => baseStores().find(({ code }) => code === row.storeCode)?.name
+      || row.storeCode,
+    owner: (row) => {
+      const store = baseStores().find(({ code }) => code === row.storeCode);
+      return ownerNameForStore(store);
+    },
+    sub: () => '',
+  };
+  let rows = aggregateHistoryRanking(bundle.storeDaily, identity, 'salesQuantity', null);
+  let basis = 'OPERATING';
+  if (!rows.length) {
+    rows = aggregateHistoryRanking(bundle.financeDaily, identity, 'goodsCount', null);
+    basis = rows.length ? 'FINANCE' : 'UNAVAILABLE';
+  }
+  const currency = homeCurrency(bundle) || financeCurrency(bundle);
+  return {
+    basis,
+    rows: rows.filter(({ value }) => value > 0).map((row) => {
+      const store = baseStores().find(({ code }) => code === row.key);
+      const ownerKey = ownerKeyForStore(store) || row.ownerName;
+      const next = {
+        ...row,
+        currency,
+        tone: ownerDisplayTone(ownerKey),
+      };
+      return {
+        ...next,
+        sub: storeHistoryRankMeta(next, 'quantity'),
+      };
+    }),
+  };
+}
+
+function salesPeriodSummary() {
+  const metrics = historyMetricRows();
+  const quantity = metrics.rows.find(({ key }) => key === 'salesQuantity');
+  const storeRanking = salesPeriodStoreRanking(metrics.current);
+  const observedSource = metrics.current.productMode
+    ? (metrics.current.productDaily.length
+        ? metrics.current.productDaily
+        : metrics.current.productFinanceDaily)
+    : (metrics.current.storeDaily.length
+        ? metrics.current.storeDaily
+        : metrics.current.financeDaily);
+  const observedDays = new Set(observedSource.map(({ date }) => date).filter(Boolean)).size;
+  const activeProductsSource = metrics.current.productDaily.length
+    ? metrics.current.productDaily.filter(({ salesQuantity }) => finiteMetric(salesQuantity) && salesQuantity > 0)
+    : metrics.current.productFinanceDaily.filter(({ goodsCount }) => finiteMetric(goodsCount) && goodsCount > 0);
+  const activeProductKeys = new Set(activeProductsSource.map((row) => [
+    row.storeCode,
+    row.productGrain,
+    row.productKey,
+  ].filter(Boolean).join(':')).filter(Boolean));
+  const rankedQuantity = storeRanking.rows.reduce((sum, row) => sum + row.value, 0);
+  const topShare = rankedQuantity > 0 && storeRanking.rows.length
+    ? storeRanking.rows[0].value / rankedQuantity
+    : null;
+  const dailyAverage = typeof quantity?.value === 'number' && observedDays > 0
+    ? quantity.value / observedDays
+    : null;
+  return {
+    ...metrics,
+    quantity,
+    observedDays,
+    activeProducts: activeProductKeys.size,
+    activeStores: storeRanking.rows.length,
+    dailyAverage,
+    topShare,
+    storeRanking,
+  };
+}
+
+function salesPeriodMetric(label, value, note, tone = '') {
+  return `
+    <article class="sales-period-metric ${escapeHtml(tone)}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <small>${escapeHtml(note)}</small>
+    </article>`;
+}
+
+function salesPeriodOverview(summary, queryData) {
+  const range = summary.range;
+  const previousRange = previousHomeDateRange(range);
+  const latestDate = queryData.history?.source?.latestAvailableDate;
+  const returned = queryData.history?.source?.returnedCurrentRows || {};
+  const historyRows = [
+    returned.storeDaily || 0,
+    returned.productDaily || 0,
+    returned.financeDaily || 0,
+    returned.productFinanceDaily || 0,
+  ].reduce((sum, value) => sum + (Number.isSafeInteger(value) ? value : 0), 0);
+  const quantityDisplay = typeof summary.quantity?.value === 'number'
+    ? `${formatUnits(summary.quantity.value)} 件`
+    : '—';
+  const previousDisplay = typeof summary.quantity?.baseline === 'number'
+    ? `${formatUnits(summary.quantity.baseline)} 件`
+    : '—';
+  const comparison = summary.quantity?.change || '—';
+  const comparisonTone = comparison.startsWith('-')
+    ? 'decline'
+    : comparison.startsWith('+') || comparison === '新增'
+      ? 'growth'
+      : '';
+  return `
+    <section class="sales-period-overview" aria-label="当前筛选销量概览">
+      <header class="sales-workspace-head">
+        <div>
+          <span class="eyebrow">SALES ANALYSIS</span>
+          <h1>销量分析</h1>
+          <p>先看选定日期的规模与变化，再用固定窗口定位增长、下滑和待归并商品。</p>
+        </div>
+        <div class="sales-range-receipt">
+          <span>当前筛选</span>
+          <strong>${escapeHtml(`${range.start} → ${range.end}`)}</strong>
+          <small>${escapeHtml(`${summary.current.productMode ? '货号搜索范围' : `${summary.current.storeCodes.size} 家店`} · 前期 ${previousRange.start} → ${previousRange.end}`)}</small>
+        </div>
+      </header>
+      <div class="sales-period-grid">
+        ${salesPeriodMetric('本期销量', quantityDisplay, summary.quantity?.note || '成交件数', 'primary')}
+        ${salesPeriodMetric('前期销量', previousDisplay, `${compactRangeLabel(previousRange)} 同长度窗口`)}
+        ${salesPeriodMetric('较前期', comparison, '同长度窗口对比', comparisonTone)}
+        ${salesPeriodMetric('有数据日日均', summary.dailyAverage === null ? '—' : `${formatDailyAverage(summary.dailyAverage)} 件`, `${numberFormatter.format(summary.observedDays)} 个有数据日，不补缺失日`)}
+        ${salesPeriodMetric('有销量店铺', `${numberFormatter.format(summary.activeStores)} 家`, '当前返回范围内销量大于 0')}
+        ${salesPeriodMetric('Top 1 店铺占比', summary.topShare === null ? '—' : formatRate(summary.topShare), summary.storeRanking.rows[0]?.label || '暂无可排序店铺')}
+      </div>
+      <div class="sales-data-receipt">
+        <span><i></i>选定日期数据已就绪</span>
+        <p>${escapeHtml(`本期返回 ${numberFormatter.format(historyRows)} 行 · 有销量货号 ${numberFormatter.format(summary.activeProducts)} 个${latestDate ? ` · 最新历史 ${latestDate}` : ''} · 未知不补 0`)}</p>
+      </div>
+    </section>`;
+}
+
+function salesTrendPanel(summary) {
+  const daily = groupHistoryByDate(summary.current);
+  const known = daily.filter(({ salesQuantity }) => finiteMetric(salesQuantity));
+  const peak = known.slice().sort((left, right) => right.salesQuantity - left.salesQuantity)[0];
+  const latest = known.at(-1);
+  const first = known[0];
+  const startEndChange = first && latest && first.salesQuantity > 0
+    ? (latest.salesQuantity - first.salesQuantity) / first.salesQuantity
+    : null;
+  return `
+    <section class="panel sales-trend-panel">
+      <header class="sales-panel-head">
+        <div><span class="eyebrow">PERIOD TREND</span><h2>日销量趋势</h2></div>
+        <p>${escapeHtml(`${summary.range.start} → ${summary.range.end} · 只连接有真实日粒度事实的日期`)}</p>
+      </header>
+      <div class="sales-trend-layout">
+        ${historyTrendChart(daily, 'salesQuantity', { suffix: '件' }, 'bar')}
+        <aside class="sales-trend-insights" aria-label="趋势关键点">
+          <div><span>峰值</span><strong>${peak ? `${formatUnits(peak.salesQuantity)} 件` : '—'}</strong><small>${peak?.date || '暂无完整日事实'}</small></div>
+          <div><span>最新有数据日</span><strong>${latest ? `${formatUnits(latest.salesQuantity)} 件` : '—'}</strong><small>${latest?.date || '—'}</small></div>
+          <div><span>首末变化</span><strong>${startEndChange === null ? '—' : `${startEndChange >= 0 ? '+' : ''}${(startEndChange * 100).toFixed(1)}%`}</strong><small>仅比较区间首个与最后一个有数据日</small></div>
+        </aside>
+      </div>
+    </section>`;
+}
+
+function salesMomentumPanel(storeRows) {
+  const comparable = storeRows.map((row) => {
+    const signal = comparableDailySignal(row);
+    const rate = signal.previous > 0
+      ? (signal.recent - signal.previous) / signal.previous
+      : null;
+    return { row, signal, rate };
+  });
+  const growing = comparable.filter(({ rate }) => rate !== null && rate >= 0.1);
+  const declining = comparable.filter(({ rate }) => rate !== null && rate <= -0.1);
+  const zeroToday = storeRows.filter(({ unitsSold }) => unitsSold?.today === 0);
+  const strongest = growing.slice().sort((left, right) => right.rate - left.rate)[0];
+  const weakest = declining.slice().sort((left, right) => left.rate - right.rate)[0];
+  const insight = (label, item, empty) => `
+    <div class="sales-momentum-line">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(item?.row?.code || empty)}</strong>
+      <small>${item ? escapeHtml(item.signal.label) : '—'}</small>
+    </div>`;
+  return `
+    <article class="panel sales-momentum-panel">
+      <header><span class="eyebrow">MOMENTUM</span><h3>店铺动量提示</h3><p>近 7 日日均对比此前 23 日日均。</p></header>
+      <div class="sales-momentum-counts">
+        <span><b>${numberFormatter.format(growing.length)}</b>增长 ≥10%</span>
+        <span><b>${numberFormatter.format(declining.length)}</b>下降 ≤-10%</span>
+        <span><b>${numberFormatter.format(zeroToday.length)}</b>今日为 0</span>
+      </div>
+      ${insight('增长最快', strongest, '暂无')}
+      ${insight('下降最快', weakest, '暂无')}
+      <p class="table-note">今日为实时累计；增长判断不使用今日与完整昨日直接对比。</p>
+    </article>`;
+}
+
 function renderSales() {
   if (state.sales.loading && !state.sales.data) {
     return `${sampleNotice()}${focusEvidencePanel()}${salesQueryState('loading')}`;
@@ -6206,8 +6420,6 @@ function renderSales() {
   }
   const queryData = state.sales.data;
   if (!queryData) return salesQueryState('loading');
-  const scope = scopedUnits();
-  const focusValue = scope.units[state.range];
   const coverage = identityCoverage();
   const productRows = queryData.products.rows;
   const standardRows = queryData.standardProducts.rows;
@@ -6220,29 +6432,32 @@ function renderSales() {
     `店内商品物化 ${numberFormatter.format(storeSkuMeta.returned || 0)} / ${numberFormatter.format(storeSkuMeta.total || 0)}`,
     storeSkuMeta.truncated === true ? '源结果已截断' : '源物化未截断',
   ].join(' · ');
+  const period = salesPeriodSummary();
   return `
     ${sampleNotice()}
-    ${pageIntro(
-      'SALES ANALYSIS',
-      '销量分析',
-      '比较当前窗口内的负责人、店铺和商品销量数量。店内身份与标准商品身份分开表达。',
-      `<span>当前口径</span><strong>${escapeHtml(RANGE_META[state.range].label)}</strong><small>${escapeHtml(filterSummary())}</small>`,
-    )}
-    <aside class="quality-notice unknown">
-      <strong>今日是实时累计，不与完整昨日直接作因果比较</strong>
-      <span>趋势判断优先看近 7 日日均与此前 23 日日均；今日数据需结合当前时刻、店铺覆盖和日切状态解释。</span>
-    </aside>
-    <section class="focus-strip">
-      <div><span>当前筛选销量</span><strong>${formatUnits(focusValue)} <small>件</small></strong></div>
-      <p><b>${escapeHtml(scope.title)}</b>${escapeHtml(scope.note)}</p>
-      ${sourceChip()}
+    ${salesPeriodOverview(period, queryData)}
+    ${salesTrendPanel(period)}
+    <section class="sales-store-analysis">
+      ${historyRankTable(
+        period.storeRanking.basis === 'FINANCE' ? '店铺财务明细件数排行' : '店铺销量贡献排行',
+        period.storeRanking.basis === 'FINANCE'
+          ? '当前经营日销量缺失，回退为财务报账明细 goodsCount；不冒充消费者下单日'
+          : `${period.range.start} → ${period.range.end} · 条形长度代表当前榜内相对规模`,
+        period.storeRanking.rows,
+        { defaultTone: 'store-quantity' },
+      )}
+      ${salesMomentumPanel(storeRows)}
     </section>
     <section class="table-section">
-      ${panelHeading('STORE DETAIL', '店铺销量表', `服务端当前筛选命中 ${numberFormatter.format(queryData.summary?.matchedMaterializedStoreCount || 0)} 家`)}
+      ${panelHeading('FIXED WINDOW STORE DETAIL', '店铺固定窗口对比', `当前筛选命中 ${numberFormatter.format(queryData.summary?.matchedMaterializedStoreCount || 0)} 家 · 今日 / 昨日 / 近 7 日 / 近 30 日来自最新销量快照`)}
+      <aside class="quality-notice unknown">
+        <strong>今日是实时累计，不与完整昨日直接作因果比较</strong>
+        <span>动量统一使用近 7 日日均对比此前 23 日日均；破折号表示未知，不表示销量为 0。</span>
+      </aside>
       ${salesTable('store', storeRows)}
     </section>
     <section class="table-section">
-      ${panelHeading('PRODUCT DETAIL', productIdentityLabel(), `完整商品口径规则（非全量行声明） · ${sourceBoundary} · ${coverage.label} · 未归并商品保持店内隔离`)}
+      ${panelHeading('PRODUCT MOMENTUM', '完整商品口径 · 商品动量筛查', `${sourceBoundary} · ${coverage.label} · 未归并商品保持店内隔离`)}
       ${quickFilterBar('sales', '商品快速筛查', [
         ['ALL', '全部商品'],
         ['GROWING', '增长 ≥10%'],
@@ -6252,13 +6467,17 @@ function renderSales() {
         ['UNMAPPED', '待归并'],
       ])}
       ${salesSortControl()}
+      <div class="sales-product-scope-note">
+        <strong>${escapeHtml(productIdentityLabel())}</strong>
+        <span>以下为固定窗口销量动量，不随顶部任意日期伪装变化；顶部日期影响本页概览、趋势和店铺贡献排行。</span>
+      </div>
       ${salesTable('sku', productRows, queryData.products.pagination)}
       ${salesPagination(queryData.products.pagination, 'product', '商品销量')}
       ${state.sales.loading ? '<p class="query-refresh-note" role="status">正在刷新当前销量筛选结果…</p>' : ''}
       ${storeSkuMeta.truncated === true ? '<p class="table-note warning-note">当前筛选只覆盖物化到 Dashboard 的店内商品排行；源结果已截断，命中数不是仓库全量商品数量。</p>' : ''}
     </section>
     <section class="table-section">
-      ${panelHeading('STANDARD PRODUCT DETAIL', '标准商品排行', `${coverage.confirmed}/${coverage.total} 个目录 SKU 已确认；源物化 ${numberFormatter.format(productMeta.returned || 0)} / ${numberFormatter.format(productMeta.total || 0)}`)}
+      ${panelHeading('STANDARD PRODUCT DETAIL', '标准商品排行（已归并）', `${coverage.confirmed}/${coverage.total} 个目录 SKU 已确认；源物化 ${numberFormatter.format(productMeta.returned || 0)} / ${numberFormatter.format(productMeta.total || 0)}`)}
       ${salesTable('standard', standardRows, queryData.standardProducts.pagination)}
       ${salesPagination(queryData.standardProducts.pagination, 'standard', '标准商品销量')}
     </section>`;
@@ -8016,6 +8235,7 @@ elements.rangeButtons.forEach((button) => {
     syncUrlFromState();
     render();
     scheduleHomeLoad();
+    scheduleSalesLoad({ resetPages: true });
     // The product query ranks and filters by the selected range on the server.
     scheduleProductLoad({ resetPages: true });
   });
@@ -8055,6 +8275,7 @@ elements.rangePopover?.addEventListener('click', (event) => {
   state.homeRangePreset = 'custom';
   render();
   scheduleHomeLoad({ delay: 120 });
+  scheduleSalesLoad({ resetPages: true, delay: 120 });
 });
 
 for (const element of [elements.homeDateStart, elements.homeDateEnd]) {
@@ -8069,6 +8290,7 @@ for (const element of [elements.homeDateStart, elements.homeDateEnd]) {
     state.homeCalendarAnchor = `${state.homeDateStart.slice(0, 7)}-01`;
     render();
     scheduleHomeLoad();
+    scheduleSalesLoad({ resetPages: true });
   });
 }
 
