@@ -30,7 +30,7 @@ test('same-company stores share one Open Platform Profile', () => {
     assert.match(entity.entityKey, /^[A-Z]{2}$/);
     assert.equal(typeof entity.legalName, 'string');
     assert.ok(entity.legalName.length >= 4);
-    assert.match(entity.profilePath, /^\/(?:opt|data)\//);
+    assert.equal(entity.profileKey, `persistent-${entity.entityKey.toLowerCase()}-profile`);
     assert.ok(entity.stores.length >= 1);
   }
 

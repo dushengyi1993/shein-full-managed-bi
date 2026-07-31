@@ -13,17 +13,20 @@
 ## 现有账户复用
 
 CX、XL、QY、DX、NM、LQ、TS、DL、FY、QH、JY、ZL、MZ、YJ
-复用半托云端已有的同主体开放平台 Profile。只复用账号登录态和应用主体，
+复用运营电脑本地已有的同主体开放平台 Profile。只复用账号登录态和应用主体，
 不复用半托业务数据口径。
 
-GJ、RH、WY 当前没有同主体的既有开放平台账户，独立 Profile 位于：
+GJ、RH、WY 当前没有同主体的既有开放平台账户，独立 Profile 创建在运营电脑本地：
 
-- `/data/shein-fm/open-platform-profiles/persistent-gj-profile`
-- `/data/shein-fm/open-platform-profiles/persistent-rh-profile`
-- `/data/shein-fm/open-platform-profiles/persistent-wy-profile`
+- `E:\Codex WorkSpace\Shein销售统计\profiles\persistent-gj-profile`
+- `E:\Codex WorkSpace\Shein销售统计\profiles\persistent-rh-profile`
+- `E:\Codex WorkSpace\Shein销售统计\profiles\persistent-wy-profile`
 
 Profile 必须保留 Cookie、Local Storage、IndexedDB 和密码库。只允许在没有
 Chrome 进程、没有租约时清理可再生缓存。
+
+开放平台开发者 Profile 不放云服务器或云盘。云端
+`/srv/shein-fm/webapi/profiles` 仅保存全托店铺后台 WebAPI Profile。
 
 ## 换绑顺序
 

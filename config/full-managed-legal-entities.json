@@ -5,103 +5,103 @@
     {
       "entityKey": "CX",
       "legalName": "广州市椿霞商贸有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-cx-profile",
+      "profileKey": "persistent-cx-profile",
       "stores": ["CX4412", "CX2816"]
     },
     {
       "entityKey": "XL",
       "legalName": "广州市夏莲电子商务有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-xl-profile",
+      "profileKey": "persistent-xl-profile",
       "stores": ["XL2801"]
     },
     {
       "entityKey": "QY",
       "legalName": "广州市秋英电子商务有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-qy-profile",
+      "profileKey": "persistent-qy-profile",
       "stores": ["QY8886"]
     },
     {
       "entityKey": "DX",
       "legalName": "广州市冬玺商贸有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-dx-profile",
+      "profileKey": "persistent-dx-profile",
       "stores": ["DX0571", "DX2420"]
     },
     {
       "entityKey": "NM",
       "legalName": "广州市南墨电子商务有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-nm-profile",
+      "profileKey": "persistent-nm-profile",
       "stores": ["NM7397", "NM4977", "NM8787", "NM8831"]
     },
     {
       "entityKey": "LQ",
       "legalName": "广州市乐棋电子商务有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-lq-profile",
+      "profileKey": "persistent-lq-profile",
       "stores": ["LQ7173"]
     },
     {
       "entityKey": "TS",
       "legalName": "广州市天实商贸有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-ts-profile",
+      "profileKey": "persistent-ts-profile",
       "stores": ["TS8263"]
     },
     {
       "entityKey": "DL",
       "legalName": "广州市地利电子商务有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-dl-profile",
+      "profileKey": "persistent-dl-profile",
       "stores": ["DL5477"]
     },
     {
       "entityKey": "FY",
       "legalName": "麻城市锋炎电子商务有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-fy-profile",
+      "profileKey": "persistent-fy-profile",
       "stores": ["FY4021"]
     },
     {
       "entityKey": "GJ",
       "legalName": "广州过景贸易有限公司",
-      "profilePath": "/data/shein-fm/open-platform-profiles/persistent-gj-profile",
+      "profileKey": "persistent-gj-profile",
       "stores": ["GJ8989"]
     },
     {
       "entityKey": "QH",
       "legalName": "广州谦和传媒有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-qh-profile",
+      "profileKey": "persistent-qh-profile",
       "stores": ["QH8028"]
     },
     {
       "entityKey": "JY",
       "legalName": "广州番禺钧羽贸易商行",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-jy-profile",
+      "profileKey": "persistent-jy-profile",
       "stores": ["JY8060"]
     },
     {
       "entityKey": "ZL",
       "legalName": "广州番禺紫翎贸易商行",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-zl-profile",
+      "profileKey": "persistent-zl-profile",
       "stores": ["ZL3133"]
     },
     {
       "entityKey": "MZ",
       "legalName": "广州市妙镇电子商务有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-mz-profile",
+      "profileKey": "persistent-mz-profile",
       "stores": ["MZ2406"]
     },
     {
       "entityKey": "YJ",
       "legalName": "珠海市永爵电子商务有限公司",
-      "profilePath": "/opt/shein-bi/app/profiles/persistent-yj-profile",
+      "profileKey": "persistent-yj-profile",
       "stores": ["YJ8177", "YJ4042"]
     },
     {
       "entityKey": "RH",
       "legalName": "广州市人和电子商务有限公司",
-      "profilePath": "/data/shein-fm/open-platform-profiles/persistent-rh-profile",
+      "profileKey": "persistent-rh-profile",
       "stores": ["RH0099", "RH2848"]
     },
     {
       "entityKey": "WY",
       "legalName": "微印(广州)印刷设计有限公司",
-      "profilePath": "/data/shein-fm/open-platform-profiles/persistent-wy-profile",
+      "profileKey": "persistent-wy-profile",
       "stores": ["WY9025"]
     }
   ]
