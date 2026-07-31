@@ -256,6 +256,38 @@ test('procurement query applies owner, quick filter, deterministic sort and pagi
     returned: 352,
     truncated: false,
   });
+  assert.deepEqual(result.summary.attentionByStore, [{
+    storeCode: 'DL5477',
+    storeName: 'DL5477',
+    attentionCount: 4,
+    overdueCount: 2,
+    pendingDeliveryCount: 4,
+    pendingReceiptCount: 0,
+    pendingStorageCount: 0,
+    defectiveCount: 1,
+    pendingDeliveryQuantity: {
+      rowCount: 4,
+      knownCount: 3,
+      unknownCount: 1,
+      knownSum: 180,
+      total: null,
+    },
+    pendingReceiptQuantity: {
+      rowCount: 0,
+      knownCount: 0,
+      unknownCount: 0,
+      knownSum: null,
+      total: null,
+    },
+    pendingStorageQuantity: {
+      rowCount: 0,
+      knownCount: 0,
+      unknownCount: 0,
+      knownSum: null,
+      total: null,
+    },
+    latestSourceFetchedAt: '2026-07-29T00:00:00.000Z',
+  }]);
 
   // Bounded paging keeps its own page window without inventing rows.
   const secondPage = queryProcurementDashboard(

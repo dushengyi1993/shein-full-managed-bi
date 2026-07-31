@@ -1095,12 +1095,14 @@ a {
   margin-bottom: 10px;
 }
 
-.inventory-risk-rankings {
+.inventory-risk-rankings,
+.operation-risk-rankings {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 14px;
 }
 
-.inventory-risk-rankings > .panel {
+.inventory-risk-rankings > .panel,
+.operation-risk-rankings > .panel {
   min-width: 0;
   margin: 0;
 }
@@ -1165,6 +1167,7 @@ a {
   }
 
   .inventory-risk-rankings,
+  .operation-risk-rankings,
   .inventory-boundary-grid {
     grid-template-columns: 1fr;
   }

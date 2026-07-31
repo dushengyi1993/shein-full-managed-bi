@@ -85,7 +85,7 @@ test('inventory workspace keeps the warm editorial and mobile containment rules'
   ]);
   assert.match(styles, /\.segmented-tabs\s*\{/);
   assert.match(styles, /\.inventory-controls\s*\{/);
-  assert.match(styles, /\.inventory-risk-rankings\s*\{/);
+  assert.match(styles, /\.inventory-risk-rankings,\s*\n\.operation-risk-rankings\s*\{/);
   assert.match(styles, /\.inventory-boundary-grid\s*\{/);
   assert.match(styles, /\.query-skeleton\s*\{/);
   assert.match(styles, /max-width:\s*100%/);

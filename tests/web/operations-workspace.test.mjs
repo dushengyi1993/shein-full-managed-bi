@@ -56,7 +56,10 @@ test('each workspace consumes only its own independent endpoint', async () => {
     assert.doesNotMatch(body, /slice\(0, ?100\)/);
   }
   // The old unbounded per-store status table is gone from procurement.
-  assert.match(procurement, /statusOverview/);
+  assert.match(procurement, /procurementDecisionOverview\(queryData\)/);
+  assert.match(procurement, /procurementStoreRankings\(queryData\)/);
+  assert.match(procurement, /procurementEvidenceDisclosure\(queryData\)/);
+  assert.match(functionBody(app, 'procurementEvidenceDisclosure'), /statusOverview/);
   assert.doesNotMatch(procurement, /queryData\.statusRows/);
   assert.match(fulfilment, /milestoneOverview/);
 });
@@ -269,12 +272,13 @@ test('coverage, truncation and quantity wording stay honest', async () => {
   assert.match(metricNote, /不代表业务数量为 0/);
 
   // Neither workspace derives a funnel, completion rate or percentage.
-  assert.match(procurement, /不是转化漏斗/);
-  assert.match(procurement, /不构成转化漏斗，也不据此推导完成率或百分比/);
+  const procurementEvidence = functionBody(app, 'procurementEvidenceDisclosure');
+  assert.match(procurementEvidence, /不是转化漏斗/);
+  assert.match(procurementEvidence, /不构成转化漏斗，也不据此推导完成率或百分比/);
   assert.match(fulfilment, /不是转化漏斗，也不据此推导履约率或准时率/);
   // Counts and quantities are labelled as different units.
   assert.match(fulfilment, /交付单数与交付数量单位不同，不可相加/);
-  assert.match(procurement, /单据张数与下方数量口径不同/);
+  assert.match(functionBody(app, 'procurementDecisionOverview'), /来自当前平台状态快照，不等于关注队列/);
   // A missing expectedReceiptAt stays unknown and is never fabricated.
   assert.match(fulfilment, /expectedReceiptKnownCount/);
   assert.match(fulfilment, /当前来源没有提供预计收货时间，保持未知，不用其他时间冒充/);
@@ -295,7 +299,7 @@ test('coverage, truncation and quantity wording stay honest', async () => {
       );
     }
   }
-  assert.match(procurement, /不提交任何采购单动作/);
+  assert.match(functionBody(app, 'procurementEvidenceDisclosure'), /不提交任何采购单动作/);
   assert.match(fulfilment, /不提交任何交付动作/);
 });
 
@@ -501,8 +505,8 @@ test('the milestone snapshot caption describes the snapshot, not the attention s
   assert.doesNotMatch(heading, /已物化关注范围/);
   // Procurement's stage snapshot legitimately keeps the attention-scope label,
   // since those quantities really do come from the attention rows.
-  const procurement = functionBody(app, 'renderProcurement');
-  assert.match(procurement, /summary\.attentionScopeLabel/);
+  const procurementDisclosure = functionBody(app, 'procurementEvidenceDisclosure');
+  assert.match(procurementDisclosure, /summary\.attentionScopeLabel/);
 });
 
 test('the global search placeholder covers every searchable identifier', async () => {
@@ -552,11 +556,8 @@ test('procurement paging mirrors the page into the URL before fetching', async (
 
 test('procurement stage cards name the field they actually render', async () => {
   const app = await read('src/web/app.js');
-  const procurement = functionBody(app, 'renderProcurement');
+  const procurement = functionBody(app, 'procurementEvidenceDisclosure');
 
-  // The card rendering stages.receipt must not claim a pending remainder.
-  assert.match(procurement, /label: '收货数量',\s*\n\s*value: stageMetricValue\(stages\.receipt, '件'\)/);
-  assert.doesNotMatch(procurement, /待入库数量/);
   // The stage snapshot keeps each label paired with its own field.
   assert.match(procurement, /\['订购', stages\.order\]/);
   assert.match(procurement, /\['交付', stages\.delivery\]/);

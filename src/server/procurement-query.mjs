@@ -171,6 +171,80 @@ function attentionCodeCounts(inputRows) {
     .map(([code, count]) => ({ code, count }));
 }
 
+function outstandingQuantity(inputRows, attentionCodes, earlierField, laterField) {
+  const selected = inputRows.filter((row) => (
+    attentionCodes.includes(String(row.attentionCode ?? '').toUpperCase())
+  ));
+  const known = selected.filter((row) => (
+    isUnit(row[earlierField]) && isUnit(row[laterField])
+  ));
+  const knownSum = known.reduce((sum, row) => (
+    sum + Math.max(0, row[earlierField] - row[laterField])
+  ), 0);
+  return {
+    rowCount: selected.length,
+    knownCount: known.length,
+    unknownCount: selected.length - known.length,
+    knownSum: known.length > 0 ? knownSum : null,
+    total: selected.length > 0 && known.length === selected.length ? knownSum : null,
+  };
+}
+
+/** Compact operating roll-up used by the page rankings. */
+function attentionByStore(inputRows) {
+  const grouped = new Map();
+  for (const row of inputRows) {
+    const storeCode = String(row.storeCode ?? '').toUpperCase();
+    if (!STORE_PATTERN.test(storeCode)) continue;
+    const group = grouped.get(storeCode) ?? [];
+    group.push(row);
+    grouped.set(storeCode, group);
+  }
+  return [...grouped]
+    .map(([storeCode, storeRows]) => {
+      const codes = attentionCodeCounts(storeRows);
+      const count = (code) => codes.find((item) => item.code === code)?.count ?? 0;
+      const defectiveCount = storeRows.filter((row) => (
+        String(row.attentionCode ?? '').toUpperCase() === 'DEFECTIVE_QUANTITY'
+        || (isUnit(row.defectiveQuantity) && row.defectiveQuantity > 0)
+      )).length;
+      return {
+        storeCode,
+        storeName: storeRows.find((row) => row.storeName)?.storeName || storeCode,
+        attentionCount: storeRows.length,
+        overdueCount: count('DELIVERY_OVERDUE') + count('RECEIPT_OVERDUE'),
+        pendingDeliveryCount: count('OPEN_PURCHASE_ORDER') + count('DELIVERY_OVERDUE'),
+        pendingReceiptCount: count('DELIVERED_PENDING_RECEIPT') + count('RECEIPT_OVERDUE'),
+        pendingStorageCount: count('RECEIVED_PENDING_STORAGE'),
+        defectiveCount,
+        pendingDeliveryQuantity: outstandingQuantity(
+          storeRows,
+          ['OPEN_PURCHASE_ORDER', 'DELIVERY_OVERDUE'],
+          'orderQuantity',
+          'deliveryQuantity',
+        ),
+        pendingReceiptQuantity: outstandingQuantity(
+          storeRows,
+          ['DELIVERED_PENDING_RECEIPT', 'RECEIPT_OVERDUE'],
+          'deliveryQuantity',
+          'receiptQuantity',
+        ),
+        pendingStorageQuantity: outstandingQuantity(
+          storeRows,
+          ['RECEIVED_PENDING_STORAGE'],
+          'receiptQuantity',
+          'storageQuantity',
+        ),
+        latestSourceFetchedAt: latestInstant(storeRows),
+      };
+    })
+    .sort((left, right) => (
+      right.attentionCount - left.attentionCount
+      || right.overdueCount - left.overdueCount
+      || compareText(left.storeCode, right.storeCode)
+    ));
+}
+
 function rows(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -417,6 +491,7 @@ export function queryProcurementDashboard(dashboardValue, paramsValue = new URLS
         defective: Object.freeze(stageQuantity(matchedAttentionRows, 'defectiveQuantity')),
       }),
       attentionCodes: Object.freeze(attentionCodeCounts(matchedAttentionRows)),
+      attentionByStore: Object.freeze(attentionByStore(matchedAttentionRows)),
     }),
     // Compact aggregate: one row per status, not one row per store and status.
     statusOverview: Object.freeze(statusOverview(scopedStatusRows)),

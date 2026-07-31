@@ -2527,6 +2527,8 @@ async function loadProcurement({ resetPage = false } = {}) {
       || !result.attention
       || !Array.isArray(result.attention.rows)
       || !Array.isArray(result.statusRows)
+      || !Array.isArray(result.statusOverview)
+      || !Array.isArray(result.summary?.attentionByStore)
     ) {
       throw new Error('采购单查询结构无效');
     }
@@ -6937,6 +6939,182 @@ function purchaseOrderAttentionTable(rows, hasEvidence) {
     <p class="table-note">当前页显示 ${numberFormatter.format(visible.length)} 条，排序与分页由服务端决定，页面不再按优先级重排当前页。数量链路未知时保留“—”，不补 0。</p>`;
 }
 
+function procurementAttentionCount(summary, ...codes) {
+  const rows = Array.isArray(summary?.attentionCodes) ? summary.attentionCodes : [];
+  return codes.reduce((total, code) => {
+    const row = rows.find((item) => item.code === code);
+    return total + (isUnit(row?.count) ? row.count : 0);
+  }, 0);
+}
+
+function procurementDecisionOverview(queryData) {
+  const summary = productRecord(queryData.summary);
+  const totalOrders = isUnit(summary.orderCount) ? summary.orderCount : null;
+  const attentionCount = isUnit(summary.matchedMaterializedAttentionCount)
+    ? summary.matchedMaterializedAttentionCount
+    : null;
+  const overdue = procurementAttentionCount(summary, 'DELIVERY_OVERDUE', 'RECEIPT_OVERDUE');
+  const pendingDelivery = procurementAttentionCount(
+    summary,
+    'OPEN_PURCHASE_ORDER',
+    'DELIVERY_OVERDUE',
+  );
+  const pendingReceipt = procurementAttentionCount(
+    summary,
+    'DELIVERED_PENDING_RECEIPT',
+    'RECEIPT_OVERDUE',
+  );
+  const pendingStorage = procurementAttentionCount(summary, 'RECEIVED_PENDING_STORAGE');
+  const coverage = productRecord(queryData.source?.coverage);
+  return `
+    <section class="sales-period-overview procurement-decision-overview" aria-label="采购单经营概览">
+      <header class="sales-workspace-head">
+        <div>
+          <span class="eyebrow">PURCHASE ORDER ANALYSIS</span>
+          <h1>采购单</h1>
+          <p>先处理逾期、待交付、待收货和待入库单据，再查看平台状态与数量证据；这里不是消费者订单。</p>
+        </div>
+        <div class="sales-range-receipt">
+          <span>采购单业务日 / 当前范围</span>
+          <strong>${escapeHtml(`${queryData.source?.businessDate || '业务日未知'} · ${inventoryScopeLabel()}`)}</strong>
+          <small>${escapeHtml(`${nullableUnits(coverage.succeededStores, '未知')} / ${nullableUnits(coverage.totalStores, '未知')} 家店快照成功 · 顶部日期不改写当前单据状态`)}</small>
+        </div>
+      </header>
+      <div class="sales-period-grid procurement-decision-grid">
+        ${salesPeriodMetric('采购单总量', totalOrders === null ? '未知' : `${numberFormatter.format(totalOrders)} 张`, '来自当前平台状态快照，不等于关注队列', 'primary')}
+        ${salesPeriodMetric('关注队列', attentionCount === null ? '未知' : `${numberFormatter.format(attentionCount)} 张`, '当前仍需交付、收货、入库或复核的已物化单据')}
+        ${salesPeriodMetric('已逾期', `${numberFormatter.format(overdue)} 张`, '要求交付或收货时间已经超过')}
+        ${salesPeriodMetric('待交付', `${numberFormatter.format(pendingDelivery)} 张`, '未交付单据，包含交付逾期')}
+        ${salesPeriodMetric('待收货', `${numberFormatter.format(pendingReceipt)} 张`, '已交付尚未收货，包含收货逾期')}
+        ${salesPeriodMetric('待入库', `${numberFormatter.format(pendingStorage)} 张`, '已收货尚未完成入库')}
+      </div>
+      <div class="sales-data-receipt">
+        <span><i></i>采购单快照覆盖</span>
+        <p>${escapeHtml(`${nullableUnits(coverage.succeededStores, '未知')} / ${nullableUnits(coverage.totalStores, '未知')} 家成功 · 最新来源 ${sourceTime(summary.latestSourceFetchedAt)} · ${coverage.reason || '覆盖说明待确认'}`)}</p>
+      </div>
+    </section>`;
+}
+
+function procurementStoreRankings(queryData) {
+  const rows = Array.isArray(queryData.summary?.attentionByStore)
+    ? queryData.summary.attentionByStore
+    : [];
+  const rankRow = (row, value, sub) => {
+    const store = baseStores().find(({ code }) => code === row.storeCode);
+    const ownerName = ownerNameForStore(store);
+    return {
+      key: row.storeCode,
+      label: row.storeCode,
+      ownerName,
+      tone: ownerDisplayTone(ownerKeyForStore(store) || ownerName),
+      value,
+      sub,
+    };
+  };
+  const attention = rows
+    .filter((row) => isUnit(row.attentionCount) && row.attentionCount > 0)
+    .map((row) => rankRow(
+      row,
+      row.attentionCount,
+      `逾期 ${nullableUnits(row.overdueCount, '未知')} · 待交付 ${nullableUnits(row.pendingDeliveryCount, '未知')} · 待收货 ${nullableUnits(row.pendingReceiptCount, '未知')} · 待入库 ${nullableUnits(row.pendingStorageCount, '未知')}`,
+    ))
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+    .slice(0, 8);
+  const pendingStorage = rows
+    .map((row) => {
+      const metric = productRecord(row.pendingStorageQuantity);
+      const value = isUnit(metric.total)
+        ? metric.total
+        : isUnit(metric.knownSum)
+          ? metric.knownSum
+          : 0;
+      return rankRow(
+        row,
+        value,
+        `${nullableUnits(row.pendingStorageCount, '未知')} 张待入库${isUnit(metric.unknownCount) && metric.unknownCount > 0 ? ` · ${numberFormatter.format(metric.unknownCount)} 张数量未知` : ' · 数量字段完整'}`,
+      );
+    })
+    .filter((row) => row.value > 0)
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+    .slice(0, 8);
+  return `
+    <section class="rank-grid operation-risk-rankings" aria-label="采购单店铺排行">
+      ${historyRankTable(
+        '采购单关注量店铺排行',
+        '当前关注队列 · Top 8 · 先定位积压单据最多的店铺',
+        attention,
+        { defaultTone: 'store-quantity' },
+      )}
+      ${historyRankTable(
+        '待入库数量店铺排行',
+        '已收货减已入库 · Top 8 · 未知数量不补零',
+        pendingStorage,
+        { defaultTone: 'product-quantity' },
+      )}
+    </section>`;
+}
+
+function procurementEvidenceDisclosure(queryData) {
+  const summary = productRecord(queryData.summary);
+  const stages = productRecord(summary.quantityStages);
+  const overview = Array.isArray(queryData.statusOverview) ? queryData.statusOverview : [];
+  return `
+    <details class="panel product-boundary-disclosure operation-evidence-disclosure">
+      <summary>
+        <span class="eyebrow">DETAIL & BOUNDARY</span>
+        <strong>状态总览与数量口径</strong>
+        <small>展开查看平台状态、关注单据阶段数量和只读边界</small>
+      </summary>
+      <div class="inventory-disclosure-body">
+        ${panelHeading(
+          'STATUS OVERVIEW',
+          '采购单状态紧凑总览',
+          `按平台状态聚合 ${numberFormatter.format(overview.length)} 类 · 不逐店铺展开`,
+        )}
+        ${overview.length ? `
+          <div class="table-wrap">
+            <table class="data-table operational-table">
+              <thead><tr><th scope="col">平台状态</th><th scope="col" class="number-column">采购单数</th><th scope="col" class="number-column">覆盖店铺</th></tr></thead>
+              <tbody>${overview.map((row) => `
+                <tr>
+                  <td class="entity-column"><strong>${escapeHtml(row.statusName || row.statusCode)}</strong><span>${escapeHtml(row.statusCode)}</span></td>
+                  <td class="number-column ${isUnit(row.orderCount) ? '' : 'missing-value'}">${nullableUnits(row.orderCount)}</td>
+                  <td class="number-column">${nullableUnits(row.storeCount)}</td>
+                </tr>`).join('')}</tbody>
+            </table>
+          </div>
+          <p class="table-note">任一店铺数量未知时该状态合计保持“—”，绝不补零；具体行动以关注队列为准。</p>`
+          : emptyEvidence('当前筛选没有采购单状态行', '这不代表没有采购单；请调整负责人、店铺、状态或搜索条件。')}
+        ${panelHeading(
+          'ATTENTION QUANTITY SNAPSHOT',
+          '关注单据阶段数量证据',
+          escapeHtml(String(summary.attentionScopeLabel || '当前已物化关注范围的阶段数量，不是转化漏斗')),
+        )}
+        <div class="stage-snapshot">
+          ${[
+            ['订购', stages.order],
+            ['交付', stages.delivery],
+            ['收货', stages.receipt],
+            ['入库', stages.storage],
+            ['残次', stages.defective],
+          ].map(([label, metric]) => `
+            <article class="stage-cell">
+              <span>${escapeHtml(label)}</span>
+              <strong>${escapeHtml(stageMetricValue(metric, '件'))}</strong>
+              <small>${escapeHtml(stageMetricNote(metric))}</small>
+            </article>`).join('')}
+        </div>
+        <p class="table-note">五个数量是同一批关注单据的独立阶段字段，不构成转化漏斗，也不据此推导完成率或百分比。</p>
+        <div class="inventory-boundary-grid">
+          <article><strong>单据口径</strong><span>SHEIN 向商家下达的采购单，不是消费者订单。</span></article>
+          <article><strong>数量口径</strong><span>订购、交付、收货、入库与残次保持独立，不相加也不算比率。</span></article>
+          <article><strong>来源时间</strong><span>接口快照时间与要求交付、收货等平台业务时间分开保存。</span></article>
+          <article><strong>写操作</strong><span>当前页面与服务仍为只读，不提交任何采购单动作。</span></article>
+        </div>
+      </div>
+    </details>`;
+}
+
 function renderProcurement() {
   if (state.procurement.loading && !state.procurement.data) {
     return `${sampleNotice()}${focusEvidencePanel()}${procurementLoadingState()}`;
@@ -6952,9 +7130,6 @@ function renderProcurement() {
     || attention.length > 0
     || sourceMeta.truncated === true;
   const summary = productRecord(queryData.summary);
-  const stages = productRecord(summary.quantityStages);
-  const overview = Array.isArray(queryData.statusOverview) ? queryData.statusOverview : [];
-  const totalOrders = isUnit(summary.orderCount) ? summary.orderCount : null;
   const coverageLine = operationCoverageLine(queryData.source);
   const statusOptions = [
     ['ALL', '全部状态'],
@@ -6964,87 +7139,8 @@ function renderProcurement() {
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
-    ${pageIntro(
-      'PURCHASE ORDERS',
-      '采购单中心',
-      '采购单是 SHEIN 向商家下达的供货单据，不是消费者订单；销量只作为需求参照。',
-      `<span>采购单证据</span><strong>${escapeHtml(`已物化范围命中 ${numberFormatter.format(isUnit(summary.matchedMaterializedAttentionCount) ? summary.matchedMaterializedAttentionCount : 0)} 条`)}</strong><small>${escapeHtml(coverageLine)}</small>`,
-    )}
-    ${operationSummaryCards([
-      {
-        label: '当前范围采购单',
-        value: totalOrders === null ? '未知' : `${numberFormatter.format(totalOrders)} 张`,
-        note: totalOrders === null
-          ? '存在数量未知的状态行，拒绝补零后合计；单据张数与下方数量口径不同'
-          : '来自状态快照的单据张数，与阶段数量是两个口径',
-        tone: totalOrders === null ? 'partial' : 'available',
-      },
-      {
-        // The field is the receipt stage quantity, so the label says 收货数量.
-        // Calling it 待入库 would imply a pending remainder the data never states.
-        label: '收货数量',
-        value: stageMetricValue(stages.receipt, '件'),
-        note: stageMetricNote(stages.receipt),
-        tone: 'partial',
-      },
-      {
-        label: '残次数量',
-        value: stageMetricValue(stages.defective, '件'),
-        note: stageMetricNote(stages.defective),
-        tone: 'partial',
-      },
-      {
-        label: '最新来源快照',
-        value: summary.latestSourceFetchedAt
-          ? formatDateTime(summary.latestSourceFetchedAt)
-          : '未知',
-        note: '接口抓取时间，不冒充采购单业务时间',
-        tone: summary.latestSourceFetchedAt ? 'available' : 'partial',
-      },
-    ])}
-    <section class="table-section">
-      ${panelHeading(
-        'ATTENTION QUANTITY SNAPSHOT',
-        '关注范围阶段数量快照',
-        escapeHtml(String(summary.attentionScopeLabel || '当前已物化关注范围的阶段数量，不是转化漏斗')),
-      )}
-      <div class="stage-snapshot">
-        ${[
-          ['订购', stages.order],
-          ['交付', stages.delivery],
-          ['收货', stages.receipt],
-          ['入库', stages.storage],
-          ['残次', stages.defective],
-        ].map(([label, metric]) => `
-          <article class="stage-cell">
-            <span>${escapeHtml(label)}</span>
-            <strong>${escapeHtml(stageMetricValue(metric, '件'))}</strong>
-            <small>${escapeHtml(stageMetricNote(metric))}</small>
-          </article>`).join('')}
-      </div>
-      <p class="table-note">这五个数量属于同一批已物化关注单据的不同阶段字段，彼此独立，不构成转化漏斗，也不据此推导完成率或百分比。</p>
-    </section>
-    <section class="table-section">
-      ${panelHeading(
-        'STATUS OVERVIEW',
-        '采购单状态紧凑总览',
-        `按平台状态聚合 ${numberFormatter.format(overview.length)} 类 · 不逐店铺展开`,
-      )}
-      ${overview.length ? `
-        <div class="table-wrap">
-          <table class="data-table operational-table">
-            <thead><tr><th scope="col">平台状态</th><th scope="col" class="number-column">采购单数</th><th scope="col" class="number-column">覆盖店铺</th></tr></thead>
-            <tbody>${overview.map((row) => `
-              <tr>
-                <td class="entity-column"><strong>${escapeHtml(row.statusName || row.statusCode)}</strong><span>${escapeHtml(row.statusCode)}</span></td>
-                <td class="number-column ${isUnit(row.orderCount) ? '' : 'missing-value'}">${nullableUnits(row.orderCount)}</td>
-                <td class="number-column">${nullableUnits(row.storeCount)}</td>
-              </tr>`).join('')}</tbody>
-          </table>
-        </div>
-        <p class="table-note">任一店铺数量未知时该状态合计保持“—”，绝不补零；这里只做范围判断，具体行动看下方关注队列。</p>`
-        : emptyEvidence('当前筛选没有采购单状态行', '这不代表没有采购单；请调整负责人、店铺、状态或搜索条件。')}
-    </section>
+    ${procurementDecisionOverview(queryData)}
+    ${procurementStoreRankings(queryData)}
     <section class="table-section inventory-workspace">
       ${panelHeading(
         'PURCHASE ATTENTION',
@@ -7078,15 +7174,7 @@ function renderProcurement() {
       ${state.procurement.loading ? '<p class="query-refresh-note" role="status">正在刷新当前筛选结果…</p>' : ''}
       ${sourceMeta.truncated === true ? '<p class="table-note warning-note">当前接口只筛选物化到页面的单据级关注记录；源明细已截断，因此筛选结果不是仓库全量采购单数量。</p>' : ''}
     </section>
-    <section class="panel condition-panel">
-      ${panelHeading('DATA BOUNDARY', '采购单数据边界', '事实接入不等于写能力开放')}
-      <ul class="condition-list">
-        <li><strong>单据口径</strong><span>SHEIN 向商家下达的采购单，不是消费者订单</span></li>
-        <li><strong>数量口径</strong><span>采购、交付、收货、入库与残次数量保持独立，不相加也不算比率</span></li>
-        <li><strong>来源时间</strong><span>接口快照时间与平台业务时间分开保存</span></li>
-        <li><strong>写操作</strong><span>当前页面与服务仍为只读，不提交任何采购单动作</span></li>
-      </ul>
-    </section>`;
+    ${procurementEvidenceDisclosure(queryData)}`;
 }
 
 function deliveryAttentionTable(rows, hasEvidence) {
