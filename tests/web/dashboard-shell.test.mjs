@@ -161,7 +161,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260731\\.3`));
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260731\\.4`));
   }
   assert.doesNotMatch(html, /v=20260728\.[123]/);
   for (const sheet of [styles, parityStyles]) {

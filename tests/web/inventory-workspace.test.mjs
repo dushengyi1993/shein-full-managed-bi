@@ -86,6 +86,6 @@ test('inventory workspace keeps the warm editorial and mobile containment rules'
   assert.match(styles, /max-width:\s*100%/);
   assert.match(styles, /\.table-wrap/);
   assert.doesNotMatch(styles, /gradient\(/);
-  assert.match(html, /\/app\.js\?v=20260731\.3/);
-  assert.match(html, /\/styles\.css\?v=20260731\.3/);
+  assert.match(html, /\/app\.js\?v=20260731\.4/);
+  assert.match(html, /\/styles\.css\?v=20260731\.4/);
 });

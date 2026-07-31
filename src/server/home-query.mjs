@@ -186,6 +186,34 @@ export function queryHomeDashboard(
   const productFinanceDaily = productFinanceCandidates.filter(
     (row) => retainedProductKeys.has(`${row.storeCode}:${row.productKey}`),
   );
+  const countWindowRows = (inputRows, windowStart, windowEnd) => (
+    inputRows.filter(({ date }) => (
+      typeof date === 'string'
+      && date >= windowStart
+      && date <= windowEnd
+    )).length
+  );
+  const returnedRows = {
+    storeDaily: storeDaily.length,
+    productDaily: productDaily.length,
+    regionDaily: regionDaily.length,
+    financeDaily: financeDaily.length,
+    productFinanceDaily: productFinanceDaily.length,
+  };
+  const returnedCurrentRows = {
+    storeDaily: countWindowRows(storeDaily, start, end),
+    productDaily: countWindowRows(productDaily, start, end),
+    regionDaily: countWindowRows(regionDaily, start, end),
+    financeDaily: countWindowRows(financeDaily, start, end),
+    productFinanceDaily: countWindowRows(productFinanceDaily, start, end),
+  };
+  const returnedComparisonRows = {
+    storeDaily: countWindowRows(storeDaily, previousStart, previousEnd),
+    productDaily: countWindowRows(productDaily, previousStart, previousEnd),
+    regionDaily: countWindowRows(regionDaily, previousStart, previousEnd),
+    financeDaily: countWindowRows(financeDaily, previousStart, previousEnd),
+    productFinanceDaily: countWindowRows(productFinanceDaily, previousStart, previousEnd),
+  };
 
   return Object.freeze({
     schemaVersion: 1,
@@ -201,6 +229,7 @@ export function queryHomeDashboard(
     }),
     source: Object.freeze({
       dashboardUpdatedAt: dashboard.updatedAt ?? historyEnvelope.updatedAt ?? null,
+      latestAvailableDate: record(history.coverage).latestDate ?? null,
       productLimitPerMetric: PRODUCT_LIMIT,
       rows: Object.freeze({
         storeDaily: rows(history.storeDaily).length,
@@ -209,13 +238,9 @@ export function queryHomeDashboard(
         financeDaily: rows(history.financeDaily).length,
         productFinanceDaily: rows(history.productFinanceDaily).length,
       }),
-      returnedRows: Object.freeze({
-        storeDaily: storeDaily.length,
-        productDaily: productDaily.length,
-        regionDaily: regionDaily.length,
-        financeDaily: financeDaily.length,
-        productFinanceDaily: productFinanceDaily.length,
-      }),
+      returnedRows: Object.freeze(returnedRows),
+      returnedCurrentRows: Object.freeze(returnedCurrentRows),
+      returnedComparisonRows: Object.freeze(returnedComparisonRows),
     }),
     home: Object.freeze({
       status: history.status || 'unavailable',

@@ -72,6 +72,9 @@ test('home query returns only the selected current and comparison window', () =>
   ]);
   assert.equal(result.home.productFinanceDaily.length, 1);
   assert.equal(result.home.productFinanceDaily[0].supplierSku, 'DL-HOT');
+  assert.equal(result.source.latestAvailableDate, '2026-07-31');
+  assert.equal(result.source.returnedCurrentRows.storeDaily, 1);
+  assert.equal(result.source.returnedComparisonRows.storeDaily, 1);
 });
 
 test('home query searches products without leaking another store', () => {

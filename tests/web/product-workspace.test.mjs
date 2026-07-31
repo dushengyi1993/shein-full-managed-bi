@@ -248,10 +248,10 @@ test('the workspace exposes no mutation control', async () => {
   }
 });
 
-test('static assets are versioned together at 20260731.3', async () => {
+test('static assets are versioned together at 20260731.4', async () => {
   const html = await read('src/web/index.html');
   for (const asset of ['app.js', 'styles.css', 'home-parity.css', 'favicon.svg']) {
-    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260731\\.3`), asset);
+    assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=20260731\\.4`), asset);
   }
   assert.doesNotMatch(html, /\?v=20260730\.9/);
 });

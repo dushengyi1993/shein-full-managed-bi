@@ -105,6 +105,8 @@ test('home names every loading group and offers an explicit cache refresh', asyn
   assert.match(home, /主销地区与销量趋势/);
   assert.match(home, /货号金额 \/ 销量排行候选/);
   assert.match(home, /data-home-force-refresh/);
+  assert.match(home, /当前日期范围已经加载完成，但没有经营历史数据/);
+  assert.match(home, /data-home-latest-date/);
   assert.match(home, /首页数据已就绪/);
   assert.match(html, /id="force-refresh"[^>]*>强制刷新缓存<\/button>/);
   assert.match(homePath, /if \(force\) params\.set\('refresh', '1'\)/);

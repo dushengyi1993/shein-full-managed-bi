@@ -6029,19 +6029,36 @@ function renderHome() {
   if (state.home.error && !state.home.data) {
     return `<section class="panel empty-state" role="alert"><h3>首页经营数据加载失败</h3><p>${escapeHtml(state.home.error)}</p><button type="button" class="refresh-cache-button" data-home-force-refresh>强制刷新缓存并重试</button></section>`;
   }
-  const returnedRows = state.home.data?.source?.returnedRows || {};
+  const returnedRows = state.home.data?.source?.returnedCurrentRows || {};
+  const comparisonRows = state.home.data?.source?.returnedComparisonRows || {};
+  const currentRowTotal = Object.values(returnedRows)
+    .reduce((sum, value) => sum + (Number.isSafeInteger(value) ? value : 0), 0);
+  const latestAvailableDate = state.home.data?.source?.latestAvailableDate || '';
   const loadedSummary = [
     `经营日 ${numberFormatter.format(returnedRows.storeDaily || 0)}`,
     `财务日 ${numberFormatter.format(returnedRows.financeDaily || 0)}`,
     `地区 ${numberFormatter.format(returnedRows.regionDaily || 0)}`,
     `货号财务 ${numberFormatter.format(returnedRows.productFinanceDaily || 0)}`,
   ].join(' · ');
+  const comparisonSummary = [
+    comparisonRows.storeDaily,
+    comparisonRows.financeDaily,
+    comparisonRows.regionDaily,
+    comparisonRows.productFinanceDaily,
+  ].reduce((sum, value) => sum + (Number.isSafeInteger(value) ? value : 0), 0);
+  const emptyCurrentNotice = currentRowTotal === 0
+    ? `<section class="home-empty-range-notice" role="status">
+        <div><strong>当前日期范围已经加载完成，但没有经营历史数据。</strong><span>这不是仍在加载。${latestAvailableDate ? `最新完整历史日期是 ${escapeHtml(latestAvailableDate)}；对比期返回 ${numberFormatter.format(comparisonSummary)} 行。` : '最新完整历史日期待确认。'}</span></div>
+        ${latestAvailableDate ? `<button type="button" class="refresh-cache-button" data-home-latest-date="${escapeHtml(latestAvailableDate)}">查看 ${escapeHtml(latestAvailableDate)}</button>` : ''}
+      </section>`
+    : '';
   return `
     <section class="home-cache-status" aria-label="首页数据缓存状态">
       <span class="home-cache-ready"><i></i>首页数据已就绪</span>
       <span>${escapeHtml(loadedSummary)} · 页面读取 ${escapeHtml(formatDateTime(state.home.lastLoadedAt))}</span>
       <button type="button" class="refresh-cache-button" data-home-force-refresh>强制刷新缓存</button>
     </section>
+    ${emptyCurrentNotice}
     ${renderHistoryKpis()}
     ${renderHistoryTrends()}
     ${renderHistoryRankings()}
@@ -8056,6 +8073,21 @@ for (const element of [elements.homeDateStart, elements.homeDateEnd]) {
 }
 
 elements.view.addEventListener('click', (event) => {
+  const latestHomeDate = event.target.closest?.('[data-home-latest-date]');
+  if (latestHomeDate && elements.view.contains(latestHomeDate)) {
+    const date = String(latestHomeDate.dataset.homeLatestDate || '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      state.homeDateStart = date;
+      state.homeDateEnd = date;
+      state.homeDateCustom = true;
+      state.homeRangePreset = 'custom';
+      state.homeCalendarAnchor = `${date.slice(0, 7)}-01`;
+      syncUrlFromState();
+      render();
+      scheduleHomeLoad();
+    }
+    return;
+  }
   const homeForceRefresh = event.target.closest?.('[data-home-force-refresh]');
   if (homeForceRefresh && elements.view.contains(homeForceRefresh)) {
     void loadDashboard({ force: true });
