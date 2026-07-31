@@ -556,6 +556,38 @@ test('mixed statistics dates fail before the transaction with a stable sanitized
   assert.equal(client.calls.length, 0);
 });
 
+test('accepts a stale dated all-zero row without moving the store business date', async () => {
+  const input = syncInput();
+  input.sales.snapshots[1].statisticsDate = '2026-07-19';
+  input.sales.snapshots[1].salesToday = 0;
+  input.sales.snapshots[1].salesYesterday = 0;
+  input.sales.snapshots[1].sales7Days = 0;
+  input.sales.snapshots[1].sales30Days = 0;
+  const client = new FakeClient();
+
+  const result = await loadFullManagedSalesSync(pool(client), input);
+
+  assert.deepEqual(result, {
+    storeCode: 'DL',
+    skuCount: 2,
+    factCount: 4,
+    batchCount: 2,
+  });
+  const runInsert = client.calls.find(({ sql }) => sql.includes('INSERT INTO ops.sales_sync_run'));
+  assert.equal(runInsert.values[3], '2026-07-20');
+  assert.deepEqual(runInsert.values.slice(11, 15), [1, 2, 7, 30]);
+  assert.equal(
+    client.calls.filter(({ sql }) => sql.includes('INSERT INTO fact.full_sku_sales_snapshot')).length,
+    4,
+  );
+  const rawBatch = client.calls.find(
+    ({ sql, values }) => sql.includes('INSERT INTO raw.openapi_fetch_batch')
+      && values?.[1] === 'FULL_MANAGED_SKU_SALES',
+  );
+  assert.equal(rawBatch.values[5], null);
+  assert.equal(rawBatch.values[6], null);
+});
+
 test('fails closed on duplicate, mismatched, or incomplete sales load coverage', async (t) => {
   const cases = [
     {

@@ -78,6 +78,7 @@ function validateSalesLoadCoverage(store, inventory, sales) {
 
   const snapshotCodes = new Set();
   const statisticsDates = new Set();
+  const nonzeroStatisticsDates = new Set();
   const fetchedAtValues = new Set();
   let datedSkuCount = 0;
   let unanchoredZeroSkuCount = 0;
@@ -117,13 +118,16 @@ function validateSalesLoadCoverage(store, inventory, sales) {
       quarantinedSkuCodes.push(skuCode);
     }
     if (dateQuality === 'DATED') {
+      let hasSales = false;
       for (const field of Object.keys(totals)) {
         totals[field] = addSalesCount(
           totals[field],
           snapshot[field],
           `sales.snapshots[${index}].${field}`,
         );
+        if (snapshot[field] > 0) hasSales = true;
       }
+      if (hasSales) nonzeroStatisticsDates.add(snapshot.statisticsDate);
     }
   }
 
@@ -139,14 +143,22 @@ function validateSalesLoadCoverage(store, inventory, sales) {
   if (fetchedAtValues.size !== 1) {
     throw new Error('All sales batches for one store must use one fetchedAt observation time.');
   }
-  if (statisticsDates.size > 1) {
+  // SHEIN occasionally returns an older dt for an otherwise complete all-zero
+  // SKU row while the non-zero rows are consistently anchored to the current
+  // statistics date. A zero row cannot move any aggregate, so it may be
+  // retained as raw evidence without blocking the whole store. Different
+  // dates on non-zero rows remain a hard quality failure.
+  if (nonzeroStatisticsDates.size > 1) {
     throw new SalesDataQualityError(
       MIXED_STATISTICS_DATES_CODE,
       MIXED_STATISTICS_DATES_MESSAGE,
-      { statisticsDateCount: statisticsDates.size },
+      { statisticsDateCount: nonzeroStatisticsDates.size },
     );
   }
-  const [businessDate = null] = statisticsDates;
+  const businessDateCandidates = nonzeroStatisticsDates.size > 0
+    ? [...nonzeroStatisticsDates]
+    : [...statisticsDates].sort();
+  const businessDate = businessDateCandidates.at(-1) ?? null;
   if (businessDate !== null) salesWindows(businessDate);
 
   let evidencedSnapshotCount = 0;
@@ -892,7 +904,6 @@ export async function loadFullManagedSalesSync(pool, {
           .map(({ statisticsDate }) => statisticsDate)
           .filter((statisticsDate) => statisticsDate !== null),
       )];
-      if (statisticsDates.length > 1) throw new Error('One sales batch returned multiple statistics dates.');
       const representativeWindow = statisticsDates.length === 1
         ? salesWindows(statisticsDates[0]).last30Days
         : null;
@@ -934,6 +945,15 @@ export async function loadFullManagedSalesSync(pool, {
         const fullSkuId = skuIds.get(snapshot.skuCode);
         if (!fullSkuId) throw new Error(`Sales response SKU ${snapshot.skuCode} is missing from inventory.`);
         if (snapshot.statisticsDate === null) continue;
+        // Mixed dated zero rows are preserved in the raw batch fingerprint,
+        // but they must not create a competing dated fact grain.
+        if (
+          snapshot.statisticsDate !== coverage.businessDate
+          && snapshot.salesToday === 0
+          && snapshot.salesYesterday === 0
+          && snapshot.sales7Days === 0
+          && snapshot.sales30Days === 0
+        ) continue;
         factCount += await insertSnapshotFacts(client, {
           storeId,
           fullSkuId,
