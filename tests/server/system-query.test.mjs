@@ -20,6 +20,12 @@ function coverage({
 } = {}) {
   return {
     status: failed.length || missing.length || stale.length ? 'partial' : 'complete',
+    succeededStores: succeeded.length,
+    failedStores: failed.length,
+    missingStores: missing.length,
+    staleStores: stale.length,
+    inProgressStores: running.length,
+    totalStores: succeeded.length + failed.length + missing.length + stale.length + running.length,
     succeededStoreCodes: succeeded,
     failedStoreCodes: failed,
     missingStoreCodes: missing,
@@ -228,6 +234,34 @@ test('system query scopes Profile and data coverage by owner/store and filters d
     row.affectedStoreCodes.includes('MZ2406')
     || `${row.title} ${row.detail}`.includes('MZ2406')
   )));
+});
+
+test('coverage proves successful stores from an exhaustive production partition', () => {
+  const dashboard = structuredClone(dashboardFixture());
+  for (const domain of Object.values(dashboard.supply.coverage.domains)) {
+    delete domain.succeededStoreCodes;
+  }
+  const allStores = querySystemDashboard(dashboard, runtimeFixture(), new URLSearchParams());
+  assert.equal(allStores.summary.coverage.complete, 5);
+  assert.equal(allStores.summary.coverage.attention, 1);
+  assert.equal(
+    allStores.coverage.rows.find((row) => row.key === 'productCatalog').complete,
+    2,
+  );
+
+  const dlOnly = querySystemDashboard(
+    dashboard,
+    runtimeFixture(),
+    new URLSearchParams('owner=owner-dl&store=DL5477'),
+  );
+  assert.equal(dlOnly.summary.coverage.complete, 6);
+
+  const unproven = structuredClone(dashboard);
+  unproven.supply.coverage.domains.productCatalog.totalStores = 3;
+  const failClosed = querySystemDashboard(unproven, runtimeFixture(), new URLSearchParams());
+  const catalog = failClosed.coverage.rows.find((row) => row.key === 'productCatalog');
+  assert.equal(catalog.status, 'unknown');
+  assert.equal(catalog.unknown, 2);
 });
 
 test('missing runtime remains an explicit issue rather than fabricated healthy zeros', () => {

@@ -126,6 +126,7 @@ function storeContext(dashboard, ownerKey, store) {
   return Object.freeze({
     owners: Object.freeze(owners),
     ownerByStore,
+    universeStoreCodes: Object.freeze([...allStoreCodes].sort(compareText)),
     storeCodes: Object.freeze([...selectedCodes].sort(compareText)),
   });
 }
@@ -212,7 +213,45 @@ function compareProfiles(left, right) {
     || compareText(left.storeCode, right.storeCode);
 }
 
-function coverageStateForStore(coverage, storeCode) {
+function coveragePartitionProvesSuccessComplement(coverage, universeStoreCodes) {
+  const universe = new Set(universeStoreCodes);
+  const counts = {
+    complete: coverage.succeededStores,
+    failed: coverage.failedStores,
+    missing: coverage.missingStores,
+    stale: coverage.staleStores,
+    running: coverage.inProgressStores,
+    total: coverage.totalStores,
+  };
+  if (!Object.values(counts).every(isUnit)) return false;
+  if (counts.total !== universe.size) return false;
+  if (
+    counts.complete
+    + counts.failed
+    + counts.missing
+    + counts.stale
+    + counts.running
+    !== counts.total
+  ) return false;
+  const exceptionGroups = [
+    [coverage.failedStoreCodes, counts.failed],
+    [coverage.missingStoreCodes, counts.missing],
+    [coverage.staleStoreCodes, counts.stale],
+    [coverage.inProgressStoreCodes, counts.running],
+  ];
+  const exceptions = new Set();
+  for (const [inputCodes, expectedCount] of exceptionGroups) {
+    const codes = rows(inputCodes);
+    if (codes.length !== expectedCount) return false;
+    for (const code of codes) {
+      if (!universe.has(code) || exceptions.has(code)) return false;
+      exceptions.add(code);
+    }
+  }
+  return exceptions.size === counts.total - counts.complete;
+}
+
+function coverageStateForStore(coverage, storeCode, successComplementProven = false) {
   const code = String(storeCode || '').toUpperCase();
   const sets = [
     ['failed', new Set(rows(coverage.failedStoreCodes))],
@@ -221,16 +260,21 @@ function coverageStateForStore(coverage, storeCode) {
     ['running', new Set(rows(coverage.inProgressStoreCodes))],
     ['complete', new Set(rows(coverage.succeededStoreCodes))],
   ];
-  return sets.find(([, values]) => values.has(code))?.[0] || 'unknown';
+  return sets.find(([, values]) => values.has(code))?.[0]
+    || (successComplementProven ? 'complete' : 'unknown');
 }
 
 function coverageRows(dashboard, context) {
   const domains = record(record(dashboard.supply).coverage).domains;
   return Object.entries(COVERAGE_LABELS).map(([key, label]) => {
     const source = record(record(domains)[key]);
+    const successComplementProven = coveragePartitionProvesSuccessComplement(
+      source,
+      context.universeStoreCodes,
+    );
     const states = context.storeCodes.map((storeCode) => Object.freeze({
       storeCode,
-      state: coverageStateForStore(source, storeCode),
+      state: coverageStateForStore(source, storeCode, successComplementProven),
     }));
     const count = (state) => states.filter((row) => row.state === state).length;
     const failed = count('failed');
