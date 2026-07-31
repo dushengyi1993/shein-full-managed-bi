@@ -107,7 +107,7 @@ test('system runtime is materialized on a bounded timer and exposed read-only to
   const timer = await read('infra/systemd/shein-fm-system-health.timer');
   const portal = await read('infra/systemd/shein-fm-portal.service');
 
-  assert.match(timer, /OnUnitActiveSec=5min/);
+  assert.match(timer, /OnUnitInactiveSec=5min/);
   assert.match(timer, /Persistent=true/);
   assert.match(portal, /FULL_BI_SYSTEM_HEALTH_FILE=\/srv\/shein-fm\/runtime\/dashboard\/system-health\.json/);
   assert.match(portal, /ReadOnlyPaths=\/srv\/shein-fm\/runtime\/dashboard\/system-health\.json/);
