@@ -175,9 +175,11 @@ git diff --check
 6. 为五个组件写入独立 `database.env`，LOGIN 与能力组必须一一对应；
 7. 安装 systemd 单元，执行 `systemd-analyze verify` 和 `systemctl daemon-reload`；
 8. 手工运行一次 Dashboard 物化，检查 staging 原子替换、文件所有权和 JSON 契约；
-9. 运行一次 `shein-fm-system-health.service`，确认脱敏快照已经原子生成且不含凭据；
+9. 首次引入运行态投影时，先用目标 release 的绝对路径手工运行
+   `materialize_full_managed_system_health.mjs`，确认脱敏快照已经原子生成且不含凭据；
 10. 切换 `/opt/shein-fm/current`；
-11. 只创建 `portal.enabled` 与 `materializer.enabled` 门禁，启动 Portal、物化 timer 和运行态投影 timer；
+11. 手工启动一次 `shein-fm-system-health.service` 并回读成功，再启用其 timer；只创建
+    `portal.enabled` 与 `materializer.enabled` 门禁，启动 Portal 和物化 timer；
 12. 安装 Nginx 和 logrotate，执行 `nginx -t` 成功后只 reload；
 13. 从 loopback 和公网验证登录墙、Dashboard API、`/api/system`、12 个路由和退出登录；
 14. 再按下节逐域开启数据服务。
