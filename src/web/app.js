@@ -3494,7 +3494,7 @@ function productDecisionSummary(queryData) {
         ${salesPeriodMetric('标准商品', `${nullableUnits(canonical.globalActiveProductCount, '未知')} 个`, `当前生效归并 ${nullableUnits(assignments.currentConfirmedCount, '未知')} 条`)}
         ${salesPeriodMetric('待归并队列', `${pendingRows} 条`, `涉及 ${nullableUnits(summary.pendingStoreCount, '未知')} 家店`)}
         ${salesPeriodMetric(`${fixedRange}待归并影响`, impactValue, isUnit(impact.unknownCount) && impact.unknownCount > 0 ? `${numberFormatter.format(impact.unknownCount)} 行未知，已按 ≥ 展示` : '销量窗口完整')}
-        ${salesPeriodMetric('缺少平台 SPU', `${nullableUnits(catalog.missingSpuSkus, '未知')} 个`, '缺少店内强标识，优先补证据')}
+        ${salesPeriodMetric('全量目录缺 SPU', `${nullableUnits(catalog.missingSpuSkus, '未知')} 个`, `销量物化队列命中 ${nullableUnits(summary.missingSpuStoreSkuRows, '未知')} 条`)}
       </div>
       <div class="sales-data-receipt">
         <span><i></i>证据覆盖（最新密封 run）</span>
@@ -6578,7 +6578,7 @@ function renderProducts() {
         ['ALL', '全部待归并'],
         ['WITH_SALES', '当前窗口有销量'],
         ['UNMAPPED', '等待证据归并'],
-        ['MISSING_SPU', '缺少平台 SPU'],
+        ['MISSING_SPU', '销量队列缺 SPU'],
       ]
     : [
         ['ALL', '全部标准商品'],
