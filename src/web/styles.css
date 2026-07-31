@@ -1602,9 +1602,7 @@ main {
 .metric-panel > header span,
 .attention-card > span,
 .gate-state > span,
-.action-lock > span,
-.system-card > span,
-.capability-grid article > span {
+.action-lock > span {
   color: var(--accent);
   font-size: 0.66rem;
   font-weight: 800;
@@ -3535,93 +3533,165 @@ body[data-dataset="sample"] .metric-item > strong {
   font-size: 0.68rem;
 }
 
-.system-overview {
+.system-decision-overview.attention .sales-workspace-head,
+.system-decision-overview.critical .sales-workspace-head {
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
+.system-decision-overview.critical .sales-workspace-head {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+.system-workspace-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: -3px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper-soft);
+}
+
+.system-workspace-actions p {
+  max-width: 78ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.67rem;
+  line-height: 1.55;
+}
+
+.system-issue-table {
+  min-width: 980px;
+}
+
+.system-profile-table {
+  min-width: 940px;
+}
+
+.system-service-table,
+.system-coverage-table {
+  min-width: 1040px;
+}
+
+.system-issue-table td:first-child small,
+.system-profile-table td small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.61rem;
+  line-height: 1.45;
+}
+
+.system-profile-table tr.needs-attention {
+  background: color-mix(in srgb, var(--danger-soft) 38%, var(--paper));
+}
+
+.system-store-list {
+  display: flex;
+  max-width: 260px;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.system-store-list span,
+.system-store-list small {
+  display: inline-flex;
+  min-height: 21px;
+  align-items: center;
+  padding: 0 6px;
+  color: var(--muted-strong);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper-soft);
+  font-size: 0.57rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.system-decision-text {
+  display: inline-block;
+  max-width: 140px;
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+.system-decision-text.attention {
+  color: var(--danger);
+}
+
+.system-decision-text.healthy {
+  color: var(--success);
+}
+
+.system-empty-state {
+  min-height: 132px;
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  padding: 22px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: var(--paper-soft);
+}
+
+.system-empty-state h3,
+.system-empty-state p {
+  margin: 0;
+}
+
+.system-empty-state h3 {
+  font-size: 0.86rem;
+}
+
+.system-empty-state p {
+  max-width: 68ch;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.67rem;
+  line-height: 1.55;
+}
+
+.system-boundary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 9px;
-  margin-bottom: 14px;
+  gap: 8px;
 }
 
-.system-card {
-  position: relative;
+.system-boundary-grid article {
   min-width: 0;
-  min-height: 124px;
-  padding: 14px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--paper);
+  padding: 12px;
+  border-left: 2px solid var(--accent);
+  border-radius: 7px;
+  background: var(--paper-soft);
 }
 
-.system-card::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 2px;
-  content: "";
-  background: var(--line-strong);
-}
-
-.system-card.complete::before {
-  background: var(--success);
-}
-
-.system-card.pending::before {
-  background: var(--warning);
-}
-
-.system-card.blocked::before {
-  background: var(--danger);
-}
-
-.system-card strong,
-.system-card p {
+.system-boundary-grid span,
+.system-boundary-grid strong,
+.system-boundary-grid small {
   display: block;
 }
 
-.system-card strong {
-  margin-top: 10px;
-  font-size: 0.88rem;
-  line-height: 1.35;
+.system-boundary-grid span,
+.system-boundary-grid small {
+  color: var(--muted);
+  font-size: 0.61rem;
+  line-height: 1.45;
 }
 
-.system-card p {
-  margin: 6px 0 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 0.66rem;
-  line-height: 1.5;
-  text-overflow: ellipsis;
+.system-boundary-grid strong {
+  margin: 6px 0 4px;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.system-boundary-disclosure .table-wrap {
+  margin-top: 12px;
 }
 
 .readiness-table {
   min-width: 760px;
-}
-
-.capability-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.capability-grid article {
-  min-height: 134px;
-  padding: 13px;
-  border: 1px solid var(--line);
-  border-top: 2px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--paper-soft);
-}
-
-.capability-grid article.available {
-  border-top-color: var(--success);
-}
-
-.capability-grid article.partial {
-  border-top-color: var(--warning);
-}
-
-.capability-grid article.locked {
-  border-top-color: var(--danger);
 }
 
 .operation-summary-grid {
@@ -4113,23 +4183,6 @@ body[data-dataset="sample"] .metric-item > strong {
   opacity: 0.78;
 }
 
-.capability-grid strong,
-.capability-grid p {
-  display: block;
-}
-
-.capability-grid strong {
-  margin-top: 9px;
-  font-size: 0.83rem;
-}
-
-.capability-grid p {
-  margin: 5px 0 0;
-  color: var(--muted);
-  font-size: 0.66rem;
-  line-height: 1.5;
-}
-
 .loading-shell {
   min-height: 480px;
   padding: 28px;
@@ -4304,7 +4357,7 @@ body[data-dataset="sample"] .metric-item > strong {
     min-height: 148px;
   }
 
-  .capability-grid {
+  .system-boundary-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -4386,7 +4439,6 @@ body[data-dataset="sample"] .metric-item > strong {
   }
 
   .metric-grid,
-  .system-overview,
   .operation-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -4780,10 +4832,14 @@ body[data-dataset="sample"] .metric-item > strong {
   .domain-grid,
   .process-flow,
   .automation-flow,
-  .system-overview,
   .operation-summary-grid,
-  .capability-grid {
+  .system-boundary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .system-workspace-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .table-signal {

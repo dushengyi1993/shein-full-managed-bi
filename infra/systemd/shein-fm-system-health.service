@@ -1,0 +1,38 @@
+[Unit]
+Description=Materialize sanitized SHEIN full-managed runtime health
+Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
+After=shein-fm-db.service
+RequiresMountsFor=/srv/shein-fm/runtime /opt/shein-fm
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/shein-fm/current
+Environment=NODE_ENV=production
+Environment=FULL_BI_SYSTEM_HEALTH_FILE=/srv/shein-fm/runtime/dashboard/system-health.json
+ExecStart=/usr/bin/node scripts/materialize_full_managed_system_health.mjs
+TimeoutStartSec=45s
+UMask=0022
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
+InaccessiblePaths=/srv/shein-fm/secrets /srv/shein-fm/webapi/profiles
+ReadWritePaths=/srv/shein-fm/runtime/dashboard
+MemoryHigh=128M
+MemoryMax=256M
+
+# This root-owned collector may read private status files and systemd metadata,
+# but publishes only the allow-listed, value-free projection defined by the
+# materializer. It cannot access the network or mutate services.

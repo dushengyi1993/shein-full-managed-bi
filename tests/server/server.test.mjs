@@ -434,6 +434,46 @@ test('ops query rejects duplicates, unknown filters and mutation methods', async
   }
 });
 
+test('GET /api/system is an independent read-only runtime and data-maintenance surface', async () => {
+  const response = await fetch(`${baseUrl}/api/system?owner=ALL&store=ALL`);
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.schemaVersion, 1);
+  assert.equal(payload.readOnly, true);
+  assert.ok(payload.verdict);
+  assert.ok(payload.summary);
+  assert.ok(Array.isArray(payload.issues.rows));
+  assert.ok(Array.isArray(payload.services.rows));
+  assert.ok(Array.isArray(payload.profiles.rows));
+  assert.ok(Array.isArray(payload.coverage.rows));
+  assert.ok(Array.isArray(payload.readiness));
+  // This fixture does not configure a root runtime projection. The endpoint must
+  // disclose that absence rather than fabricating healthy service/Profile zeros.
+  assert.equal(payload.source.runtimeAvailable, false);
+  assert.ok(payload.issues.rows.some((row) => row.key === 'runtime-missing'));
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+
+  const head = await fetch(`${baseUrl}/api/system`, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+});
+
+test('system query rejects duplicates, unknown parameters and mutation methods', async () => {
+  const duplicate = await fetch(`${baseUrl}/api/system?q=a&q=b`);
+  assert.equal(duplicate.status, 400);
+  assert.match(await duplicate.text(), /QUERY_PARAMETER_DUPLICATED/);
+
+  const unknown = await fetch(`${baseUrl}/api/system?page=2`);
+  assert.equal(unknown.status, 400);
+  assert.match(await unknown.text(), /QUERY_PARAMETER_UNKNOWN/);
+
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const mutation = await fetch(`${baseUrl}/api/system`, { method });
+    assert.equal(mutation.status, 405, method);
+    assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
+  }
+});
+
 test('procurement exposes exact page sizes, explicit quick filters and a compact status summary', async () => {
   const response = await fetch(`${baseUrl}/api/procurement?pageSize=100&quick=DEFECTIVE`);
   assert.equal(response.status, 200);

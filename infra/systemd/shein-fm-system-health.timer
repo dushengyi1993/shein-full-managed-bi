@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh sanitized full-managed runtime health every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=shein-fm-system-health.service
+
+[Install]
+WantedBy=timers.target

@@ -17,15 +17,19 @@ function functionBody(source, functionName) {
 
 test('supply pages consume real purchase, delivery, inventory and stock-advice contracts', async () => {
   const app = await read('src/web/app.js');
+  const procurement = await read('src/server/procurement-query.mjs');
+  const fulfilment = await read('src/server/fulfilment-query.mjs');
+  const inventory = await read('src/server/inventory-query.mjs');
 
-  assert.match(app, /domainRows\(supply, 'purchaseOrderStatus'\)/);
-  assert.match(app, /domainRows\(supply, 'deliveryMilestones'\)/);
-  assert.match(app, /domainRows\(supply, 'inventory'\)/);
-  assert.match(app, /domainRows\(supply, 'stockAdvice'\)/);
-  assert.match(app, /attentionRows\('purchaseOrderAttention'\)/);
-  assert.match(app, /attentionRows\('deliveryAttention'\)/);
-  assert.match(app, /attentionRows\('inventoryRisks'\)/);
-  assert.match(app, /attentionRows\('stockAdviceRisks'\)/);
+  assert.match(procurement, /purchaseOrderStatus/);
+  assert.match(procurement, /purchaseOrderAttention/);
+  assert.match(fulfilment, /deliveryMilestones/);
+  assert.match(fulfilment, /deliveryAttention/);
+  assert.match(inventory, /inventoryRisks/);
+  assert.match(inventory, /stockAdviceRisks/);
+  assert.match(app, /\/api\/procurement/);
+  assert.match(app, /\/api\/fulfilment/);
+  assert.match(app, /\/api\/inventory/);
   assert.match(app, /采购单关注队列/);
   assert.match(app, /交付入仓关注队列/);
   assert.match(app, /SKU 风险与备货筛查/);
@@ -88,35 +92,23 @@ test('nullable operational quantities stay unknown and expose field coverage', a
 
 test('owner, store and text filters scope all store-keyed operational rows', async () => {
   const app = await read('src/web/app.js');
-  const storeScope = functionBody(app, 'storeScopedRows');
-  const searchScope = functionBody(app, 'searchableOperationRows');
-  const combinedScope = functionBody(app, 'scopedOperationRows');
+  const queryFiles = await Promise.all([
+    'procurement-query.mjs',
+    'fulfilment-query.mjs',
+    'inventory-query.mjs',
+    'platform-query.mjs',
+    'ops-query.mjs',
+    'system-query.mjs',
+  ].map((name) => read(`src/server/${name}`)));
 
-  assert.match(storeScope, /selectedStore\(\)/);
-  assert.match(storeScope, /selectedOwner\(\)/);
-  assert.match(storeScope, /owner\.storeCodes/);
-  assert.match(storeScope, /row\?\.storeCode/);
-  assert.match(searchScope, /normalizedQuery\(\)/);
-  assert.match(combinedScope, /searchableOperationRows\(storeScopedRows\(rows\)\)/);
-
-  for (const collection of [
-    'purchaseOrderStatus',
-    'deliveryMilestones',
-    'inventory',
-    'stockAdvice',
-    'events',
-    'candidates',
-  ]) {
-    assert.match(app, new RegExp(`domainRows\\([^\\n]+, '${collection}'\\)`));
+  for (const query of queryFiles) {
+    assert.match(query, /owner/);
+    assert.match(query, /store/);
+    assert.match(query, /\bq\b/);
   }
-  for (const collection of [
-    'purchaseOrderAttention',
-    'deliveryAttention',
-    'inventoryRisks',
-    'stockAdviceRisks',
-  ]) {
-    assert.match(app, new RegExp(`attentionRows\\('${collection}'\\)`));
-  }
+  assert.match(functionBody(app, 'systemQueryUrl'), /owner: state\.owner/);
+  assert.match(functionBody(app, 'systemQueryUrl'), /store: state\.store/);
+  assert.match(functionBody(app, 'systemQueryUrl'), /q: state\.query/);
   assert.doesNotMatch(app, /canSeeTechnicalGlobal|role === 'admin'/);
 });
 
@@ -300,34 +292,43 @@ test('attention and risk workspaces support explicit quick filters and preserve 
   }
 });
 
-test('system capability cards follow real operational domain evidence', async () => {
+test('system workspace follows sanitized runtime and operational coverage evidence', async () => {
   const app = await read('src/web/app.js');
   const system = functionBody(app, 'renderSystem');
-  const overview = functionBody(app, 'datasetOverview');
+  const overview = functionBody(app, 'systemDecisionOverview');
+  const services = functionBody(app, 'systemServiceTable');
+  const profiles = functionBody(app, 'systemProfileTable');
 
-  assert.match(system, /procurementConnected/);
-  assert.match(system, /fulfilmentConnected/);
-  assert.match(system, /inventoryConnected/);
-  assert.match(system, /webhookConnected/);
-  assert.match(system, /candidateConnected/);
-  assert.match(system, /supplyCoverageTable/);
-  assert.match(overview, /供应链只读链路/);
-  assert.match(overview, /Webhook 链路/);
+  assert.match(system, /systemDecisionOverview\(queryData\)/);
+  assert.match(system, /systemIssueTable\(queryData\)/);
+  assert.match(system, /systemProfileTable\(queryData\)/);
+  assert.match(system, /systemServiceTable\(queryData\)/);
+  assert.match(system, /systemCoverageTable\(queryData\)/);
+  assert.match(system, /systemBoundaryDisclosure\(queryData\)/);
+  assert.match(overview, /Profile 续期有效/);
+  assert.match(overview, /数据域覆盖/);
   assert.match(overview, /写动作总闸/);
-  assert.match(overview, /空数组不补成业务 0/);
+  assert.match(services, /systemd 脱敏回读|计划任务|常驻服务/);
+  assert.match(profiles, /登录登记和续期验真是两套证据/);
+  assert.doesNotMatch(system, /capability-grid|system-overview/);
 });
 
-test('supply coverage distinguishes a complete empty business window from missing evidence', async () => {
+test('system coverage distinguishes success, failure, missing, stale and in-progress stores', async () => {
   const app = await read('src/web/app.js');
-  const connectionState = functionBody(app, 'domainConnectionState');
-  const coverageTable = functionBody(app, 'supplyCoverageTable');
+  const query = await read('src/server/system-query.mjs');
+  const coverageState = functionBody(query, 'coverageStateForStore');
+  const coverageRows = functionBody(query, 'coverageRows');
+  const coverageTable = functionBody(app, 'systemCoverageTable');
 
-  assert.match(connectionState, /coverage\.every\(\(item\) => item\.status === 'complete'\)/);
-  assert.match(connectionState, /coverage\.some\(\(item\) => item\.status === 'blocked'\)/);
-  assert.match(app, /接口已有覆盖 · 当前筛选无事实行/);
-  assert.match(coverageTable, /最新同步尝试、覆盖和时效证据/);
-  assert.match(coverageTable, /历史成功不能掩盖当前失败/);
-  assert.match(coverageTable, /业务数量为 0/);
+  assert.match(coverageState, /\['failed'/);
+  assert.match(coverageState, /\['stale'/);
+  assert.match(coverageState, /\['missing'/);
+  assert.match(coverageState, /\['running'/);
+  assert.match(coverageState, /\['complete'/);
+  assert.match(coverageRows, /failed \+ stale \+ missing > 0/);
+  assert.match(coverageRows, /running > 0/);
+  assert.match(coverageTable, /失败 \/ 缺失 \/ 过期 \/ 同步中/);
+  assert.match(coverageTable, /旧成功掩盖当前问题/);
 });
 
 test('operational layouts keep mobile content inside the viewport', async () => {

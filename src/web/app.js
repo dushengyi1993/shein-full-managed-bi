@@ -779,6 +779,12 @@ const state = {
     page: initialHashState.opsPage || 1,
     pageSize: initialHashState.opsPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
   },
+  system: {
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+  },
   sales: {
     data: null,
     loading: false,
@@ -853,6 +859,7 @@ let productLoadTimer = null;
 let fulfilmentLoadTimer = null;
 let platformLoadTimer = null;
 let opsLoadTimer = null;
+let systemLoadTimer = null;
 let dashboardEventSource = null;
 
 function routeFromLocation() {
@@ -3000,6 +3007,76 @@ function scheduleOpsLoad({ resetPage = false, delay = 0 } = {}) {
   }, delay);
 }
 /* --- ops-query:end --- */
+
+/* --- system-query:start ---
+   The System workspace reads a sanitized root-owned runtime snapshot plus the
+   materialized business coverage. It never reads Profile files or systemd from
+   the browser process. */
+
+function systemQueryUrl() {
+  const params = new URLSearchParams({
+    owner: state.owner,
+    store: state.store,
+    q: state.query,
+  });
+  return `/api/system?${params.toString()}`;
+}
+
+async function loadSystem() {
+  if (state.route !== 'system') return;
+  const requestSerial = state.system.requestSerial + 1;
+  state.system.requestSerial = requestSerial;
+  state.system.loading = true;
+  state.system.error = '';
+  render();
+  try {
+    const result = await fetchJson(systemQueryUrl());
+    if (requestSerial !== state.system.requestSerial) return;
+    if (
+      !result
+      || result.readOnly !== true
+      || !result.verdict
+      || !result.summary
+      || !Array.isArray(result.issues?.rows)
+      || !Array.isArray(result.services?.rows)
+      || !Array.isArray(result.profiles?.rows)
+      || !Array.isArray(result.coverage?.rows)
+      || !Array.isArray(result.readiness)
+      || !result.source
+    ) {
+      throw new Error('系统管理查询结构无效');
+    }
+    state.system.data = result;
+  } catch (error) {
+    if (requestSerial !== state.system.requestSerial) return;
+    state.system.data = null;
+    state.system.error = error instanceof Error
+      ? error.message
+      : '系统管理查询暂不可用';
+  } finally {
+    if (requestSerial === state.system.requestSerial) {
+      state.system.loading = false;
+      render();
+    }
+  }
+}
+
+function scheduleSystemLoad({ reset = false, delay = 0 } = {}) {
+  if (systemLoadTimer !== null) window.clearTimeout(systemLoadTimer);
+  state.system.requestSerial += 1;
+  if (reset) {
+    state.system.data = null;
+    state.system.error = '';
+    state.system.loading = true;
+  }
+  if (state.route !== 'system') return;
+  if (reset) render();
+  systemLoadTimer = window.setTimeout(() => {
+    systemLoadTimer = null;
+    void loadSystem();
+  }, delay);
+}
+/* --- system-query:end --- */
 
 function fulfilmentQueryState(kind) {
   const error = kind === 'error';
@@ -8611,208 +8688,271 @@ function renderOps() {
     ${opsEvidenceDisclosure(queryData)}`;
 }
 
-function datasetOverview() {
-  const permission = state.data?.permission || {};
-  const permissionCount = isUnit(permission.authorizedStores) && isUnit(permission.totalStores)
-    ? `${numberFormatter.format(permission.authorizedStores)} / ${numberFormatter.format(permission.totalStores)} 家店铺`
-    : '店铺范围待确认';
-  const healthOk = state.health?.status === 'ok';
-  const runtimeLabel = healthOk ? '云端服务响应正常' : '未取得 /health 运行态';
-  const runtimeNote = healthOk
-    ? `${state.health.service || 'shein-full-managed-bi'} · ${state.health.readOnly === true ? '只读' : '模式待确认'}`
-    : (state.healthError || '运行态接口尚未返回');
-  const dataTone = datasetStatus() === 'live' ? 'complete' : datasetStatus() === 'sample' ? 'pending' : 'unknown';
-  const permissionTone = permission.status === 'granted'
-    ? 'complete'
-    : permission.status === 'denied'
-      ? 'blocked'
-      : permission.status || 'unknown';
-  const supply = supplyDomain();
-  const platform = platformDomain();
-  const actionPool = actionPoolDomain();
-  const supplyFacts = [
-    ...domainRows(supply, 'purchaseOrderStatus'),
-    ...domainRows(supply, 'deliveryMilestones'),
-    ...domainRows(supply, 'inventory'),
-    ...domainRows(supply, 'stockAdvice'),
-  ];
-  const platformFacts = domainRows(platform, 'events');
-  const subscriptionFacts = domainRows(platform, 'subscriptions');
-  const actionFacts = domainRows(actionPool, 'candidates');
-  const supplyCoverageStates = Object.keys(SUPPLY_COVERAGE_META)
-    .map(supplyCoverageDomain)
-    .filter(coverageHasEvidence);
-  const supplyCoverageBlocked = supplyCoverageStates.some((coverage) => coverage.status === 'blocked');
-  const supplyLabel = supplyFacts.length
-    ? '供应链事实可读'
-    : supplyCoverageStates.length
-      ? '同步覆盖证据可读 · 暂无事实行'
-      : supply.status === 'available' ? '连接可用 · 覆盖未知' : '供应链待接入';
-  const platformLabel = platformAvailable()
-    ? (platform.health?.ok === true
-      ? 'Webhook Receiver / Worker 在线'
-      : platform.health?.ok === false
-        ? 'Webhook 运行态需关注'
-        : 'Webhook 仓库证据可读 · Runtime 未知')
-    : platform.status === 'available' ? '连接可用 · 运行态未知' : 'Webhook 待接入';
-  const actionLabel = actionFacts.length
-    ? '只读候选池可用'
-    : actionPool.mode === 'observe_only' ? '观察模式 · 暂无候选行' : '候选池待接入';
-  const cards = [
-    ['销量数据集', datasetLabel(), state.data?.updatedAt ? `快照：${formatDateTime(state.data.updatedAt)}` : '暂无有效快照', dataTone],
-    ['销量权限', permission.label || '权限待确认', permissionCount, permissionTone],
-    ['接口模式', state.data?.readOnly === true ? '只读白名单' : '模式待确认', `schema v${isUnit(state.data?.schemaVersion) ? state.data.schemaVersion : '—'}`, state.data?.readOnly === true ? 'complete' : 'unknown'],
-    ['云端运行态', runtimeLabel, runtimeNote, healthOk ? 'complete' : 'unknown'],
-    ['供应链只读链路', supplyLabel, supplyFacts.length
-      ? `${numberFormatter.format(supplyFacts.length)} 条聚合事实行`
-      : supplyCoverageStates.length
-        ? `${numberFormatter.format(supplyCoverageStates.length)} 个域有同步证据；空数组不补成业务 0`
-        : '空数组不补成业务 0', supplyCoverageBlocked ? 'blocked' : supplyFacts.length ? 'complete' : supplyCoverageStates.length ? 'partial' : supply.status === 'available' ? 'pending' : 'unknown'],
-    ['Webhook 链路', platformLabel, platformAvailable()
-      ? ([
-        platformFacts.length ? `${numberFormatter.format(platformFacts.length)} 条事件` : null,
-        subscriptionFacts.length ? `${numberFormatter.format(subscriptionFacts.length)} 条订阅回读` : null,
-        queueHasEvidence(platform.queue) ? '队列运行态可见' : null,
-      ].filter(Boolean).join(' · ') || '仅健康探针已回读，业务数量未知')
-      : '队列、订阅与事件均无证据', platform.health?.ok === false ? 'blocked' : platform.health?.ok === true ? 'complete' : platformAvailable() ? 'partial' : 'unknown'],
-    ['自动化运营', actionLabel, actionFacts.length ? `${numberFormatter.format(actionFacts.length)} 条 observe-only 候选` : '所有写按钮持续禁用', actionFacts.length ? 'pending' : 'unknown'],
-    ['写动作总闸', actionPool.writeEnabled === true ? '配置异常：写开关开启' : '关闭', actionPool.writeEnabled === true ? '首版要求 writeEnabled=false，请立即检查' : '前端无可用提交入口', actionPool.writeEnabled === true ? 'blocked' : 'complete'],
-  ];
+function systemQueryState(kind) {
+  const error = kind === 'error';
   return `
-    <div class="system-overview">
-      ${cards.map(([label, value, note, status]) => `
-        <article class="system-card ${readinessClass(status)}">
-          <span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><p>${escapeHtml(note)}</p>
-        </article>`).join('')}
+    <section class="panel procurement-query-state system-query-state${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}">
+      <span class="eyebrow">SYSTEM RUNTIME</span>
+      <h2>${error ? '系统管理数据暂不可用' : '正在读取运行与数据维护状态'}</h2>
+      <p>${error
+        ? escapeHtml(state.system.error || '请稍后重新读取。')
+        : '正在合并脱敏 systemd、Profile 续期、磁盘守卫和 Dashboard 覆盖；失败不会显示成正常。'}</p>
+      ${error
+        ? '<button type="button" class="clear-button" data-system-retry="1">重新读取</button>'
+        : ''}
+    </section>`;
+}
+
+function systemStatusClass(value) {
+  if (['healthy', 'complete', 'active'].includes(value)) return 'complete';
+  if (['attention', 'expired', 'blocked', 'critical'].includes(value)) return 'blocked';
+  if (['running', 'scheduled', 'pending', 'unverified'].includes(value)) return 'pending';
+  return 'unknown';
+}
+
+function systemSeverityLabel(value) {
+  return ({
+    P0: '紧急',
+    P1: '高优先',
+    P2: '需关注',
+    P3: '观察',
+  })[value] || '未知';
+}
+
+function systemSessionReason(code) {
+  return ({
+    WEBAPI_SESSION_AUTH_EXPIRED: '保存登录态已失效',
+    WEBAPI_SESSION_IDENTITY_UNPROVEN: '店铺身份未通过',
+    WEBAPI_SESSION_ORIGIN_MISMATCH: '页面来源不匹配',
+    WEBAPI_SESSION_LAUNCH_BLOCKED: 'Profile 启动受阻',
+    SESSION_RENEWAL_FAILED: '续期未完成',
+  })[code] || (code ? `错误码 ${code}` : '等待下一次续期验真');
+}
+
+function systemRouteHref(hrefOrRoute) {
+  const token = String(hrefOrRoute || 'system').replace(/^#/, '');
+  const route = URL_ROUTE_KEYS.includes(token) ? token : 'system';
+  return serializeHashState({
+    route,
+    owner: state.owner,
+    store: state.store,
+    range: state.range,
+  });
+}
+
+function systemDecisionOverview(queryData) {
+  const verdict = productRecord(queryData.verdict);
+  const summary = productRecord(queryData.summary);
+  const service = productRecord(summary.services);
+  const profiles = productRecord(summary.profiles);
+  const coverage = productRecord(summary.coverage);
+  const disks = Array.isArray(summary.disks) ? summary.disks : [];
+  const rootDisk = disks.find((row) => row.filesystem === '/') || {};
+  const dataDisk = disks.find((row) => row.filesystem === '/data') || {};
+  const writeClosed = queryData.boundaries?.actionWriteEnabled === false;
+  const issueTone = verdict.level === 'critical'
+    ? 'decline'
+    : verdict.level === 'healthy' ? 'growth' : 'primary';
+  return `
+    <section class="sales-period-overview system-decision-overview ${escapeHtml(verdict.level || 'unknown')}" aria-label="系统运行与数据维护概览">
+      <header class="sales-workspace-head">
+        <div>
+          <span class="eyebrow">RUNTIME & DATA CONTROL</span>
+          <h1>系统管理</h1>
+          <p>${escapeHtml(verdict.headline || '正在判断运行态')}。先处理会影响数据新鲜度的异常，再查看 Profile、同步覆盖与技术边界。</p>
+        </div>
+        <div class="sales-range-receipt">
+          <span>当前店铺范围 / 运行快照</span>
+          <strong>${escapeHtml(`${inventoryScopeLabel()} · ${nullableUnits(queryData.scope?.storeCount)} 家`)}</strong>
+          <small>${escapeHtml(`运行态 ${sourceTime(queryData.source?.runtimeGeneratedAt)} · 只读查询`)}</small>
+        </div>
+      </header>
+      <div class="sales-period-grid system-decision-grid">
+        ${salesPeriodMetric('待处理事项', `${nullableUnits(verdict.issueCount)} 项`, `当前搜索命中 ${nullableUnits(verdict.matchedIssueCount)} 项`, issueTone)}
+        ${salesPeriodMetric('核心任务', `${nullableUnits(service.healthy)} / ${nullableUnits(service.total)} 正常`, `异常 ${nullableUnits(service.attention)} · 运行中 ${nullableUnits(service.running)}`)}
+        ${salesPeriodMetric('Profile 续期有效', `${nullableUnits(profiles.active)} / ${nullableUnits(profiles.total)} 家`, `最近验真 ${nullableUnits(profiles.verified)} 家 · 待处理 ${nullableUnits(profiles.actionRequired)}`)}
+        ${salesPeriodMetric('数据域覆盖', `${nullableUnits(coverage.complete)} / ${nullableUnits(coverage.total)} 完整`, `同步中 ${nullableUnits(coverage.running)} · 异常 ${nullableUnits(coverage.attention)}`)}
+        ${salesPeriodMetric('磁盘', `系统盘 ${rootDisk.usedPercent ?? '—'}%`, `数据盘 ${dataDisk.usedPercent ?? '—'}% · 阈值前告警`)}
+        ${salesPeriodMetric('写动作总闸', writeClosed ? '关闭' : '需检查', writeClosed ? '系统页只提供观测和下钻' : '服务端写开关与只读阶段不一致', writeClosed ? 'growth' : 'decline')}
+      </div>
+      <div class="sales-data-receipt">
+        <span><i></i>证据时间</span>
+        <p>${escapeHtml(`Dashboard ${sourceTime(queryData.source?.dashboardUpdatedAt)} · 供应链 ${sourceTime(queryData.source?.supplyEvaluatedAt)} · Profile 续期 ${sourceTime(queryData.source?.renewalGeneratedAt)} · 运行态每 5 分钟刷新`)}</p>
+      </div>
+    </section>`;
+}
+
+function systemEmptyState(title, note) {
+  return `
+    <div class="empty-state system-empty-state" role="status">
+      <h3>${escapeHtml(title)}</h3>
+      <p>${escapeHtml(note)}</p>
     </div>`;
 }
 
-function readinessTable() {
+function systemIssueTable(queryData) {
+  const issues = Array.isArray(queryData.issues?.rows) ? queryData.issues.rows : [];
+  if (!issues.length) {
+    return systemEmptyState(
+      queryData.issues?.total > 0 ? '当前搜索没有命中系统问题' : '当前范围没有待处理系统问题',
+      queryData.issues?.total > 0
+        ? '清空搜索后可查看当前范围的全部运行与数据问题。'
+        : '运行、Profile、数据覆盖和磁盘均未发现需处理项。',
+    );
+  }
   return `
     <div class="table-wrap">
-      <table class="data-table readiness-table">
-        <thead><tr><th scope="col">阶段</th><th scope="col">运行态</th><th scope="col">证据范围</th><th scope="col">说明</th></tr></thead>
-        <tbody>${readinessStages().map((stage) => `
-          <tr>
-            <td class="entity-column"><strong>${escapeHtml(stage.label)}</strong><span>${escapeHtml(stage.key)}</span></td>
-            <td><span class="row-status ${readinessClass(stage.status)}">${escapeHtml(stage.statusLabel || '待确认')}</span></td>
-            <td>${escapeHtml(readinessCount(stage))}</td>
-            <td class="boundary-cell">${escapeHtml(stage.note || '暂无运行证据')}</td>
-          </tr>`).join('')}</tbody>
+      <table class="data-table system-issue-table">
+        <thead><tr><th scope="col">优先级</th><th scope="col">问题</th><th scope="col">影响店铺</th><th scope="col">事实时间</th><th scope="col">查看</th></tr></thead>
+        <tbody>${issues.map((row) => {
+          const stores = Array.isArray(row.affectedStoreCodes) ? row.affectedStoreCodes : [];
+          return `
+            <tr>
+              <td><span class="row-status ${row.severity === 'P0' || row.severity === 'P1' ? 'blocked' : 'pending'}">${escapeHtml(systemSeverityLabel(row.severity))}</span><small>${escapeHtml(row.domain || '系统')}</small></td>
+              <td class="boundary-cell"><strong>${escapeHtml(row.title || '系统问题')}</strong><span>${escapeHtml(row.detail || '等待更多证据')}</span></td>
+              <td>${stores.length ? `<div class="system-store-list">${stores.slice(0, 8).map((code) => `<span>${escapeHtml(code)}</span>`).join('')}${stores.length > 8 ? `<small>+${numberFormatter.format(stores.length - 8)}</small>` : ''}</div>` : '<span class="muted-value">跨店 / 系统级</span>'}</td>
+              <td>${escapeHtml(sourceTime(row.evidenceAt))}</td>
+              <td><a class="text-link" href="${escapeHtml(systemRouteHref(row.href))}">查看事实 →</a></td>
+            </tr>`;
+        }).join('')}</tbody>
       </table>
     </div>`;
 }
 
-function supplyCoverageTable() {
-  const rows = Object.entries(SUPPLY_COVERAGE_META).map(([key, label]) => {
-    const coverage = supplyCoverageDomain(key) || {};
-    const succeeded = isUnit(coverage.succeededStores)
-      ? numberFormatter.format(coverage.succeededStores)
-      : '—';
-    const total = isUnit(coverage.totalStores)
-      ? numberFormatter.format(coverage.totalStores)
-      : '—';
-    const failed = isUnit(coverage.failedStores)
-      ? numberFormatter.format(coverage.failedStores)
-      : '—';
-    const missing = Array.isArray(coverage.missingStoreCodes)
-      ? coverage.missingStoreCodes.length
-      : coverage.missingStores;
-    const stale = isUnit(coverage.staleStores)
-      ? numberFormatter.format(coverage.staleStores)
-      : '—';
-    const inProgress = isUnit(coverage.inProgressStores)
-      ? numberFormatter.format(coverage.inProgressStores)
-      : '—';
-    const windowLabel = coverage.watermarkStart || coverage.watermarkEnd
-      ? `${coverage.watermarkStart ? sourceTime(coverage.watermarkStart) : '起点未知'} → ${coverage.watermarkEnd ? sourceTime(coverage.watermarkEnd) : '终点未知'}`
-      : '业务窗口未知';
-    return {
-      key,
-      label,
-      coverage,
-      succeeded,
-      total,
-      failed,
-      missing: isUnit(missing) ? numberFormatter.format(missing) : '—',
-      stale,
-      inProgress,
-      windowLabel,
-    };
-  });
+function systemProfileTable(queryData) {
+  const rows = Array.isArray(queryData.profiles?.rows) ? queryData.profiles.rows : [];
+  if (!rows.length) {
+    return systemEmptyState(
+      queryData.profiles?.total > 0 ? '当前搜索没有命中 Profile' : '当前范围没有 Profile 状态',
+      '这里只显示脱敏的登录登记和最近一次续期验真，不读取 Cookie、密码或页面内容。',
+    );
+  }
   return `
     <div class="table-wrap">
-      <table class="data-table supply-coverage-table">
-        <thead><tr><th scope="col">只读域</th><th scope="col">最新状态</th><th scope="col">成功覆盖</th><th scope="col">失败 / 缺失 / 过期 / 同步中</th><th scope="col">模式与业务窗口</th><th scope="col">证据与下一步</th></tr></thead>
+      <table class="data-table system-profile-table">
+        <thead><tr><th scope="col">店铺</th><th scope="col">登录登记</th><th scope="col">最近续期验真</th><th scope="col">事实时间</th><th scope="col">判断</th></tr></thead>
         <tbody>${rows.map((row) => `
-          <tr>
-            <td class="entity-column"><strong>${escapeHtml(row.label)}</strong><span>${escapeHtml(row.key)}</span></td>
-            <td><span class="row-status ${readinessClass(row.coverage.status)}">${escapeHtml(row.coverage.status || 'unknown')}</span></td>
-            <td>${escapeHtml(`${row.succeeded} / ${row.total} 家`)}</td>
-            <td>${escapeHtml(`${row.failed} / ${row.missing} / ${row.stale} / ${row.inProgress}`)}</td>
-            <td class="boundary-cell"><strong>${escapeHtml(row.coverage.mode || '模式未知')}</strong><span>${escapeHtml(row.windowLabel)}</span><small>${escapeHtml(isUnit(row.coverage.freshnessMaxAgeSeconds) ? `时效门槛 ${Math.round(row.coverage.freshnessMaxAgeSeconds / 3600)} 小时` : '时效门槛未知')}</small></td>
-            <td class="boundary-cell"><strong>${escapeHtml(row.coverage.latestFetchedAt ? sourceTime(row.coverage.latestFetchedAt) : '尚无最新成功/失败尝试时间')}</strong><span>${escapeHtml(row.coverage.reason || '同步尝试、时效与覆盖证据待接入')}</span></td>
+          <tr class="${row.actionRequired ? 'needs-attention' : ''}">
+            <td class="entity-column"><strong>${escapeHtml(row.storeCode)}</strong><span>${escapeHtml(row.ownerName || '负责人未知')}</span></td>
+            <td><span class="row-status ${row.loginStatus === 'completed' ? 'complete' : row.loginStatus === 'needs_attention' ? 'blocked' : 'pending'}">${escapeHtml(({ completed: '已登记', pending: '未完成', needs_attention: '需处理' })[row.loginStatus] || '未知')}</span><small>${row.loginVerified ? '登记已验证' : '未标记验证'}</small></td>
+            <td><span class="row-status ${systemStatusClass(row.state)}">${escapeHtml(row.stateLabel || '待确认')}</span><small>${escapeHtml(systemSessionReason(row.errorCode))}</small></td>
+            <td>${escapeHtml(sourceTime(row.evidenceAt))}</td>
+            <td><strong class="system-decision-text ${row.actionRequired ? 'attention' : 'healthy'}">${row.actionRequired ? '需要登录或复核' : '当前有效'}</strong></td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
-    <p class="table-note">这里展示最新同步尝试、覆盖和时效证据；历史成功不能掩盖当前失败，完整空结果也不会被解释成业务数量为 0。</p>`;
+    <p class="table-note">登录登记和续期验真是两套证据：显示“已登记”不等于当前登录态仍有效；续期快照未覆盖的店铺保留为待验真。</p>`;
+}
+
+function systemServiceTable(queryData) {
+  const rows = Array.isArray(queryData.services?.rows) ? queryData.services.rows : [];
+  return `
+    <div class="table-wrap">
+      <table class="data-table system-service-table">
+        <thead><tr><th scope="col">任务</th><th scope="col">状态</th><th scope="col">最近运行</th><th scope="col">下次计划</th><th scope="col">结果</th><th scope="col">页面</th></tr></thead>
+        <tbody>${rows.map((row) => `
+          <tr>
+            <td class="entity-column"><strong>${escapeHtml(row.label)}</strong><span>${escapeHtml(row.kind === 'daemon' ? '常驻服务' : '计划任务')}</span></td>
+            <td><span class="row-status ${systemStatusClass(row.state)}">${escapeHtml(({ healthy: '正常', running: '运行中', scheduled: '已计划', attention: '需处理', unknown: '未知' })[row.state] || '未知')}</span></td>
+            <td>${escapeHtml(sourceTime(row.lastRunAt))}</td>
+            <td>${escapeHtml(row.nextRunAt ? sourceTime(row.nextRunAt) : (row.kind === 'daemon' ? '持续运行' : '尚无计划时间'))}</td>
+            <td class="boundary-cell"><strong>${escapeHtml(`${row.activeState || 'unknown'} / ${row.subState || 'unknown'}`)}</strong><span>${escapeHtml(`${row.result || 'unknown'}${isUnit(row.exitStatus) ? ` · exit ${row.exitStatus}` : ''}`)}</span></td>
+            <td><a class="text-link" href="${escapeHtml(systemRouteHref(row.route))}">进入 →</a></td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function systemCoverageTable(queryData) {
+  const rows = Array.isArray(queryData.coverage?.rows) ? queryData.coverage.rows : [];
+  return `
+    <div class="table-wrap">
+      <table class="data-table system-coverage-table">
+        <thead><tr><th scope="col">数据域</th><th scope="col">当前状态</th><th scope="col">成功覆盖</th><th scope="col">失败 / 缺失 / 过期 / 同步中</th><th scope="col">受影响店铺</th><th scope="col">证据时间</th></tr></thead>
+        <tbody>${rows.map((row) => `
+          <tr>
+            <td class="entity-column"><strong>${escapeHtml(row.label)}</strong><span>${escapeHtml(row.mode || '模式未知')}</span></td>
+            <td><span class="row-status ${systemStatusClass(row.status)}">${escapeHtml(({ complete: '完整', running: '同步中', attention: '需处理', unknown: '未知' })[row.status] || '未知')}</span></td>
+            <td>${escapeHtml(`${nullableUnits(row.complete)} / ${nullableUnits(row.total)} 家`)}</td>
+            <td>${escapeHtml(`${nullableUnits(row.failed)} / ${nullableUnits(row.missing)} / ${nullableUnits(row.stale)} / ${nullableUnits(row.running)}`)}</td>
+            <td>${Array.isArray(row.affectedStoreCodes) && row.affectedStoreCodes.length ? `<div class="system-store-list">${row.affectedStoreCodes.slice(0, 8).map((code) => `<span>${escapeHtml(code)}</span>`).join('')}</div>` : '<span class="muted-value">无</span>'}</td>
+            <td class="boundary-cell"><strong>${escapeHtml(sourceTime(row.evaluatedAt || row.latestFetchedAt))}</strong><span>${escapeHtml(isUnit(row.freshnessMaxAgeSeconds) ? `时效门槛 ${Math.round(row.freshnessMaxAgeSeconds / 3600)} 小时` : '时效门槛未知')}</span></td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <p class="table-note">覆盖按当前负责人或店铺范围重新计算；同步中、历史失败和缺失分别显示，不用旧成功掩盖当前问题。</p>`;
+}
+
+function systemBoundaryDisclosure(queryData) {
+  const boundaries = productRecord(queryData.boundaries);
+  const releases = productRecord(boundaries.releases);
+  const readiness = Array.isArray(queryData.readiness) ? queryData.readiness : [];
+  const current = releases.current ? releases.current.slice(0, 7) : '未知';
+  const previous = releases.previous ? releases.previous.slice(0, 7) : '未知';
+  return `
+    <details class="panel product-boundary-disclosure system-boundary-disclosure">
+      <summary>
+        <span class="eyebrow">TECHNICAL BOUNDARY</span>
+        <strong>接入证据与安全边界</strong>
+        <small>展开查看应用、授权、销量探针、事实入仓、版本和写动作总闸</small>
+      </summary>
+      <div class="inventory-disclosure-body">
+        <div class="system-boundary-grid">
+          <article><span>当前 / 上一版本</span><strong>${escapeHtml(`${current} / ${previous}`)}</strong><small>回滚版本持续保留</small></article>
+          <article><span>销量权限</span><strong>${escapeHtml(boundaries.salesPermission?.status === 'granted' ? '已授权' : '待确认')}</strong><small>${escapeHtml(`${nullableUnits(boundaries.salesPermission?.authorizedStores)} / ${nullableUnits(boundaries.salesPermission?.totalStores)} 家`)}</small></article>
+          <article><span>自动化模式</span><strong>${escapeHtml(boundaries.actionMode || 'unknown')}</strong><small>${boundaries.actionWriteEnabled ? '写动作需检查' : '所有执行入口关闭'}</small></article>
+          <article><span>Webhook 仓库</span><strong>${boundaries.platformWarehouseReady ? '已就绪' : '待确认'}</strong><small>运行心跳在平台动态页独立取证</small></article>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table readiness-table">
+            <thead><tr><th scope="col">阶段</th><th scope="col">状态</th><th scope="col">证据范围</th><th scope="col">说明</th></tr></thead>
+            <tbody>${readiness.map((row) => `
+              <tr>
+                <td class="entity-column"><strong>${escapeHtml(row.label)}</strong><span>${escapeHtml(row.key)}</span></td>
+                <td><span class="row-status ${readinessClass(row.status)}">${escapeHtml(row.status || 'unknown')}</span></td>
+                <td>${escapeHtml(isUnit(row.completed) && isUnit(row.total) ? `${row.completed} / ${row.total}` : '证据待接入')}</td>
+                <td>${escapeHtml(row.note || '暂无说明')}</td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+    </details>`;
 }
 
 function renderSystem() {
-  const supply = supplyDomain();
-  const platform = platformDomain();
-  const actionPool = actionPoolDomain();
-  const procurementState = domainConnectionState(
-    supply,
-    ['purchaseOrderAttention', 'purchaseOrderStatus'],
-    ['purchaseOrders'],
-  );
-  const fulfilmentState = domainConnectionState(
-    supply,
-    ['deliveryAttention', 'deliveryMilestones'],
-    ['deliveries'],
-  );
-  const inventoryState = domainConnectionState(
-    supply,
-    ['inventoryRisks', 'stockAdviceRisks', 'inventory', 'stockAdvice'],
-    ['inventory', 'stockAdvice'],
-  );
-  const procurementConnected = procurementState === 'available';
-  const fulfilmentConnected = fulfilmentState === 'available';
-  const inventoryConnected = inventoryState === 'available';
-  const webhookConnected = platformAvailable();
-  const candidateConnected = domainRows(actionPool, 'candidates').length > 0;
+  if (state.system.loading && !state.system.data) {
+    return `${sampleNotice()}${systemQueryState('loading')}`;
+  }
+  if (state.system.error && !state.system.data) {
+    return `${sampleNotice()}${systemQueryState('error')}`;
+  }
+  const queryData = state.system.data;
+  if (!queryData) return `${sampleNotice()}${systemQueryState('loading')}`;
   return `
     ${sampleNotice()}
-    ${pageIntro(
-      'SYSTEM HEALTH',
-      '系统健康',
-      '把数据集、权限、接口探针、事实入仓和云端运行态分开判断。',
-      `<span>API schema</span><strong>v${isUnit(state.data?.schemaVersion) ? state.data.schemaVersion : '—'}</strong><small>/api/dashboard · GET only</small>`,
-    )}
-    ${datasetOverview()}
-    <section class="table-section">
-      ${panelHeading('READINESS LEDGER', '五阶段接入台账', '数量未知时显示“证据待接入”，不补零')}
-      ${readinessTable()}
-    </section>
-    <section class="table-section">
-      ${panelHeading('SUPPLY COVERAGE', '供应链同步覆盖水位', '按店铺 × 域读取最新尝试；失败、缺失、时效和业务窗口分开展示')}
-      ${supplyCoverageTable()}
-    </section>
-    <section class="capability-section">
-      ${panelHeading('DATA CAPABILITIES', '数据与动作能力', '以当前页面实际消费的字段为准')}
-      <div class="capability-grid">
-        <article class="available"><span>销量数量</span><strong>可读取</strong><p>总量、店铺排行、SKU 排行；可选日趋势。</p></article>
-        <article class="partial"><span>商品身份</span><strong>部分可见</strong><p>SKU 销量清单可读，完整商品主数据待探针。</p></article>
-        <article class="${procurementConnected ? 'available' : 'pending'}"><span>采购单</span><strong>${procurementConnected ? '状态事实可读' : '未接入'}</strong><p>${procurementConnected ? '按店铺和平台状态显示真实采购单数。' : '没有事实行时不显示采购单数为 0。'}</p></article>
-        <article class="${fulfilmentConnected ? 'available' : 'pending'}"><span>交付与入仓</span><strong>${fulfilmentConnected ? '里程碑可读' : '未接入'}</strong><p>${fulfilmentConnected ? '交付单数、数量和覆盖率分开显示。' : '没有事实行时不推导履约率或异常数。'}</p></article>
-        <article class="${inventoryConnected ? 'available' : 'pending'}"><span>库存与供给</span><strong>${inventoryConnected ? '只读快照可见' : '未接入'}</strong><p>${inventoryConnected ? '库存、在途、缺货和备货建议保留未知值。' : '没有快照时不显示库存或建议为 0。'}</p></article>
-        <article class="${webhookConnected ? (platform.health?.ok === false ? 'locked' : platform.health?.ok === true ? 'available' : 'partial') : 'pending'}"><span>平台动态</span><strong>${webhookConnected ? (platform.health?.ok === false ? '已接入 · 需关注' : platform.health?.ok === true ? 'Receiver / Worker 在线' : '仓库可读 · Runtime 未知') : '未接入'}</strong><p>${webhookConnected ? '队列、订阅回读、进程心跳和事件时间线分开取证。' : '没有运行态时不显示事件数或队列数为 0。'}</p></article>
-        <article class="${candidateConnected ? 'partial' : 'pending'}"><span>运营候选池</span><strong>${candidateConnected ? '观察模式可用' : '未接入'}</strong><p>${candidateConnected ? '候选可筛选，所有执行入口仍禁用。' : '没有候选快照时不展示伪 0。'}</p></article>
-        <article class="pending"><span>财务事实</span><strong>未接入</strong><p>没有金额、订单、结算、成本或利润字段。</p></article>
-        <article class="${actionPool.writeEnabled === true ? 'locked' : 'available'}"><span>自动化写动作</span><strong>${actionPool.writeEnabled === true ? '配置异常' : '关闭'}</strong><p>${actionPool.writeEnabled === true ? '服务端写开关不符合首版安全要求。' : '所有已登录员工可读全店数据；任何写操作仍保持关闭。'}</p></article>
+    ${systemDecisionOverview(queryData)}
+    <section class="table-section system-issues-workspace">
+      ${panelHeading('ACTION REQUIRED', '系统待处理事项', `按影响程度排序 · 当前范围 ${nullableUnits(queryData.issues?.total)} 项`)}
+      <div class="system-workspace-actions">
+        <p>搜索框可按店铺、问题或错误码筛查；重新读取只获取脱敏快照，不执行 systemd、登录或同步任务。</p>
+        <button type="button" class="clear-button" data-system-retry="1">重新读取运行态</button>
       </div>
-    </section>`;
+      ${systemIssueTable(queryData)}
+    </section>
+    <section class="table-section system-profiles-workspace">
+      ${panelHeading('PROFILE SESSION', '店铺登录与续期', `当前筛选显示 ${nullableUnits(queryData.profiles?.matched)} / ${nullableUnits(queryData.profiles?.total)} 家`)}
+      ${systemProfileTable(queryData)}
+    </section>
+    <section class="table-section">
+      ${panelHeading('SERVICE RUNTIME', '核心服务与计划任务', 'systemd 脱敏回读 · 失败结果不会被 inactive 状态掩盖')}
+      ${systemServiceTable(queryData)}
+    </section>
+    <section class="table-section">
+      ${panelHeading('DATA FRESHNESS', '数据同步覆盖', '按当前负责人或店铺范围核算 6 个只读业务域')}
+      ${systemCoverageTable(queryData)}
+    </section>
+    ${systemBoundaryDisclosure(queryData)}
+    ${state.system.loading ? '<p class="query-refresh-note" role="status">正在重新读取系统运行态…</p>' : ''}`;
 }
 
 function renderRoute() {
@@ -9183,6 +9323,9 @@ async function loadDashboard(options = {}) {
   if (state.data && state.route === 'ops') {
     scheduleOpsLoad();
   }
+  if (state.data && state.route === 'system') {
+    scheduleSystemLoad();
+  }
 }
 
 function connectDashboardUpdates() {
@@ -9417,6 +9560,12 @@ function syncRouteFromLocation() {
     state.ops.requestSerial += 1;
     state.ops.loading = false;
   }
+  if (state.route === 'system') {
+    scheduleSystemLoad({ reset: routeChanged });
+  } else if (routeChanged) {
+    state.system.requestSerial += 1;
+    state.system.loading = false;
+  }
   if (routeChanged && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -9434,6 +9583,7 @@ elements.search.addEventListener('input', (event) => {
   scheduleFulfilmentLoad({ resetPage: true, delay: 220 });
   schedulePlatformLoad({ resetPage: true, delay: 220 });
   scheduleOpsLoad({ resetPage: true, delay: 220 });
+  scheduleSystemLoad({ reset: true, delay: 220 });
 });
 
 elements.scope.addEventListener('change', (event) => {
@@ -9450,6 +9600,7 @@ elements.scope.addEventListener('change', (event) => {
   scheduleFulfilmentLoad({ resetPage: true, delay: 120 });
   schedulePlatformLoad({ resetPage: true, delay: 120 });
   scheduleOpsLoad({ resetPage: true, delay: 120 });
+  scheduleSystemLoad({ reset: true, delay: 120 });
 });
 
 elements.rangeButtons.forEach((button) => {
@@ -9590,6 +9741,11 @@ elements.view.addEventListener('click', (event) => {
   const opsRetry = event.target.closest?.('[data-ops-retry]');
   if (opsRetry && elements.view.contains(opsRetry)) {
     void loadOps();
+    return;
+  }
+  const systemRetry = event.target.closest?.('[data-system-retry]');
+  if (systemRetry && elements.view.contains(systemRetry)) {
+    void loadSystem();
     return;
   }
   const fulfilmentPage = event.target.closest?.('[data-fulfilment-page]');
@@ -9928,6 +10084,8 @@ elements.clearFilters.addEventListener('click', () => {
   scheduleProductLoad({ resetPages: true });
   scheduleFulfilmentLoad({ resetPage: true });
   schedulePlatformLoad({ resetPage: true });
+  scheduleOpsLoad({ resetPage: true });
+  scheduleSystemLoad({ reset: true });
   elements.search.focus();
 });
 
@@ -10005,6 +10163,7 @@ window.addEventListener('beforeunload', () => {
   if (procurementLoadTimer !== null) window.clearTimeout(procurementLoadTimer);
   if (salesLoadTimer !== null) window.clearTimeout(salesLoadTimer);
   if (opsLoadTimer !== null) window.clearTimeout(opsLoadTimer);
+  if (systemLoadTimer !== null) window.clearTimeout(systemLoadTimer);
   dashboardEventSource?.close();
 });
 

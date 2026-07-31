@@ -175,11 +175,12 @@ git diff --check
 6. 为五个组件写入独立 `database.env`，LOGIN 与能力组必须一一对应；
 7. 安装 systemd 单元，执行 `systemd-analyze verify` 和 `systemctl daemon-reload`；
 8. 手工运行一次 Dashboard 物化，检查 staging 原子替换、文件所有权和 JSON 契约；
-9. 切换 `/opt/shein-fm/current`；
-10. 只创建 `portal.enabled` 与 `materializer.enabled` 门禁，启动 Portal 和物化 timer；
-11. 安装 Nginx 和 logrotate，执行 `nginx -t` 成功后只 reload；
-12. 从 loopback 和公网验证登录墙、Dashboard API、12 个路由和退出登录；
-13. 再按下节逐域开启数据服务。
+9. 运行一次 `shein-fm-system-health.service`，确认脱敏快照已经原子生成且不含凭据；
+10. 切换 `/opt/shein-fm/current`；
+11. 只创建 `portal.enabled` 与 `materializer.enabled` 门禁，启动 Portal、物化 timer 和运行态投影 timer；
+12. 安装 Nginx 和 logrotate，执行 `nginx -t` 成功后只 reload；
+13. 从 loopback 和公网验证登录墙、Dashboard API、`/api/system`、12 个路由和退出登录；
+14. 再按下节逐域开启数据服务。
 
 共享 HAProxy 同时承载 443 SSH，严禁 restart；只允许在保留现有 SSH 会话时执行 `haproxy -c` 后 reload。
 
@@ -224,6 +225,7 @@ systemctl status \
   shein-fm-db.service \
   shein-fm-portal.service \
   shein-fm-dashboard-materialize.timer \
+  shein-fm-system-health.timer \
   shein-fm-webhook-receiver.service \
   shein-fm-webhook-worker.service
 
@@ -236,6 +238,7 @@ docker exec shein-fm-db pg_isready -U sheinfm -d shein_fm
 验收要求：
 
 - 未登录 `/api/dashboard` 返回 `401`，登录后只读；
+- 未登录 `/api/system` 返回 `401`，登录后只返回脱敏运行态；
 - Portal 进程环境无数据库与平台凭据；
 - 首页显示真实今日/昨日/7日/30日、逐日趋势、店铺和标准商品排行；
 - 页面明确业务日期、24 店覆盖和具体质量原因；
@@ -298,6 +301,10 @@ Webhook receiver/worker 常运行在较旧的发布上，仅按“最新 5 个�
 | `shein-fm-backup-archive.timer` | 每日 03:10 | 保留 + COS 归档 |
 | `shein-fm-disk-guard.timer` | 每 15 分钟 | 只观测，`>=85%` 时 unit failed |
 | `shein-fm-profile-cache-prune.timer` | 每周日 04:40 | Profile 占用时 fail closed |
+| `shein-fm-system-health.timer` | 每 5 分钟 | root 读取固定白名单并原子发布脱敏运行态 |
+
+系统管理页的数据边界、Profile 双证据语义和生产验收见
+[docs/system-management.md](system-management.md)。
 
 历史维护**故意没有定时器**：每一步破坏性操作都要先出计划、再带 `--plan-hash` 执行。
 `VACUUM FULL` 只能通过显式 `--reclaim` 在维护窗口人工触发，任何定时器都不会调度它。

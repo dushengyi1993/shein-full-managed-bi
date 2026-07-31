@@ -35,6 +35,8 @@ import {
   OpsQueryError,
   queryOpsDashboard,
 } from './ops-query.mjs';
+import { loadSystemHealthData, SystemHealthDataError } from './system-health-data.mjs';
+import { querySystemDashboard, SystemQueryError } from './system-query.mjs';
 import { createDashboardUpdateBroker } from './dashboard-update-stream.mjs';
 import {
   createAuthService,
@@ -169,6 +171,7 @@ function staticFilePath(pathname, webRoot) {
 export function createRequestHandler(options = {}) {
   const dataFile = options.dataFile;
   const homeDataFile = options.homeDataFile;
+  const systemHealthFile = options.systemHealthFile;
   const webRoot = options.webRoot || DEFAULT_WEB_ROOT;
   const updateBroker = options.updateBroker || null;
   const runtimeEnvironment = options.runtimeEnvironment || options.auth?.runtimeEnvironment || 'development';
@@ -649,6 +652,43 @@ export function createRequestHandler(options = {}) {
           error: {
             code: 'OPS_DATA_UNAVAILABLE',
             message: '运营待办查询暂不可用',
+          },
+        }, method);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/system') {
+      try {
+        const [dashboard, systemHealth] = await Promise.all([
+          loadDashboardData(dataFile),
+          loadSystemHealthData(systemHealthFile),
+        ]);
+        const projected = projectDashboardForUser(dashboard, signedInUser);
+        sendJson(
+          response,
+          200,
+          querySystemDashboard(projected, systemHealth, url.searchParams),
+          method,
+          request,
+        );
+      } catch (error) {
+        if (error instanceof SystemQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        if (error instanceof SystemHealthDataError) {
+          sendJson(response, 503, {
+            error: { code: error.code, message: '系统运行态快照暂不可用' },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'SYSTEM_DATA_UNAVAILABLE',
+            message: '系统管理查询暂不可用',
           },
         }, method);
       }
