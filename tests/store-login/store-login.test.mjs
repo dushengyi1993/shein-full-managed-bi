@@ -44,15 +44,26 @@ test('the login server is constructible without opening a listener', () => {
   server.close();
 });
 
-test('store login routes never put the batch bearer into a query parameter', async () => {
+test('store login accepts a shareable query bearer and removes it immediately', async () => {
   const source = await readFile(
     new URL('../../scripts/serve_full_managed_store_login.mjs', import.meta.url),
     'utf8',
   );
-  assert.doesNotMatch(source, /searchParams\.get\(['"]token/);
+  assert.match(source, /query\.get\(['"]token/);
+  assert.match(source, /history\.replaceState\(null,''\,location\.pathname\)/);
   assert.match(source, /headers\.authorization/);
   assert.match(source, /--password-store=basic/);
   assert.match(source, /script-src 'self' 'unsafe-inline'/);
   assert.match(source, /img-src 'self' data: blob:/);
   assert.doesNotMatch(source, /document\.cookie|localStorage\.getItem|Network\.getAllCookies/);
+});
+
+test('nginx disables access logs for every store-login route that can carry a bearer', async () => {
+  const source = await readFile(
+    new URL('../../infra/nginx/shein-fm.conf', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /location = \/store-login \{\s*access_log off;/);
+  assert.match(source, /location \^~ \/store-login\/ \{\s*access_log off;/);
+  assert.match(source, /location \^~ \/api\/store-login\/ \{\s*access_log off;/);
 });

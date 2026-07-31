@@ -62,7 +62,7 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     expiresAt: batch.record.expiresAt,
-    url: `${args.publicOrigin}/store-login#token=${batch.token}`,
+    url: `${args.publicOrigin}/store-login?token=${encodeURIComponent(batch.token)}`,
   }, null, 2));
 }
 

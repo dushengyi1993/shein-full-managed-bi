@@ -28,7 +28,10 @@
 
 1. 以 `sheinfm` 可读写的方式创建 `/srv/shein-fm/secrets/store-login/batch.json`。
 2. 运行 `node scripts/create_full_managed_store_login_batch.mjs`，把输出的
-   `https://fm.dushengyi.cc/store-login#token=...` 交给全托同事。
+   `https://fm.dushengyi.cc/store-login?token=...` 交给全托同事。查询参数用于避免
+   企业微信、飞书等内置浏览器截断 `#` 后的口令；页面读取后会立即清除地址栏中的口令。
+   Nginx 对 `/store-login`、`/store-login/` 和 `/api/store-login/` 全部关闭访问日志，
+   页面同时启用 `Referrer-Policy: no-referrer`。
 3. 同事逐店打开云端 Chrome，登录并允许 Chrome 保存密码，然后点击
    “登录完成并验证”。同一时间只允许一个 Profile 打开。
 4. 服务只保存店铺、进度、进程号和令牌哈希，不读取或输出密码、Cookie、
