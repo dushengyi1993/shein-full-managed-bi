@@ -113,6 +113,48 @@ test('a multi-entity batch binds every store and callback state to its applicati
   assert.equal(claim.applicationStoreCode, 'CX');
 });
 
+test('the full roster remains visible while an unregistered entity is not actionable', async (context) => {
+  const { store } = await temporaryStore(context);
+  const batchToken = Buffer.alloc(32, 23).toString('base64url');
+  await store.createBatch({
+    batchId: 'application-readiness-batch',
+    label: 'All stores including pending applications',
+    tokenHash: sha256(batchToken),
+    storeCodes: ['DL5477', 'GJ8989'],
+    applicationStoreCodesByStore: {
+      DL5477: 'DL',
+      GJ8989: 'GJ',
+    },
+    availableApplicationStoreCodes: ['DL'],
+    createdAt: new Date('2026-07-26T00:00:00.000Z'),
+    expiresAt: new Date('2026-07-27T00:00:00.000Z'),
+  });
+  const batch = await store.getBatchByTokenHash(
+    sha256(batchToken),
+    new Date('2026-07-26T01:00:00.000Z'),
+  );
+  assert.deepEqual(
+    batch.stores.map(({ storeCode, applicationReady }) => ({ storeCode, applicationReady })),
+    [
+      { storeCode: 'DL5477', applicationReady: true },
+      { storeCode: 'GJ8989', applicationReady: false },
+    ],
+  );
+  await assert.rejects(
+    () => store.beginState({
+      tokenHash: sha256(batchToken),
+      storeCode: 'GJ8989',
+      stateHash: sha256(Buffer.alloc(32, 24).toString('base64url')),
+      createdAt: new Date('2026-07-26T01:00:00.000Z'),
+      expiresAt: new Date('2026-07-26T01:10:00.000Z'),
+    }),
+    (error) => (
+      error instanceof AuthorizationStoreError
+      && error.code === 'APPLICATION_NOT_READY'
+    ),
+  );
+});
+
 test('expires old states and rejects a completed state replay', async (context) => {
   const { file, store } = await temporaryStore(context);
   const batchToken = Buffer.alloc(32, 3).toString('base64url');

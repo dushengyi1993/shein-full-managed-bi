@@ -4,7 +4,7 @@
   "permission": {
     "status": "pending",
     "authorizedStores": 0,
-    "totalStores": 24
+    "totalStores": 25
   },
   "unitsSold": {
     "today": 496,
@@ -17,16 +17,16 @@
       "key": "applications",
       "label": "全托应用审核",
       "status": "complete",
-      "completed": 24,
-      "total": 24,
-      "note": "统一应用已审核，24 家全托店铺已纳入授权清单"
+      "completed": 25,
+      "total": 25,
+      "note": "主体应用已审核，25 家全托店铺已纳入授权清单"
     },
     {
       "key": "sales_permission",
       "label": "销量权限包",
       "status": "pending",
-      "completed": 24,
-      "total": 24,
+      "completed": 25,
+      "total": 25,
       "note": "已逐店提交，当前等待平台审批"
     },
     {
@@ -34,7 +34,7 @@
       "label": "店铺授权",
       "status": "not_started",
       "completed": 0,
-      "total": 24,
+      "total": 25,
       "note": "权限包通过后逐店完成授权"
     },
     {
@@ -42,7 +42,7 @@
       "label": "接口探针",
       "status": "not_started",
       "completed": 0,
-      "total": 24,
+      "total": 25,
       "note": "以 query-sku-sales 真实业务成功为准"
     },
     {
@@ -50,7 +50,7 @@
       "label": "事实入仓",
       "status": "not_started",
       "completed": 0,
-      "total": 24,
+      "total": 25,
       "note": "探针和字段对账通过后开始"
     }
   ],
@@ -208,6 +208,12 @@
       "name": "NM8831",
       "permissionStatus": "pending",
       "unitsSold": { "today": 0, "last7Days": 22, "last30Days": 120 }
+    },
+    {
+      "code": "NM7418",
+      "name": "NM7418",
+      "permissionStatus": "pending",
+      "unitsSold": { "today": 0, "last7Days": 0, "last30Days": 0 }
     },
     {
       "code": "DX2420",

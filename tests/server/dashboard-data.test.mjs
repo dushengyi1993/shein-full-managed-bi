@@ -772,7 +772,7 @@ test('missing permission and coverage counts remain unknown instead of becoming 
 test('mixed statistics date store count is bounded by the trusted store total', () => {
   const dashboard = normalizeDashboardData({
     datasetStatus: 'live',
-    permission: { status: 'granted', authorizedStores: 24, totalStores: 24 },
+    permission: { status: 'granted', authorizedStores: 25, totalStores: 25 },
     salesCoverage: {
       status: 'partial',
       totalStores: 999,
@@ -780,8 +780,8 @@ test('mixed statistics date store count is bounded by the trusted store total', 
     },
   });
 
-  assert.equal(dashboard.salesCoverage.totalStores, 24);
-  assert.equal(dashboard.salesCoverage.mixedStatisticsDateStores, 24);
+  assert.equal(dashboard.salesCoverage.totalStores, 25);
+  assert.equal(dashboard.salesCoverage.mixedStatisticsDateStores, 25);
 });
 
 test('product identity coverage uses the complete ranking and rejects malformed canonical rows', () => {

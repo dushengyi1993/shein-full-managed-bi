@@ -3567,7 +3567,7 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .system-profile-table {
-  min-width: 940px;
+  min-width: 1160px;
 }
 
 .system-service-table,
@@ -3586,6 +3586,56 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .system-profile-table tr.needs-attention {
   background: color-mix(in srgb, var(--danger-soft) 38%, var(--paper));
+}
+
+.system-login-maintenance-summary {
+  margin: 0 0 12px;
+  border-color: color-mix(in srgb, var(--success) 28%, var(--line));
+  background: color-mix(in srgb, var(--success-soft) 38%, var(--paper));
+}
+
+.system-login-maintenance-error {
+  color: var(--danger) !important;
+}
+
+.system-login-actions {
+  display: flex;
+  min-width: 250px;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.system-login-button {
+  min-height: 30px;
+  padding: 0 9px;
+  color: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 7px;
+  background: var(--ink);
+  font: inherit;
+  font-size: 0.61rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.system-login-button.secondary {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background: var(--paper);
+}
+
+.system-login-button.danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+  background: var(--paper);
+}
+
+.system-login-button:disabled {
+  color: var(--muted);
+  border-color: var(--line);
+  background: var(--paper-soft);
+  cursor: not-allowed;
+  opacity: 0.72;
 }
 
 .system-store-list {

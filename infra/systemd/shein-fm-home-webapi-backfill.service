@@ -7,7 +7,7 @@ After=network-online.target shein-fm-db.service shein-fm-db-migrate.service
 OnSuccess=shein-fm-dashboard-materialize.service
 RequiresMountsFor=/data /srv/shein-fm/runtime /srv/shein-fm/webapi/profiles
 ConditionPathExists=/srv/shein-fm/runtime/webapi-history.enabled
-ConditionPathExists=/srv/shein-fm/runtime/store-login/all-24-completed
+ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
 
 [Service]
 Type=oneshot
@@ -19,7 +19,7 @@ Environment=NODE_ENV=production
 EnvironmentFile=/srv/shein-fm/secrets/webapi-experiment/database.env
 RuntimeDirectory=shein-fm-webapi
 RuntimeDirectoryMode=0700
-ExecStart=/usr/bin/flock -n /run/shein-fm-webapi/home-history.lock /usr/bin/node scripts/sync_full_managed_home_history.mjs --stores=CX4412,XL2801,QY8886,DX0571,NM7397,LQ7173,TS8263,DL5477,FY4021,GJ8989,QH8028,JY8060,ZL3133,MZ2406,YJ8177,RH0099,WY9025,RH2848,CX2816,YJ4042,NM4977,NM8787,NM8831,DX2420 --from=2023-06-07 --to=2026-07-30 --execute
+ExecStart=/usr/bin/flock -n /run/shein-fm-webapi/home-history.lock /usr/bin/node scripts/sync_full_managed_home_history.mjs --stores=CX4412,XL2801,QY8886,DX0571,NM7397,LQ7173,TS8263,DL5477,FY4021,GJ8989,QH8028,JY8060,ZL3133,MZ2406,YJ8177,RH0099,WY9025,RH2848,CX2816,YJ4042,NM4977,NM8787,NM8831,NM7418,DX2420 --from=2023-06-07 --to=2026-07-30 --execute
 TimeoutStartSec=48h
 NoNewPrivileges=true
 PrivateTmp=true

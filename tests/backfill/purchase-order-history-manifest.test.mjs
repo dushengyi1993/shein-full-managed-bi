@@ -9,13 +9,13 @@ import {
   purchaseOrderHistoryPeriods,
 } from '../../scripts/backfill_full_managed_purchase_order_history.mjs';
 
-test('purchase-order history manifest covers all 24 stores in bounded resumable plans', () => {
+test('purchase-order history manifest covers all 25 stores in bounded resumable plans', () => {
   const manifest = buildPurchaseOrderHistoryManifest();
   assert.equal(manifest.from, PURCHASE_ORDER_HISTORY_FROM);
   assert.equal(manifest.to, PURCHASE_ORDER_HISTORY_TO);
-  assert.equal(manifest.storeCodes.length, 24);
-  assert.equal(manifest.planCount, 18);
-  assert.equal(manifest.windowCount, 22_584);
+  assert.equal(manifest.storeCodes.length, 25);
+  assert.equal(manifest.planCount, 21);
+  assert.equal(manifest.windowCount, 23_525);
   assert.match(manifest.manifestHash, /^[0-9a-f]{64}$/);
   assert.ok(manifest.plans.every((plan) => plan.storeCodes.length <= 4));
   assert.ok(manifest.plans.every((plan) => plan.summary.plannedWindowCount <= 2_000));

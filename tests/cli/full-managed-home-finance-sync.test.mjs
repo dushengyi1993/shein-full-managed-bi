@@ -11,7 +11,7 @@ const BASE = [
   '--config=/tmp/openapi.json',
 ];
 
-test('finance history accepts the exact 24-store roster and resumes with bounded concurrency', () => {
+test('finance history accepts the exact 25-store roster and resumes with bounded concurrency', () => {
   const args = parseArgs([...BASE, '--concurrency=4']);
   assert.deepEqual(args.stores, [...FULL_MANAGED_STORE_CODES]);
   assert.equal(args.resume, true);

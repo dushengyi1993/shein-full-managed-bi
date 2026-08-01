@@ -80,7 +80,7 @@ test('Profile projections expose only status evidence and discard private fields
   assert.match(serialized, /DL5477/);
   assert.match(serialized, /WEBAPI_SESSION_AUTH_EXPIRED/);
   assert.doesNotMatch(serialized, /Cookie=secret|do-not-project|password|cookie/i);
-  assert.equal(login.rows.length, 24);
+  assert.equal(login.rows.length, 25);
 });
 
 test('runtime snapshot contains only allow-listed releases, units, disks and Profile evidence', () => {

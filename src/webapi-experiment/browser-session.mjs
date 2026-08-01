@@ -163,7 +163,7 @@ function chromeArguments({ profileDirectory, debuggingPort }) {
  * Open one experiment session for exactly one canonical store.
  *
  * @param {object} input
- * @param {string} input.storeCode canonical store code from the 24-store roster
+ * @param {string} input.storeCode canonical store code from the 25-store roster
  * @param {object} input.deps injected runtime
  * @returns {Promise<{storeCode: string, sessionState: string, evaluate: Function, close: Function}>}
  */

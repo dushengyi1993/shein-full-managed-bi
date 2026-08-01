@@ -11,7 +11,7 @@ const STORE_CODES = [
   'CX4412', 'XL2801', 'QY8886', 'DX0571', 'NM7397', 'LQ7173',
   'TS8263', 'DL5477', 'FY4021', 'GJ8989', 'QH8028', 'JY8060',
   'ZL3133', 'MZ2406', 'YJ8177', 'RH0099', 'WY9025', 'RH2848',
-  'CX2816', 'YJ4042', 'NM4977', 'NM8787', 'NM8831', 'DX2420',
+  'CX2816', 'YJ4042', 'NM4977', 'NM8787', 'NM8831', 'NM7418', 'DX2420',
 ];
 
 function permissions(overrides = {}) {
@@ -85,7 +85,7 @@ test('projects latest snapshots into live dashboard totals and rankings without 
   assert.deepEqual(projected.permission, {
     status: 'partial',
     authorizedStores: 2,
-    totalStores: 24,
+    totalStores: 25,
   });
   assert.deepEqual(projected.unitsSold, {
     today: 19,
@@ -153,7 +153,7 @@ test('an entirely missing sales dataset remains null and has no invented update 
     last7Days: null,
     last30Days: null,
   });
-  assert.equal(projected.storeRanking.length, 24);
+  assert.equal(projected.storeRanking.length, 25);
   assert.ok(projected.storeRanking.every(({ unitsSold }) => Object.values(unitsSold).every((value) => value === null)));
   assert.deepEqual(projected.skuRanking, []);
 });

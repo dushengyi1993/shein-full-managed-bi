@@ -37,6 +37,10 @@ import {
 } from './ops-query.mjs';
 import { loadSystemHealthData, SystemHealthDataError } from './system-health-data.mjs';
 import { querySystemDashboard, SystemQueryError } from './system-query.mjs';
+import {
+  createStoreLoginProxy,
+  StoreLoginProxyError,
+} from './store-login-proxy.mjs';
 import { createDashboardUpdateBroker } from './dashboard-update-stream.mjs';
 import {
   createAuthService,
@@ -124,6 +128,28 @@ function requestWantsJson(request) {
   );
 }
 
+async function readSmallJson(request, maximumBytes = 8_192) {
+  let body = '';
+  for await (const chunk of request) {
+    body += chunk;
+    if (Buffer.byteLength(body, 'utf8') > maximumBytes) {
+      const error = new Error('请求内容过大');
+      error.code = 'BODY_TOO_LARGE';
+      throw error;
+    }
+  }
+  if (!body) return {};
+  try {
+    const parsed = JSON.parse(body);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+    return parsed;
+  } catch {
+    const error = new Error('请求内容格式无效');
+    error.code = 'INVALID_JSON';
+    throw error;
+  }
+}
+
 function rawPathHasTraversal(requestUrl = '/') {
   const rawPath = requestUrl.split(/[?#]/, 1)[0];
   let decoded = rawPath;
@@ -180,6 +206,11 @@ export function createRequestHandler(options = {}) {
     host: options.host || options.auth?.host,
     runtimeEnvironment,
   });
+  const storeLoginProxy = options.storeLoginProxy || (
+    options.storeLogin?.token
+      ? createStoreLoginProxy(options.storeLogin)
+      : null
+  );
   if (String(runtimeEnvironment).toLowerCase() === 'production' && !dataFile) {
     throw new TypeError('FULL_BI_DATA_FILE is required in production.');
   }
@@ -390,6 +421,56 @@ export function createRequestHandler(options = {}) {
           storeCodes: [],
         },
       }, method);
+      return;
+    }
+
+    const storeLoginRoute = /^\/api\/system\/store-login\/(status|start|finish|close)$/.exec(
+      url.pathname,
+    );
+    if (storeLoginRoute) {
+      if (signedInUser?.role !== 'admin') {
+        sendJson(response, 403, {
+          error: { code: 'ADMIN_REQUIRED', message: '仅系统管理员可维护店铺登录态' },
+        }, method);
+        return;
+      }
+      if (!storeLoginProxy) {
+        sendJson(response, 503, {
+          error: { code: 'STORE_LOGIN_UNAVAILABLE', message: '登录维护中心暂不可用' },
+        }, method);
+        return;
+      }
+      const action = storeLoginRoute[1];
+      const expectedMethod = action === 'status' ? 'GET' : 'POST';
+      if (method !== expectedMethod) {
+        response.setHeader('Allow', expectedMethod);
+        sendJson(response, 405, {
+          error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' },
+        }, method);
+        return;
+      }
+      try {
+        const body = method === 'POST' ? await readSmallJson(request) : {};
+        const result = action === 'status'
+          ? await storeLoginProxy.status()
+          : action === 'start'
+            ? await storeLoginProxy.start(body.storeCode)
+            : action === 'finish'
+              ? await storeLoginProxy.finish(body.storeCode)
+              : await storeLoginProxy.close();
+        sendJson(response, 200, result, method);
+      } catch (error) {
+        if (error instanceof StoreLoginProxyError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        const code = error?.code === 'BODY_TOO_LARGE' ? 'BODY_TOO_LARGE' : 'INVALID_REQUEST';
+        sendJson(response, code === 'BODY_TOO_LARGE' ? 413 : 400, {
+          error: { code, message: error?.message || '登录维护请求无效' },
+        }, method);
+      }
       return;
     }
 

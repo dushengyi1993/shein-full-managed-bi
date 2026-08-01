@@ -297,7 +297,7 @@ test('a latest quality-blocked run cannot leak an older accepted watermark into 
 
 test('mixed-date quality keeps permission granted while excluding the stale watermark from home totals', () => {
   const currentStoreCodes = Array.from(
-    { length: 20 },
+    { length: 21 },
     (_, index) => `CURRENT-${String(index + 1).padStart(2, '0')}`,
   );
   const rolloverStoreCodes = Array.from(
@@ -350,14 +350,14 @@ test('mixed-date quality keeps permission granted while excluding the stale wate
     }),
   });
 
-  assert.equal(dashboard.permission.authorizedStores, 24);
-  assert.equal(dashboard.permission.totalStores, 24);
+  assert.equal(dashboard.permission.authorizedStores, 25);
+  assert.equal(dashboard.permission.totalStores, 25);
   assert.equal(dashboard.businessDate, '2026-07-26');
   assert.deepEqual(dashboard.unitsSold, {
-    today: 20,
-    yesterday: 40,
-    last7Days: 140,
-    last30Days: 600,
+    today: 21,
+    yesterday: 42,
+    last7Days: 147,
+    last30Days: 630,
   });
   assert.equal(dashboard.salesCoverage.status, 'partial');
   assert.equal(dashboard.salesCoverage.mixedStatisticsDateStores, 4);
@@ -390,7 +390,7 @@ test('mixed-date quality keeps permission granted while excluding the stale wate
       probe: readiness.get('sales_probe').completed,
       facts: readiness.get('fact_load').completed,
     },
-    { permission: 24, probe: 24, facts: 20 },
+    { permission: 25, probe: 25, facts: 21 },
   );
   assert.match(readiness.get('fact_load').note, /混合统计日期/);
 });
@@ -452,9 +452,9 @@ test('dated rows remain visible as partial coverage when a small unanchored non-
   );
 });
 
-test('one partial store keeps the 24-store home globally partial and exposes quarantine evidence', () => {
+test('one partial store keeps the 25-store home globally partial and exposes quarantine evidence', () => {
   const healthyCodes = Array.from(
-    { length: 23 },
+    { length: 24 },
     (_, index) => `S${String(index + 1).padStart(2, '0')}`,
   );
   const storeCodes = [...healthyCodes, 'NM7397'];
@@ -507,23 +507,23 @@ test('one partial store keeps the 24-store home globally partial and exposes qua
 
   assert.equal(dashboard.datasetStatus, 'live');
   assert.equal(dashboard.salesCoverage.status, 'partial');
-  assert.equal(dashboard.salesCoverage.coveredStores, 24);
-  assert.equal(dashboard.salesCoverage.totalStores, 24);
+  assert.equal(dashboard.salesCoverage.coveredStores, 25);
+  assert.equal(dashboard.salesCoverage.totalStores, 25);
   assert.equal(dashboard.salesCoverage.partialStores, 1);
   assert.equal(dashboard.salesCoverage.quarantinedRows, 2);
   assert.match(dashboard.salesCoverage.reason, /2 个非零SKU/);
   assert.equal(dashboard.quality.status, 'partial');
   assert.match(dashboard.quality.impact, /当前数值不是完整总量/);
   assert.deepEqual(dashboard.unitsSold, {
-    today: 26,
-    yesterday: 27,
-    last7Days: 175,
-    last30Days: 750,
+    today: 27,
+    yesterday: 28,
+    last7Days: 182,
+    last30Days: 780,
   });
   const nm = dashboard.storeRanking.find(({ code }) => code === 'NM7397');
   assert.equal(nm.qualityStatus, 'partial');
   assert.match(nm.qualityReason, /NM-SKU-0547、NM-SKU-0548/);
-  assert.equal(dashboard.productRanking.length, 24);
+  assert.equal(dashboard.productRanking.length, 25);
 });
 
 test('legal zero never turns blocked or missing stores into a global zero', () => {

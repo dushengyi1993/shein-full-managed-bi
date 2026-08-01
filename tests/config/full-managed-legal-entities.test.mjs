@@ -9,7 +9,7 @@ const manifest = JSON.parse(await readFile(
   'utf8',
 ));
 
-test('24 full-managed stores are assigned exactly once to 17 legal entities', () => {
+test('25 full-managed stores are assigned exactly once to 17 legal entities', () => {
   assert.equal(manifest.schemaVersion, 1);
   assert.equal(manifest.entities.length, 17);
 
@@ -17,8 +17,8 @@ test('24 full-managed stores are assigned exactly once to 17 legal entities', ()
   const stores = manifest.entities.flatMap((entity) => entity.stores);
 
   assert.equal(new Set(entityKeys).size, 17);
-  assert.equal(stores.length, 24);
-  assert.equal(new Set(stores).size, 24);
+  assert.equal(stores.length, 25);
+  assert.equal(new Set(stores).size, 25);
   assert.deepEqual(
     [...stores].sort(),
     [...FULL_MANAGED_STORE_CODES].sort(),
@@ -36,7 +36,7 @@ test('same-company stores share one Open Platform Profile', () => {
 
   assert.deepEqual(
     manifest.entities.find((entity) => entity.entityKey === 'NM').stores,
-    ['NM7397', 'NM4977', 'NM8787', 'NM8831'],
+    ['NM7397', 'NM4977', 'NM8787', 'NM8831', 'NM7418'],
   );
   assert.deepEqual(
     manifest.entities.find((entity) => entity.entityKey === 'RH').stores,

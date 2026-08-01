@@ -17,9 +17,10 @@ function parseArgs(argv) {
     origin: process.env.FULL_AUTH_PUBLIC_ORIGIN || 'https://fm.dushengyi.cc',
     storesFile: path.join(projectRoot, 'config', 'stores.example.json'),
     entitiesFile: path.join(projectRoot, 'config', 'full-managed-legal-entities.json'),
+    applicationFile: process.env.FULL_AUTH_APPLICATION_FILE || '',
     includeEntities: '',
     validHours: 24,
-    label: '24 家全托店铺授权',
+    label: '25 家全托店铺授权',
   };
   const names = new Set([
     '--state-file',
@@ -27,6 +28,7 @@ function parseArgs(argv) {
     '--origin',
     '--stores-file',
     '--entities-file',
+    '--application-file',
     '--include-entities',
     '--valid-hours',
     '--label',
@@ -41,6 +43,10 @@ function parseArgs(argv) {
   args.stateFile = path.resolve(args.stateFile);
   args.output = path.resolve(args.output);
   args.storesFile = path.resolve(args.storesFile);
+  args.entitiesFile = path.resolve(args.entitiesFile);
+  args.applicationFile = args.applicationFile
+    ? path.resolve(args.applicationFile)
+    : '';
   args.validHours = Number(args.validHours);
   if (!Number.isSafeInteger(args.validHours) || args.validHours < 1 || args.validHours > 168) {
     throw new RangeError('--valid-hours must be an integer between 1 and 168.');
@@ -51,6 +57,28 @@ function parseArgs(argv) {
   }
   args.origin = origin;
   return args;
+}
+
+async function loadAvailableApplicationOwners(file) {
+  if (!file) return null;
+  const config = JSON.parse(await readFile(file, 'utf8'));
+  if (
+    config?.schemaVersion !== 1
+    || config?.cooperationMode !== 'FULL_MANAGED'
+    || !Array.isArray(config.applications)
+  ) {
+    throw new Error('Application credential file is incompatible.');
+  }
+  const owners = config.applications.map((application) => (
+    String(application?.storeCode || '').trim().toUpperCase()
+  ));
+  if (
+    owners.some((owner) => !/^[A-Z0-9_-]{1,24}$/.test(owner))
+    || new Set(owners).size !== owners.length
+  ) {
+    throw new Error('Application credential file contains invalid owners.');
+  }
+  return owners;
 }
 
 async function loadStoreCodes(file) {
@@ -138,6 +166,9 @@ async function main() {
   const storeCodes = availableStoreCodes.filter(
     (storeCode) => applicationStoreCodesByStore[storeCode],
   );
+  const availableApplicationStoreCodes = await loadAvailableApplicationOwners(
+    args.applicationFile,
+  );
   const createdAt = new Date();
   const expiresAt = new Date(createdAt.getTime() + args.validHours * 60 * 60 * 1000);
   const token = crypto.randomBytes(32).toString('base64url');
@@ -149,6 +180,7 @@ async function main() {
     tokenHash: sha256(token),
     storeCodes,
     applicationStoreCodesByStore,
+    availableApplicationStoreCodes,
     createdAt,
     expiresAt,
   });
@@ -161,6 +193,11 @@ async function main() {
     expiresAt: expiresAt.toISOString(),
     handoffUrl: `${args.origin}/authorize#${token}`,
     storeCodes,
+    readyStoreCount: availableApplicationStoreCodes === null
+      ? storeCodes.length
+      : storeCodes.filter((storeCode) => (
+        availableApplicationStoreCodes.includes(applicationStoreCodesByStore[storeCode])
+      )).length,
     instructions: [
       'Only send handoffUrl to the designated full-managed operator.',
       'Do not send passwords, cookies, callback URLs, screenshots containing tokens, or this file.',
@@ -171,6 +208,11 @@ async function main() {
     ok: true,
     batchId,
     storeCount: storeCodes.length,
+    readyStoreCount: availableApplicationStoreCodes === null
+      ? storeCodes.length
+      : storeCodes.filter((storeCode) => (
+        availableApplicationStoreCodes.includes(applicationStoreCodesByStore[storeCode])
+      )).length,
     expiresAt: expiresAt.toISOString(),
     stateFile: args.stateFile,
     handoffFile: args.output,

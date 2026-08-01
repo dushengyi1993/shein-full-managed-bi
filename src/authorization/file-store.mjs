@@ -76,6 +76,8 @@ function validateStateFile(value) {
         !STORE_CODES.test(String(store.storeCode || '')) ||
         (store.applicationStoreCode != null
           && !STORE_CODES.test(String(store.applicationStoreCode || ''))) ||
+        (store.applicationReady !== undefined
+          && typeof store.applicationReady !== 'boolean') ||
         !STORE_STATUSES.has(store.status) ||
         !Number.isSafeInteger(store.attemptCount) ||
         store.attemptCount < 0
@@ -116,6 +118,7 @@ function publicBatch(batch, now) {
   const stores = batch.stores.map((store) => ({
     storeCode: store.storeCode,
     applicationStoreCode: store.applicationStoreCode || null,
+    applicationReady: store.applicationReady !== false,
     status: isExpired && store.status === 'AUTHORIZING' ? 'ERROR' : store.status,
     attemptCount: store.attemptCount,
     authorizedAt: store.authorizedAt || null,
@@ -286,6 +289,7 @@ export class FileAuthorizationStore {
     tokenHash,
     storeCodes,
     applicationStoreCodesByStore = null,
+    availableApplicationStoreCodes = null,
     createdAt,
     expiresAt,
   }) {
@@ -313,6 +317,20 @@ export class FileAuthorizationStore {
     ) {
       throw new TypeError('application store routing must cover the batch exactly');
     }
+    const availableApplications = availableApplicationStoreCodes == null
+      ? null
+      : new Set(
+        availableApplicationStoreCodes.map((value) => String(value).toUpperCase()),
+      );
+    if (
+      availableApplications
+      && (
+        availableApplications.size !== availableApplicationStoreCodes.length
+        || [...availableApplications].some((owner) => !STORE_CODES.test(owner))
+      )
+    ) {
+      throw new TypeError('available application owners must be unique valid codes');
+    }
     const now = new Date(createdAt);
     const expiry = new Date(expiresAt);
     if (!Number.isFinite(now.getTime()) || !Number.isFinite(expiry.getTime()) || expiry <= now) {
@@ -333,6 +351,8 @@ export class FileAuthorizationStore {
         stores: normalizedCodes.map((storeCode) => ({
           storeCode,
           applicationStoreCode: routes?.[storeCode] || null,
+          applicationReady: availableApplications === null
+            || availableApplications.has(routes?.[storeCode] || ''),
           status: 'NOT_STARTED',
           attemptCount: 0,
           authorizedAt: null,
@@ -395,6 +415,9 @@ export class FileAuthorizationStore {
       }
       const store = findStore(batch, normalizedStoreCode);
       if (!store) fail('STORE_NOT_IN_BATCH', 'store is not part of this batch');
+      if (store.applicationReady === false) {
+        fail('APPLICATION_NOT_READY', 'the legal-entity application is not ready');
+      }
       if (['REVIEW_REQUIRED', 'APPROVED'].includes(store.status)) {
         fail('STORE_ALREADY_RECEIVED', 'store authorization has already been received');
       }

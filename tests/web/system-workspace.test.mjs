@@ -64,6 +64,7 @@ test('Profile table separates onboarding registration from last renewal proof', 
   assert.match(reason, /WEBAPI_SESSION_AUTH_EXPIRED/);
   assert.match(reason, /最近一次续期验真通过/);
   assert.match(table, /systemSessionReason\(row\)/);
+  assert.match(table, /systemLoginMaintenanceAction\(row\)/);
   assert.doesNotMatch(table, /row\.(cookie|password|token|authorization)/i);
 });
 
@@ -95,7 +96,8 @@ test('system runtime UI remains dense, responsive and colour is not the only sta
   const styles = await read('src/web/styles.css');
 
   assert.match(styles, /\.system-issue-table\s*\{[^}]*min-width:\s*980px/s);
-  assert.match(styles, /\.system-profile-table\s*\{[^}]*min-width:\s*940px/s);
+  assert.match(styles, /\.system-profile-table\s*\{[^}]*min-width:\s*1160px/s);
+  assert.match(styles, /\.system-login-button\s*\{[^}]*cursor:\s*pointer/s);
   assert.match(styles, /\.system-store-list span,[\s\S]*border:/);
   assert.match(styles, /\.system-decision-text\.attention/);
   assert.match(styles, /\.system-decision-text\.healthy/);

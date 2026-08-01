@@ -21,7 +21,7 @@ import {
 
 const CONFIRMATION = 'SHEIN_FULL_WAREHOUSE_STORE_INVENTORY_APPLY';
 const STORE_CODES = Object.freeze(
-  Array.from({ length: 24 }, (_, index) => `T${String(index + 1).padStart(4, '0')}`),
+  Array.from({ length: 25 }, (_, index) => `T${String(index + 1).padStart(4, '0')}`),
 );
 
 function fakeDatabase(overrides = {}) {
@@ -47,8 +47,8 @@ function fakeDatabase(overrides = {}) {
       ...overrides.baseline,
     },
     postcondition: {
-      active_count: '24',
-      expected_active_count: '24',
+      active_count: '25',
+      expected_active_count: '25',
       unexpected_active_count: '0',
       ...overrides.postcondition,
     },
@@ -143,13 +143,13 @@ test('dry-run executes the complete migration under an advisory transaction and 
   assert.deepEqual(result, {
     ok: true,
     mode: 'dry-run',
-    expectedStoreCount: 24,
+    expectedStoreCount: 25,
     previousActiveStoreCount: 18,
-    insertedStoreCount: 24,
+    insertedStoreCount: 25,
     reactivatedStoreCount: 0,
     deactivatedLegacyStoreCount: 18,
     preservedPendingProbeCount: 684,
-    activeStoreCount: 24,
+    activeStoreCount: 25,
     planHash: planHashFor(database),
   });
   const queries = sqlCalls(database);
@@ -211,7 +211,7 @@ test('confirmed apply commits and reports inserted, reactivated and deactivated 
   });
 
   assert.equal(result.mode, 'applied');
-  assert.equal(result.insertedStoreCount, 16);
+  assert.equal(result.insertedStoreCount, 17);
   assert.equal(result.reactivatedStoreCount, 2);
   assert.equal(result.deactivatedLegacyStoreCount, 14);
   assert.equal(sqlCalls(database).at(-1), 'COMMIT');
@@ -305,8 +305,8 @@ test('a concurrent count change or inexact active postcondition rolls back', asy
 
   const inexact = fakeDatabase({
     postcondition: {
-      active_count: '25',
-      expected_active_count: '24',
+      active_count: '26',
+      expected_active_count: '25',
       unexpected_active_count: '1',
     },
   });
@@ -342,7 +342,7 @@ test('SQL contract writes only dim.store and never deletes warehouse history', a
   assert.match(sql, /NOT \(store_code = ANY\(\$1::text\[\]\)\)/);
 });
 
-test('CLI validates the 24-store file and emits counts without identities or DATABASE_URL', async () => {
+test('CLI validates the 25-store file and emits counts without identities or DATABASE_URL', async () => {
   const files = await inventoryFixture();
   const database = fakeDatabase();
   const stdout = capture();
@@ -370,7 +370,7 @@ test('CLI validates the 24-store file and emits counts without identities or DAT
     assert.equal(exitCode, 0);
     assert.equal(stderr.value, '');
     assert.equal(JSON.parse(stdout.value).mode, 'applied');
-    assert.equal(JSON.parse(stdout.value).expectedStoreCount, 24);
+    assert.equal(JSON.parse(stdout.value).expectedStoreCount, 25);
     for (const secret of [
       databaseUrl,
       'private-pass',
@@ -389,7 +389,7 @@ test('CLI validates the 24-store file and emits counts without identities or DAT
 
 test('CLI rejects an invalid confirmation or non-unique inventory without connecting', async () => {
   const duplicateCodes = [...STORE_CODES];
-  duplicateCodes[23] = duplicateCodes[0];
+  duplicateCodes[24] = duplicateCodes[0];
   const files = await inventoryFixture(duplicateCodes);
   try {
     for (const argv of [

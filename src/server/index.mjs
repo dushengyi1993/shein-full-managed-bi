@@ -1,4 +1,6 @@
 import { createDashboardServer } from './app.mjs';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 const host = process.env.FULL_BI_HOST || '127.0.0.1';
 const parsedPort = Number.parseInt(process.env.FULL_BI_PORT || '3100', 10);
@@ -26,10 +28,32 @@ function optionalBoolean(name) {
   throw new TypeError(`${name} must be true/false or 1/0.`);
 }
 
+function storeLoginOptions() {
+  const baseUrl = String(process.env.FULL_BI_STORE_LOGIN_INTERNAL_URL || '').trim();
+  const explicitFile = String(
+    process.env.FULL_BI_STORE_LOGIN_INTERNAL_TOKEN_FILE || '',
+  ).trim();
+  const credentialDirectory = String(process.env.CREDENTIALS_DIRECTORY || '').trim();
+  const tokenFile = explicitFile || (
+    credentialDirectory
+      ? path.join(credentialDirectory, 'store_login_internal_token')
+      : ''
+  );
+  if (!baseUrl && !tokenFile) return undefined;
+  if (!baseUrl || !tokenFile) {
+    throw new TypeError('Store-login internal URL and credential must be configured together.');
+  }
+  return {
+    baseUrl,
+    token: readFileSync(tokenFile, 'utf8').replace(/[\r\n]+$/, ''),
+  };
+}
+
 const server = createDashboardServer({
   dataFile: process.env.FULL_BI_DATA_FILE,
   homeDataFile: process.env.FULL_BI_HOME_DATA_FILE,
   systemHealthFile: process.env.FULL_BI_SYSTEM_HEALTH_FILE,
+  storeLogin: storeLoginOptions(),
   host,
   runtimeEnvironment,
   auth: {

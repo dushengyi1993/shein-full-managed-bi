@@ -23,6 +23,12 @@ const BATCH_FILE = process.env.FULL_FM_STORE_LOGIN_BATCH_FILE
   || '/srv/shein-fm/secrets/store-login/batch.json';
 const LOG_DIR = process.env.FULL_FM_STORE_LOGIN_LOG_DIR
   || '/srv/shein-fm/runtime/store-login/logs';
+const INTERNAL_TOKEN_FILE = process.env.FULL_FM_STORE_LOGIN_INTERNAL_TOKEN_FILE
+  || (
+    process.env.CREDENTIALS_DIRECTORY
+      ? path.join(process.env.CREDENTIALS_DIRECTORY, 'store_login_internal_token')
+      : ''
+  );
 const TARGET_URL = 'https://sso.geiwohuo.com/#/gsp/home';
 const NOVNC_ROOTS = ['/usr/share/novnc', '/usr/share/novnc-pkg'];
 const RUNTIME = Object.freeze({
@@ -32,6 +38,18 @@ const RUNTIME = Object.freeze({
   debuggingPort: 39_700,
 });
 const SESSION_MINUTES = 60;
+const INTERNAL_TOKEN = (() => {
+  if (!INTERNAL_TOKEN_FILE) return '';
+  const value = fssync.readFileSync(INTERNAL_TOKEN_FILE, 'utf8').replace(/[\r\n]+$/, '');
+  if (
+    Buffer.byteLength(value, 'utf8') < 32
+    || Buffer.byteLength(value, 'utf8') > 512
+    || /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new Error('STORE_LOGIN_INTERNAL_TOKEN_INVALID');
+  }
+  return value;
+})();
 
 function sha256(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex');
@@ -295,6 +313,15 @@ async function batchAuthorized(req) {
   return timingSafeEqualHex(sha256(token), batch.tokenHash);
 }
 
+function internalAuthorized(req) {
+  if (!INTERNAL_TOKEN) return false;
+  const remoteAddress = String(req.socket?.remoteAddress || '');
+  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddress)) return false;
+  const supplied = String(req.headers['x-fm-internal-token'] || '');
+  if (!supplied) return false;
+  return timingSafeEqualHex(sha256(supplied), sha256(INTERNAL_TOKEN));
+}
+
 function send(res, status, body, headers = {}) {
   res.writeHead(status, {
     'Cache-Control': 'no-store',
@@ -349,7 +376,7 @@ function loginPage() {
   return `\uFEFF<!doctype html><html lang="zh-CN"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>&#x5168;&#x6258;&#x5e97;&#x94fa;&#x4e91;&#x7aef;&#x767b;&#x5f55;</title><style>
   :root{--bg:#f6f5f2;--card:#fff;--text:#171717;--muted:#737373;--line:#e7e5e4;--green:#176b4d;--black:#171717;--red:#b42318}
   *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}header{padding:28px 32px;border-bottom:1px solid var(--line);background:#fff}h1{margin:0;font-size:25px}.sub{color:var(--muted);margin-top:6px}.wrap{max-width:1180px;margin:auto;padding:28px}.summary{display:flex;gap:14px;margin-bottom:18px}.pill{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 16px}.pill b{font-size:20px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.store{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}.row{display:flex;justify-content:space-between;gap:12px;align-items:center}.code{font-size:18px;font-weight:760}.status{font-size:12px;color:var(--muted)}button{border:0;border-radius:10px;padding:9px 13px;background:var(--black);color:#fff;font-weight:700;cursor:pointer}button[disabled]{opacity:.35;cursor:not-allowed}.done{color:var(--green)}.bad{color:var(--red)}#message{position:sticky;top:10px;z-index:3;background:#171717;color:#fff;border-radius:13px;padding:12px 16px;margin-bottom:16px;display:none}@media(max-width:800px){.grid{grid-template-columns:1fr}.wrap{padding:18px}}
-  </style></head><body><header><h1>&#x5168;&#x6258; 24 &#x5e97;&#x4e91;&#x7aef;&#x767b;&#x5f55;</h1><div class="sub">&#x9010;&#x5e97;&#x6253;&#x5f00;&#x4e91;&#x7aef; Chrome&#xff0c;&#x767b;&#x5f55;&#x5e76;&#x5141;&#x8bb8;&#x4fdd;&#x5b58;&#x5bc6;&#x7801;&#x3002;&#x5b8c;&#x6210;&#x4e00;&#x5bb6;&#x540e;&#x5173;&#x95ed;&#x7a97;&#x53e3;&#xff0c;&#x518d;&#x5904;&#x7406;&#x4e0b;&#x4e00;&#x5bb6;&#x3002;</div></header><main class="wrap"><div id="message"></div><div id="summary" class="summary"></div><div id="grid" class="grid"></div></main><script>
+  </style></head><body><header><h1>&#x5168;&#x6258; ${FULL_MANAGED_STORE_CODES.length} &#x5e97;&#x4e91;&#x7aef;&#x767b;&#x5f55;</h1><div class="sub">&#x9010;&#x5e97;&#x6253;&#x5f00;&#x4e91;&#x7aef; Chrome&#xff0c;&#x767b;&#x5f55;&#x5e76;&#x5141;&#x8bb8;&#x4fdd;&#x5b58;&#x5bc6;&#x7801;&#x3002;&#x5b8c;&#x6210;&#x4e00;&#x5bb6;&#x540e;&#x5173;&#x95ed;&#x7a97;&#x53e3;&#xff0c;&#x518d;&#x5904;&#x7406;&#x4e0b;&#x4e00;&#x5bb6;&#x3002;</div></header><main class="wrap"><div id="message"></div><div id="summary" class="summary"></div><div id="grid" class="grid"></div></main><script>
   const query = new URLSearchParams(location.search); const fragment = new URLSearchParams(location.hash.slice(1)); const incoming = query.get('token')||fragment.get('token'); if(incoming){sessionStorage.setItem('fmStoreLoginToken',incoming);history.replaceState(null,'',location.pathname)}
   const TOKEN=sessionStorage.getItem('fmStoreLoginToken')||''; const $=id=>document.getElementById(id); const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function msg(s){$('message').textContent=s;$('message').style.display='block'} async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{Authorization:'Bearer '+TOKEN,'Content-Type':'application/json',...(opts.headers||{})}});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'HTTP '+r.status);return j}
@@ -403,7 +430,9 @@ async function handle(req, res) {
     return serveNovnc(res, url.pathname);
   }
   if (!url.pathname.startsWith('/api/store-login/')) return json(res, 404, { ok: false, error: 'NOT_FOUND' });
-  if (!(await batchAuthorized(req))) return json(res, 401, { ok: false, error: 'LINK_EXPIRED_OR_INVALID' });
+  if (!(await batchAuthorized(req)) && !internalAuthorized(req)) {
+    return json(res, 401, { ok: false, error: 'LINK_EXPIRED_OR_INVALID' });
+  }
   let state = normalizeState(await readJson(STATE_FILE, null));
   if (state.active && (!isPidAlive(Number(state.active.pids?.chrome)) || Date.parse(state.active.expiresAt) <= Date.now())) {
     await stopActive(state.active);

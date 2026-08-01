@@ -109,7 +109,15 @@ function renderBatch(batch) {
   const list = byId('store-list');
   list.replaceChildren();
   for (const store of batch.stores) {
-    const meta = STATUS_META[store.status] || STATUS_META.ERROR;
+    const applicationReady = store.applicationReady !== false;
+    const meta = applicationReady
+      ? (STATUS_META[store.status] || STATUS_META.ERROR)
+      : {
+          label: '主体应用待就绪',
+          tone: 'warn',
+          action: '',
+          detail: '该主体尚未取得可用的全托应用凭据；店铺已列入清单，应用就绪后再授权。',
+        };
     const row = document.createElement('article');
     row.className = 'store-row';
 
@@ -135,8 +143,10 @@ function renderBatch(batch) {
     const action = document.createElement('button');
     action.className = 'store-action';
     action.type = 'button';
-    action.textContent = expired ? '链接已过期' : meta.action || '无需操作';
-    action.disabled = expired || !meta.action;
+    action.textContent = expired
+      ? '链接已过期'
+      : applicationReady ? (meta.action || '无需操作') : '暂不可授权';
+    action.disabled = expired || !applicationReady || !meta.action;
     if (!action.disabled) {
       action.addEventListener('click', () => beginAuthorization(store.storeCode, action));
     }

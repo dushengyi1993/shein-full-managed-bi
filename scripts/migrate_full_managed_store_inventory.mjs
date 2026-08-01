@@ -19,8 +19,8 @@ import { fileURLToPath } from 'node:url';
 
 import { validateFullManagedConfig } from '../src/openapi/full-managed-config.mjs';
 
-const CONFIRMATION = 'SHEIN_FULL_INVENTORY_MIGRATE_24';
-const EXPECTED_STORE_COUNT = 24;
+const CONFIRMATION = 'SHEIN_FULL_INVENTORY_MIGRATE_25';
+const EXPECTED_STORE_COUNT = 25;
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TEMPLATE = path.resolve(
   SCRIPT_DIRECTORY,
@@ -135,7 +135,7 @@ function buildStoreInventory(template) {
     fail('INVALID_TEMPLATE', 'inventory template failed validation', { cause: error });
   }
   if (validated.stores.length !== EXPECTED_STORE_COUNT) {
-    fail('INVALID_STORE_COUNT', 'inventory template must contain exactly 24 stores');
+    fail('INVALID_STORE_COUNT', 'inventory template must contain exactly 25 stores');
   }
 
   return template.stores.map((store, index) => ({

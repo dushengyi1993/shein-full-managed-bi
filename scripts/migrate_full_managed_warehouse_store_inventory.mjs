@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 
 const CONFIRMATION = 'SHEIN_FULL_WAREHOUSE_STORE_INVENTORY_APPLY';
-const EXPECTED_STORE_COUNT = 24;
+const EXPECTED_STORE_COUNT = 25;
 const LOCK_NAME = 'shein-fm:dim.store:inventory:v1';
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INVENTORY_FILE = path.resolve(
@@ -99,7 +99,7 @@ async function readInventory(file) {
   ) {
     fail(
       'INVENTORY_FILE_INVALID',
-      'inventory must contain exactly 24 full-managed stores',
+      'inventory must contain exactly 25 full-managed stores',
     );
   }
 
@@ -422,7 +422,7 @@ export async function migrateFullManagedWarehouseStoreInventory({
     || storeCodes.length !== EXPECTED_STORE_COUNT
     || new Set(storeCodes).size !== EXPECTED_STORE_COUNT
   ) {
-    throw new TypeError('exactly 24 unique storeCodes are required');
+    throw new TypeError('exactly 25 unique storeCodes are required');
   }
   if (apply && (typeof planHash !== 'string' || !/^[0-9a-f]{64}$/.test(planHash))) {
     fail('PLAN_HASH_REQUIRED', 'a canonical dry-run plan hash is required');

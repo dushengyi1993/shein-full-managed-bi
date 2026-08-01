@@ -97,11 +97,12 @@ sudo install -d -o root -g root -m 0700 \
 | --- | --- | --- |
 | `portal/bi_users.json` | `root:sheinfm-portal 0640` | 登录账号散列 |
 | `portal/session-secret` | `root:sheinfm-portal 0640` | 会话 HMAC |
+| `store-login/internal.token` | `root:root 0600` | Portal 与回环登录维护服务的 systemd credential |
 | `materializer/database.env` | `root:sheinfm-materializer 0640` | 只读物化连接 |
 | `sales/database.env` | `root:sheinfm-sales 0640` | 销量 loader 连接 |
-| `sales/openapi.json` | `root:sheinfm-sales 0640` | 24 店只读凭据 |
+| `sales/openapi.json` | `root:sheinfm-sales 0640` | 25 店清单；仅已授权店启用只读凭据 |
 | `supply/database.env` | `root:sheinfm-supply 0640` | 供应链 loader 连接 |
-| `supply/openapi.json` | `root:sheinfm-supply 0640` | 24 店只读凭据副本 |
+| `supply/openapi.json` | `root:sheinfm-supply 0640` | 25 店清单；仅已授权店启用只读凭据副本 |
 | `webhook-ingress/database.env` | `root:sheinfm-webhook-ingress 0640` | 回执入仓连接 |
 | `webhook-ingress/stores.json` | `root:sheinfm-webhook-ingress 0640` | 最小店铺路由身份 |
 | `webhook-ingress/application.secret.json` | `root:sheinfm-webhook-ingress 0640` | 验签/密文接收应用凭据 |
@@ -193,7 +194,7 @@ git diff --check
 1. 使用新 `sheinfm-sales` 身份对一个已知店铺运行权限探针；
 2. 对一个有销量日期的店铺完成同步与仓库回读；
 3. 对一个完整零销量、无 `dt` 的店铺验证 `LEGAL_ZERO_UNANCHORED`，不得告警为失败；
-4. 扩大到 24 店并核对权限、SKU 数、业务日期、四窗口总量和店铺覆盖；
+4. 扩大到当前已授权店并核对权限、SKU 数、业务日期、四窗口总量和店铺覆盖；新增店逐店通过后扩至 25 店；
 5. 物化并回读 Portal；
 6. 只有全部门禁通过后创建 `sales-sync.enabled` 并启用 timer。
 
@@ -243,7 +244,7 @@ docker exec shein-fm-db pg_isready -U sheinfm -d shein_fm
 - 未登录 `/api/system` 返回 `401`，登录后只返回脱敏运行态；
 - Portal 进程环境无数据库与平台凭据；
 - 首页显示真实今日/昨日/7日/30日、逐日趋势、店铺和标准商品排行；
-- 页面明确业务日期、24 店覆盖和具体质量原因；
+- 页面明确业务日期、25 店规范范围、实际覆盖和具体质量原因；
 - 合法零销量不报错，缺数/部分覆盖不显示为零；
 - 员工可读全部店铺，负责人/店铺仅用于筛选；
 - 所有 mutation 和 SHEIN 写开关保持关闭；

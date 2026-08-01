@@ -6,7 +6,7 @@ import { FULL_MANAGED_STORE_CODES } from '../../src/config/full-managed-stores.m
 
 test('the homepage scope migration covers the canonical roster on every history table', async () => {
   const sql = await readFile(
-    new URL('../../db/migrations/0017_full_home_all_store_scope.sql', import.meta.url),
+    new URL('../../db/migrations/0018_full_home_25_store_scope.sql', import.meta.url),
     'utf8',
   );
   const constraints = [

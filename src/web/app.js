@@ -784,6 +784,15 @@ const state = {
     loading: false,
     error: '',
     requestSerial: 0,
+    maintenance: {
+      data: null,
+      loading: false,
+      error: '',
+      requestSerial: 0,
+      busyAction: '',
+      busyStore: '',
+      activeUrl: sessionStorage.getItem('fmSystemStoreLoginActiveUrl') || '',
+    },
   },
   sales: {
     data: null,
@@ -3061,6 +3070,45 @@ async function loadSystem() {
   }
 }
 
+async function loadSystemLoginMaintenance() {
+  if (state.route !== 'system') return;
+  const maintenance = state.system.maintenance;
+  const requestSerial = maintenance.requestSerial + 1;
+  maintenance.requestSerial = requestSerial;
+  maintenance.loading = true;
+  maintenance.error = '';
+  render();
+  try {
+    const result = await fetchJson('/api/system/store-login/status');
+    if (requestSerial !== maintenance.requestSerial) return;
+    if (
+      !result
+      || result.ok !== true
+      || !Number.isSafeInteger(result.total)
+      || !Number.isSafeInteger(result.completed)
+      || !Array.isArray(result.stores)
+    ) {
+      throw new Error('登录维护状态结构无效');
+    }
+    maintenance.data = result;
+    if (!result.active) {
+      maintenance.activeUrl = '';
+      sessionStorage.removeItem('fmSystemStoreLoginActiveUrl');
+    }
+  } catch (error) {
+    if (requestSerial !== maintenance.requestSerial) return;
+    maintenance.data = null;
+    maintenance.error = error instanceof Error
+      ? error.message
+      : '登录维护中心暂不可用';
+  } finally {
+    if (requestSerial === maintenance.requestSerial) {
+      maintenance.loading = false;
+      render();
+    }
+  }
+}
+
 function scheduleSystemLoad({ reset = false, delay = 0 } = {}) {
   if (systemLoadTimer !== null) window.clearTimeout(systemLoadTimer);
   state.system.requestSerial += 1;
@@ -3074,6 +3122,7 @@ function scheduleSystemLoad({ reset = false, delay = 0 } = {}) {
   systemLoadTimer = window.setTimeout(() => {
     systemLoadTimer = null;
     void loadSystem();
+    void loadSystemLoginMaintenance();
   }, delay);
 }
 /* --- system-query:end --- */
@@ -3131,7 +3180,7 @@ function operationSearchControls(kind) {
     </div>`;
 }
 
-/** Truthful coverage line: 23/24 with the in-progress store named explicitly. */
+/** Truthful coverage line: completed/25 with any in-progress stores named explicitly. */
 function operationCoverageLine(source) {
   const coverage = productRecord(source?.coverage);
   const meta = productRecord(source?.materializedAttention);
@@ -8832,6 +8881,48 @@ function systemIssueTable(queryData) {
     </div>`;
 }
 
+function systemLoginMaintenanceAction(row) {
+  const maintenance = state.system.maintenance;
+  const status = maintenance.data;
+  if (!status) {
+    return `<span class="muted-value">${escapeHtml(
+      maintenance.loading ? '正在读取' : maintenance.error || '暂不可用',
+    )}</span>`;
+  }
+  const direct = status.stores.find((candidate) => candidate.storeCode === row.storeCode);
+  if (!direct) return '<span class="muted-value">尚未纳入维护清单</span>';
+  const active = status.active;
+  const busy = Boolean(maintenance.busyAction);
+  if (active && active.storeCode !== row.storeCode) {
+    return `<button type="button" class="system-login-button" disabled>正在处理 ${escapeHtml(active.storeCode)}</button>`;
+  }
+  if (active?.storeCode === row.storeCode) {
+    return `
+      <div class="system-login-actions">
+        <button type="button" class="system-login-button secondary" data-store-login-open="${escapeHtml(row.storeCode)}" ${maintenance.activeUrl ? '' : 'disabled'}>进入窗口</button>
+        <button type="button" class="system-login-button" data-store-login-finish="${escapeHtml(row.storeCode)}" ${busy ? 'disabled' : ''}>完成并验证</button>
+        <button type="button" class="system-login-button danger" data-store-login-close="${escapeHtml(row.storeCode)}" ${busy ? 'disabled' : ''}>关闭重来</button>
+      </div>`;
+  }
+  const label = direct.status === 'completed' ? '重新登录' : '打开登录';
+  return `<button type="button" class="system-login-button" data-store-login-start="${escapeHtml(row.storeCode)}" ${busy ? 'disabled' : ''}>${label}</button>`;
+}
+
+function systemLoginMaintenanceSummary() {
+  const maintenance = state.system.maintenance;
+  if (maintenance.error && !maintenance.data) {
+    return `<p class="system-login-maintenance-error">${escapeHtml(maintenance.error)}。只读状态仍可查看，登录操作仅向系统管理员开放。</p>`;
+  }
+  if (!maintenance.data) {
+    return '<p>正在读取 25 家店的云端登录登记与活动窗口。</p>';
+  }
+  const status = maintenance.data;
+  const active = status.active?.storeCode
+    ? `当前正在处理 ${status.active.storeCode}`
+    : '当前没有打开的云端登录窗口';
+  return `<p>登录维护中心：已登记 ${numberFormatter.format(status.completed)} / ${numberFormatter.format(status.total)} 家；${escapeHtml(active)}。登录掉线时可直接在对应行重新打开，不需要再次输入授权口令。</p>`;
+}
+
 function systemProfileTable(queryData) {
   const rows = Array.isArray(queryData.profiles?.rows) ? queryData.profiles.rows : [];
   if (!rows.length) {
@@ -8841,9 +8932,13 @@ function systemProfileTable(queryData) {
     );
   }
   return `
+    <div class="system-workspace-actions system-login-maintenance-summary">
+      ${systemLoginMaintenanceSummary()}
+      <button type="button" class="clear-button" data-store-login-refresh="1" ${state.system.maintenance.loading ? 'disabled' : ''}>刷新登录状态</button>
+    </div>
     <div class="table-wrap">
       <table class="data-table system-profile-table">
-        <thead><tr><th scope="col">店铺</th><th scope="col">登录登记</th><th scope="col">最近续期验真</th><th scope="col">事实时间</th><th scope="col">判断</th></tr></thead>
+        <thead><tr><th scope="col">店铺</th><th scope="col">登录登记</th><th scope="col">最近续期验真</th><th scope="col">事实时间</th><th scope="col">判断</th><th scope="col">登录维护</th></tr></thead>
         <tbody>${rows.map((row) => `
           <tr class="${row.actionRequired ? 'needs-attention' : ''}">
             <td class="entity-column"><strong>${escapeHtml(row.storeCode)}</strong><span>${escapeHtml(row.ownerName || '负责人未知')}</span></td>
@@ -8851,6 +8946,7 @@ function systemProfileTable(queryData) {
             <td><span class="row-status ${systemStatusClass(row.state)}">${escapeHtml(row.stateLabel || '待确认')}</span><small>${escapeHtml(systemSessionReason(row))}</small></td>
             <td>${escapeHtml(sourceTime(row.evidenceAt))}</td>
             <td><strong class="system-decision-text ${row.actionRequired ? 'attention' : 'healthy'}">${row.actionRequired ? '需要登录或复核' : '当前有效'}</strong></td>
+            <td>${systemLoginMaintenanceAction(row)}</td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
@@ -8966,6 +9062,45 @@ function renderSystem() {
     </section>
     ${systemBoundaryDisclosure(queryData)}
     ${state.system.loading ? '<p class="query-refresh-note" role="status">正在重新读取系统运行态…</p>' : ''}`;
+}
+
+async function runSystemStoreLoginAction(action, storeCode = '') {
+  const maintenance = state.system.maintenance;
+  if (maintenance.busyAction) return;
+  const normalizedStoreCode = String(storeCode || '').trim().toUpperCase();
+  let popup = null;
+  if (action === 'start') {
+    popup = window.open('about:blank', `fm-store-login-${normalizedStoreCode}`);
+  }
+  maintenance.busyAction = action;
+  maintenance.busyStore = normalizedStoreCode;
+  maintenance.error = '';
+  render();
+  try {
+    const result = await postJson(
+      `/api/system/store-login/${action}`,
+      action === 'close' ? {} : { storeCode: normalizedStoreCode },
+    );
+    if (action === 'start') {
+      const openUrl = String(result.openUrl || '');
+      if (!/^\/store-login\/session\/[A-Za-z0-9%_-]+#token=[A-Za-z0-9_-]+$/.test(openUrl)) {
+        throw new Error('登录窗口地址无效');
+      }
+      maintenance.activeUrl = openUrl;
+      sessionStorage.setItem('fmSystemStoreLoginActiveUrl', openUrl);
+      if (popup) popup.location.replace(openUrl);
+    } else {
+      maintenance.activeUrl = '';
+      sessionStorage.removeItem('fmSystemStoreLoginActiveUrl');
+    }
+  } catch (error) {
+    popup?.close();
+    maintenance.error = error instanceof Error ? error.message : '登录维护操作未完成';
+  } finally {
+    maintenance.busyAction = '';
+    maintenance.busyStore = '';
+    await loadSystemLoginMaintenance();
+  }
 }
 
 function renderRoute() {
@@ -9218,6 +9353,30 @@ async function fetchJson(path) {
       message = '';
     }
     throw new Error(message || `云端数据服务返回 HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function postJson(path, body = {}) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    credentials: 'same-origin',
+    cache: 'no-store',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    let message = '';
+    try {
+      const payload = await response.json();
+      message = payload?.error?.message || '';
+    } catch {
+      message = '';
+    }
+    throw new Error(message || `登录维护服务返回 HTTP ${response.status}`);
   }
   return response.json();
 }
@@ -9578,6 +9737,8 @@ function syncRouteFromLocation() {
   } else if (routeChanged) {
     state.system.requestSerial += 1;
     state.system.loading = false;
+    state.system.maintenance.requestSerial += 1;
+    state.system.maintenance.loading = false;
   }
   if (routeChanged && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -9754,6 +9915,34 @@ elements.view.addEventListener('click', (event) => {
   const opsRetry = event.target.closest?.('[data-ops-retry]');
   if (opsRetry && elements.view.contains(opsRetry)) {
     void loadOps();
+    return;
+  }
+  const storeLoginRefresh = event.target.closest?.('[data-store-login-refresh]');
+  if (storeLoginRefresh && elements.view.contains(storeLoginRefresh)) {
+    void loadSystemLoginMaintenance();
+    return;
+  }
+  const storeLoginOpen = event.target.closest?.('[data-store-login-open]');
+  if (storeLoginOpen && elements.view.contains(storeLoginOpen)) {
+    const openUrl = state.system.maintenance.activeUrl;
+    if (/^\/store-login\/session\/[A-Za-z0-9%_-]+#token=[A-Za-z0-9_-]+$/.test(openUrl)) {
+      window.open(openUrl, `fm-store-login-${storeLoginOpen.dataset.storeLoginOpen}`);
+    }
+    return;
+  }
+  const storeLoginStart = event.target.closest?.('[data-store-login-start]');
+  if (storeLoginStart && elements.view.contains(storeLoginStart)) {
+    void runSystemStoreLoginAction('start', storeLoginStart.dataset.storeLoginStart);
+    return;
+  }
+  const storeLoginFinish = event.target.closest?.('[data-store-login-finish]');
+  if (storeLoginFinish && elements.view.contains(storeLoginFinish)) {
+    void runSystemStoreLoginAction('finish', storeLoginFinish.dataset.storeLoginFinish);
+    return;
+  }
+  const storeLoginClose = event.target.closest?.('[data-store-login-close]');
+  if (storeLoginClose && elements.view.contains(storeLoginClose)) {
+    void runSystemStoreLoginAction('close');
     return;
   }
   const systemRetry = event.target.closest?.('[data-system-retry]');

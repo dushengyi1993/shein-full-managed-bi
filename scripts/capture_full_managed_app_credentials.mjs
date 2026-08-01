@@ -271,6 +271,7 @@ async function main() {
     }, null, 2));
   } finally {
     await ownedContext?.close();
+    await browser?.close();
   }
 }
 

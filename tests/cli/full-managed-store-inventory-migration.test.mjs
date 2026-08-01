@@ -18,7 +18,7 @@ import {
 } from '../../scripts/migrate_full_managed_store_inventory.mjs';
 
 const NOW = new Date('2026-07-26T08:09:10.000Z');
-const CONFIRMATION = 'SHEIN_FULL_INVENTORY_MIGRATE_24';
+const CONFIRMATION = 'SHEIN_FULL_INVENTORY_MIGRATE_25';
 
 function baseConfiguration(stores) {
   return {
@@ -64,7 +64,7 @@ function currentConfiguration(overrides = {}) {
 }
 
 function inventoryTemplate() {
-  return baseConfiguration(Array.from({ length: 24 }, (_, index) => {
+  return baseConfiguration(Array.from({ length: 25 }, (_, index) => {
     const suffix = String(index + 1).padStart(4, '0');
     return {
       storeCode: `T${suffix}`,
@@ -129,7 +129,7 @@ test('store inventory migration defaults to a validated dry-run with no backup o
       ok: true,
       mode: 'dry-run',
       previousStoreCount: 2,
-      storeCount: 24,
+      storeCount: 25,
       enabledStoreCount: 0,
       credentialsConfigured: 0,
       applicationStatus: 'approved',
@@ -146,7 +146,7 @@ test('store inventory migration defaults to a validated dry-run with no backup o
   }
 });
 
-test('confirmed migration backs up and atomically installs exact 24-store identities', async () => {
+test('confirmed migration backs up and atomically installs exact 25-store identities', async () => {
   const files = await fixture();
   try {
     const original = await readFile(files.configFile, 'utf8');
@@ -160,7 +160,7 @@ test('confirmed migration backs up and atomically installs exact 24-store identi
       ok: true,
       mode: 'applied',
       previousStoreCount: 2,
-      storeCount: 24,
+      storeCount: 25,
       enabledStoreCount: 0,
       credentialsConfigured: 0,
       applicationStatus: 'approved',
@@ -176,7 +176,7 @@ test('confirmed migration backs up and atomically installs exact 24-store identi
     });
     assert.equal(updated.timeoutMs, 37_000);
     assert.equal(updated.pageSize, 73);
-    assert.equal(updated.stores.length, 24);
+    assert.equal(updated.stores.length, 25);
     assert.deepEqual(
       updated.stores.map(({ storeCode, storeName }) => ({
         storeCode,
@@ -239,7 +239,7 @@ test('migration rejects any legacy credential before creating a backup', async (
   }
 });
 
-test('wrong confirmation and incomplete 24-store identity fail closed without mutation', async () => {
+test('wrong confirmation and incomplete 25-store identity fail closed without mutation', async () => {
   const files = await fixture();
   try {
     const original = await readFile(files.configFile, 'utf8');
@@ -287,7 +287,7 @@ test('CLI output is a redacted summary and never exposes paths or inventory iden
       ok: true,
       mode: 'dry-run',
       previousStoreCount: 2,
-      storeCount: 24,
+      storeCount: 25,
       enabledStoreCount: 0,
       credentialsConfigured: 0,
       applicationStatus: 'approved',

@@ -22,9 +22,11 @@ Environment=FULL_BI_SESSION_TTL_SECONDS=2592000
 Environment=FULL_BI_DATA_FILE=/srv/shein-fm/runtime/dashboard/dashboard.json
 Environment=FULL_BI_HOME_DATA_FILE=/srv/shein-fm/runtime/dashboard/dashboard.home.json
 Environment=FULL_BI_SYSTEM_HEALTH_FILE=/srv/shein-fm/runtime/dashboard/system-health.json
+Environment=FULL_BI_STORE_LOGIN_INTERNAL_URL=http://127.0.0.1:8794
 Environment=NODE_OPTIONS=--max-old-space-size=640
 Environment=FULL_BI_AUTH_FILE=/srv/shein-fm/secrets/portal/bi_users.json
 Environment=FULL_BI_SESSION_SECRET_FILE=/srv/shein-fm/secrets/portal/session-secret
+LoadCredential=store_login_internal_token:/srv/shein-fm/secrets/store-login/internal.token
 ExecStart=/usr/bin/node src/server/index.mjs
 Restart=always
 RestartSec=5

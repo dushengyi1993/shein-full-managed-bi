@@ -14,15 +14,15 @@ import {
 } from '../../scripts/create_full_managed_store_login_batch.mjs';
 import { createStoreLoginServer } from '../../scripts/serve_full_managed_store_login.mjs';
 
-test('the login roster contains 24 unique canonical Profiles and runtime slots', () => {
-  assert.equal(FULL_MANAGED_STORE_CODES.length, 24);
-  assert.equal(new Set(FULL_MANAGED_STORE_CODES).size, 24);
+test('the login roster contains 25 unique canonical Profiles and runtime slots', () => {
+  assert.equal(FULL_MANAGED_STORE_CODES.length, 25);
+  assert.equal(new Set(FULL_MANAGED_STORE_CODES).size, 25);
   assert.equal(normalizeFullManagedStoreCode('dl5477'), 'DL5477');
   assert.equal(normalizeFullManagedStoreCode('DL'), null);
-  assert.equal(new Set(FULL_MANAGED_STORE_CODES.map(fullManagedProfileKey)).size, 24);
+  assert.equal(new Set(FULL_MANAGED_STORE_CODES.map(fullManagedProfileKey)).size, 25);
   assert.equal(
     new Set(FULL_MANAGED_STORE_CODES.map((storeCode) => fullManagedRuntimeSlot(storeCode).debuggingPort)).size,
-    24,
+    25,
   );
 });
 
@@ -52,6 +52,8 @@ test('store login accepts a shareable query bearer and removes it immediately', 
   assert.match(source, /query\.get\(['"]token/);
   assert.match(source, /history\.replaceState\(null,''\,location\.pathname\)/);
   assert.match(source, /headers\.authorization/);
+  assert.match(source, /x-fm-internal-token/);
+  assert.match(source, /internalAuthorized/);
   assert.match(source, /--password-store=basic/);
   assert.match(source, /script-src 'self' 'unsafe-inline'/);
   assert.match(source, /img-src 'self' data: blob:/);
@@ -66,4 +68,5 @@ test('nginx disables access logs for every store-login route that can carry a be
   assert.match(source, /location = \/store-login \{\s*access_log off;/);
   assert.match(source, /location \^~ \/store-login\/ \{\s*access_log off;/);
   assert.match(source, /location \^~ \/api\/store-login\/ \{\s*access_log off;/);
+  assert.match(source, /proxy_set_header X-FM-Internal-Token ""/);
 });

@@ -52,15 +52,16 @@ const CHECK_PATH = `${LIST_PATH}/check`;
 const EXPECTED_BUSINESS = ['商品管理', '商品合规', '备货管理', '库存管理', '财务管理'];
 
 function parseArgs(argv) {
-  const args = { submit: false };
+  const args = { submit: false, shortName: '', iconPath: '' };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === '--submit') {
       args.submit = true;
       continue;
     }
-    if (token === '--store' || token === '--port') {
-      args[token.slice(2)] = argv[index + 1];
+    if (['--store', '--port', '--short-name', '--icon-path'].includes(token)) {
+      const key = token.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+      args[key] = argv[index + 1];
       index += 1;
       continue;
     }
@@ -75,6 +76,14 @@ function parseArgs(argv) {
   if (!Number.isInteger(args.port) || args.port < 1 || args.port > 65535) {
     throw new Error('Missing or invalid --port.');
   }
+  args.shortName = String(args.shortName || '').trim();
+  if (args.shortName && (
+    args.shortName.length > 20
+    || /[\u0000-\u001f\u007f<>]/.test(args.shortName)
+  )) {
+    throw new Error('Invalid --short-name.');
+  }
+  args.iconPath = args.iconPath ? path.resolve(args.iconPath) : '';
   return args;
 }
 
@@ -118,6 +127,44 @@ async function waitForApplicationList(page, timeout = 45_000) {
     (url) => url.pathname.replace(/\/$/, '') === LIST_PATH,
     { timeout },
   );
+}
+
+async function goToApplicationList(page) {
+  const currentPath = new URL(page.url()).pathname.replace(/\/$/, '');
+  if (currentPath === LIST_PATH) return;
+  if (!currentPath.startsWith(`${LIST_PATH}/`)) {
+    throw new Error(`Unexpected developer-platform page: ${page.url()}`);
+  }
+  await page.keyboard.press('Escape').catch(() => {});
+  await clickFirstVisible(
+    page.getByRole('link', { name: '应用管理', exact: true }),
+    'application management link',
+  );
+  await waitForApplicationList(page);
+}
+
+async function finishSuccessfulSubmission(page) {
+  const successModal = page
+    .locator('.ant-modal:visible')
+    .filter({ hasText: '创建成功' });
+  const outcome = await Promise.race([
+    page.waitForURL(
+      (url) => url.pathname.replace(/\/$/, '') === LIST_PATH,
+      { timeout: 45_000 },
+    ).then(() => 'list'),
+    successModal.waitFor({ state: 'visible', timeout: 45_000 }).then(() => 'modal'),
+  ]);
+  if (outcome === 'modal') {
+    await clickFirstVisible(
+      successModal.getByRole('button', { name: '确 认', exact: true }),
+      'successful submission confirmation',
+    );
+    await page.waitForURL((url) => {
+      const pathname = url.pathname.replace(/\/$/, '');
+      return pathname === LIST_PATH || pathname.startsWith(`${LIST_PATH}/detail`);
+    }, { timeout: 45_000 });
+  }
+  await goToApplicationList(page);
 }
 
 async function loginIfNeeded(page) {
@@ -274,10 +321,8 @@ async function main() {
   await page.waitForLoadState('domcontentloaded').catch(() => {});
   await loginIfNeeded(page);
 
-  if (new URL(page.url()).pathname.replace(/\/$/, '') === CHECK_PATH) {
-    await page.keyboard.press('Escape').catch(() => {});
-    await clickFirstVisible(page.getByRole('link', { name: '应用管理', exact: true }), 'application management link');
-    await waitForApplicationList(page);
+  if (new URL(page.url()).pathname.replace(/\/$/, '').startsWith(`${LIST_PATH}/`)) {
+    await goToApplicationList(page);
   }
 
   if (new URL(page.url()).pathname.replace(/\/$/, '') !== LIST_PATH) {
@@ -285,7 +330,8 @@ async function main() {
   }
 
   await page.locator('span.mr-1.text-sm').waitFor({ state: 'visible', timeout: 25_000 });
-  await page.locator('h3').first().waitFor({ state: 'visible', timeout: 25_000 });
+  await page.getByRole('button', { name: '创建应用', exact: true })
+    .waitFor({ state: 'visible', timeout: 25_000 });
   const subject = (await page.locator('span.mr-1.text-sm').innerText()).trim();
   const appNames = (await page.locator('h3').allInnerTexts()).map((name) => name.trim());
   const existingFullName = appNames.find((name) => (
@@ -310,14 +356,29 @@ async function main() {
   const semiName = appNames.find((name) => (
     name.startsWith(`${args.store}-`) && name.includes('SHEIN运营中台')
   ));
-  if (!semiName) throw new Error(`Existing semi-managed app is missing for ${args.store}.`);
-  const suffixIndex = semiName.indexOf('SHEIN运营中台');
-  const shortName = semiName.slice(args.store.length + 1, suffixIndex);
-  if (!shortName) throw new Error(`Could not derive the Chinese short name for ${args.store}.`);
+  let shortName = args.shortName;
+  let iconPath = args.iconPath;
+  let iconBytes = 0;
+  if (semiName) {
+    const suffixIndex = semiName.indexOf('SHEIN运营中台');
+    shortName ||= semiName.slice(args.store.length + 1, suffixIndex);
+    if (!shortName) throw new Error(`Could not derive the Chinese short name for ${args.store}.`);
+    const icon = await saveExistingAppIcon(page, args.store);
+    iconPath ||= icon.iconPath;
+    iconBytes = icon.iconBytes;
+  } else if (!shortName || !iconPath) {
+    throw new Error(`New Open Platform account ${args.store} requires --short-name and --icon-path.`);
+  }
+  const iconMetadata = await fs.stat(iconPath);
+  if (!iconMetadata.isFile() || iconMetadata.size < 1 || iconMetadata.size >= 10 * 1024 * 1024) {
+    throw new Error(`Application icon has an invalid size for ${args.store}.`);
+  }
+  iconBytes = iconMetadata.size;
 
   const appName = `${args.store}-${shortName}SHEIN全托运营中台`;
-  const description = `本应用由${subject}自研，计划服务同一公司主体旗下的全托管店铺，用于商品管理、商品合规、备货履约、库存管理、财务对账及内部BI经营分析。公司已有独立半托管应用；本应用仅用于全托管商家授权，按合作模式隔离数据和权限。所有写操作均执行权限校验、预检、人工确认、审计与结果回读。`;
-  const { iconPath, iconBytes } = await saveExistingAppIcon(page, args.store);
+  const description = semiName
+    ? `本应用由${subject}自研，计划服务同一公司主体旗下的全托管店铺，用于商品管理、商品合规、备货履约、库存管理、财务对账及内部BI经营分析。公司已有独立半托管应用；本应用仅用于全托管商家授权，按合作模式隔离数据和权限。所有写操作均执行权限校验、预检、人工确认、审计与结果回读。`
+    : `本应用由${subject}自研，计划服务同一公司主体旗下的全托管店铺，用于商品管理、商品合规、备货履约、库存管理、财务对账及内部BI经营分析。本应用仅用于全托管商家授权，按合作模式隔离数据和权限。所有写操作均执行权限校验、预检、人工确认、审计与结果回读。`;
 
   await clickFirstVisible(page.getByRole('button', { name: '创建应用', exact: true }), 'create application button');
   await page.waitForURL((url) => url.pathname.replace(/\/$/, '') === CHECK_PATH, { timeout: 30_000 });
@@ -337,7 +398,7 @@ async function main() {
       port: args.port,
       action: 'prepared',
       subject,
-      semiManagedApp: semiName,
+      semiManagedApp: semiName || null,
       appName,
       cooperationMode: prepared.mode,
       businessFunctions: prepared.business,
@@ -350,7 +411,7 @@ async function main() {
   }
 
   await clickFirstVisible(page.getByRole('button', { name: '提交审核', exact: true }), 'submit for review button');
-  await waitForApplicationList(page);
+  await finishSuccessfulSubmission(page);
   await page.waitForFunction((targetName) => (
     [...document.querySelectorAll('h3')].some((heading) => heading.innerText.trim() === targetName)
   ), appName, { timeout: 30_000 });
@@ -365,7 +426,7 @@ async function main() {
     port: args.port,
     action: 'submitted',
     subject,
-    semiManagedApp: semiName,
+    semiManagedApp: semiName || null,
     appName,
     cooperationMode: readback.mode,
     status: readback.status,

@@ -158,7 +158,7 @@ test('an adapter without an injected transport makes zero requests and reports B
   await assert.rejects(() => adapter.fetchWindow(), /WEBAPI_EXPERIMENT_ONLY|experiment/);
 });
 
-test('all 24 stores stay isolated and canonical everywhere', async () => {
+test('all 25 stores stay isolated and canonical everywhere', async () => {
   assert.deepEqual([...WEBAPI_STORE_CODES], [...FULL_MANAGED_STORE_CODES]);
   assert.equal(WEBAPI_PROFILE_KEYS.DL5477, 'persistent-dl5477-profile');
   assert.equal(WEBAPI_PROFILE_KEYS.MZ2406, 'persistent-mz2406-profile');

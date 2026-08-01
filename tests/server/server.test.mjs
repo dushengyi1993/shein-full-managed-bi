@@ -62,8 +62,8 @@ test('GET /api/dashboard returns only the permitted volume dashboard shape', asy
   assert.equal(dashboard.schemaVersion, 5);
   assert.equal(dashboard.readOnly, true);
   assert.equal(dashboard.dataset.status, 'sample');
-  assert.equal(dashboard.permission.totalStores, 24);
-  assert.equal(dashboard.storeRanking.length, 24);
+  assert.equal(dashboard.permission.totalStores, 25);
+  assert.equal(dashboard.storeRanking.length, 25);
   assert.equal(dashboard.skuRanking.length, 5);
   assert.equal(dashboard.readiness.length, 5);
   assert.equal(dashboard.salesTrend.length, 14);

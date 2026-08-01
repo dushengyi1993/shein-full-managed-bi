@@ -330,7 +330,7 @@ responses. The backfill therefore calls `/sbn/trade/overview` and
 `/sbn/trade/rank_top` at single-day grain, writes only that business date, and
 records a body hash plus accepted-row count. Before each Profile run it reads
 successful same-day audit keys and skips those dates. This makes the long
-24-store backfill resumable without treating an aggregate range response as a
+25-store backfill resumable without treating an aggregate range response as a
 daily fact.
 
 The live management-analysis page sends compact `startDt` / `endDt` values.

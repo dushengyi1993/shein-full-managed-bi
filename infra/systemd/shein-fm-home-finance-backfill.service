@@ -19,7 +19,7 @@ Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/sales/openapi.json
 EnvironmentFile=/srv/shein-fm/secrets/sales/database.env
 RuntimeDirectory=shein-fm-sales
 RuntimeDirectoryMode=0700
-ExecStart=/usr/bin/flock -n /run/shein-fm-sales/home-finance-backfill.lock /usr/bin/node scripts/sync_full_managed_home_finance.mjs --stores=CX4412,XL2801,QY8886,DX0571,NM7397,LQ7173,TS8263,DL5477,FY4021,GJ8989,QH8028,JY8060,ZL3133,MZ2406,YJ8177,RH0099,WY9025,RH2848,CX2816,YJ4042,NM4977,NM8787,NM8831,DX2420 --from=2024-01-01 --to=2026-07-30 --concurrency=2 --execute
+ExecStart=/usr/bin/flock -n /run/shein-fm-sales/home-finance-backfill.lock /usr/bin/node scripts/sync_full_managed_home_finance.mjs --stores=CX4412,XL2801,QY8886,DX0571,NM7397,LQ7173,TS8263,DL5477,FY4021,GJ8989,QH8028,JY8060,ZL3133,MZ2406,YJ8177,RH0099,WY9025,RH2848,CX2816,YJ4042,NM4977,NM8787,NM8831,NM7418,DX2420 --from=2024-01-01 --to=2026-07-30 --concurrency=2 --execute
 TimeoutStartSec=24h
 NoNewPrivileges=true
 PrivateTmp=true

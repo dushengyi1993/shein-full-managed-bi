@@ -22,6 +22,7 @@ export const FULL_MANAGED_STORE_CODES = Object.freeze([
   'NM4977',
   'NM8787',
   'NM8831',
+  'NM7418',
   'DX2420',
 ]);
 

@@ -27,7 +27,7 @@ const DASHBOARD = Object.freeze({
         purchaseOrders: {
           status: 'partial',
           succeededStores: 23,
-          totalStores: 24,
+          totalStores: 25,
           inProgressStores: 1,
           inProgressStoreCodes: ['FY4021'],
           failedStores: 0,
@@ -411,7 +411,7 @@ test('unknown quantities stay null and materialized counts never impersonate sou
   assert.equal(result.attention.pagination.matchedMaterializedRows, 1);
   // Coverage and watermark evidence passes through exactly.
   assert.equal(result.source.coverage.succeededStores, 23);
-  assert.equal(result.source.coverage.totalStores, 24);
+  assert.equal(result.source.coverage.totalStores, 25);
   assert.deepEqual(result.source.coverage.inProgressStoreCodes, ['FY4021']);
   assert.equal(result.source.coverage.watermarkEnd, '2026-07-29T00:45:19.000Z');
 });

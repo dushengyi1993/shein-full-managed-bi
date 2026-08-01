@@ -381,7 +381,7 @@ test('coverage, truncation and quantity wording stay honest', async () => {
   const procurement = functionBody(app, 'renderProcurement');
   const fulfilment = functionBody(app, 'renderFulfilment');
 
-  // 23/24 plus the in-progress store, watermark window and source truncation.
+  // Completed/25 plus the in-progress store, watermark window and source truncation.
   assert.match(coverage, /succeededStores/);
   assert.match(coverage, /totalStores/);
   assert.match(coverage, /inProgressStoreCodes/);

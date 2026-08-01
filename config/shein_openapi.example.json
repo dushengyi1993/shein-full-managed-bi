@@ -31,6 +31,7 @@
     { "storeCode": "NM4977", "storeName": "NM4977", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
     { "storeCode": "NM8787", "storeName": "NM8787", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
     { "storeCode": "NM8831", "storeName": "NM8831", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
+    { "storeCode": "NM7418", "storeName": "NM7418", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null },
     { "storeCode": "DX2420", "storeName": "DX2420", "enabled": false, "applicationStatus": "approved", "authorizationStatus": "not_started", "appId": null, "openKeyId": null, "secretKey": null }
   ]
 }

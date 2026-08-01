@@ -26,6 +26,7 @@
     { "storeCode": "NM4977", "enabled": false },
     { "storeCode": "NM8787", "enabled": false },
     { "storeCode": "NM8831", "enabled": false },
+    { "storeCode": "NM7418", "enabled": false },
     { "storeCode": "DX2420", "enabled": false }
   ]
 }

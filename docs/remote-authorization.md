@@ -25,7 +25,7 @@ OpenAPI 应用；同主体多店共用一个应用，但每家店铺仍独立换
 ### 全托同事
 
 1. 打开管理员发送的完整链接，确认域名是 `fm.dushengyi.cc`。
-2. 页面会显示 24 家店铺清单。每次只选择一家。
+2. 页面会显示全部 25 家店铺清单。尚无可用主体应用的店铺也会保留在清单中，但按钮显示“暂不可授权”。
 3. 点击“开始授权”，在新窗口核对域名是 SHEIN 官方授权域名。
 4. 登录该店对应的全托账号，核对页面展示的是该店所属公司主体的全托应用及权限范围。
 5. 由本人点击确认授权，等待自动跳回结果页。
@@ -69,17 +69,19 @@ npm run authorization:create-batch
 sudo -u sheinfm-auth env \
   FULL_AUTH_STATE_FILE=/srv/shein-fm-auth/runtime/authorization-state.json \
   FULL_AUTH_PUBLIC_ORIGIN=https://fm.dushengyi.cc \
+  FULL_AUTH_APPLICATION_FILE=/srv/shein-fm-auth/secrets/application.secret.json \
   node scripts/create_full_managed_authorization_batch.mjs \
   --output /srv/shein-fm-auth/runtime/current-batch.secret.json \
-  --include-entities CX,XL,QY,DX,NM,LQ,TS,DL,FY,QH,JY,ZL,MZ,YJ \
+  --include-entities CX,XL,QY,DX,NM,LQ,TS,DL,FY,GJ,QH,JY,ZL,MZ,YJ,RH,WY \
   --valid-hours 24
 ```
 
-`--include-entities` 只选择已经注册并已取得全托应用凭据的主体。尚未注册的
-GJ、RH、WY 不得临时回退到 DL 应用；注册、应用审核和权限包完成后再生成下一批。
-平台原有 DL 对 24 店授权不撤销，旧凭据单独保留作回滚，不作为新批次的主体路由。
+传入 `FULL_AUTH_APPLICATION_FILE` 后，脚本仍把所选主体的全部店铺放入清单，
+但只有已经取得可用应用凭据的主体可以点击授权；未就绪主体不会临时回退到 DL 应用。
+平台原有 DL 对 24 店授权不撤销，旧凭据单独保留作回滚，不作为新批次的主体路由；
+新增 `NM7418` 只路由到 NM 主体应用。
 
-脚本标准输出只显示批次编号、店铺数、有效期和文件位置，不打印交接链接。
+脚本标准输出只显示批次编号、店铺数、可操作店铺数、有效期和文件位置，不打印交接链接。
 
 ## 核验与晋级
 

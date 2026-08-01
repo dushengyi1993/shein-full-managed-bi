@@ -28,7 +28,7 @@ const DASHBOARD = Object.freeze({
         deliveries: {
           status: 'partial',
           succeededStores: 23,
-          totalStores: 24,
+          totalStores: 25,
           inProgressStores: 1,
           inProgressStoreCodes: ['FY4021'],
           failedStores: 0,
@@ -357,7 +357,7 @@ test('evidence coverage, watermarks and truncation are reported exactly', () => 
     truncated: false,
   });
   assert.equal(result.source.coverage.succeededStores, 23);
-  assert.equal(result.source.coverage.totalStores, 24);
+  assert.equal(result.source.coverage.totalStores, 25);
   assert.equal(result.source.coverage.failedStores, 0);
   assert.equal(result.source.coverage.staleStores, 0);
   assert.deepEqual(result.source.coverage.inProgressStoreCodes, ['FY4021']);

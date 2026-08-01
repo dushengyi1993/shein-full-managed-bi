@@ -23,7 +23,7 @@ RuntimeDirectoryMode=0700
 # Reuse the normal supply lock. A history run waits for the current incremental
 # sync to finish, then future timer runs fail their own non-blocking lock instead
 # of overlapping the same OpenAPI and warehouse writers.
-ExecStart=/usr/bin/flock /run/shein-fm-supply/sync.lock /usr/bin/node scripts/backfill_full_managed_purchase_order_history.mjs --execute --approved-manifest-hash=4f7700f03220014c8611787b362a02c3f576d35b87ceadf776e866a981f64ec9
+ExecStart=/usr/bin/flock /run/shein-fm-supply/sync.lock /usr/bin/node scripts/backfill_full_managed_purchase_order_history.mjs --execute --approved-manifest-hash=e2b5adf1f6f1690e4d4f12255484b87e06890050fe732f23f1a6fb06df95cd50
 TimeoutStartSec=72h
 NoNewPrivileges=true
 PrivateTmp=true
