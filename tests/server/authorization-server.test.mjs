@@ -5,8 +5,15 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { FileAuthorizationStore, sha256 } from '../../src/authorization/file-store.mjs';
-import { createAuthorizationServer } from '../../src/authorization/server.mjs';
-import { createFullManagedAuthorizationService } from '../../src/authorization/service.mjs';
+import {
+  authorizationCallbackDiagnostic,
+  createAuthorizationServer,
+} from '../../src/authorization/server.mjs';
+import {
+  AuthorizationServiceError,
+  createFullManagedAuthorizationService,
+} from '../../src/authorization/service.mjs';
+import { SheinOpenApiError } from '../../src/openapi/shein-client.mjs';
 
 const TOKEN = Buffer.alloc(32, 21).toString('base64url');
 const PUBLIC_ORIGIN = 'http://127.0.0.1';
@@ -132,6 +139,71 @@ test('successful callback redirects to a scrubbed result URL without leaking cal
   assert.equal(await response.text(), '');
   assert.deepEqual(received, [{ state, tempToken }]);
   assert.doesNotMatch(response.headers.get('location'), new RegExp(`${state}|${tempToken}`));
+});
+
+test('failed callback logs bounded platform diagnostics without callback secrets', async (context) => {
+  const messages = [];
+  const platformError = new SheinOpenApiError(
+    'PLATFORM_ERROR',
+    '/open-api/auth/get-by-token returned a platform error',
+    {
+      httpStatus: 200,
+      platformCode: 'AUTH_APP_SECRET_INVALID',
+      platformMessage: `invalid credential ${'x'.repeat(48)}`,
+      traceId: 'trace-123456789012345678901234567890123456',
+    },
+  );
+  const baseUrl = await listen(context, {
+    publicOrigin: 'https://fm.test',
+    async complete() {
+      throw new AuthorizationServiceError(
+        'SHEIN_EXCHANGE_FAILED',
+        'authorization could not be completed',
+        { cause: platformError },
+      );
+    },
+  }, {
+    logger: { error(message) { messages.push(message); } },
+  });
+  const state = 's'.repeat(43);
+  const tempToken = 'temporary-token-that-must-never-be-logged';
+  const response = await fetch(
+    `${baseUrl}/openapi/authorize/callback?state=${state}&tempToken=${tempToken}`,
+    { redirect: 'manual' },
+  );
+
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.get('location'), '/authorize/result?status=retry');
+  assert.equal(messages.length, 1);
+  const diagnostic = JSON.parse(messages[0]);
+  assert.equal(diagnostic.event, 'authorization_callback_failed');
+  assert.deepEqual(diagnostic.diagnostic.map((entry) => entry.code), [
+    'SHEIN_EXCHANGE_FAILED',
+    'PLATFORM_ERROR',
+  ]);
+  assert.equal(diagnostic.diagnostic[1].httpStatus, 200);
+  assert.equal(diagnostic.diagnostic[1].platformCode, 'AUTH_APP_SECRET_INVALID');
+  assert.match(diagnostic.diagnostic[1].platformMessage, /\[REDACTED\]/);
+  assert.equal(
+    diagnostic.diagnostic[1].traceId,
+    'trace-123456789012345678901234567890123456',
+  );
+  assert.doesNotMatch(messages[0], new RegExp(`${state}|${tempToken}`));
+  assert.doesNotMatch(messages[0], /x{24}/);
+});
+
+test('authorization callback diagnostics are stable for non-error values', () => {
+  assert.deepEqual(authorizationCallbackDiagnostic(null), []);
+  assert.deepEqual(
+    authorizationCallbackDiagnostic({ code: 'NETWORK_ERROR', details: { httpStatus: 503 } }),
+    [{
+      code: 'NETWORK_ERROR',
+      httpStatus: 503,
+      platformCode: null,
+      platformMessage: null,
+      traceId: null,
+    }],
+  );
 });
 
 test('bounds concurrent callback work and rejects excess requests before exchange', async (context) => {

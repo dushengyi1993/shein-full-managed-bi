@@ -117,6 +117,59 @@ function callbackResult(error) {
   return 'retry';
 }
 
+function boundedDiagnosticText(value, maximum = 240) {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  return value
+    .replace(/[A-Za-z0-9._~-]{24,}/g, '[REDACTED]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maximum);
+}
+
+function boundedDiagnosticCode(value, fallback = 'ERROR') {
+  const text = String(value || '').trim();
+  return /^[A-Za-z0-9_.:-]{1,80}$/.test(text) ? text : fallback;
+}
+
+export function authorizationCallbackDiagnostic(error) {
+  const chain = [];
+  const seen = new Set();
+  let current = error;
+  while (current && typeof current === 'object' && chain.length < 4 && !seen.has(current)) {
+    seen.add(current);
+    const details = current.details && typeof current.details === 'object'
+      ? current.details
+      : {};
+    chain.push({
+      code: boundedDiagnosticCode(current.code || current.name),
+      httpStatus: Number.isInteger(details.httpStatus) ? details.httpStatus : null,
+      platformCode: details.platformCode === null || details.platformCode === undefined
+        ? null
+        : boundedDiagnosticCode(
+          String(details.platformCode),
+          'UNKNOWN_PLATFORM_CODE',
+        ),
+      platformMessage: boundedDiagnosticText(details.platformMessage),
+      traceId: details.traceId === null || details.traceId === undefined
+        ? null
+        : boundedDiagnosticCode(details.traceId, 'UNSAFE_TRACE_ID'),
+    });
+    current = current.cause;
+  }
+  return Object.freeze(chain);
+}
+
+function logCallbackFailure(logger, error) {
+  try {
+    logger?.error?.(JSON.stringify({
+      event: 'authorization_callback_failed',
+      diagnostic: authorizationCallbackDiagnostic(error),
+    }));
+  } catch {
+    // Logging must never alter the authorization result or expose callback input.
+  }
+}
+
 async function parseJsonBody(request) {
   if (!String(request.headers['content-type'] || '').toLowerCase().startsWith('application/json')) {
     const error = new Error('Content-Type must be application/json');
@@ -186,6 +239,7 @@ export function createAuthorizationRequestHandler({
   authorizationService,
   webRoot = DEFAULT_WEB_ROOT,
   maximumConcurrentCallbacks = 8,
+  logger = console,
 } = {}) {
   if (!authorizationService) throw new TypeError('authorizationService is required');
   if (
@@ -250,6 +304,7 @@ export function createAuthorizationRequestHandler({
           `/authorize/result?status=received&store=${encodeURIComponent(result.storeCode)}`,
         );
       } catch (error) {
+        logCallbackFailure(logger, error);
         redirect(response, `/authorize/result?status=${callbackResult(error)}`);
       } finally {
         activeCallbacks -= 1;
