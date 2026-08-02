@@ -6204,7 +6204,7 @@ function homeMetricSourceNote(bundle, key) {
     const parts = [
       confirmed ? `${key === 'salesQuantity' ? '台账' : '账单'}确认 ${confirmed} 店日` : null,
       settled ? `历史日经营 ${settled} 店日` : null,
-      realtime ? `今日实时 ${realtime} 店日` : null,
+      realtime ? `日内实时暂估 ${realtime} 店日` : null,
     ].filter(Boolean);
     return parts.join(' · ') || '当前范围暂无可用来源';
   }
@@ -6759,7 +6759,7 @@ function renderHistoryTrends() {
       ${historyTrendChart(rows, metricKey, metric, kind)}
     </article>`;
   const provisionalNote = hasProvisional
-    ? '实心点为已物化历史事实；颜色较浅的点或柱表示今日实时暂估，台账或账单更新后自动切换为确认数据。'
+    ? '实心点为已物化历史事实；颜色较浅的点或柱表示日内实时暂估，台账或账单更新后自动切换为确认数据。'
     : '当前指标来自所选范围内的确认或已物化数据。';
   return `
     <section class="home-history-trends" aria-label="经营趋势">
@@ -6943,7 +6943,7 @@ function renderHistoryRankings() {
     return [
       bases.has(confirmedBasis) ? confirmedLabel : null,
       bases.has('WEBAPI_INDEX') ? '历史日经营口径' : null,
-      bases.has('WEBAPI_REALTIME') ? '含今日实时暂估' : null,
+      bases.has('WEBAPI_REALTIME') ? '含日内实时暂估' : null,
     ].filter(Boolean).join(' + ') || '当前可用口径';
   };
   const storeAmountBasisNote = rankingBasisNote(

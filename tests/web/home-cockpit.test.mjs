@@ -127,7 +127,7 @@ test('monthly trend uses source-aware sales and non-additive stock boundaries', 
   assert.match(period, /resolvedHomeDaily\(bundle\)/);
   assert.match(rankings, /storeQuantityBasisNote/);
   assert.match(rankings, /历史日经营口径/);
-  assert.match(rankings, /含今日实时暂估/);
+  assert.match(rankings, /含日内实时暂估/);
 });
 
 test('historical KPI cards stay row-balanced and expose only evidence-backed traffic derivations', async () => {
