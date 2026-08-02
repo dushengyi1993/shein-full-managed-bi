@@ -371,8 +371,11 @@ export async function openExperimentSession({
     if (
       proof?.sameOrigin === true
       && proof?.onLoginView !== true
-      && proof?.aliasPresent === true
     ) {
+      // The account badge is rendered after the shell on some otherwise valid
+      // Profiles. Recheck once after the bounded stability delay whether the
+      // first proof was positive or still waiting for that badge; a genuinely
+      // wrong account remains blocked by the second proof below.
       await sleep(resolvedLimits.identityStabilityMs);
       proof = await cdp.evaluate(
         buildIdentityProofExpression({

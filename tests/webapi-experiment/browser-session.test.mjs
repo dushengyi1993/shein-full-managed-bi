@@ -192,6 +192,30 @@ test('a successful session navigates only to the allow-listed origin and proves 
   assert.doesNotMatch(evaluated[0], /document\.cookie|localStorage|sessionStorage/);
 });
 
+test('a slowly rendered account badge is rechecked before identity is rejected', async () => {
+  let evaluation = 0;
+  const { deps } = sessionDeps({
+    cdpFactory: async () => ({
+      async send() { return {}; },
+      async evaluate() {
+        evaluation += 1;
+        return {
+          sameOrigin: true,
+          onLoginView: false,
+          aliasPresent: evaluation >= 2,
+          textLength: evaluation >= 2 ? 1200 : 80,
+        };
+      },
+      close() {},
+    }),
+  });
+
+  const session = await openExperimentSession({ storeCode: 'CX4412', deps });
+  assert.equal(session.identityProven, true);
+  assert.equal(evaluation, 2);
+  await session.close();
+});
+
 test('the identity proof returns booleans only and never an identity value', () => {
   const expression = buildIdentityProofExpression({ origin: WEBAPI_ORIGIN, aliasDigits: '5477' });
   assert.match(expression, /sameOrigin: sameOrigin === true/);
