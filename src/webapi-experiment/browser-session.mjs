@@ -15,6 +15,7 @@
  */
 
 import {
+  WEBAPI_HOME_URL,
   WEBAPI_ORIGIN,
 } from './endpoint-allowlist.mjs';
 import {
@@ -74,6 +75,7 @@ export const SESSION_DEFAULT_LIMITS = Object.freeze({
   debuggerReadyMs: 25_000,
   debuggerPollMs: 500,
   navigationSettleMs: 6_000,
+  identityStabilityMs: 6_000,
   identityTimeoutMs: 15_000,
   terminateGraceMs: 4_000,
 });
@@ -349,9 +351,11 @@ export async function openExperimentSession({
       originPattern: new RegExp(`^${WEBAPI_ORIGIN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
     });
 
-    // The only navigation target is the allow-listed origin.
+    // The only navigation target is the allow-listed full-managed home route.
+    // Navigating to the bare origin can briefly render stale cached content
+    // before the SPA redirects to an expired-login view.
     try {
-      await cdp.send('Page.navigate', { url: WEBAPI_ORIGIN });
+      await cdp.send('Page.navigate', { url: WEBAPI_HOME_URL });
     } catch {
       throw new WebApiSessionError(SESSION_REJECT_CODES.NAVIGATION_FAILED, canonical);
     }
@@ -364,6 +368,20 @@ export async function openExperimentSession({
       }),
       { timeoutMs: resolvedLimits.identityTimeoutMs },
     );
+    if (
+      proof?.sameOrigin === true
+      && proof?.onLoginView !== true
+      && proof?.aliasPresent === true
+    ) {
+      await sleep(resolvedLimits.identityStabilityMs);
+      proof = await cdp.evaluate(
+        buildIdentityProofExpression({
+          origin: WEBAPI_ORIGIN,
+          identityMarkers: fullManagedLoginIdentityMarkers(canonical, identityAliases),
+        }),
+        { timeoutMs: resolvedLimits.identityTimeoutMs },
+      );
+    }
     if (proof?.sameOrigin !== true) {
       throw new WebApiSessionError(SESSION_REJECT_CODES.ORIGIN_MISMATCH, canonical);
     }

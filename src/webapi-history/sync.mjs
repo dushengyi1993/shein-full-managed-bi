@@ -458,6 +458,7 @@ export async function runFullHomeHistorySync({
   startDate,
   endDate,
   includeProducts = true,
+  allowSavedCredentialLogin = true,
   openSession,
   transportFactory,
   repository,
@@ -486,7 +487,7 @@ export async function runFullHomeHistorySync({
     const storeCode = String(rawStoreCode).trim().toUpperCase();
     let session = null;
     try {
-      session = await openSession({ storeCode });
+      session = await openSession({ storeCode, allowSavedCredentialLogin });
       const transport = transportFactory({ session });
       const [completedTradeDates, completedRegionDates] = await Promise.all([
         repository.successfulDailyDates({

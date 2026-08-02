@@ -12,6 +12,7 @@ test('homepage history sync processes one Profile at a time and preserves partia
   const audits = [];
   const storeRows = [];
   const productRows = [];
+  const sessionOptions = [];
   let activeSessions = 0;
   const result = await runFullHomeHistorySync({
     storeCodes: ['DL5477', 'MZ2406'],
@@ -21,9 +22,10 @@ test('homepage history sync processes one Profile at a time and preserves partia
       let tick = 0;
       return () => new Date(Date.UTC(2026, 6, 29, 0, 0, tick++));
     })(),
-    openSession: async ({ storeCode }) => {
+    openSession: async ({ storeCode, allowSavedCredentialLogin }) => {
       activeSessions += 1;
       assert.equal(activeSessions, 1);
+      sessionOptions.push({ storeCode, allowSavedCredentialLogin });
       events.push(`open:${storeCode}`);
       return {
         storeCode,
@@ -84,6 +86,10 @@ test('homepage history sync processes one Profile at a time and preserves partia
   assert.equal(result.ok, true);
   assert.equal(result.complete, false);
   assert.equal(activeSessions, 0);
+  assert.deepEqual(sessionOptions, [
+    { storeCode: 'DL5477', allowSavedCredentialLogin: true },
+    { storeCode: 'MZ2406', allowSavedCredentialLogin: true },
+  ]);
   assert.deepEqual(events.filter((item) => item.startsWith('open:') || item.startsWith('close:')), [
     'open:DL5477',
     'close:DL5477',

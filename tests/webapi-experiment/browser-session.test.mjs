@@ -21,7 +21,10 @@ import {
   WEBAPI_EXPERIMENT_GATE_PATH,
   WEBAPI_PROFILE_ROOT,
 } from '../../src/webapi-experiment/profile-guard.mjs';
-import { WEBAPI_ORIGIN } from '../../src/webapi-experiment/endpoint-allowlist.mjs';
+import {
+  WEBAPI_HOME_URL,
+  WEBAPI_ORIGIN,
+} from '../../src/webapi-experiment/endpoint-allowlist.mjs';
 import { TRANSPORT_REJECT_CODES } from '../../src/webapi-experiment/page-transport.mjs';
 import { FULL_MANAGED_STORE_CODES } from '../../src/config/full-managed-stores.mjs';
 
@@ -183,9 +186,9 @@ test('a successful session navigates only to the allow-listed origin and proves 
 
   const navigations = commands.filter((entry) => entry.method === 'Page.navigate');
   assert.equal(navigations.length, 1);
-  assert.equal(navigations[0].params.url, WEBAPI_ORIGIN);
+  assert.equal(navigations[0].params.url, WEBAPI_HOME_URL);
   // The identity proof asks yes/no questions and reads no credential.
-  assert.equal(evaluated.length, 1);
+  assert.equal(evaluated.length, 2);
   assert.doesNotMatch(evaluated[0], /document\.cookie|localStorage|sessionStorage/);
 });
 
@@ -199,7 +202,7 @@ test('the identity proof returns booleans only and never an identity value', () 
   assert.doesNotMatch(expression, /document\.cookie|localStorage/);
 });
 
-test('saved credential renewal uses a browser gesture without reading a credential value', async () => {
+test('a late login redirect still uses saved credentials without reading a value', async () => {
   const commands = [];
   const gestures = [];
   const evaluated = [];
@@ -218,10 +221,13 @@ test('saved credential renewal uses a browser gesture without reading a credenti
         evaluated.push(String(expression));
         evaluation += 1;
         if (evaluation === 1) {
+          return { sameOrigin: true, onLoginView: false, aliasPresent: true, textLength: 1200 };
+        }
+        if (evaluation === 2) {
           return { sameOrigin: true, onLoginView: true, aliasPresent: false, textLength: 100 };
         }
-        if (evaluation === 2) return { found: true, x: 320, y: 240 };
-        if (evaluation === 3) {
+        if (evaluation === 3) return { found: true, x: 320, y: 240 };
+        if (evaluation === 4) {
           return {
             accountReady: true,
             passwordReady: true,
@@ -242,7 +248,7 @@ test('saved credential renewal uses a browser gesture without reading a credenti
   });
   assert.equal(session.identityProven, true);
   assert.match(evaluated[0], /test-subaccount-7343/);
-  assert.match(evaluated[1], /getBoundingClientRect/);
+  assert.match(evaluated[2], /getBoundingClientRect/);
   assert.doesNotMatch(evaluated.join('\n'), /document\.cookie|localStorage|sessionStorage/);
   assert.deepEqual(gestures, [
     { stage: 'focus', point: { x: 320, y: 240 } },

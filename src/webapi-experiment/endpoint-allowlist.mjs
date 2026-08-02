@@ -7,6 +7,7 @@
  */
 
 export const WEBAPI_ORIGIN = 'https://sso.geiwohuo.com';
+export const WEBAPI_HOME_URL = `${WEBAPI_ORIGIN}/#/gsp/home`;
 
 export const WEBAPI_REQUEST_SHAPES = Object.freeze({
   NONE: 'NONE',
