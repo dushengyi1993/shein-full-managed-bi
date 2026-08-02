@@ -4,8 +4,13 @@ import test from 'node:test';
 
 import {
   createLinuxExperimentRuntime,
+  isAllowedLoopbackDebugUrl,
   WebApiLinuxRuntimeError,
 } from '../../src/webapi-experiment/linux-runtime.mjs';
+import {
+  FULL_MANAGED_STORE_CODES,
+  fullManagedRuntimeSlot,
+} from '../../src/config/full-managed-stores.mjs';
 
 const DATABASE_URL = 'postgresql://sheinfm_webapi_login:123456789012345678901234@127.0.0.1:54330/shein_fm';
 
@@ -134,6 +139,27 @@ function fakeSystem({ platform = 'linux' } = {}) {
     children,
   };
 }
+
+test('the loopback debugger allowlist covers every one of the 25 runtime slots', () => {
+  for (const storeCode of FULL_MANAGED_STORE_CODES) {
+    const { debuggingPort } = fullManagedRuntimeSlot(storeCode);
+    for (const path of ['version', 'list']) {
+      assert.equal(
+        isAllowedLoopbackDebugUrl(`http://127.0.0.1:${debuggingPort}/json/${path}`),
+        true,
+        `${storeCode}:${debuggingPort}:${path}`,
+      );
+    }
+  }
+  for (const url of [
+    'http://127.0.0.1:39540/json/version',
+    'http://127.0.0.1:39566/json/version',
+    'http://127.0.0.2:39565/json/version',
+    'https://127.0.0.1:39565/json/version',
+  ]) {
+    assert.equal(isAllowedLoopbackDebugUrl(url), false, url);
+  }
+});
 
 test('runtime rejects non-Linux and non-dedicated database URLs before a process', async () => {
   const windows = fakeSystem({ platform: 'win32' });
