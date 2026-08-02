@@ -93,7 +93,7 @@ async function main() {
       repository,
     });
     console.log(JSON.stringify(result, null, 2));
-    if (!result.ok) process.exitCode = 2;
+    if (!result.complete) process.exitCode = 2;
   } finally {
     await runtime.close().catch(() => {});
     await pool.end().catch(() => {});
