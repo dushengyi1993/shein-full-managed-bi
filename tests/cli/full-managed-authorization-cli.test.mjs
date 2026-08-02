@@ -537,9 +537,12 @@ test('finalizer backs up and atomically enables only the confirmed store before 
   }
 });
 
-test('finalizer accepts the exact non-DL application routed by the authorization batch', async () => {
+test('finalizer accepts the exact routed application in a multi-entity OpenAPI config', async () => {
   const files = await fixture();
   try {
+    const config = openApiConfig();
+    config.stores.find((store) => store.storeCode === 'DL').appId = 'another-entity-app-id';
+    await privateJson(files.configFile, config);
     await privateJson(files.stateFile, authorizationState({
       store: { applicationStoreCode: 'DX' },
     }));
@@ -567,8 +570,12 @@ test('finalizer accepts the exact non-DL application routed by the authorization
       cloudExecution: '1',
     });
     assert.equal(result.status, 'APPROVED');
-    const config = JSON.parse(await readFile(files.configFile, 'utf8'));
-    assert.equal(config.stores.find((store) => store.storeCode === 'DX').appId, APP_ID);
+    const updated = JSON.parse(await readFile(files.configFile, 'utf8'));
+    assert.equal(updated.stores.find((store) => store.storeCode === 'DX').appId, APP_ID);
+    assert.equal(
+      updated.stores.find((store) => store.storeCode === 'DL').appId,
+      'another-entity-app-id',
+    );
   } finally {
     await rm(files.directory, { recursive: true, force: true });
   }

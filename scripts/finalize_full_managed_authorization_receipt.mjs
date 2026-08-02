@@ -610,15 +610,6 @@ function updateOpenApiConfiguration(config, {
       );
     }
   }
-  const configuredAppIds = [...new Set(
-    config.stores.map((store) => String(store?.appId || '').trim()).filter(Boolean),
-  )];
-  if (
-    configuredAppIds.length > 1 ||
-    (configuredAppIds.length === 1 && configuredAppIds[0] !== credentials.appId)
-  ) {
-    fail('APPLICATION_OWNER_MISMATCH', 'receipt app does not match the configured DL application');
-  }
   const updated = structuredClone(config);
   const target = updated.stores[matches[0].index];
   Object.assign(target, {
