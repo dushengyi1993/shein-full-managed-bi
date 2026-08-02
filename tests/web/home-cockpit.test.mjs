@@ -660,7 +660,7 @@ test('active responsive shell mirrors the semi-managed top rail and keeps health
     read('src/web/home-parity.css'),
   ]);
 
-  assert.match(html, /class="mark"[^>]*>[\s\S]*?<img src="\/favicon\.svg\?v=20260803\.1"/);
+  assert.match(html, /class="mark"[^>]*>[\s\S]*?<img src="\/favicon\.svg\?v=20260803\.2"/);
   const navIndex = html.indexOf('class="nav primary-nav"');
   const accountIndex = html.indexOf('class="account-box sidebar-context sidebar-account"');
   const healthIndex = html.indexOf('class="side-note sidebar-health"');
@@ -691,6 +691,9 @@ test('active responsive shell mirrors the semi-managed top rail and keeps health
   assert.match(mobile, /\.sidebar\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) auto/s);
   assert.match(mobile, /\.primary-nav\s*\{[^}]*grid-column: 1 \/ -1/s);
   assert.match(mobile, /\.bar\.home-filter-bar\s*\{[^}]*grid-template-columns: 1fr/s);
+  assert.match(mobile, /\.home-filter-bar \.range-dock\s*\{[^}]*display: block[^}]*grid-area: range/s);
+  assert.match(mobile, /\.home-filter-bar \.range-toolbar-main\s*\{[^}]*display: grid/s);
+  assert.match(mobile, /\.mobile-title\s*\{[^}]*display: none/s);
   assert.match(mobile, /\.line-chart\s*\{[^}]*overflow-x: auto/s);
   assert.match(mobile, /\.line-chart svg\s*\{[^}]*min-width: 720px/s);
 });

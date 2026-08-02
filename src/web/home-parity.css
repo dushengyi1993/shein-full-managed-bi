@@ -2825,6 +2825,10 @@ body {
     backdrop-filter: none;
   }
 
+  .mobile-title {
+    display: none;
+  }
+
   .bar.home-filter-bar {
     grid-template-columns: 1fr;
     grid-template-areas:
@@ -2835,6 +2839,28 @@ body {
     gap: 7px;
     padding: 7px;
     border-radius: 18px;
+  }
+
+  .home-filter-bar .range-dock {
+    display: block;
+    grid-area: range;
+  }
+
+  .home-filter-bar .range-toolbar {
+    display: block;
+  }
+
+  .home-filter-bar .range-toolbar-main {
+    display: grid;
+  }
+
+  .home-filter-bar .range-button,
+  .home-filter-bar .range-preset-strip {
+    grid-area: auto;
+  }
+
+  .home-filter-bar .command-actions {
+    grid-area: actions;
   }
 
   .field.filter-field,
