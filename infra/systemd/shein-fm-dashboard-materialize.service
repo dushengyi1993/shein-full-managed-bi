@@ -13,6 +13,7 @@ SupplementaryGroups=sheinfm-dashboard
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
+Environment=NODE_OPTIONS=--max-old-space-size=1024
 Environment=FULL_BI_DATA_FILE=/srv/shein-fm/runtime/dashboard/dashboard.next.json
 EnvironmentFile=/srv/shein-fm/secrets/materializer/database.env
 ExecStart=/usr/bin/node scripts/materialize_full_managed_dashboard.mjs
@@ -42,6 +43,7 @@ ReadOnlyPaths=/srv/shein-fm/secrets/materializer/database.env
 ReadWritePaths=/srv/shein-fm/runtime/dashboard
 MemoryHigh=768M
 MemoryMax=1536M
+LimitCORE=0
 
 # The materializer writes a private staging file. Only after a successful
 # projection is it made group-readable and atomically promoted for the portal.
