@@ -98,7 +98,9 @@ test('home shell keeps the historical filter, KPI tables, vertical trends and fo
   assert.match(app, /data-home-trend-metric=/);
   assert.match(app, /class="rank-list"/);
   assert.match(app, /rank-item rank-fill-\$\{fillStep\} rank-tone-/);
-  assert.match(app, /class="home-footnote"/);
+  assert.match(app, /class="help"/);
+  assert.match(app, /data-tip=/);
+  assert.doesNotMatch(functionBody(app, 'renderHome'), /home-footnote/);
   assert.match(parityStyles, /\.metric-matrix\s*\{/);
   assert.match(parityStyles, /\.metric-matrix \.matrix-cell\s*\{/);
   assert.match(parityStyles, /\.trend-stack\s*\{/);
@@ -177,7 +179,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   const assetVersions = [];
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    const match = html.match(new RegExp(`/${asset.replace('.', '\\.')}\\?v=(20260802\\.\\d+)`));
+    const match = html.match(new RegExp(`/${asset.replace('.', '\\.')}\\?v=(20260803\\.\\d+)`));
     assert.ok(match, `${asset} must use a dated local cache key`);
     assetVersions.push(match[1]);
   }

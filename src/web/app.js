@@ -860,7 +860,9 @@ const elements = {
   liveUpdateBadge: document.querySelector('#live-update-badge'),
   updatedAt: document.querySelector('#updated-at'),
   sidebarDataset: document.querySelector('#sidebar-dataset'),
+  sidebarAccountName: document.querySelector('#sidebar-account-name'),
   sidebarPermission: document.querySelector('#sidebar-permission'),
+  sidebarHomeFreshness: document.querySelector('#sidebar-home-freshness'),
   sidebarSampleNote: document.querySelector('#sidebar-sample-note'),
   mobilePageTitle: document.querySelector('#mobile-page-title'),
   errorPanel: document.querySelector('#error-panel'),
@@ -5769,24 +5771,6 @@ function homeProductRankingTable(rows) {
 }
 /* --- home-ranking-tables:end --- */
 
-/** One compact caliber footnote plus the entries into the other workspaces. */
-function homeFootnote() {
-  return `
-    <footer class="home-footnote" aria-label="口径脚注与其他业务页面入口">
-      <p>口径：仅统计销量数量事实；未知为 —，合法零为 0，缺失不补零、不插值；四个窗口独立取数，不跨业务日混算；财务与结算、流量、订单等指标尚未接入，不由销量推导金额。</p>
-      <nav class="home-footnote-links" aria-label="其他业务页面入口">
-        <a href="${escapeHtml(homePulseHref('sales'))}">销量分析</a>
-        <a href="${escapeHtml(homePulseHref('products'))}">商品分析</a>
-        <a href="#inventory">库存与备货</a>
-        <a href="#procurement">采购单</a>
-        <a href="#fulfilment">交付入仓</a>
-        <a href="#platform">平台动态</a>
-        <a href="#ops">运营工具</a>
-        <a href="#system">系统管理</a>
-      </nav>
-    </footer>`;
-}
-
 function finiteMetric(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
@@ -6410,17 +6394,29 @@ function compactRangeLabel(range) {
   return `${compact(range.start)}–${compact(range.end)}`;
 }
 
+function homeHelpTip(text, label = '查看口径说明') {
+  return `<button type="button" class="help" aria-label="${escapeHtml(label)}" data-tip="${escapeHtml(text)}">?</button>`;
+}
+
 function homeMetricTable(title, subtitle, metrics, currentRange, previousRange) {
+  const comparisonNote = [
+    subtitle,
+    `本期 ${currentRange.start} → ${currentRange.end}`,
+    `前期 ${previousRange.start} → ${previousRange.end}，为紧邻本期且天数完全相同的上一窗口`,
+    '未知显示 —，不会补零',
+  ].join('；');
   return `
     <article class="overview-matrix-card home-history-card">
-      <div class="matrix-card-head"><h4>${escapeHtml(title)}</h4><div class="sub">${escapeHtml(subtitle)}</div></div>
+      <div class="matrix-card-head">
+        <div class="title-with-help"><h4>${escapeHtml(title)}</h4>${homeHelpTip(comparisonNote, `${title}口径说明`)}</div>
+      </div>
       <div class="metric-matrix cols-3 home-history-matrix" role="table" aria-label="${escapeHtml(title)}">
         <span class="matrix-cell head" role="columnheader">指标</span>
         <span class="matrix-cell head" role="columnheader"><strong>本期</strong></span>
         <span class="matrix-cell head" role="columnheader"><strong>前期</strong></span>
         <span class="matrix-cell head" role="columnheader">较前期</span>
         ${metrics.map((metric) => `
-          <span class="matrix-cell label" role="rowheader" title="${escapeHtml(metric.note)}">${escapeHtml(metric.label)}</span>
+          <span class="matrix-cell label" role="rowheader" tabindex="0" data-tip="${escapeHtml(metric.note)}">${escapeHtml(metric.label)}</span>
           <span class="matrix-cell value" role="cell">${escapeHtml(metric.display)}${metric.currentNote ? `<small class="metric-subvalue">${escapeHtml(metric.currentNote)}</small>` : ''}</span>
           <span class="matrix-cell value comparison-value" role="cell">${escapeHtml(metric.baselineDisplay)}</span>
           <span class="matrix-cell value change-value" role="cell">${escapeHtml(metric.change)}</span>`).join('')}
@@ -6451,7 +6447,9 @@ function renderHistoryKpis() {
         ${homeMetricTable('台账金额', '库存价值；不等于销售收入', summary.ledgerAmountRows, summary.range, previousRange)}
         ${homeMetricTable('客户结构', '新客规模与占比', summary.customerRows, summary.range, previousRange)}
         <article class="overview-matrix-card home-history-card home-region-card">
-          <div class="matrix-card-head"><h4>主销地区</h4><div class="sub">销量 Top 4</div></div>
+          <div class="matrix-card-head">
+            <div class="title-with-help"><h4>主销地区</h4>${homeHelpTip(`按 ${summary.range.start} → ${summary.range.end} 及当前店铺范围汇总地区销量，只展示销量 Top 4；未知不补零。`, '主销地区口径说明')}</div>
+          </div>
           <div class="metric-matrix cols-region" role="table" aria-label="销量 Top 主销地区">
             <span class="matrix-cell head" role="columnheader">排名</span>
             <span class="matrix-cell head" role="columnheader">地区</span>
@@ -6590,8 +6588,19 @@ function historyTrendChart(rows, key, { money = false, suffix = '' } = {}, kind 
   const innerHeight = height - top - bottom;
   const rawMin = Math.min(...visible.map((row) => row[key]));
   const rawMax = Math.max(...visible.map((row) => row[key]));
-  const min = Math.min(0, rawMin);
-  const max = Math.max(0, rawMax);
+  const barChart = kind === 'bar';
+  const rawSpan = rawMax - rawMin;
+  const linePadding = rawSpan > 0
+    ? rawSpan * 0.14
+    : Math.max(1, Math.abs(rawMax) * 0.12);
+  let min = barChart ? Math.min(0, rawMin) : rawMin - linePadding;
+  let max = barChart ? Math.max(0, rawMax) : rawMax + linePadding;
+  if (!barChart && rawMin === 0) min = 0;
+  if (!barChart && rawMax === 0) max = 0;
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
   const span = Math.max(1, max - min);
   const yFor = (value) => top + innerHeight - (((value - min) / span) * innerHeight);
   const points = visible.map((row, index) => ({
@@ -6618,14 +6627,45 @@ function historyTrendChart(rows, key, { money = false, suffix = '' } = {}, kind 
     (best, point, index) => (point[key] < points[best][key] ? index : best),
     0,
   );
-  const labelled = new Set();
-  const minimumLabelGap = points.length > 12 ? 2 : 1;
-  for (const index of [maxIndex, minIndex, 0, points.length - 1]) {
-    if ([...labelled].every((existing) => Math.abs(existing - index) >= minimumLabelGap)) {
+  const evenlySpacedIndices = (count, limit) => {
+    if (count <= 0 || limit <= 0) return [];
+    if (count <= limit) return Array.from({ length: count }, (_, index) => index);
+    return [...new Set(Array.from(
+      { length: limit },
+      (_, index) => Math.round((index * (count - 1)) / (limit - 1)),
+    ))];
+  };
+  const tickIndices = new Set(evenlySpacedIndices(points.length, 7));
+  const labelLimit = Math.min(points.length, points.length <= 8 ? points.length : 6);
+  const labelled = new Set([maxIndex, minIndex]);
+  const minimumLabelPixelGap = points.length > 12 ? 96 : 72;
+  for (const index of [0, points.length - 1]) {
+    if ([...labelled].every((existing) => (
+      Math.abs(points[existing].x - points[index].x) >= minimumLabelPixelGap
+    ))) {
       labelled.add(index);
     }
   }
-  const gridValues = [max, min + span / 2, min];
+  while (labelled.size < labelLimit) {
+    let candidate = -1;
+    let candidateDistance = -1;
+    for (let index = 0; index < points.length; index += 1) {
+      if (labelled.has(index)) continue;
+      const nearest = Math.min(...[...labelled].map((existing) => (
+        Math.abs(points[existing].x - points[index].x)
+      )));
+      if (nearest > candidateDistance) {
+        candidate = index;
+        candidateDistance = nearest;
+      }
+    }
+    if (candidate < 0 || candidateDistance < minimumLabelPixelGap) break;
+    labelled.add(candidate);
+  }
+  const gridValues = Array.from(
+    { length: 4 },
+    (_, index) => max - ((span * index) / 3),
+  );
   const axis = gridValues.map((value) => {
     const y = yFor(value);
     const label = money
@@ -6635,12 +6675,27 @@ function historyTrendChart(rows, key, { money = false, suffix = '' } = {}, kind 
       <text class="chart-axis chart-axis-end" x="${left - 8}" y="${(y + 4).toFixed(1)}">${escapeHtml(label)}</text>`;
   }).join('');
   const zeroY = yFor(0);
+  const zeroLine = min <= 0 && max >= 0
+    ? `<line class="chart-zero" x1="${left}" y1="${zeroY.toFixed(1)}" x2="${left + innerWidth}" y2="${zeroY.toFixed(1)}"></line>`
+    : '';
   const pointLabels = points.map((point, index) => {
     if (!labelled.has(index)) return '';
-    const below = point[key] < 0;
-    const y = below ? point.y + 18 : Math.max(14, point.y - 10);
+    const placeBelow = point.y < top + 18 || index % 2 === 1;
+    const y = placeBelow
+      ? Math.min(height - bottom - 2, point.y + 18)
+      : Math.max(14, point.y - 10);
     const anchor = index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle';
     return `<text class="chart-value-label" text-anchor="${anchor}" x="${point.x.toFixed(1)}" y="${y.toFixed(1)}">${escapeHtml(compactValue(point))}</text>`;
+  }).join('');
+  const axisDateLabel = (date) => (
+    String(date).length === 7
+      ? String(date).replace('-', '/')
+      : String(date).slice(5).replace('-', '/')
+  );
+  const lineAxis = points.map((point, index) => {
+    if (!tickIndices.has(index)) return '';
+    const anchor = index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle';
+    return `<text class="chart-axis chart-date-axis" text-anchor="${anchor}" x="${point.x.toFixed(1)}" y="${height - 12}">${escapeHtml(axisDateLabel(point.date))}</text>`;
   }).join('');
   const bars = points.map((point, index) => {
     const slot = innerWidth / Math.max(1, points.length);
@@ -6652,35 +6707,33 @@ function historyTrendChart(rows, key, { money = false, suffix = '' } = {}, kind 
     return `<rect class="history-bar${provisional ? ' provisional' : ''}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="5" tabindex="0" data-tip="${escapeHtml(`${point.date} · ${valueLabel(point)}${provisional ? ' · 含实时暂估' : ''}`)}"></rect>`;
   }).join('');
   const barLabels = points.map((point, index) => {
-    const shouldLabel = points.length <= 12 || labelled.has(index);
-    if (!shouldLabel) return '';
+    if (!labelled.has(index)) return '';
     const slot = innerWidth / Math.max(1, points.length);
     const x = left + (slot * index) + (slot / 2);
     const y = point[key] < 0 ? point.y + 18 : Math.max(14, point.y - 8);
     return `<text class="chart-value-label" text-anchor="middle" x="${x.toFixed(1)}" y="${y.toFixed(1)}">${escapeHtml(compactValue(point))}</text>`;
   }).join('');
   const barAxis = points.map((point, index) => {
-    const every = Math.max(1, Math.ceil(points.length / 8));
-    if (index !== 0 && index !== points.length - 1 && index % every !== 0) return '';
+    if (!tickIndices.has(index)) return '';
     const slot = innerWidth / Math.max(1, points.length);
     const x = left + (slot * index) + (slot / 2);
-    return `<text class="chart-axis" text-anchor="middle" x="${x.toFixed(1)}" y="${height - 12}">${escapeHtml(point.date)}</text>`;
+    const anchor = index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle';
+    return `<text class="chart-axis chart-date-axis" text-anchor="${anchor}" x="${x.toFixed(1)}" y="${height - 12}">${escapeHtml(axisDateLabel(point.date))}</text>`;
   }).join('');
   return `
-    <div class="line-chart trend-chart home-history-chart ${kind === 'bar' ? 'history-bar-chart' : 'history-line-chart'}">
+    <div class="line-chart trend-chart home-history-chart ${barChart ? 'history-bar-chart' : 'history-line-chart'}">
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(`${points[0].date} 至 ${points.at(-1).date} 趋势`)}">
         ${axis}
-        <line class="chart-zero" x1="${left}" y1="${zeroY.toFixed(1)}" x2="${left + innerWidth}" y2="${zeroY.toFixed(1)}"></line>
-        ${kind === 'bar'
+        ${zeroLine}
+        ${barChart
           ? `${bars}${barLabels}${barAxis}`
           : `<path class="chart-line" d="${path}"></path>
              ${points.map((point) => {
                const provisional = point.basisByMetric?.[key] === 'PROVISIONAL';
-               return `<circle class="chart-point${provisional ? ' provisional' : ''}" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="${provisional ? '5' : '4'}" tabindex="0" data-tip="${escapeHtml(`${point.date} · ${valueLabel(point)}${provisional ? ' · 实时暂估' : ''}`)}"></circle>`;
+               return `<circle class="chart-point${provisional ? ' provisional' : ''}" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="${provisional ? '4.5' : '3.6'}" tabindex="0" data-tip="${escapeHtml(`${point.date} · ${valueLabel(point)}${provisional ? ' · 实时暂估' : ''}`)}"></circle>`;
              }).join('')}
              ${pointLabels}
-             <text class="chart-axis" x="${left}" y="${height - 12}">${escapeHtml(points[0].date)}</text>
-             <text class="chart-axis chart-axis-end" x="${left + innerWidth}" y="${height - 12}">${escapeHtml(points.at(-1).date)}</text>`}
+             ${lineAxis}`}
       </svg>
     </div>`;
 }
@@ -6699,23 +6752,38 @@ function renderHistoryTrends() {
   );
   const metricLabel = metric.label;
   const metricGroups = [...new Set(Object.values(HOME_TREND_METRICS).map(({ group }) => group))];
-  const trendPanel = (title, rows, note, kind) => `
+  const trendPanel = (title, rows, visibleRange, helpText, kind) => `
     <article class="panel trend-panel home-history-trend-panel">
-      <h4>${escapeHtml(`${title} · ${metricLabel}`)}</h4>
-      <p class="sub">${escapeHtml(note)}</p>
+      <div class="title-with-help"><h4>${escapeHtml(`${title} · ${metricLabel}`)}</h4>${homeHelpTip(helpText, `${title}口径说明`)}</div>
+      <p class="sub">${escapeHtml(visibleRange)}</p>
       ${historyTrendChart(rows, metricKey, metric, kind)}
     </article>`;
+  const provisionalNote = hasProvisional
+    ? '实心点为已物化历史事实；颜色较浅的点或柱表示今日实时暂估，台账或账单更新后自动切换为确认数据。'
+    : '当前指标来自所选范围内的确认或已物化数据。';
   return `
     <section class="home-history-trends" aria-label="经营趋势">
       <header class="head home-trend-section-head">
-        <div><h3>趋势</h3><p>${escapeHtml(hasProvisional ? '空心点或浅色柱表示实时暂估，台账或账单更新后自动转为确认数据。' : '当前指标均来自所选范围内的确认或已物化数据。')}</p></div>
+        <div class="title-with-help"><h3>趋势</h3>${homeHelpTip(`${provisionalNote} 日趋势不强制从零起轴，避免有效波动被大片空白压扁；横轴均匀展示日期。`, '趋势图说明')}</div>
         <div class="trend-toggle" role="group" aria-label="趋势指标">
           ${metricGroups.map((group) => `<span class="trend-group"><em>${escapeHtml(group)}</em>${Object.entries(HOME_TREND_METRICS).filter(([, item]) => item.group === group).map(([key, item]) => `<button type="button" class="${metricKey === key ? 'active' : ''}" data-home-trend-metric="${escapeHtml(key)}" aria-pressed="${metricKey === key ? 'true' : 'false'}">${escapeHtml(item.label)}</button>`).join('')}</span>`).join('')}
         </div>
       </header>
       <div class="trend-stack home-trend-stack">
-        ${trendPanel('日趋势', daily, `${selectedHomeDateRange().start} → ${selectedHomeDateRange().end} · 折线展示连续变化，关键点直接标数`, 'line')}
-        ${trendPanel('月趋势', monthly, `${['billSalesAmount', 'supplementAmount', 'deductionAmount', 'settlementAmount'].includes(metricKey) ? '报账单生成日' : '业务日'}归入自然月 · 库存期初/期末取月首/月末，其余指标累计`, 'bar')}
+        ${trendPanel(
+          '日趋势',
+          daily,
+          `${selectedHomeDateRange().start} → ${selectedHomeDateRange().end}`,
+          `按业务日展示连续变化，横轴均匀标日期，关键点直接标数。${provisionalNote}`,
+          'line',
+        )}
+        ${trendPanel(
+          '月趋势',
+          monthly,
+          `${selectedHomeDateRange().start.slice(0, 7)} → ${selectedHomeDateRange().end.slice(0, 7)}`,
+          `${['billSalesAmount', 'supplementAmount', 'deductionAmount', 'settlementAmount'].includes(metricKey) ? '报账单生成日' : '业务日'}归入自然月；库存期初、期末取月首、月末，其余指标累计。${provisionalNote}`,
+          'bar',
+        )}
       </div>
     </section>`;
 }
@@ -6757,6 +6825,26 @@ function rankingObservedDays(rows) {
   return new Set(rows.map(({ date }) => date).filter(Boolean)).size;
 }
 
+function rankMetaMetric(label, value, suffix = '') {
+  return value === null || value === undefined || value === ''
+    ? null
+    : { label, value: String(value), suffix };
+}
+
+function rankMetaText(text) {
+  return text ? { text: String(text) } : null;
+}
+
+function renderRankMeta(parts) {
+  if (!Array.isArray(parts)) return escapeHtml(parts || '');
+  return parts.filter(Boolean).map((part) => {
+    if (part.text) {
+      return `<span class="meta-part meta-text"><em>${escapeHtml(part.text)}</em></span>`;
+    }
+    return `<span class="meta-part">${part.label ? `<em>${escapeHtml(part.label)}</em>` : ''}<b>${escapeHtml(part.value)}</b>${part.suffix ? `<em>${escapeHtml(part.suffix)}</em>` : ''}</span>`;
+  }).join('<i class="meta-sep" aria-hidden="true">·</i>');
+}
+
 function storeHistoryRankMeta(row, primary) {
   const quantity = rankingKnownSum(row.rows, ['salesQuantity', 'goodsCount']);
   const amount = rankingKnownSum(row.rows, ['salesAmount', 'dealAmount', 'incomeAmount']);
@@ -6764,16 +6852,16 @@ function storeHistoryRankMeta(row, primary) {
   const days = rankingObservedDays(row.rows);
   const parts = primary === 'amount'
     ? [
-      quantity === null ? null : `销量 ${formatUnits(quantity)} 件`,
-      orders === null ? null : `支付订单 ${formatUnits(orders)} 单`,
-      days ? `${formatUnits(days)} 天有数据` : null,
+      rankMetaMetric('销量', quantity === null ? null : formatUnits(quantity), '件'),
+      rankMetaMetric('支付订单', orders === null ? null : formatUnits(orders), '单'),
+      rankMetaMetric('', days ? formatUnits(days) : null, '天有数据'),
     ]
     : [
-      amount === null ? null : `金额 ${formatMoney(amount, row.currency)}`,
-      orders === null ? null : `支付订单 ${formatUnits(orders)} 单`,
-      days ? `${formatUnits(days)} 天有数据` : null,
+      rankMetaMetric('金额', amount === null ? null : formatMoney(amount, row.currency)),
+      rankMetaMetric('支付订单', orders === null ? null : formatUnits(orders), '单'),
+      rankMetaMetric('', days ? formatUnits(days) : null, '天有数据'),
     ];
-  return parts.filter(Boolean).join(' · ');
+  return parts.filter(Boolean);
 }
 
 function productHistoryRankMeta(row, primary) {
@@ -6786,16 +6874,16 @@ function productHistoryRankMeta(row, primary) {
   const days = rankingObservedDays(row.rows);
   const parts = primary === 'amount'
     ? [
-      quantity === null ? null : `销量 ${formatUnits(quantity)} 件`,
-      storeCodes.length ? `店铺 ${storeCodes.join('、')}` : null,
-      days ? `${formatUnits(days)} 天有数据` : null,
+      rankMetaMetric('销量', quantity === null ? null : formatUnits(quantity), '件'),
+      rankMetaMetric('店铺', storeCodes.length ? storeCodes.join('、') : null),
+      rankMetaMetric('', days ? formatUnits(days) : null, '天有数据'),
     ]
     : [
-      amount === null ? null : `金额 ${formatMoney(amount, row.currency)}`,
-      storeCodes.length ? `店铺 ${storeCodes.join('、')}` : null,
-      days ? `${formatUnits(days)} 天有数据` : null,
+      rankMetaMetric('金额', amount === null ? null : formatMoney(amount, row.currency)),
+      rankMetaMetric('店铺', storeCodes.length ? storeCodes.join('、') : null),
+      rankMetaMetric('', days ? formatUnits(days) : null, '天有数据'),
     ];
-  return parts.filter(Boolean).join(' · ');
+  return parts.filter(Boolean);
 }
 
 function historyRankTable(title, note, rows, {
@@ -6807,8 +6895,7 @@ function historyRankTable(title, note, rows, {
   const max = Math.max(1, ...rows.map(({ value }) => Math.abs(value)));
   return `
     <article class="panel rank-panel home-history-rank-card">
-      <h4>${escapeHtml(title)}</h4>
-      <p class="sub">${escapeHtml(note)}</p>
+      <div class="title-with-help"><h4>${escapeHtml(title)}</h4>${homeHelpTip(note, `${title}口径说明`)}</div>
       ${rows.length ? `<div class="rank-list">${rows.map((row, index) => {
         const pct = Math.max(4, Math.round((Math.abs(row.value) / max) * 100));
         const fillStep = Math.max(1, Math.min(10, Math.ceil(pct / 10)));
@@ -6817,7 +6904,7 @@ function historyRankTable(title, note, rows, {
           <span class="rank-no">${index + 1}</span>
           <span class="rank-main">
             <span class="rank-title-line"><span class="rank-name">${escapeHtml(row.label)}</span>${row.ownerName ? `<span class="rank-owner" title="${escapeHtml(row.ownerName)}">${escapeHtml(shortOwnerName(row.ownerName))}</span>` : ''}</span>
-            <span class="rank-meta">${escapeHtml(row.sub || '')}</span>
+            <span class="rank-meta">${renderRankMeta(row.sub)}</span>
           </span>
           <span class="rank-value">${escapeHtml(money ? formatMoney(row.value, row.currency) : formatUnits(row.value))}<small>${estimated ? '估算' : money ? '' : escapeHtml(unit)}</small></span>
         </div>`;
@@ -6928,9 +7015,9 @@ function renderHistoryRankings() {
     return {
       ...next,
       sub: [
-        productAmountBasis === 'FINANCE' ? '待标准货号归并' : null,
-        productHistoryRankMeta(next, 'amount'),
-      ].filter(Boolean).join(' · '),
+        productAmountBasis === 'FINANCE' ? rankMetaText('待标准货号归并') : null,
+        ...productHistoryRankMeta(next, 'amount'),
+      ].filter(Boolean),
     };
   });
   let productQuantity = aggregateHistoryRanking(
@@ -6958,16 +7045,16 @@ function renderHistoryRankings() {
     return {
       ...next,
       sub: [
-        productQuantityBasis === 'FINANCE' ? '待标准货号归并' : null,
-        productHistoryRankMeta(next, 'quantity'),
-      ].filter(Boolean).join(' · '),
+        productQuantityBasis === 'FINANCE' ? rankMetaText('待标准货号归并') : null,
+        ...productHistoryRankMeta(next, 'quantity'),
+      ].filter(Boolean),
     };
   });
   const range = selectedHomeDateRange();
   const note = `${range.start} → ${range.end} · 当前筛选联动`;
   return `
     <section class="home-history-rankings" aria-label="经营排行榜">
-      <header class="head"><div><h3>排行榜</h3><p>店铺展示所选范围内全部有销售记录；未归并货号先保留金额、销量各 Top 20。</p></div><span class="sub">${escapeHtml(note)}</span></header>
+      <header class="head"><div class="title-with-help"><h3>排行榜</h3>${homeHelpTip('店铺展示所选范围内全部有销售记录；未归并货号暂按店内身份分别统计，金额、销量各展示 Top 20。', '排行榜说明')}</div><span class="sub">${escapeHtml(note)}</span></header>
       <div class="rank-grid home-rank-grid">
         ${historyRankTable(
           '店铺销售金额排行',
@@ -7002,8 +7089,8 @@ function renderHistoryRankings() {
 }
 
 /* Vertical order is fixed: A 销量 KPI 数据矩阵 → B 日销量趋势 →
-   C 月销量趋势 → D 店铺经营排行 → E 货号/商品经营排行 →
-   口径脚注与业务入口。首页噪音（pulse、supply radar、运营提醒）不再参与组装，
+   C 月销量趋势 → D 店铺经营排行 → E 货号/商品经营排行。
+   口径说明放在相应标题的问号提示中；首页噪音（pulse、supply radar、运营提醒）不再参与组装，
    相关函数保留给其他路由使用。 */
 function renderHome() {
   if (state.home.loading && !state.home.data) {
@@ -7058,8 +7145,7 @@ function renderHome() {
     ${emptyCurrentNotice}
     ${renderHistoryKpis()}
     ${renderHistoryTrends()}
-    ${renderHistoryRankings()}
-    <footer class="home-footnote"><p>口径：未出台账或账单的历史日期使用 WebAPI 日经营口径，今天使用小时实时累计；台账更新后销量切换为客单出库数量，账单更新后金额切换为账单销售款。台账总出库与库存金额不等同销量或销售收入；货号尚未归并，当前仅展示各 Top 20；未知显示 —，不会补 0。</p></footer>`;
+    ${renderHistoryRankings()}`;
 }
 
 function permissionBadge(permission) {
@@ -9535,20 +9621,43 @@ function updateDatasetChrome() {
   if (!state.data) {
     elements.datasetBadge.textContent = state.loading ? '正在读取' : '数据不可用';
     elements.datasetBadge.className = `status-badge ${state.loading ? 'neutral' : 'error'}`;
-    elements.updatedAt.textContent = state.loading ? '更新时间：--' : '更新时间：读取失败';
+    elements.updatedAt.textContent = state.loading ? '--' : '读取失败';
     elements.sidebarDataset.textContent = state.loading ? '正在读取' : '数据不可用';
-    elements.sidebarPermission.textContent = '销量权限待确认';
+    elements.sidebarAccountName.textContent = state.loading ? '正在读取' : '登录状态待确认';
+    elements.sidebarPermission.textContent = '账号权限待确认';
+    elements.sidebarHomeFreshness.textContent = state.loading ? '读取中' : '读取失败';
     elements.sidebarSampleNote.hidden = true;
     delete document.body.dataset.dataset;
     return;
   }
 
   const status = datasetStatus();
-  elements.datasetBadge.textContent = datasetLabel();
+  const statusLabels = {
+    live: '正式数据',
+    sample: '示例数据',
+    empty: '暂无数据',
+    neutral: '状态待确认',
+  };
+  const access = state.data.access || {};
+  const accountName = access.displayName || access.username || '已登录';
+  const accessParts = [
+    access.roleLabel || null,
+    access.readAllStores === true ? '全部店铺可查看' : '查看范围待确认',
+    access.writeEnabled === true ? '写入已启用' : '写入需单独授权',
+  ].filter(Boolean);
+  const latestAvailableDate = state.home.data?.source?.latestAvailableDate
+    || state.data.home?.coverage?.latestDate
+    || '';
+  elements.datasetBadge.textContent = statusLabels[status] || statusLabels.neutral;
   elements.datasetBadge.className = `status-badge ${status}`;
-  elements.updatedAt.textContent = `更新时间：${formatDateTime(state.data.updatedAt)}`;
+  elements.updatedAt.textContent = formatDateTime(state.data.updatedAt);
   elements.sidebarDataset.textContent = datasetLabel();
-  elements.sidebarPermission.textContent = state.data.permission?.label || '销量权限待确认';
+  elements.sidebarAccountName.textContent = accountName;
+  elements.sidebarAccountName.title = access.username && access.username !== accountName
+    ? `${accountName} · ${access.username}`
+    : accountName;
+  elements.sidebarPermission.textContent = accessParts.join(' · ') || '账号权限待确认';
+  elements.sidebarHomeFreshness.textContent = latestAvailableDate || '历史完整日待确认';
   elements.sidebarSampleNote.hidden = status !== 'sample';
   document.body.dataset.dataset = status;
 }
@@ -9556,11 +9665,11 @@ function updateDatasetChrome() {
 function updateLiveUpdateChrome() {
   if (!elements.liveUpdateBadge) return;
   const labels = {
-    connecting: ['自动更新连接中', 'neutral'],
+    connecting: ['连接中', 'neutral'],
     connected: ['快照自动更新', 'complete'],
-    refreshing: ['正在读取新快照', 'partial'],
-    reconnecting: ['自动更新重连中', 'partial'],
-    unsupported: ['浏览器需手动刷新', 'neutral'],
+    refreshing: ['读取新快照', 'partial'],
+    reconnecting: ['重新连接', 'partial'],
+    unsupported: ['需手动刷新', 'neutral'],
   };
   const [label, tone] = labels[state.updates.status] || labels.connecting;
   elements.liveUpdateBadge.textContent = label;

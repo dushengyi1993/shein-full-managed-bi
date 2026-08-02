@@ -7,10 +7,10 @@
     <meta name="theme-color" content="#171814">
     <meta name="color-scheme" content="light">
     <title>SHEIN 全托运营驾驶舱</title>
-    <link rel="icon" href="/favicon.svg?v=20260802.2" type="image/svg+xml">
-    <link rel="stylesheet" href="/styles.css?v=20260802.2">
-    <link rel="stylesheet" href="/home-parity.css?v=20260802.2">
-    <script src="/app.js?v=20260802.2" defer></script>
+    <link rel="icon" href="/favicon.svg?v=20260803.1" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css?v=20260803.1">
+    <link rel="stylesheet" href="/home-parity.css?v=20260803.1">
+    <script src="/app.js?v=20260803.1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#content">跳到主要内容</a>
@@ -18,7 +18,9 @@
     <div class="app-shell">
       <aside class="sidebar" aria-label="全托运营工作台">
         <div class="brand">
-          <div class="mark" aria-hidden="true">BI</div>
+          <div class="mark" aria-hidden="true">
+            <img src="/favicon.svg?v=20260803.1" alt="">
+          </div>
           <div>
             <h1>SHEIN BI</h1>
             <p>全托运营工作台</p>
@@ -37,21 +39,41 @@
           <a href="#system" data-route="system"><span>系统管理</span><small>SYSTEM</small></a>
         </nav>
 
-        <div class="account-box sidebar-context" aria-live="polite">
+        <div class="account-box sidebar-context sidebar-account" aria-live="polite">
           <div class="account-main">
             <div class="account-identity">
-              <span class="account-label">数据环境</span>
-              <strong id="sidebar-dataset" class="account-name">正在读取</strong>
+              <span class="account-label">登录账号</span>
+              <strong id="sidebar-account-name" class="account-name">正在读取</strong>
             </div>
             <button id="logout-button" class="logout-button logout-btn" type="button">退出</button>
           </div>
-          <p id="sidebar-permission">销量权限待确认</p>
-          <div class="context-flags">
-            <span id="dataset-badge" class="status-badge neutral">正在读取</span>
-            <span id="live-update-badge" class="status-badge neutral">自动更新连接中</span>
-            <span class="flag">只读</span>
+          <p id="sidebar-permission">账号权限待确认</p>
+        </div>
+
+        <div class="side-note sidebar-health" aria-live="polite">
+          <div class="side-status-head">DATA HEALTH</div>
+          <div class="side-status">
+            <div class="side-status-row">
+              <span>数据底稿</span>
+              <strong id="sidebar-dataset">正在读取</strong>
+            </div>
+            <div class="side-status-row">
+              <span>数据状态</span>
+              <strong><span id="dataset-badge" class="status-badge neutral">正在读取</span></strong>
+            </div>
+            <div class="side-status-row">
+              <span>自动更新</span>
+              <strong><span id="live-update-badge" class="status-badge neutral">连接中</span></strong>
+            </div>
+            <div class="side-status-row">
+              <span>完整日期</span>
+              <strong id="sidebar-home-freshness">读取中</strong>
+            </div>
+            <div class="side-status-row">
+              <span>底稿更新</span>
+              <strong id="updated-at">--</strong>
+            </div>
           </div>
-          <p id="updated-at">更新时间：--</p>
         </div>
 
         <div id="sidebar-sample-note" class="sample-note" hidden>

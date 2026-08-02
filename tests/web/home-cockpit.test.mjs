@@ -75,16 +75,16 @@ test('home assembles KPI tables, vertical trends and rankings without a redundan
     'renderHistoryKpis()',
     'renderHistoryTrends()',
     'renderHistoryRankings()',
-    'home-footnote',
   ].map((marker) => home.indexOf(marker));
   assert.ok(order.every((index) => index !== -1), '首页历史经营区块都必须存在');
   assert.deepEqual(order, [...order].sort((left, right) => left - right));
 
   assert.doesNotMatch(home, /homeBusinessPulse|supplyRadar|renderOperationalPriorities/);
   assert.doesNotMatch(home, /homeTruthStrip|trendCoverageBanner|homeSectionHeading/);
-  assert.match(home, /台账更新后销量切换为客单出库数量/);
-  assert.match(home, /账单更新后金额切换为账单销售款/);
-  assert.match(home, /台账总出库与库存金额不等同销量或销售收入/);
+  assert.doesNotMatch(home, /home-footnote/);
+  assert.match(app, /function homeHelpTip\(/);
+  assert.match(app, /紧邻本期且天数完全相同的上一窗口/);
+  assert.match(app, /未知显示 —，不会补零/);
   assert.doesNotMatch(app, /function renderHistoryHomeHeader\(\)/);
   const trends = functionBody(app, 'renderHistoryTrends');
   assert.ok(trends.indexOf("'日趋势'") < trends.indexOf("'月趋势'"));
@@ -234,21 +234,19 @@ test('KPI matrix is one dense real table with legal comparisons only', async () 
   assert.match(parity, /\.home-kpi-table \.num\s*\{[^}]*font-variant-numeric: tabular-nums[^}]*text-align: right/s);
 });
 
-test('unsupported amount, traffic and order metrics live only in the single caliber footnote', async () => {
+test('metric definitions live in contextual title help instead of a page-bottom footnote', async () => {
   const app = await read('src/web/app.js');
-  const kpis = functionBody(app, 'homeKpis');
-  const footnote = functionBody(app, 'homeFootnote');
+  const helper = functionBody(app, 'homeHelpTip');
+  const table = functionBody(app, 'homeMetricTable');
   const home = functionBody(app, 'renderHome');
 
-  // No finance or consumer block anywhere in the home assembly.
-  assert.doesNotMatch(kpis, /财务与结算|实时金额|结算金额|流量与支付人数/);
-  assert.doesNotMatch(home, /财务与结算/);
-  assert.doesNotMatch(kpis, /[¥€]|\bSAR\b|\bRMB\b|\bGMV\b|订单数|转化率|支付人数/i);
-
-  // Exactly one footnote sentence states the boundary.
-  assert.match(footnote, /财务与结算、流量、订单等指标尚未接入，不由销量推导金额/);
-  assert.match(footnote, /未知为 —，合法零为 0，缺失不补零、不插值/);
-  assert.doesNotMatch(footnote, /\d+%|metricValue|formatUnits/);
+  assert.match(helper, /class="help"/);
+  assert.match(helper, /data-tip=/);
+  assert.match(table, /homeHelpTip\(comparisonNote/);
+  assert.match(table, /data-tip="\$\{escapeHtml\(metric\.note\)\}"/);
+  assert.match(table, /紧邻本期且天数完全相同的上一窗口/);
+  assert.match(table, /未知显示 —，不会补零/);
+  assert.doesNotMatch(home, /home-footnote/);
 });
 
 test('daily trend uses real day-grain points and names the real window length', async () => {
@@ -516,9 +514,11 @@ test('limited day-grain history is stated exactly and never padded into a full s
   assert.match(home, /renderHistoryTrends\(\)/);
   const historicalChart = functionBody(app, 'historyTrendChart');
   assert.match(historicalChart, /缺失不补零、不连线/);
-  assert.match(historicalChart, /for \(const index of \[maxIndex, minIndex, 0, points\.length - 1\]\)/);
-  assert.match(historicalChart, /minimumLabelGap/);
+  assert.match(historicalChart, /evenlySpacedIndices/);
+  assert.match(historicalChart, /minimumLabelPixelGap/);
+  assert.match(historicalChart, /tickIndices/);
   assert.match(historicalChart, /class="chart-value-label"/);
+  assert.match(historicalChart, /class="chart-axis chart-date-axis"/);
   assert.match(historicalChart, /class="history-bar/);
 
   // The banner helper stays available for callers outside home.
@@ -639,16 +639,60 @@ test('homepage range, trend labels and renewal cadence match the operating prefe
   ]);
   const chart = functionBody(app, 'historyTrendChart');
 
-  assert.match(parity, /grid-template-columns: minmax\(220px, 250px\) minmax\(180px, 200px\) minmax\(900px, 1fr\) auto/);
+  assert.match(parity, /grid-template-columns: minmax\(280px, 310px\) minmax\(190px, 210px\) minmax\(850px, 1fr\) auto/);
   assert.match(parity, /grid-template-columns: minmax\(340px, 380px\) minmax\(540px, 1fr\)/);
   assert.match(parity, /@media \(max-width: 1650px\)[\s\S]*"range range range"/);
   assert.match(parity, /\.metric-matrix \.matrix-cell\.head\s*\{[^}]*margin: 0;[^}]*gap: 0;/s);
   assert.doesNotMatch(chart, /point\.currency/);
-  assert.match(chart, /minimumLabelGap/);
-  assert.match(chart, /Math\.abs\(existing - index\) >= minimumLabelGap/);
+  assert.match(chart, /minimumLabelPixelGap/);
+  assert.match(chart, /Math\.abs\(points\[existing\]\.x - points\[index\]\.x\)/);
+  assert.match(chart, /rawMin - linePadding/);
+  assert.match(chart, /tickIndices/);
   assert.match(timer, /Description=Daily full-managed SHEIN Profile session renewal/);
   assert.match(timer, /OnCalendar=\*-\*-\* 03:20:00 Asia\/Shanghai/);
   assert.doesNotMatch(timer, /00,04,08,12,16,20/);
+});
+
+test('active responsive shell mirrors the semi-managed top rail and keeps health below account on desktop', async () => {
+  const [html, app, parity] = await Promise.all([
+    read('src/web/index.html'),
+    read('src/web/app.js'),
+    read('src/web/home-parity.css'),
+  ]);
+
+  assert.match(html, /class="mark"[^>]*>[\s\S]*?<img src="\/favicon\.svg\?v=20260803\.1"/);
+  const navIndex = html.indexOf('class="nav primary-nav"');
+  const accountIndex = html.indexOf('class="account-box sidebar-context sidebar-account"');
+  const healthIndex = html.indexOf('class="side-note sidebar-health"');
+  assert.ok(navIndex < accountIndex && accountIndex < healthIndex);
+  for (const id of [
+    'sidebar-account-name',
+    'sidebar-permission',
+    'sidebar-dataset',
+    'live-update-badge',
+    'sidebar-home-freshness',
+    'updated-at',
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(app, /access\.displayName \|\| access\.username/);
+  assert.match(app, /全部店铺可查看/);
+  assert.match(app, /写入需单独授权/);
+
+  const tabletIndex = parity.lastIndexOf('@media (max-width: 1280px)');
+  const mobileIndex = parity.lastIndexOf('@media (max-width: 720px)');
+  assert.notEqual(tabletIndex, -1);
+  assert.notEqual(mobileIndex, -1);
+  const tablet = parity.slice(tabletIndex, mobileIndex);
+  const mobile = parity.slice(mobileIndex);
+  assert.match(tablet, /\.sidebar\s*\{[^}]*grid-template-columns: auto minmax\(0, 1fr\) auto/s);
+  assert.match(tablet, /\.primary-nav\s*\{[^}]*display: flex[^}]*overflow-x: auto/s);
+  assert.match(tablet, /\.sidebar-health,[\s\S]*?display: none/s);
+  assert.match(mobile, /\.sidebar\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) auto/s);
+  assert.match(mobile, /\.primary-nav\s*\{[^}]*grid-column: 1 \/ -1/s);
+  assert.match(mobile, /\.bar\.home-filter-bar\s*\{[^}]*grid-template-columns: 1fr/s);
+  assert.match(mobile, /\.line-chart\s*\{[^}]*overflow-x: auto/s);
+  assert.match(mobile, /\.line-chart svg\s*\{[^}]*min-width: 720px/s);
 });
 
 test('390px layout has explicit page-level overflow guards', async () => {
@@ -687,6 +731,30 @@ test('390px layout has explicit page-level overflow guards', async () => {
   assert.match(parity, /@media \(min-width: 1400px\)[\s\S]*?\.home-kpi-table th,[\s\S]*?padding: 5px 10px/);
   assert.match(parity, /@media \(max-width: 1280px\)[\s\S]*?position: static/);
   assert.match(parity, /@media \(max-width: 1280px\)[\s\S]*?\.workspace\.main\s*\{[\s\S]*?margin-left: 0/);
+});
+
+test('comparison, ranking metadata and chart markers retain the revised evidence hierarchy', async () => {
+  const [app, parity] = await Promise.all([
+    read('src/web/app.js'),
+    read('src/web/home-parity.css'),
+  ]);
+  const previous = functionBody(app, 'previousHomeDateRange');
+  const ranking = functionBody(app, 'historyRankTable');
+  const rankMeta = functionBody(app, 'renderRankMeta');
+  const chart = functionBody(app, 'historyTrendChart');
+
+  assert.match(previous, /start: shiftIsoDate\(range\.start, -days\)/);
+  assert.match(previous, /end: shiftIsoDate\(range\.start, -1\)/);
+  assert.match(ranking, /renderRankMeta\(row\.sub\)/);
+  assert.match(rankMeta, /class="meta-part"/);
+  assert.match(rankMeta, /<b>\$\{escapeHtml\(part\.value\)\}<\/b>/);
+  assert.match(parity, /\.rank-meta \.meta-part b\s*\{[^}]*font-weight: 850/s);
+  assert.match(parity, /\.rank-meta \.meta-sep\s*\{[^}]*margin: 0 9px/s);
+  assert.match(chart, /rawMin - linePadding/);
+  assert.match(chart, /evenlySpacedIndices\(points\.length, 7\)/);
+  assert.match(chart, /class="chart-point\$\{provisional/);
+  assert.match(parity, /\.home-history-chart \.chart-point\s*\{[^}]*fill: var\(--accent\)/s);
+  assert.doesNotMatch(parity, /\.home-history-chart \.chart-point\s*\{[^}]*fill: #fffdf8/s);
 });
 
 test('1440px homepage keeps historical sections ordered and the trend stack vertical', async () => {
