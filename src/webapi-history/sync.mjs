@@ -1,6 +1,7 @@
 import {
   buildAnalyseSearchRequest,
   buildProductDailyRequest,
+  buildRealtimeRequest,
   buildRegionRankRequest,
   buildShopDailyRequest,
   buildStoreDailyHistoryRequest,
@@ -116,6 +117,61 @@ function mergeShopRows(rows) {
   return [...byGrain.values()];
 }
 
+const SHANGHAI_CLOCK_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  hourCycle: 'h23',
+});
+
+function shanghaiClockParts(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.valueOf())) throw new TypeError('clock returned an invalid date');
+  const parts = Object.fromEntries(
+    SHANGHAI_CLOCK_FORMATTER.formatToParts(date)
+      .filter(({ type }) => type !== 'literal')
+      .map(({ type, value: part }) => [type, part]),
+  );
+  const businessDate = `${parts.year}-${parts.month}-${parts.day}`;
+  return {
+    businessDate,
+    startHour: `${parts.year}${parts.month}${parts.day}00`,
+    endHour: `${parts.year}${parts.month}${parts.day}${parts.hour}`,
+  };
+}
+
+function completeMetricSum(rows, field) {
+  if (
+    rows.length === 0
+    || rows.some((row) => typeof row[field] !== 'number' || !Number.isFinite(row[field]))
+  ) return null;
+  return rows.reduce((sum, row) => sum + row[field], 0);
+}
+
+export function mergeRealtimeStoreRows(rows, { storeCode, businessDate, observedAt } = {}) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const currencies = [...new Set(rows.map(({ currency }) => currency).filter(Boolean))];
+  return Object.freeze({
+    storeCode,
+    businessDate,
+    currency: currencies.length === 1 ? currencies[0] : null,
+    dealAmount: completeMetricSum(rows, 'dealAmount'),
+    netDealAmount: completeMetricSum(rows, 'netDealAmount'),
+    salesQuantity: completeMetricSum(rows, 'salesQuantity'),
+    // Hourly UVs are not additive across a day. Preserve them as unavailable
+    // instead of overstating unique buyers or product-detail visitors.
+    buyerCount: null,
+    goodsDetailVisitors: null,
+    stockingOrderCount: completeMetricSum(rows, 'stockingOrderCount'),
+    urgentPurchaseOrderCount: completeMetricSum(rows, 'urgentPurchaseOrderCount'),
+    sourceUpdatedAt: null,
+    observedAt,
+    sourceCode: 'WEBAPI_REALTIME',
+  });
+}
+
 async function audit(repository, input) {
   try {
     await repository.recordFetchAudit(input);
@@ -187,6 +243,51 @@ async function requestAndAudit({
   }
 }
 
+async function syncRealtimeDay({
+  storeCode,
+  realtime,
+  transport,
+  repository,
+  clock,
+}) {
+  const request = buildRealtimeRequest({
+    startHour: realtime.startHour,
+    endHour: realtime.endHour,
+    observedDate: realtime.businessDate,
+  });
+  return requestAndAudit({
+    transport,
+    repository,
+    storeCode,
+    endpointCode: 'STORE_REALTIME',
+    request,
+    startDate: realtime.businessDate,
+    endDate: realtime.businessDate,
+    clock,
+    handle: async (body, observedAt) => {
+      const hourlyRows = parseStoreDailyHistory(body, {
+        storeCode,
+        observedAt,
+        realtimeDate: realtime.businessDate,
+      });
+      const merged = mergeRealtimeStoreRows(hourlyRows, {
+        storeCode,
+        businessDate: realtime.businessDate,
+        observedAt,
+      });
+      if (merged) await repository.upsertStoreDaily([merged]);
+      return {
+        accepted: hourlyRows.length,
+        payload: {
+          hourlyRows: hourlyRows.length,
+          factRows: merged ? 1 : 0,
+          uniqueVisitorMetrics: 'UNAVAILABLE',
+        },
+      };
+    },
+  });
+}
+
 async function syncStoreWindow({
   storeCode,
   window,
@@ -205,6 +306,7 @@ async function syncStoreWindow({
     productDaily: null,
     tradeDaily: null,
     regionDaily: null,
+    realtime: null,
   };
   const storeRequest = buildStoreDailyHistoryRequest(window);
   result.storeDaily = await requestAndAudit({
@@ -482,6 +584,11 @@ export async function runFullHomeHistorySync({
     }
   }
   const windows = historyWindows({ startDate, endDate });
+  const realtimeClock = shanghaiClockParts(clock());
+  const realtime = startDate <= realtimeClock.businessDate
+    && endDate >= realtimeClock.businessDate
+    ? realtimeClock
+    : null;
   const results = [];
   for (const rawStoreCode of storeCodes) {
     const storeCode = String(rawStoreCode).trim().toUpperCase();
@@ -515,6 +622,15 @@ export async function runFullHomeHistorySync({
           completedRegionDates,
         }));
       }
+      if (realtime) {
+        results.at(-1).realtime = await syncRealtimeDay({
+          storeCode,
+          realtime,
+          transport,
+          repository,
+          clock,
+        });
+      }
     } catch (error) {
       results.push({
         storeCode,
@@ -530,6 +646,7 @@ export async function runFullHomeHistorySync({
     row.sessionErrorCode
     || row.storeDaily?.ok === false
     || row.shopDaily?.ok === false
+    || row.realtime?.ok === false
   )).length;
   const partialWindows = results.filter((row) => (
     row.sessionErrorCode

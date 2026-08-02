@@ -51,6 +51,12 @@ test('store daily upsert selects the narrow WebAPI role and never null-coerces m
   assert.equal(upsert.params[8], null);
   assert.equal(upsert.params[9], 'UNAVAILABLE');
   assert.match(upsert.sql, /COALESCE\(EXCLUDED\.deal_amount/);
+  assert.match(upsert.sql, /'WEBAPI_INDEX' = ANY\(EXCLUDED\.source_codes\)/);
+  assert.match(
+    upsert.sql,
+    /ARRAY\['WEBAPI_INDEX', 'WEBAPI_REALTIME'\]::text\[\]/,
+  );
+  assert.match(upsert.sql, /'WEBAPI_TRADE' = ANY\(EXCLUDED\.source_codes\)/);
   assert.equal(runtime.calls.at(-2).sql, 'COMMIT');
   assert.equal(runtime.calls.at(-1).sql, 'RELEASE');
 });

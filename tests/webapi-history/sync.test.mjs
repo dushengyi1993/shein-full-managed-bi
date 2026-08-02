@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { runFullHomeHistorySync } from '../../src/webapi-history/sync.mjs';
+import {
+  mergeRealtimeStoreRows,
+  runFullHomeHistorySync,
+} from '../../src/webapi-history/sync.mjs';
 
 function response(body) {
   return { httpStatus: 200, byteLength: JSON.stringify(body).length, body };
@@ -202,4 +205,137 @@ test('homepage history sync resumes successful daily trade and region requests',
   assert.equal(result.results[0].tradeDaily.skipped, 1);
   assert.equal(result.results[0].regionDaily.skipped, 1);
   assert.equal(maximumDailyRequests, 2);
+});
+
+test('current-day sync aggregates only additive hourly realtime metrics', async () => {
+  const audits = [];
+  const storeRows = [];
+  const endpoints = [];
+  const merged = mergeRealtimeStoreRows([
+    {
+      storeCode: 'DL5477',
+      businessDate: '2026-08-02',
+      dealAmount: 10,
+      netDealAmount: 8,
+      salesQuantity: 1,
+      buyerCount: 1,
+      goodsDetailVisitors: 20,
+      stockingOrderCount: 0,
+      urgentPurchaseOrderCount: 1,
+    },
+    {
+      storeCode: 'DL5477',
+      businessDate: '2026-08-02',
+      dealAmount: 25,
+      netDealAmount: 20,
+      salesQuantity: 2,
+      buyerCount: 2,
+      goodsDetailVisitors: 30,
+      stockingOrderCount: 1,
+      urgentPurchaseOrderCount: 0,
+    },
+  ], {
+    storeCode: 'DL5477',
+    businessDate: '2026-08-02',
+    observedAt: '2026-08-02T13:00:00.000Z',
+  });
+  assert.deepEqual({
+    dealAmount: merged.dealAmount,
+    netDealAmount: merged.netDealAmount,
+    salesQuantity: merged.salesQuantity,
+    buyerCount: merged.buyerCount,
+    goodsDetailVisitors: merged.goodsDetailVisitors,
+    stockingOrderCount: merged.stockingOrderCount,
+    urgentPurchaseOrderCount: merged.urgentPurchaseOrderCount,
+  }, {
+    dealAmount: 35,
+    netDealAmount: 28,
+    salesQuantity: 3,
+    buyerCount: null,
+    goodsDetailVisitors: null,
+    stockingOrderCount: 1,
+    urgentPurchaseOrderCount: 1,
+  });
+
+  const result = await runFullHomeHistorySync({
+    storeCodes: ['DL5477'],
+    startDate: '2026-08-02',
+    endDate: '2026-08-02',
+    includeProducts: false,
+    clock: () => new Date('2026-08-02T13:00:00.000Z'),
+    openSession: async () => ({ async close() {} }),
+    transportFactory: () => async (endpointCode) => {
+      endpoints.push(endpointCode);
+      if (endpointCode === 'STORE_DAILY_HISTORY') {
+        return response({ code: '0', info: [] });
+      }
+      if (endpointCode === 'STORE_REALTIME') {
+        return response({
+          code: '0',
+          info: [
+            {
+              dealAmtH: '10',
+              netDealAmtH: '8',
+              saleCntH: '1',
+              buyerCntH: '1',
+              shopGoodsUvH: '20',
+              bhOrdCntH: '0',
+              jcOrdCntH: '1',
+            },
+            {
+              dealAmtH: '25',
+              netDealAmtH: '20',
+              saleCntH: '2',
+              buyerCntH: '2',
+              shopGoodsUvH: '30',
+              bhOrdCntH: '1',
+              jcOrdCntH: '0',
+            },
+          ],
+        });
+      }
+      if (endpointCode === 'ANALYSE_MODEL') {
+        return response({ code: '0', info: { status: true } });
+      }
+      if (endpointCode === 'ANALYSE_SEARCH') {
+        return response({
+          code: '0',
+          info: { analyseResult: { data: [], meta: { count: 0 } } },
+        });
+      }
+      if (endpointCode === 'TRADE_OVERVIEW') {
+        return response({ code: '0', info: {} });
+      }
+      return response({ code: '0', info: { countryTrade: [] } });
+    },
+    repository: {
+      async recordFetchAudit(entry) {
+        audits.push(entry);
+      },
+      async upsertStoreDaily(rows) {
+        storeRows.push(...rows);
+      },
+      async upsertProducts() {},
+      async upsertRegions() {},
+      async successfulDailyDates() {
+        return new Set();
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.complete, true);
+  assert.equal(endpoints.filter((code) => code === 'STORE_REALTIME').length, 1);
+  const realtime = storeRows.find(({ sourceCode }) => sourceCode === 'WEBAPI_REALTIME');
+  assert.equal(realtime.dealAmount, 35);
+  assert.equal(realtime.salesQuantity, 3);
+  assert.equal(realtime.buyerCount, null);
+  assert.equal(realtime.goodsDetailVisitors, null);
+  const audit = audits.find(({ endpointCode }) => endpointCode === 'STORE_REALTIME');
+  assert.equal(audit.acceptedRowCount, 2);
+  assert.deepEqual(result.results[0].realtime.payload, {
+    hourlyRows: 2,
+    factRows: 1,
+    uniqueVisitorMetrics: 'UNAVAILABLE',
+  });
 });

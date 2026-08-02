@@ -136,6 +136,8 @@ test('historical KPI cards stay row-balanced and expose only evidence-backed tra
 
   assert.match(metrics, /'paymentOrderCount'/);
   assert.match(metrics, /'detailPaymentRate'/);
+  assert.match(metrics, /boundedShare\(/);
+  assert.match(metrics, /分子大于分母时视为口径不兼容/);
   assert.match(metrics, /ratePointChange\(currentValue, previousValue\)/);
   assert.match(kpis, /homeMetricTable\('销售与支付'[^]*summary\.salesRows, summary\.range, previousRange\)/);
   assert.match(kpis, /homeMetricTable\('商家账单'[^]*summary\.billRows, summary\.range, previousRange\)/);

@@ -4,7 +4,7 @@ import { normalizeFullManagedStoreCode } from '../config/full-managed-stores.mjs
 export const HOME_WEBAPI_ORIGIN = 'https://sso.geiwohuo.com';
 export const HOME_HISTORY_EARLIEST_DATE = '2023-06-07';
 export const HOME_HISTORY_MAX_WINDOW_DAYS = 90;
-export const HOME_HISTORY_CONTRACT_VERSION = 1;
+export const HOME_HISTORY_CONTRACT_VERSION = 2;
 
 export const HOME_ENDPOINTS = Object.freeze({
   STORE_DAILY_HISTORY: Object.freeze({

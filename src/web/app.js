@@ -6167,6 +6167,11 @@ function metricRate(numerator, denominator) {
   return numerator / denominator;
 }
 
+function boundedShare(numerator, denominator) {
+  const value = metricRate(numerator, denominator);
+  return value !== null && value <= 1 ? value : null;
+}
+
 function formatRate(value) {
   return typeof value === 'number' && Number.isFinite(value)
     ? `${(value * 100).toFixed(1)}%`
@@ -6341,25 +6346,21 @@ function historyMetricRows() {
     metric('出库金额', 'ledgerOutboundAmount', 'plain-money', '范围内库存出库价值累计'),
     metric('期末库存金额', 'ledgerEndAmount', 'plain-money', '库存台账价值，不是销售收入'),
   ];
-  const newCustomerSalesRate = ratioFrom(
-    resolvedCurrent,
-    'newCustomerSalesQuantity',
-    'webapiSalesQuantity',
+  const validNewCustomerSalesRate = boundedShare(
+    availableMetricSum(resolvedCurrent, 'newCustomerSalesQuantity'),
+    availableMetricSum(resolvedCurrent, 'webapiSalesQuantity'),
   );
-  const previousNewCustomerSalesRate = ratioFrom(
-    resolvedPrevious,
-    'newCustomerSalesQuantity',
-    'webapiSalesQuantity',
+  const validPreviousNewCustomerSalesRate = boundedShare(
+    availableMetricSum(resolvedPrevious, 'newCustomerSalesQuantity'),
+    availableMetricSum(resolvedPrevious, 'webapiSalesQuantity'),
   );
-  const newCustomerOrderRate = ratioFrom(
-    resolvedCurrent,
-    'newCustomerPaymentOrderCount',
-    'paymentOrderCount',
+  const validNewCustomerOrderRate = boundedShare(
+    availableMetricSum(resolvedCurrent, 'newCustomerPaymentOrderCount'),
+    availableMetricSum(resolvedCurrent, 'paymentOrderCount'),
   );
-  const previousNewCustomerOrderRate = ratioFrom(
-    resolvedPrevious,
-    'newCustomerPaymentOrderCount',
-    'paymentOrderCount',
+  const validPreviousNewCustomerOrderRate = boundedShare(
+    availableMetricSum(resolvedPrevious, 'newCustomerPaymentOrderCount'),
+    availableMetricSum(resolvedPrevious, 'paymentOrderCount'),
   );
   const customerRows = [
     metric('新客销量', 'newCustomerSalesQuantity', 'count', '经营后台新客成交件数'),
@@ -6367,16 +6368,16 @@ function historyMetricRows() {
     ratioMetric(
       '新客销量占比',
       'newCustomerSalesRate',
-      newCustomerSalesRate,
-      previousNewCustomerSalesRate,
-      '新客销量 ÷ 同口径实时销量',
+      validNewCustomerSalesRate,
+      validPreviousNewCustomerSalesRate,
+      '新客销量 ÷ 同口径实时销量；分子大于分母时视为口径不兼容',
     ),
     ratioMetric(
       '新客订单占比',
       'newCustomerOrderRate',
-      newCustomerOrderRate,
-      previousNewCustomerOrderRate,
-      '新客支付订单 ÷ 支付订单',
+      validNewCustomerOrderRate,
+      validPreviousNewCustomerOrderRate,
+      '新客支付订单 ÷ 支付订单；分子大于分母时视为口径不兼容',
     ),
   ];
   return {

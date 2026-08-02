@@ -286,10 +286,37 @@ export function createFullHomeHistoryRepository({ pool } = {}) {
               EXCLUDED.net_deal_amount,
               fact.full_home_store_daily.net_deal_amount
             ),
-            sales_quantity = COALESCE(
-              EXCLUDED.sales_quantity,
-              fact.full_home_store_daily.sales_quantity
-            ),
+            sales_quantity = CASE
+              -- The daily index is the settled operating truth and may replace
+              -- the previous day's hourly realtime subtotal.
+              WHEN 'WEBAPI_INDEX' = ANY(EXCLUDED.source_codes)
+                THEN COALESCE(
+                  EXCLUDED.sales_quantity,
+                  fact.full_home_store_daily.sales_quantity
+                )
+              -- Realtime is authoritative only until a settled daily-index row
+              -- exists for the same store/date.
+              WHEN 'WEBAPI_REALTIME' = ANY(EXCLUDED.source_codes)
+                   AND NOT (
+                     'WEBAPI_INDEX' = ANY(
+                       fact.full_home_store_daily.source_codes
+                     )
+                   )
+                THEN COALESCE(
+                  EXCLUDED.sales_quantity,
+                  fact.full_home_store_daily.sales_quantity
+                )
+              -- Brand-summed analysis is useful as a fallback but must never
+              -- overwrite the store-level index or realtime quantity.
+              WHEN 'WEBAPI_ANALYSE' = ANY(EXCLUDED.source_codes)
+                   AND fact.full_home_store_daily.source_codes
+                     && ARRAY['WEBAPI_INDEX', 'WEBAPI_REALTIME']::text[]
+                THEN fact.full_home_store_daily.sales_quantity
+              ELSE COALESCE(
+                EXCLUDED.sales_quantity,
+                fact.full_home_store_daily.sales_quantity
+              )
+            END,
             buyer_count = COALESCE(EXCLUDED.buyer_count, fact.full_home_store_daily.buyer_count),
             goods_detail_visitors = COALESCE(
               EXCLUDED.goods_detail_visitors,
@@ -312,10 +339,22 @@ export function createFullHomeHistoryRepository({ pool } = {}) {
               EXCLUDED.urgent_purchase_order_count,
               fact.full_home_store_daily.urgent_purchase_order_count
             ),
-            payment_order_count = COALESCE(
-              EXCLUDED.payment_order_count,
-              fact.full_home_store_daily.payment_order_count
-            ),
+            payment_order_count = CASE
+              WHEN 'WEBAPI_TRADE' = ANY(EXCLUDED.source_codes)
+                THEN COALESCE(
+                  EXCLUDED.payment_order_count,
+                  fact.full_home_store_daily.payment_order_count
+                )
+              WHEN 'WEBAPI_ANALYSE' = ANY(EXCLUDED.source_codes)
+                   AND 'WEBAPI_TRADE' = ANY(
+                     fact.full_home_store_daily.source_codes
+                   )
+                THEN fact.full_home_store_daily.payment_order_count
+              ELSE COALESCE(
+                EXCLUDED.payment_order_count,
+                fact.full_home_store_daily.payment_order_count
+              )
+            END,
             new_customer_sales_quantity = COALESCE(
               EXCLUDED.new_customer_sales_quantity,
               fact.full_home_store_daily.new_customer_sales_quantity
