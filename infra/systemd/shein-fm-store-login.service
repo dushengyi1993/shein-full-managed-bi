@@ -16,6 +16,7 @@ Environment=NODE_ENV=production
 Environment=FULL_FM_STORE_LOGIN_HOST=127.0.0.1
 Environment=FULL_FM_STORE_LOGIN_PORT=8794
 LoadCredential=store_login_internal_token:/srv/shein-fm/secrets/store-login/internal.token
+LoadCredential=store_login_identity_aliases:/srv/shein-fm/secrets/store-login/identity-aliases.secret.json
 ExecStart=/usr/bin/node scripts/serve_full_managed_store_login.mjs
 Restart=on-failure
 RestartSec=3

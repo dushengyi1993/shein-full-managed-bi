@@ -12,7 +12,11 @@ import {
   createBatch,
   sha256,
 } from '../../scripts/create_full_managed_store_login_batch.mjs';
-import { createStoreLoginServer } from '../../scripts/serve_full_managed_store_login.mjs';
+import {
+  createStoreLoginServer,
+  parseStoreLoginIdentityAliases,
+  storeLoginIdentityMarkers,
+} from '../../scripts/serve_full_managed_store_login.mjs';
 
 test('the login roster contains 25 unique canonical Profiles and runtime slots', () => {
   assert.equal(FULL_MANAGED_STORE_CODES.length, 25);
@@ -44,6 +48,30 @@ test('the login server is constructible without opening a listener', () => {
   server.close();
 });
 
+test('subaccount login markers are exact, private-configured and store scoped', () => {
+  const aliases = parseStoreLoginIdentityAliases({
+    schemaVersion: 1,
+    aliases: {
+      NM7397: ['test-subaccount-7343'],
+    },
+  });
+  assert.deepEqual(storeLoginIdentityMarkers('NM7397', aliases), [
+    '7397',
+    'test-subaccount-7343',
+  ]);
+  assert.deepEqual(storeLoginIdentityMarkers('NM4977', aliases), ['4977']);
+  assert.throws(
+    () => parseStoreLoginIdentityAliases({
+      schemaVersion: 1,
+      aliases: {
+        NM7397: ['same-alias'],
+        NM4977: ['same-alias'],
+      },
+    }),
+    /STORE_LOGIN_IDENTITY_ALIASES_INVALID/,
+  );
+});
+
 test('store login accepts a shareable query bearer and removes it immediately', async () => {
   const source = await readFile(
     new URL('../../scripts/serve_full_managed_store_login.mjs', import.meta.url),
@@ -55,8 +83,10 @@ test('store login accepts a shareable query bearer and removes it immediately', 
   assert.match(source, /x-fm-internal-token/);
   assert.match(source, /internalAuthorized/);
   assert.match(source, /--password-store=basic/);
+  assert.match(source, /store_login_identity_aliases/);
   assert.match(source, /script-src 'self' 'unsafe-inline'/);
   assert.match(source, /img-src 'self' data: blob:/);
+  assert.doesNotMatch(source, /Nanmo7343/);
   assert.doesNotMatch(source, /document\.cookie|localStorage\.getItem|Network\.getAllCookies/);
 });
 

@@ -29,6 +29,12 @@ const INTERNAL_TOKEN_FILE = process.env.FULL_FM_STORE_LOGIN_INTERNAL_TOKEN_FILE
       ? path.join(process.env.CREDENTIALS_DIRECTORY, 'store_login_internal_token')
       : ''
   );
+const IDENTITY_ALIASES_FILE = process.env.FULL_FM_STORE_LOGIN_IDENTITY_ALIASES_FILE
+  || (
+    process.env.CREDENTIALS_DIRECTORY
+      ? path.join(process.env.CREDENTIALS_DIRECTORY, 'store_login_identity_aliases')
+      : ''
+  );
 const TARGET_URL = 'https://sso.geiwohuo.com/#/gsp/home';
 const NOVNC_ROOTS = ['/usr/share/novnc', '/usr/share/novnc-pkg'];
 const RUNTIME = Object.freeze({
@@ -38,6 +44,64 @@ const RUNTIME = Object.freeze({
   debuggingPort: 39_700,
 });
 const SESSION_MINUTES = 60;
+
+export function parseStoreLoginIdentityAliases(raw) {
+  if (
+    !raw
+    || raw.schemaVersion !== 1
+    || !raw.aliases
+    || typeof raw.aliases !== 'object'
+    || Array.isArray(raw.aliases)
+  ) {
+    throw new Error('STORE_LOGIN_IDENTITY_ALIASES_INVALID');
+  }
+  const result = {};
+  const seenAliases = new Set();
+  for (const [storeCode, rawAliases] of Object.entries(raw.aliases)) {
+    const canonical = normalizeFullManagedStoreCode(storeCode);
+    if (canonical !== storeCode || !Array.isArray(rawAliases) || rawAliases.length > 4) {
+      throw new Error('STORE_LOGIN_IDENTITY_ALIASES_INVALID');
+    }
+    const aliases = [];
+    for (const rawAlias of rawAliases) {
+      const alias = String(rawAlias || '').trim();
+      if (
+        !/^[A-Za-z0-9._@-]{3,64}$/.test(alias)
+        || seenAliases.has(alias)
+        || aliases.includes(alias)
+      ) {
+        throw new Error('STORE_LOGIN_IDENTITY_ALIASES_INVALID');
+      }
+      seenAliases.add(alias);
+      aliases.push(alias);
+    }
+    result[canonical] = Object.freeze(aliases);
+  }
+  return Object.freeze(result);
+}
+
+const LOGIN_IDENTITY_ALIASES = (() => {
+  if (!IDENTITY_ALIASES_FILE || !fssync.existsSync(IDENTITY_ALIASES_FILE)) {
+    return Object.freeze({});
+  }
+  try {
+    return parseStoreLoginIdentityAliases(
+      JSON.parse(fssync.readFileSync(IDENTITY_ALIASES_FILE, 'utf8')),
+    );
+  } catch {
+    throw new Error('STORE_LOGIN_IDENTITY_ALIASES_INVALID');
+  }
+})();
+
+export function storeLoginIdentityMarkers(storeCode, aliases = LOGIN_IDENTITY_ALIASES) {
+  const canonical = normalizeFullManagedStoreCode(storeCode);
+  if (!canonical) throw new Error('STORE_INVALID');
+  return Object.freeze([
+    canonical.slice(-4),
+    ...(aliases[canonical] || []),
+  ]);
+}
+
 const INTERNAL_TOKEN = (() => {
   if (!INTERNAL_TOKEN_FILE) return '';
   const value = fssync.readFileSync(INTERNAL_TOKEN_FILE, 'utf8').replace(/[\r\n]+$/, '');
@@ -287,14 +351,15 @@ async function cdpEvaluate(expression) {
 }
 
 async function proveLogin(storeCode) {
-  const digits = storeCode.slice(-4);
+  const markers = storeLoginIdentityMarkers(storeCode);
   return cdpEvaluate(`(() => {
     const text = String(document.body && document.body.innerText || '');
     const href = String(location.href || '');
+    const markers = ${JSON.stringify(markers)};
     return {
       sameOrigin: location.origin === 'https://sso.geiwohuo.com',
       onLogin: /login/i.test(href) || /登录|验证码/.test(text),
-      aliasPresent: text.includes(${JSON.stringify(digits)})
+      aliasPresent: markers.some((marker) => text.includes(marker))
     };
   })()`);
 }
