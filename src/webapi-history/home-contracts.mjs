@@ -553,7 +553,9 @@ export function parseProductDailyRows(body, {
       platformSkcId: String(row.goodsSn ?? row.skc ?? row.skcCode ?? '').trim() || null,
       supplierCode: String(row.supplierCode ?? row.supplierGoodsSn ?? '').trim() || null,
       supplierSku: String(row.supplierSku ?? '').trim() || null,
-      displayName: String(row.goodsName ?? row.spuName ?? row.skcName ?? '').trim() || null,
+      displayName: String(
+        row.goodsName ?? row.spuName ?? row.skcName ?? '',
+      ).trim().slice(0, 240) || null,
       salesQuantity: optionalCount(row.saleCnt),
       observedAt,
       sourceUpdatedAt: row.updateTime ?? null,
@@ -611,7 +613,9 @@ export function parseProductDiagnosePage(body, {
       platformSkcId: null,
       supplierCode: null,
       supplierSku: null,
-      displayName: String(row.goodsName ?? row.goodsNameEn ?? '').trim() || null,
+      displayName: String(
+        row.goodsName ?? row.goodsNameEn ?? '',
+      ).trim().slice(0, 240) || null,
       salesQuantity,
       observedAt,
       sourceUpdatedAt: null,

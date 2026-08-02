@@ -302,6 +302,20 @@ test('current product diagnose contract keeps one-day SPU facts and drops catalo
     sourceUpdatedAt: null,
   });
   assert.equal(Object.hasOwn(page.rows[0], 'estimatedDealAmount'), false);
+  const longName = parseProductDiagnosePage({
+    info: {
+      data: [{
+        spu: 'SPU-LONG-NAME',
+        goodsName: '超'.repeat(300),
+        c1dSaleCnt: 1,
+      }],
+      meta: { count: 1 },
+    },
+  }, {
+    storeCode: 'DL5477',
+    businessDate: '2026-07-31',
+  });
+  assert.equal(longName.rows[0].displayName.length, 240);
   assert.throws(
     () => parseProductDiagnosePage({
       info: {
