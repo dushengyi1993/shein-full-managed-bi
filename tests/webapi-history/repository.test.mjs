@@ -181,3 +181,34 @@ test('terminal unsupported dates exclude any day that later succeeded', async ()
   assert.match(select.sql, /NOT EXISTS/);
   assert.match(select.sql, /succeeded\.result_status = 'SUCCEEDED'/);
 });
+
+test('history metric floors come only from the first known trade and region facts', async () => {
+  const runtime = fakePool();
+  runtime.pool.connect = async () => ({
+    async query(sql, params) {
+      runtime.calls.push({ sql: String(sql), params });
+      if (/AS trade_floor/.test(sql)) {
+        return {
+          rows: [{
+            trade_floor: '2025-01-01',
+            region_floor: '2025-08-01',
+          }],
+        };
+      }
+      return { rowCount: 1, rows: [] };
+    },
+    release() {
+      runtime.calls.push({ sql: 'RELEASE' });
+    },
+  });
+  const repository = createFullHomeHistoryRepository({ pool: runtime.pool });
+  const floors = await repository.historyMetricFloors({ storeCode: 'CX4412' });
+  assert.deepEqual(floors, {
+    tradeFloor: '2025-01-01',
+    regionFloor: '2025-08-01',
+  });
+  const select = runtime.calls.find(({ sql }) => /AS trade_floor/.test(sql));
+  assert.deepEqual(select.params, ['CX4412']);
+  assert.match(select.sql, /payment_order_count IS NOT NULL/);
+  assert.match(select.sql, /FROM fact\.full_home_region_daily/);
+});

@@ -357,6 +357,11 @@ daily fact. A historical business-status failure is skipped only when that same
 store, endpoint and date has no later successful audit. Recent settled dates
 can be explicitly re-read with `--refresh-recent-days=N`; this repairs an early
 successful-but-not-yet-settled response without reopening all completed dates.
+The loader also treats the first non-null trade fact and first persisted region
+fact as per-store availability floors. It does not fan out thousands of
+single-day requests into an earlier period already proven to contain no usable
+metric; a store with no such evidence still probes normally and is never given
+an invented floor.
 
 The live management-analysis page sends compact `startDt` / `endDt` values.
 Trade overview requires `dtFlag=1`; the region ranking requires `statType=2`.

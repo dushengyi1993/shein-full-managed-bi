@@ -438,6 +438,7 @@ async function syncStoreWindow({
   completedProductDates,
   unsupportedTradeDates,
   unsupportedRegionDates,
+  metricFloors,
   dataAnchor,
 }) {
   const result = {
@@ -574,7 +575,10 @@ async function syncStoreWindow({
   };
   for (const businessDate of datesInWindow(window)) {
     const syncTradeDate = async () => {
-      if (unsupportedTradeDates.has(businessDate)) {
+      if (
+        (metricFloors.tradeFloor && businessDate < metricFloors.tradeFloor)
+        || unsupportedTradeDates.has(businessDate)
+      ) {
         tradeDaily.unsupported += 1;
       } else if (completedTradeDates.has(businessDate)) {
         tradeDaily.skipped += 1;
@@ -615,7 +619,10 @@ async function syncStoreWindow({
     };
 
     const syncRegionDate = async () => {
-      if (unsupportedRegionDates.has(businessDate)) {
+      if (
+        (metricFloors.regionFloor && businessDate < metricFloors.regionFloor)
+        || unsupportedRegionDates.has(businessDate)
+      ) {
         regionDaily.unsupported += 1;
       } else if (completedRegionDates.has(businessDate)) {
         regionDaily.skipped += 1;
@@ -786,6 +793,7 @@ export async function runFullHomeHistorySync({
         completedProductDates,
         unsupportedTradeDates,
         unsupportedRegionDates,
+        metricFloors,
       ] = windows.length > 0
         ? await Promise.all([
           repository.successfulDailyDates({
@@ -824,8 +832,21 @@ export async function runFullHomeHistorySync({
                 endDate: historicalEndDate,
               })
             : Promise.resolve(new Set()),
+          typeof repository.historyMetricFloors === 'function'
+            ? repository.historyMetricFloors({ storeCode })
+            : Promise.resolve(Object.freeze({
+                tradeFloor: null,
+                regionFloor: null,
+              })),
         ])
-        : [new Set(), new Set(), new Set(), new Set(), new Set()];
+        : [
+            new Set(),
+            new Set(),
+            new Set(),
+            new Set(),
+            new Set(),
+            Object.freeze({ tradeFloor: null, regionFloor: null }),
+          ];
       if (refreshRecentSettledDays > 0 && windows.length > 0) {
         const refreshStart = shiftBusinessDate(
           settledEndDate,
@@ -856,6 +877,7 @@ export async function runFullHomeHistorySync({
           completedProductDates,
           unsupportedTradeDates,
           unsupportedRegionDates,
+          metricFloors,
           dataAnchor,
         }));
       }

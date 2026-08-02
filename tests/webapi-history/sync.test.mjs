@@ -244,6 +244,60 @@ test('homepage history sync resumes successful daily trade and region requests',
   assert.equal(maximumDailyRequests, 2);
 });
 
+test('history sync does not fan out before the first known metric availability floor', async () => {
+  const endpoints = [];
+  const result = await runFullHomeHistorySync({
+    storeCodes: ['DL5477'],
+    startDate: '2026-07-28',
+    endDate: '2026-07-30',
+    includeProducts: false,
+    openSession: async () => ({ async close() {} }),
+    transportFactory: () => async (endpointCode) => {
+      endpoints.push(endpointCode);
+      if (endpointCode === 'UPDATE_TIME') {
+        return response({
+          code: '0',
+          info: { areaCd: 'cn', dt: '20260730' },
+        });
+      }
+      if (endpointCode === 'STORE_DAILY_HISTORY') {
+        return response({
+          code: '0',
+          info: [
+            { dataDate: '20260728' },
+            { dataDate: '20260729' },
+            { dataDate: '20260730' },
+          ],
+        });
+      }
+      if (endpointCode === 'TRADE_OVERVIEW') {
+        return response({ code: '0', info: { payOrder: { cnt: 1 } } });
+      }
+      return response({ code: '0', info: { countryTrade: [] } });
+    },
+    repository: {
+      async recordFetchAudit() {},
+      async upsertStoreDaily() {},
+      async upsertProducts() {},
+      async upsertRegions() {},
+      async successfulDailyDates() {
+        return new Set();
+      },
+      async historyMetricFloors() {
+        return {
+          tradeFloor: '2026-07-29',
+          regionFloor: '2026-07-30',
+        };
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(endpoints.filter((code) => code === 'TRADE_OVERVIEW').length, 2);
+  assert.equal(endpoints.filter((code) => code === 'REGION_RANK').length, 1);
+  assert.equal(result.results[0].tradeDaily.unsupported, 1);
+  assert.equal(result.results[0].regionDaily.unsupported, 2);
+});
+
 test('current-day sync aggregates only additive hourly realtime metrics', async () => {
   const audits = [];
   const storeRows = [];

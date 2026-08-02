@@ -922,6 +922,33 @@ export function createFullHomeHistoryRepository({ pool } = {}) {
     });
   }
 
+  async function historyMetricFloors({ storeCode: inputStoreCode } = {}) {
+    const store = storeCode(inputStoreCode);
+    return inCapabilityTransaction(pool, async (client) => {
+      const result = await client.query(`
+        SELECT
+          (
+            SELECT min(business_date)::text
+            FROM fact.full_home_store_daily
+            WHERE store_code = $1
+              AND (
+                payment_order_count IS NOT NULL
+                OR new_customer_sales_quantity IS NOT NULL
+                OR new_customer_payment_order_count IS NOT NULL
+              )
+          ) AS trade_floor,
+          (
+            SELECT min(business_date)::text
+            FROM fact.full_home_region_daily
+            WHERE store_code = $1
+          ) AS region_floor`, [store]);
+      return Object.freeze({
+        tradeFloor: result.rows[0]?.trade_floor ?? null,
+        regionFloor: result.rows[0]?.region_floor ?? null,
+      });
+    });
+  }
+
   return Object.freeze({
     upsertStoreDaily,
     upsertRegions,
@@ -930,5 +957,6 @@ export function createFullHomeHistoryRepository({ pool } = {}) {
     recordFetchAudit,
     successfulDailyDates,
     terminalUnsupportedDailyDates,
+    historyMetricFloors,
   });
 }
