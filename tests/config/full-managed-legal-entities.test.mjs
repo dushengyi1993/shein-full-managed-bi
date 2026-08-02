@@ -31,6 +31,7 @@ test('same-company stores share one Open Platform Profile', () => {
     assert.equal(typeof entity.legalName, 'string');
     assert.ok(entity.legalName.length >= 4);
     assert.equal(entity.profileKey, `persistent-${entity.entityKey.toLowerCase()}-profile`);
+    assert.match(entity.chromeProfileDirectory, /^(Default|Profile 1)$/);
     assert.ok(entity.stores.length >= 1);
   }
 
@@ -41,5 +42,30 @@ test('same-company stores share one Open Platform Profile', () => {
   assert.deepEqual(
     manifest.entities.find((entity) => entity.entityKey === 'RH').stores,
     ['RH0099', 'RH2848'],
+  );
+  assert.deepEqual(
+    Object.fromEntries(manifest.entities.map((entity) => [
+      entity.entityKey,
+      entity.chromeProfileDirectory,
+    ])),
+    {
+      CX: 'Profile 1',
+      XL: 'Profile 1',
+      QY: 'Profile 1',
+      DX: 'Profile 1',
+      NM: 'Profile 1',
+      LQ: 'Profile 1',
+      TS: 'Profile 1',
+      DL: 'Profile 1',
+      FY: 'Profile 1',
+      GJ: 'Default',
+      QH: 'Profile 1',
+      JY: 'Profile 1',
+      ZL: 'Profile 1',
+      MZ: 'Profile 1',
+      YJ: 'Profile 1',
+      RH: 'Default',
+      WY: 'Default',
+    },
   );
 });

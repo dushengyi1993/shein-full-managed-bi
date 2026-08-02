@@ -9,6 +9,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, '..');
 const siblingRoot = path.resolve(projectRoot, '..', 'Shein销售统计');
 const defaultOutput = path.join(projectRoot, 'config', 'full_managed_onboarding.secret.json');
+const legalEntitiesFile = path.join(projectRoot, 'config', 'full-managed-legal-entities.json');
 const require = createRequire(import.meta.url);
 const playwrightCandidates = [
   path.join(projectRoot, 'node_modules', 'playwright'),
@@ -51,8 +52,13 @@ function parseArgs(argv) {
       args.headed = true;
       continue;
     }
-    if (['--store', '--port', '--output', '--profile-root'].includes(token)) {
-      args[token === '--profile-root' ? 'profileRoot' : token.slice(2)] = argv[index + 1];
+    if (['--store', '--port', '--output', '--profile-root', '--profile-directory'].includes(token)) {
+      const key = token === '--profile-root'
+        ? 'profileRoot'
+        : token === '--profile-directory'
+          ? 'profileDirectory'
+          : token.slice(2);
+      args[key] = argv[index + 1];
       index += 1;
       continue;
     }
@@ -60,7 +66,14 @@ function parseArgs(argv) {
   }
   args.store = String(args.store || '').trim().toUpperCase();
   args.output = path.resolve(args.output);
+  args.profileDirectory = String(args.profileDirectory || '').trim();
   if (!/^[A-Z0-9]+$/.test(args.store)) throw new Error('Missing or invalid --store.');
+  if (
+    args.profileDirectory
+    && !/^(Default|Profile [1-9][0-9]*)$/.test(args.profileDirectory)
+  ) {
+    throw new Error('Invalid --profile-directory.');
+  }
   if (args.profileRoot) {
     args.profileRoot = path.resolve(args.profileRoot);
     const expected = `persistent-${args.store.toLowerCase()}-profile`;
@@ -69,6 +82,9 @@ function parseArgs(argv) {
     }
     if (args.port !== undefined) throw new Error('Use either --port or --profile-root, not both.');
   } else {
+    if (args.profileDirectory) {
+      throw new Error('--profile-directory can be used only with --profile-root.');
+    }
     args.port = Number(args.port);
     if (!Number.isInteger(args.port) || args.port < 1 || args.port > 65535) {
       throw new Error('Missing or invalid --port.');
@@ -78,6 +94,25 @@ function parseArgs(argv) {
     throw new Error('Credential output must use an ignored *.secret.json path.');
   }
   return args;
+}
+
+async function resolveProfileDirectory(args) {
+  if (!args.profileRoot) return args;
+  const manifest = JSON.parse(await fs.readFile(legalEntitiesFile, 'utf8'));
+  const entity = Array.isArray(manifest?.entities)
+    ? manifest.entities.find((candidate) => candidate?.entityKey === args.store)
+    : null;
+  if (!entity || entity.profileKey !== path.basename(args.profileRoot)) {
+    throw new Error('Profile root is not registered for the requested legal entity.');
+  }
+  const configured = String(entity.chromeProfileDirectory || '').trim();
+  if (!/^(Default|Profile [1-9][0-9]*)$/.test(configured)) {
+    throw new Error('Registered Chrome profile directory is invalid.');
+  }
+  if (args.profileDirectory && args.profileDirectory !== configured) {
+    throw new Error('Requested Chrome profile directory conflicts with the legal-entity registry.');
+  }
+  return { ...args, profileDirectory: configured };
 }
 
 async function clickFirstVisible(locator, description) {
@@ -222,7 +257,7 @@ async function saveCredential(args, application, credentials) {
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = await resolveProfileDirectory(parseArgs(process.argv.slice(2)));
   let ownedContext = null;
   const browser = args.profileRoot
     ? null
@@ -233,7 +268,7 @@ async function main() {
       headless: !args.headed,
       locale: 'zh-CN',
       args: [
-        '--profile-directory=Profile 1',
+        `--profile-directory=${args.profileDirectory}`,
         '--no-first-run',
         '--no-default-browser-check',
         '--password-store=basic',
