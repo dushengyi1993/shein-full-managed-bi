@@ -40,7 +40,47 @@ apply_sql() {
   printf 'applied %s\n' "$(basename "$sql_file")"
 }
 
+migration_is_superseded() {
+  local migration_name
+  migration_name="$(basename "$1")"
+  case "$migration_name" in
+    0017_full_home_all_store_scope.sql)
+      # 0018 extends the same constraints from 24 to 25 stores. Replaying 0017
+      # after NM7418 facts exist would temporarily narrow the constraint and
+      # fail before 0018 can restore the current roster. Existing migrations
+      # remain immutable; the runner explicitly skips only this proven
+      # superseded transition once either the current constraint or current
+      # evidence proves that 0018 has already taken effect.
+      docker exec "$container_name" sh -ceu '
+        exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "
+          SELECT CASE WHEN
+            EXISTS (
+              SELECT 1
+              FROM pg_constraint
+              WHERE conrelid = '\''raw.webapi_home_fetch_audit'\''::regclass
+                AND conname = '\''ck_raw_webapi_home_fetch_store'\''
+                AND pg_get_constraintdef(oid) LIKE '\''%NM7418%'\''
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM raw.webapi_home_fetch_audit
+              WHERE store_code = '\''NM7418'\''
+            )
+          THEN 1 ELSE 0 END
+        "
+      ' | grep -qx 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 for sql_file in "$project_root"/db/migrations/*.sql; do
+  if migration_is_superseded "$sql_file"; then
+    printf 'skipped superseded %s\n' "$(basename "$sql_file")"
+    continue
+  fi
   apply_sql "$sql_file"
 done
 
