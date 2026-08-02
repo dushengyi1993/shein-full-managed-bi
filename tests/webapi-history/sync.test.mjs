@@ -326,6 +326,8 @@ test('current-day sync aggregates only additive hourly realtime metrics', async 
   assert.equal(result.ok, true);
   assert.equal(result.complete, true);
   assert.equal(endpoints.filter((code) => code === 'STORE_REALTIME').length, 1);
+  assert.equal(endpoints.filter((code) => code === 'STORE_DAILY_HISTORY').length, 0);
+  assert.equal(result.windowCount, 0);
   const realtime = storeRows.find(({ sourceCode }) => sourceCode === 'WEBAPI_REALTIME');
   assert.equal(realtime.dealAmount, 35);
   assert.equal(realtime.salesQuantity, 3);
@@ -338,4 +340,76 @@ test('current-day sync aggregates only additive hourly realtime metrics', async 
     factRows: 1,
     uniqueVisitorMetrics: 'UNAVAILABLE',
   });
+});
+
+test('a range ending today anchors settled endpoints to yesterday', async () => {
+  const requests = [];
+  const result = await runFullHomeHistorySync({
+    storeCodes: ['DL5477'],
+    startDate: '2026-08-01',
+    endDate: '2026-08-02',
+    includeProducts: false,
+    clock: () => new Date('2026-08-02T13:00:00.000Z'),
+    openSession: async () => ({ async close() {} }),
+    transportFactory: () => async (endpointCode, request) => {
+      requests.push({ endpointCode, request });
+      if (endpointCode === 'STORE_DAILY_HISTORY') {
+        return response({
+          code: '0',
+          info: [{
+            dataDate: '2026-08-01',
+            dealAmt1d: '1498.37',
+            saleCnt1d: '35',
+          }],
+        });
+      }
+      if (endpointCode === 'STORE_REALTIME') {
+        return response({
+          code: '0',
+          info: [{
+            dealAmtH: '10',
+            netDealAmtH: '8',
+            saleCntH: '1',
+            bhOrdCntH: '0',
+            jcOrdCntH: '0',
+          }],
+        });
+      }
+      if (endpointCode === 'ANALYSE_MODEL') {
+        return response({ code: '0', info: { status: true } });
+      }
+      if (endpointCode === 'ANALYSE_SEARCH') {
+        return response({
+          code: '0',
+          info: { analyseResult: { data: [], meta: { count: 0 } } },
+        });
+      }
+      if (endpointCode === 'TRADE_OVERVIEW') {
+        return response({ code: '0', info: {} });
+      }
+      return response({ code: '0', info: { countryTrade: [] } });
+    },
+    repository: {
+      async recordFetchAudit() {},
+      async upsertStoreDaily() {},
+      async upsertProducts() {},
+      async upsertRegions() {},
+      async successfulDailyDates() {
+        return new Set();
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.complete, true);
+  assert.equal(result.windowCount, 1);
+  const historical = requests.find(({ endpointCode }) => (
+    endpointCode === 'STORE_DAILY_HISTORY'
+  )).request;
+  assert.equal(historical.startDate, '2026-08-01');
+  assert.equal(historical.endDate, '2026-08-01');
+  assert.equal(historical.dt, '20260801');
+  assert.equal(requests.filter(({ endpointCode }) => (
+    endpointCode === 'STORE_REALTIME'
+  )).length, 1);
 });

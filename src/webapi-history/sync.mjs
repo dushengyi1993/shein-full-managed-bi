@@ -142,6 +142,12 @@ function shanghaiClockParts(value) {
   };
 }
 
+function previousBusinessDate(value) {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
 function completeMetricSum(rows, field) {
   if (
     rows.length === 0
@@ -583,12 +589,24 @@ export async function runFullHomeHistorySync({
       throw new TypeError(`repository.${method} is required`);
     }
   }
-  const windows = historyWindows({ startDate, endDate });
+  // Validate the complete requested scope before applying the source-specific
+  // settled-day boundary below.
+  historyWindows({ startDate, endDate });
   const realtimeClock = shanghaiClockParts(clock());
   const realtime = startDate <= realtimeClock.businessDate
     && endDate >= realtimeClock.businessDate
     ? realtimeClock
     : null;
+  // The daily index uses its `dt` field as the data-version anchor. Anchoring
+  // it to the current Shanghai day returns correctly dated rows whose metrics
+  // are still null. Keep every historical endpoint on yesterday or earlier;
+  // the current day is supplied only by the hourly realtime endpoint.
+  const settledEndDate = realtime
+    ? previousBusinessDate(realtime.businessDate)
+    : endDate;
+  const windows = startDate <= settledEndDate
+    ? historyWindows({ startDate, endDate: settledEndDate })
+    : [];
   const results = [];
   for (const rawStoreCode of storeCodes) {
     const storeCode = String(rawStoreCode).trim().toUpperCase();
@@ -596,22 +614,27 @@ export async function runFullHomeHistorySync({
     try {
       session = await openSession({ storeCode, allowSavedCredentialLogin });
       const transport = transportFactory({ session });
-      const [completedTradeDates, completedRegionDates] = await Promise.all([
-        repository.successfulDailyDates({
-          storeCode,
-          endpointCode: 'TRADE_OVERVIEW',
-          startDate,
-          endDate,
-        }),
-        repository.successfulDailyDates({
-          storeCode,
-          endpointCode: 'REGION_RANK',
-          startDate,
-          endDate,
-        }),
-      ]);
+      const storeResults = [];
+      const historicalStartDate = windows[0]?.startDate ?? null;
+      const historicalEndDate = windows.at(-1)?.endDate ?? null;
+      const [completedTradeDates, completedRegionDates] = windows.length > 0
+        ? await Promise.all([
+          repository.successfulDailyDates({
+            storeCode,
+            endpointCode: 'TRADE_OVERVIEW',
+            startDate: historicalStartDate,
+            endDate: historicalEndDate,
+          }),
+          repository.successfulDailyDates({
+            storeCode,
+            endpointCode: 'REGION_RANK',
+            startDate: historicalStartDate,
+            endDate: historicalEndDate,
+          }),
+        ])
+        : [new Set(), new Set()];
       for (const window of windows) {
-        results.push(await syncStoreWindow({
+        storeResults.push(await syncStoreWindow({
           storeCode,
           window,
           transport,
@@ -623,7 +646,20 @@ export async function runFullHomeHistorySync({
         }));
       }
       if (realtime) {
-        results.at(-1).realtime = await syncRealtimeDay({
+        if (storeResults.length === 0) {
+          storeResults.push({
+            storeCode,
+            startDate: realtime.businessDate,
+            endDate: realtime.businessDate,
+            storeDaily: null,
+            shopDaily: null,
+            productDaily: null,
+            tradeDaily: null,
+            regionDaily: null,
+            realtime: null,
+          });
+        }
+        storeResults.at(-1).realtime = await syncRealtimeDay({
           storeCode,
           realtime,
           transport,
@@ -631,6 +667,7 @@ export async function runFullHomeHistorySync({
           clock,
         });
       }
+      results.push(...storeResults);
     } catch (error) {
       results.push({
         storeCode,
