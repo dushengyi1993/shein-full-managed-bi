@@ -1,13 +1,13 @@
 import {
   buildAnalyseSearchRequest,
-  buildProductDailyRequest,
+  buildProductDiagnoseListRequest,
   buildRealtimeRequest,
   buildRegionRankRequest,
   buildShopDailyRequest,
   buildStoreDailyHistoryRequest,
   buildTradeOverviewRequest,
   historyWindows,
-  parseProductDailyRows,
+  parseProductDiagnosePage,
   parseRegionRows,
   parseShopAnalysisRows,
   parseStoreDailyHistory,
@@ -146,6 +146,27 @@ function previousBusinessDate(value) {
   const date = new Date(`${value}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() - 1);
   return date.toISOString().slice(0, 10);
+}
+
+function shiftBusinessDate(value, days) {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function operationalRows(rows) {
+  const fields = [
+    'dealAmount',
+    'netDealAmount',
+    'salesQuantity',
+    'buyerCount',
+    'goodsDetailVisitors',
+    'stockingOrderCount',
+    'urgentPurchaseOrderCount',
+  ];
+  return rows.filter((row) => fields.some((field) => (
+    row[field] !== null && row[field] !== undefined
+  )));
 }
 
 function completeMetricSum(rows, field) {
@@ -294,6 +315,86 @@ async function syncRealtimeDay({
   });
 }
 
+async function syncProductDate({
+  storeCode,
+  businessDate,
+  observedDate,
+  transport,
+  repository,
+  clock,
+}) {
+  const pageSize = 200;
+  let pageNum = 1;
+  let total = null;
+  let accepted = 0;
+  let rejected = 0;
+  let sourceRows = 0;
+  do {
+    const request = buildProductDiagnoseListRequest({
+      businessDate,
+      observedDate,
+      pageNum,
+      pageSize,
+    });
+    const page = await requestAndAudit({
+      transport,
+      repository,
+      storeCode,
+      endpointCode: 'PRODUCT_DIAGNOSE_LIST',
+      request,
+      startDate: businessDate,
+      endDate: businessDate,
+      clock,
+      handle: async (body, observedAt) => {
+        const parsed = parseProductDiagnosePage(body, {
+          storeCode,
+          businessDate,
+          observedAt,
+        });
+        await repository.upsertProducts(parsed.rows);
+        return {
+          accepted: parsed.rows.length,
+          rejected: parsed.rejectedRowCount,
+          total: parsed.count,
+          payload: {
+            sourceRows: parsed.sourceRowCount,
+            lastSalesQuantity: parsed.lastSalesQuantity,
+          },
+        };
+      },
+    });
+    if (!page.ok) {
+      return {
+        ...page,
+        pageNum,
+        accepted,
+        rejected,
+        sourceRows,
+      };
+    }
+    total = page.total;
+    accepted += page.accepted;
+    rejected += page.rejected;
+    sourceRows += page.payload?.sourceRows ?? 0;
+    const hasAnotherPage = pageNum * pageSize < total;
+    const pageMayContainMoreSales = (
+      page.payload?.sourceRows === pageSize
+      && typeof page.payload?.lastSalesQuantity === 'number'
+      && page.payload.lastSalesQuantity > 0
+    );
+    pageNum += 1;
+    if (!hasAnotherPage || !pageMayContainMoreSales) break;
+  } while (true);
+  return {
+    ok: true,
+    accepted,
+    rejected,
+    sourceRows,
+    total,
+    pages: pageNum - 1,
+  };
+}
+
 async function syncStoreWindow({
   storeCode,
   window,
@@ -303,6 +404,10 @@ async function syncStoreWindow({
   includeProducts,
   completedTradeDates,
   completedRegionDates,
+  completedProductDates,
+  unsupportedTradeDates,
+  unsupportedRegionDates,
+  productAnchorDate,
 }) {
   const result = {
     storeCode,
@@ -327,79 +432,99 @@ async function syncStoreWindow({
     handle: async (body, observedAt) => {
       const rows = parseStoreDailyHistory(body, { storeCode, observedAt });
       await repository.upsertStoreDaily(rows);
-      return { accepted: rows.length };
+      const activeRows = operationalRows(rows);
+      return {
+        accepted: rows.length,
+        payload: {
+          hasOperationalRows: activeRows.length > 0,
+          productDates: activeRows
+            .filter(({ salesQuantity }) => (
+              Number.isSafeInteger(salesQuantity) && salesQuantity > 0
+            ))
+            .map(({ businessDate }) => businessDate),
+        },
+      };
     },
   });
 
-  const shopModelRequest = buildShopDailyRequest(window);
-  const shopModel = await requestAndAudit({
-    transport,
-    repository,
-    storeCode,
-    endpointCode: 'ANALYSE_MODEL',
-    request: shopModelRequest,
-    startDate: window.startDate,
-    endDate: window.endDate,
-    clock,
-    handle: async (body) => {
-      assertAnalyseModelAccepted(body);
-      return { accepted: 0 };
-    },
-  });
-  if (shopModel.ok) {
-    const shopRawRows = [];
-    let pageNum = 1;
-    let total = null;
-    let searchFailed = false;
-    do {
-      const request = buildAnalyseSearchRequest({ pageNum, pageSize: 200 });
-      const page = await requestAndAudit({
-        transport,
-        repository,
-        storeCode,
-        endpointCode: 'ANALYSE_SEARCH',
-        request,
-        startDate: window.startDate,
-        endDate: window.endDate,
-        clock,
-        handle: async (body) => {
-          const rows = analyseRows(body);
-          total = analyseCount(body);
-          shopRawRows.push(...rows);
-          return { accepted: rows.length, total };
-        },
-      });
-      if (!page.ok) {
-        searchFailed = true;
-        result.shopDaily = page;
-        break;
+  if (result.storeDaily.ok && result.storeDaily.payload?.hasOperationalRows) {
+    const shopModelRequest = buildShopDailyRequest(window);
+    const shopModel = await requestAndAudit({
+      transport,
+      repository,
+      storeCode,
+      endpointCode: 'ANALYSE_MODEL',
+      request: shopModelRequest,
+      startDate: window.startDate,
+      endDate: window.endDate,
+      clock,
+      handle: async (body) => {
+        assertAnalyseModelAccepted(body);
+        return { accepted: 0 };
+      },
+    });
+    if (shopModel.ok) {
+      const shopRawRows = [];
+      let pageNum = 1;
+      let total = null;
+      let searchFailed = false;
+      do {
+        const request = buildAnalyseSearchRequest({ pageNum, pageSize: 200 });
+        const page = await requestAndAudit({
+          transport,
+          repository,
+          storeCode,
+          endpointCode: 'ANALYSE_SEARCH',
+          request,
+          startDate: window.startDate,
+          endDate: window.endDate,
+          clock,
+          handle: async (body) => {
+            const rows = analyseRows(body);
+            total = analyseCount(body);
+            shopRawRows.push(...rows);
+            return { accepted: rows.length, total };
+          },
+        });
+        if (!page.ok) {
+          searchFailed = true;
+          result.shopDaily = page;
+          break;
+        }
+        pageNum += 1;
+      } while (total !== null && (pageNum - 1) * 200 < total);
+      if (!searchFailed) {
+        const parsed = parseShopAnalysisRows({
+          info: { analyseResult: { data: shopRawRows } },
+        }, {
+          storeCode,
+          observedAt: nowIso(clock),
+        });
+        const rows = mergeShopRows(parsed);
+        await repository.upsertStoreDaily(rows);
+        result.shopDaily = {
+          ok: true,
+          accepted: rows.length,
+          sourceRows: shopRawRows.length,
+          total,
+        };
       }
-      pageNum += 1;
-    } while (total !== null && (pageNum - 1) * 200 < total);
-    if (!searchFailed) {
-      const parsed = parseShopAnalysisRows({
-        info: { analyseResult: { data: shopRawRows } },
-      }, {
-        storeCode,
-        observedAt: nowIso(clock),
-      });
-      const rows = mergeShopRows(parsed);
-      await repository.upsertStoreDaily(rows);
-      result.shopDaily = {
-        ok: true,
-        accepted: rows.length,
-        sourceRows: shopRawRows.length,
-        total,
-      };
+    } else {
+      result.shopDaily = shopModel;
     }
   } else {
-    result.shopDaily = shopModel;
+    result.shopDaily = {
+      ok: true,
+      skipped: true,
+      reason: result.storeDaily.ok ? 'NO_OPERATIONAL_DATA' : 'STORE_DAILY_FAILED',
+    };
   }
 
   const tradeDaily = {
     ok: true,
     loaded: 0,
     skipped: 0,
+    unsupported: 0,
     failed: 0,
     firstErrorCode: null,
   };
@@ -407,13 +532,16 @@ async function syncStoreWindow({
     ok: true,
     loaded: 0,
     skipped: 0,
+    unsupported: 0,
     failed: 0,
     acceptedRows: 0,
     firstErrorCode: null,
   };
   for (const businessDate of datesInWindow(window)) {
     const syncTradeDate = async () => {
-      if (completedTradeDates.has(businessDate)) {
+      if (unsupportedTradeDates.has(businessDate)) {
+        tradeDaily.unsupported += 1;
+      } else if (completedTradeDates.has(businessDate)) {
         tradeDaily.skipped += 1;
       } else {
         const request = buildTradeOverviewRequest({
@@ -452,7 +580,9 @@ async function syncStoreWindow({
     };
 
     const syncRegionDate = async () => {
-      if (completedRegionDates.has(businessDate)) {
+      if (unsupportedRegionDates.has(businessDate)) {
+        regionDaily.unsupported += 1;
+      } else if (completedRegionDates.has(businessDate)) {
         regionDaily.skipped += 1;
       } else {
         const request = buildRegionRankRequest({
@@ -502,62 +632,43 @@ async function syncStoreWindow({
 
   if (!includeProducts) return result;
 
-  const productModelRequest = buildProductDailyRequest({
-    ...window,
-    grain: 'SPU',
-  });
-  const productModel = await requestAndAudit({
-    transport,
-    repository,
-    storeCode,
-    endpointCode: 'ANALYSE_MODEL',
-    request: productModelRequest,
-    startDate: window.startDate,
-    endDate: window.endDate,
-    clock,
-    handle: async (body) => {
-      assertAnalyseModelAccepted(body);
-      return { accepted: 0 };
-    },
-  });
-  if (!productModel.ok) {
-    result.productDaily = productModel;
-    return result;
-  }
-
-  let pageNum = 1;
-  let total = null;
-  let accepted = 0;
-  do {
-    const request = buildAnalyseSearchRequest({ pageNum, pageSize: 200 });
-    const page = await requestAndAudit({
+  const productDaily = {
+    ok: true,
+    loadedDates: 0,
+    skippedDates: 0,
+    failedDates: 0,
+    acceptedRows: 0,
+    sourceRows: 0,
+    firstErrorCode: null,
+  };
+  const productDates = [
+    ...new Set(result.storeDaily.payload?.productDates ?? []),
+  ].sort();
+  for (const businessDate of productDates) {
+    if (completedProductDates.has(businessDate)) {
+      productDaily.skippedDates += 1;
+      continue;
+    }
+    const product = await syncProductDate({
+      storeCode,
+      businessDate,
+      observedDate: productAnchorDate,
       transport,
       repository,
-      storeCode,
-      endpointCode: 'ANALYSE_SEARCH',
-      request,
-      startDate: window.startDate,
-      endDate: window.endDate,
       clock,
-      handle: async (body, observedAt) => {
-        const rows = parseProductDailyRows(body, {
-          storeCode,
-          grain: 'SPU',
-          observedAt,
-        });
-        total = analyseCount(body);
-        await repository.upsertProducts(rows);
-        return { accepted: rows.length, total };
-      },
     });
-    if (!page.ok) {
-      result.productDaily = page;
-      return result;
+    if (product.ok) {
+      productDaily.loadedDates += 1;
+      productDaily.acceptedRows += product.accepted;
+      productDaily.sourceRows += product.sourceRows;
+      completedProductDates.add(businessDate);
+    } else {
+      productDaily.ok = false;
+      productDaily.failedDates += 1;
+      productDaily.firstErrorCode ??= product.errorCode;
     }
-    accepted += page.accepted;
-    pageNum += 1;
-  } while (total !== null && (pageNum - 1) * 200 < total);
-  result.productDaily = { ok: true, accepted, total };
+  }
+  result.productDaily = productDaily;
   return result;
 }
 
@@ -566,6 +677,7 @@ export async function runFullHomeHistorySync({
   startDate,
   endDate,
   includeProducts = true,
+  refreshRecentSettledDays = 0,
   allowSavedCredentialLogin = true,
   openSession,
   transportFactory,
@@ -574,6 +686,13 @@ export async function runFullHomeHistorySync({
 } = {}) {
   if (!Array.isArray(storeCodes) || storeCodes.length === 0) {
     throw new TypeError('storeCodes are required');
+  }
+  if (
+    !Number.isSafeInteger(refreshRecentSettledDays)
+    || refreshRecentSettledDays < 0
+    || refreshRecentSettledDays > 30
+  ) {
+    throw new TypeError('refreshRecentSettledDays must be between 0 and 30');
   }
   for (const dependency of [openSession, transportFactory]) {
     if (typeof dependency !== 'function') throw new TypeError('sync dependency missing');
@@ -617,7 +736,13 @@ export async function runFullHomeHistorySync({
       const storeResults = [];
       const historicalStartDate = windows[0]?.startDate ?? null;
       const historicalEndDate = windows.at(-1)?.endDate ?? null;
-      const [completedTradeDates, completedRegionDates] = windows.length > 0
+      const [
+        completedTradeDates,
+        completedRegionDates,
+        completedProductDates,
+        unsupportedTradeDates,
+        unsupportedRegionDates,
+      ] = windows.length > 0
         ? await Promise.all([
           repository.successfulDailyDates({
             storeCode,
@@ -631,8 +756,49 @@ export async function runFullHomeHistorySync({
             startDate: historicalStartDate,
             endDate: historicalEndDate,
           }),
+          includeProducts
+            ? repository.successfulDailyDates({
+                storeCode,
+                endpointCode: 'PRODUCT_DIAGNOSE_LIST',
+                startDate: historicalStartDate,
+                endDate: historicalEndDate,
+              })
+            : Promise.resolve(new Set()),
+          typeof repository.terminalUnsupportedDailyDates === 'function'
+            ? repository.terminalUnsupportedDailyDates({
+                storeCode,
+                endpointCode: 'TRADE_OVERVIEW',
+                startDate: historicalStartDate,
+                endDate: historicalEndDate,
+              })
+            : Promise.resolve(new Set()),
+          typeof repository.terminalUnsupportedDailyDates === 'function'
+            ? repository.terminalUnsupportedDailyDates({
+                storeCode,
+                endpointCode: 'REGION_RANK',
+                startDate: historicalStartDate,
+                endDate: historicalEndDate,
+              })
+            : Promise.resolve(new Set()),
         ])
-        : [new Set(), new Set()];
+        : [new Set(), new Set(), new Set(), new Set(), new Set()];
+      if (refreshRecentSettledDays > 0 && windows.length > 0) {
+        const refreshStart = shiftBusinessDate(
+          settledEndDate,
+          1 - refreshRecentSettledDays,
+        );
+        for (const completed of [
+          completedTradeDates,
+          completedRegionDates,
+          completedProductDates,
+          unsupportedTradeDates,
+          unsupportedRegionDates,
+        ]) {
+          for (const date of completed) {
+            if (date >= refreshStart) completed.delete(date);
+          }
+        }
+      }
       for (const window of windows) {
         storeResults.push(await syncStoreWindow({
           storeCode,
@@ -643,6 +809,10 @@ export async function runFullHomeHistorySync({
           includeProducts,
           completedTradeDates,
           completedRegionDates,
+          completedProductDates,
+          unsupportedTradeDates,
+          unsupportedRegionDates,
+          productAnchorDate: settledEndDate,
         }));
       }
       if (realtime) {
@@ -682,11 +852,11 @@ export async function runFullHomeHistorySync({
   const failedWindows = results.filter((row) => (
     row.sessionErrorCode
     || row.storeDaily?.ok === false
-    || row.shopDaily?.ok === false
     || row.realtime?.ok === false
   )).length;
   const partialWindows = results.filter((row) => (
     row.sessionErrorCode
+    || row.shopDaily?.ok === false
     || row.productDaily?.ok === false
     || row.tradeDaily?.ok === false
     || row.regionDaily?.ok === false

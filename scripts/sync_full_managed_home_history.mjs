@@ -17,6 +17,7 @@ function parseArgs(argv) {
     to: null,
     execute: false,
     includeProducts: true,
+    refreshRecentSettledDays: 0,
   };
   for (const token of argv) {
     const match = /^--([a-z-]+)(?:=(.*))?$/.exec(token);
@@ -28,7 +29,12 @@ function parseArgs(argv) {
       result.stores = [...new Set(value.split(',').map((item) => item.trim().toUpperCase()))];
     } else if (name === 'from' && value) result.from = value;
     else if (name === 'to' && value) result.to = value;
-    else throw new Error('HOME_CLI_ARGUMENT_INVALID');
+    else if (name === 'refresh-recent-days' && /^\d{1,2}$/.test(value ?? '')) {
+      result.refreshRecentSettledDays = Number(value);
+      if (result.refreshRecentSettledDays > 30) {
+        throw new Error('HOME_CLI_ARGUMENT_INVALID');
+      }
+    } else throw new Error('HOME_CLI_ARGUMENT_INVALID');
   }
   if (result.stores.length === 0 || !result.from || !result.to) {
     throw new Error('HOME_CLI_SCOPE_REQUIRED');
@@ -47,6 +53,7 @@ function dryRunReport(args) {
     from: args.from,
     to: args.to,
     includeProducts: args.includeProducts,
+    refreshRecentSettledDays: args.refreshRecentSettledDays,
     includeTradeOverview: true,
     includeRegionRank: true,
     dailyDimensionResume: true,
@@ -80,6 +87,7 @@ async function main() {
       startDate: args.from,
       endDate: args.to,
       includeProducts: args.includeProducts,
+      refreshRecentSettledDays: args.refreshRecentSettledDays,
       openSession: runtime.deps.openSession,
       transportFactory: ({ session }) => createFullHomePageTransport({ session }),
       repository,

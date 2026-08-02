@@ -10,7 +10,7 @@ function response(body) {
   return { httpStatus: 200, byteLength: JSON.stringify(body).length, body };
 }
 
-test('homepage history sync processes one Profile at a time and preserves partial product failure', async () => {
+test('homepage history sync uses the current paginated product contract and preserves partial failure', async () => {
   const events = [];
   const audits = [];
   const storeRows = [];
@@ -50,8 +50,23 @@ test('homepage history sync processes one Profile at a time and preserves partia
           }],
         });
       }
-      if (endpointCode === 'ANALYSE_MODEL' && request.dimension.dimensionType === 'product') {
-        return response({ code: '0', info: { status: false, errorMsg: 'private platform detail' } });
+      if (endpointCode === 'PRODUCT_DIAGNOSE_LIST') {
+        if (session.storeCode === 'MZ2406') {
+          const error = new Error('private platform detail');
+          error.code = 'HOME_PRODUCT_FETCH_FAILED';
+          throw error;
+        }
+        return response({
+          code: '0',
+          info: {
+            data: [{
+              spu: 'SPU-11',
+              goodsName: 'Coffee maker',
+              c1dSaleCnt: '4',
+            }],
+            meta: { count: 1 },
+          },
+        });
       }
       if (endpointCode === 'ANALYSE_MODEL') {
         return response({ code: '0', info: { status: true, errorMsg: null } });
@@ -102,11 +117,13 @@ test('homepage history sync processes one Profile at a time and preserves partia
   assert.equal(storeRows.filter((row) => row.sourceCode === 'WEBAPI_INDEX').length, 2);
   assert.equal(storeRows.filter((row) => row.sourceCode === 'WEBAPI_ANALYSE').length, 2);
   assert.equal(storeRows.filter((row) => row.sourceCodes?.includes('WEBAPI_ANALYSE')).length, 2);
-  assert.equal(productRows.length, 0);
+  assert.equal(productRows.length, 1);
+  assert.equal(productRows[0].productKey, 'SPU-11');
   assert.equal(
-    audits.filter((entry) => entry.sanitizedErrorCode === 'HOME_ANALYSE_MODEL_REJECTED').length,
-    2,
+    audits.filter((entry) => entry.sanitizedErrorCode === 'HOME_PRODUCT_FETCH_FAILED').length,
+    1,
   );
+  assert.equal(events.filter((item) => item.endsWith(':PRODUCT_DIAGNOSE_LIST')).length, 2);
   assert.equal(events.filter((item) => item.endsWith(':TRADE_OVERVIEW')).length, 2);
   assert.equal(events.filter((item) => item.endsWith(':REGION_RANK')).length, 2);
   assert.ok(audits.every((entry) => !JSON.stringify(entry).includes('private platform detail')));

@@ -5,10 +5,12 @@ import {
   buildAnalyseSearchRequest,
   buildLedgerDailyRequest,
   buildProductDailyRequest,
+  buildProductDiagnoseListRequest,
   buildRegionRankRequest,
   buildStoreDailyHistoryRequest,
   buildTradeOverviewRequest,
   historyWindows,
+  parseProductDiagnosePage,
   parseProductDailyRows,
   parseLedgerDailyRows,
   parseShopAnalysisRows,
@@ -213,6 +215,95 @@ test('product analysis keeps daily store-local grain and no invented amount', ()
     sourceUpdatedAt: null,
   });
   assert.equal(Object.hasOwn(rows[0], 'estimatedDealAmount'), false);
+});
+
+test('current product diagnose contract keeps one-day SPU facts and drops catalogue zero rows', () => {
+  assert.deepEqual(buildProductDiagnoseListRequest({
+    businessDate: '2026-07-31',
+    observedDate: '2026-08-01',
+    pageNum: 2,
+  }), {
+    areaCd: 'cn',
+    dt: '20260801',
+    countrySite: ['shein-all'],
+    startDate: '20260731',
+    endDate: '20260731',
+    pageNum: 2,
+    pageSize: 200,
+    groupType: 'total',
+    orderList: 'c1dSaleCnt',
+    orderType: 'desc',
+  });
+  const page = parseProductDiagnosePage({
+    code: '0',
+    info: {
+      data: [
+        {
+          spu: 'v2607071423828016',
+          goodsName: '迷你电煮锅',
+          c1dSaleCnt: '12',
+          c1dSaleAmt: null,
+          dataDate: null,
+        },
+        {
+          spu: 'v2607071423828999',
+          goodsName: '零销量商品',
+          c1dSaleCnt: 0,
+        },
+      ],
+      meta: { count: 378 },
+    },
+  }, {
+    storeCode: 'DL5477',
+    businessDate: '2026-07-31',
+    observedAt: '2026-08-01T13:00:00.000Z',
+  });
+  assert.equal(page.count, 378);
+  assert.equal(page.sourceRowCount, 2);
+  assert.equal(page.lastSalesQuantity, 0);
+  assert.equal(page.rows.length, 1);
+  assert.deepEqual(page.rows[0], {
+    storeCode: 'DL5477',
+    businessDate: '2026-07-31',
+    productGrain: 'SPU',
+    productKey: 'v2607071423828016',
+    platformSpuId: 'v2607071423828016',
+    platformSkcId: null,
+    supplierCode: null,
+    supplierSku: null,
+    displayName: '迷你电煮锅',
+    salesQuantity: 12,
+    observedAt: '2026-08-01T13:00:00.000Z',
+    sourceUpdatedAt: null,
+  });
+  assert.equal(Object.hasOwn(page.rows[0], 'estimatedDealAmount'), false);
+  assert.throws(
+    () => parseProductDiagnosePage({
+      info: {
+        data: [{ spu: 'SPU-1', c1dSaleCnt: null }],
+        meta: { count: 1 },
+      },
+    }, {
+      storeCode: 'DL5477',
+      businessDate: '2026-07-31',
+    }),
+    { code: 'HOME_PRODUCT_SALES_UNAVAILABLE' },
+  );
+  assert.throws(
+    () => parseProductDiagnosePage({
+      info: {
+        data: [
+          { spu: 'SPU-1', c1dSaleCnt: 1 },
+          { spu: 'SPU-2', c1dSaleCnt: 2 },
+        ],
+        meta: { count: 2 },
+      },
+    }, {
+      storeCode: 'DL5477',
+      businessDate: '2026-07-31',
+    }),
+    { code: 'HOME_PRODUCT_SORT_INVALID' },
+  );
 });
 
 test('trade overview maps new-customer quantities without treating missing as zero', () => {

@@ -4,7 +4,7 @@ import { normalizeFullManagedStoreCode } from '../config/full-managed-stores.mjs
 export const HOME_WEBAPI_ORIGIN = 'https://sso.geiwohuo.com';
 export const HOME_HISTORY_EARLIEST_DATE = '2023-06-07';
 export const HOME_HISTORY_MAX_WINDOW_DAYS = 90;
-export const HOME_HISTORY_CONTRACT_VERSION = 2;
+export const HOME_HISTORY_CONTRACT_VERSION = 3;
 
 export const HOME_ENDPOINTS = Object.freeze({
   STORE_DAILY_HISTORY: Object.freeze({
@@ -30,6 +30,10 @@ export const HOME_ENDPOINTS = Object.freeze({
   ANALYSE_SEARCH: Object.freeze({
     method: 'POST',
     path: '/sbn/analyse/search',
+  }),
+  PRODUCT_DIAGNOSE_LIST: Object.freeze({
+    method: 'POST',
+    path: '/sbn/new_goods/get_diagnose_list',
   }),
   LEDGER_DAILY: Object.freeze({
     method: 'POST',
@@ -287,6 +291,44 @@ export function buildProductDailyRequest({
   });
 }
 
+/**
+ * Current first-party SPU detail contract used by
+ * `/sbn/merchandise/details`.
+ *
+ * Unlike the retired analyse/model_dimension flow, this endpoint is paginated
+ * and returns one aggregate row per SPU for the requested range. The history
+ * loader deliberately requests one business day at a time so the persisted
+ * grain remains store × day × SPU.
+ */
+export function buildProductDiagnoseListRequest({
+  businessDate,
+  observedDate,
+  pageNum = 1,
+  pageSize = 200,
+} = {}) {
+  const date = isoDate(businessDate, 'businessDate');
+  const anchor = isoDate(observedDate ?? date, 'observedDate').replaceAll('-', '');
+  if (!Number.isSafeInteger(pageNum) || pageNum < 1 || pageNum > 100_000) {
+    fail('HOME_PAGE_INVALID', 'pageNum is invalid');
+  }
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 200) {
+    fail('HOME_PAGE_SIZE_INVALID', 'pageSize is invalid');
+  }
+  const compactDate = date.replaceAll('-', '');
+  return Object.freeze({
+    areaCd: 'cn',
+    dt: anchor,
+    countrySite: ['shein-all'],
+    startDate: compactDate,
+    endDate: compactDate,
+    pageNum,
+    pageSize,
+    groupType: 'total',
+    orderList: 'c1dSaleCnt',
+    orderType: 'desc',
+  });
+}
+
 export function buildShopDailyRequest({ startDate, endDate } = {}) {
   const start = isoDate(startDate, 'startDate');
   const end = isoDate(endDate, 'endDate');
@@ -487,6 +529,71 @@ export function parseProductDailyRows(body, {
     }));
   }
   return Object.freeze(result);
+}
+
+export function parseProductDiagnosePage(body, {
+  storeCode,
+  businessDate,
+  observedAt = new Date().toISOString(),
+} = {}) {
+  const store = canonicalStore(storeCode);
+  const date = isoDate(businessDate, 'businessDate');
+  const envelope = record(body);
+  const info = record(envelope.info ?? envelope.data ?? envelope);
+  const sourceRows = Array.isArray(info.data) ? info.data : [];
+  const count = optionalCount(record(info.meta).count);
+  if (count === null || sourceRows.length > count) {
+    fail('HOME_PRODUCT_RESPONSE_INVALID', 'product diagnose page count is invalid');
+  }
+  const orderedQuantities = sourceRows.map((input) => (
+    optionalCount(record(input).c1dSaleCnt)
+  ));
+  if (orderedQuantities.some((value) => value === null)) {
+    fail('HOME_PRODUCT_SALES_UNAVAILABLE', 'product sales quantity is unavailable');
+  }
+  if (orderedQuantities.some((value, index) => (
+    index > 0 && orderedQuantities[index - 1] < value
+  ))) {
+    fail('HOME_PRODUCT_SORT_INVALID', 'product sales response is not descending');
+  }
+  const parsedRows = [];
+  let rejectedRowCount = 0;
+  for (const [index, input] of sourceRows.entries()) {
+    const row = record(input);
+    const productKey = String(row.spu ?? row.spuCode ?? '').trim();
+    const salesQuantity = orderedQuantities[index];
+    if (!productKey || productKey === 'undefined') {
+      rejectedRowCount += 1;
+      continue;
+    }
+    // The official list contains the full catalogue, including zero-sale
+    // products. Persist only positive sale facts; zero-sale dates remain
+    // provable through the successful fetch audit without multiplying the
+    // warehouse by hundreds of catalogue rows per store and day.
+    if (salesQuantity <= 0) continue;
+    parsedRows.push(Object.freeze({
+      storeCode: store,
+      businessDate: date,
+      productGrain: 'SPU',
+      productKey: productKey.slice(0, 160),
+      platformSpuId: productKey.slice(0, 160),
+      platformSkcId: null,
+      supplierCode: null,
+      supplierSku: null,
+      displayName: String(row.goodsName ?? row.goodsNameEn ?? '').trim() || null,
+      salesQuantity,
+      observedAt,
+      sourceUpdatedAt: null,
+    }));
+  }
+  const lastSourceRow = sourceRows.at(-1);
+  return Object.freeze({
+    count,
+    sourceRowCount: sourceRows.length,
+    rejectedRowCount,
+    lastSalesQuantity: lastSourceRow ? optionalCount(lastSourceRow.c1dSaleCnt) : null,
+    rows: Object.freeze(parsedRows),
+  });
 }
 
 export function parseTradeOverview(body, {

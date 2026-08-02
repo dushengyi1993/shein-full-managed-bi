@@ -885,6 +885,43 @@ export function createFullHomeHistoryRepository({ pool } = {}) {
     });
   }
 
+  async function terminalUnsupportedDailyDates({
+    storeCode: inputStoreCode,
+    endpointCode,
+    startDate,
+    endDate,
+  } = {}) {
+    const store = storeCode(inputStoreCode);
+    const endpoint = text(endpointCode, 'endpointCode', 40);
+    const start = date(startDate, 'startDate');
+    const end = date(endDate, 'endDate');
+    if (start > end) throw new TypeError('history date range is invalid');
+    return inCapabilityTransaction(pool, async (client) => {
+      const result = await client.query(`
+        SELECT failed.requested_start_date::text AS business_date
+        FROM raw.webapi_home_fetch_audit AS failed
+        WHERE failed.store_code = $1
+          AND failed.endpoint_code = $2
+          AND failed.requested_start_date >= $3::date
+          AND failed.requested_end_date <= $4::date
+          AND failed.requested_start_date = failed.requested_end_date
+          AND failed.result_status = 'FAILED'
+          AND failed.sanitized_error_code = 'HOME_BUSINESS_STATUS_FAILED'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM raw.webapi_home_fetch_audit AS succeeded
+            WHERE succeeded.store_code = failed.store_code
+              AND succeeded.endpoint_code = failed.endpoint_code
+              AND succeeded.requested_start_date = failed.requested_start_date
+              AND succeeded.requested_end_date = failed.requested_end_date
+              AND succeeded.result_status = 'SUCCEEDED'
+          )
+        GROUP BY failed.requested_start_date
+        ORDER BY failed.requested_start_date`, [store, endpoint, start, end]);
+      return new Set(result.rows.map((row) => row.business_date));
+    });
+  }
+
   return Object.freeze({
     upsertStoreDaily,
     upsertRegions,
@@ -892,5 +929,6 @@ export function createFullHomeHistoryRepository({ pool } = {}) {
     upsertLedgerDaily,
     recordFetchAudit,
     successfulDailyDates,
+    terminalUnsupportedDailyDates,
   });
 }

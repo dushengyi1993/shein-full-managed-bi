@@ -315,15 +315,31 @@ observations do not authorize or feed the purchase-order backfill.
 ## 9. Verified homepage history contract
 
 The homepage history loader is a separate, production contract rather than a
-promotion of the generic experiment. It supports only `DL5477` and `MZ2406`
-during the first trial and uses one cloud Profile at a time.
+promotion of the generic experiment. It supports the canonical 25-store roster
+and uses one cloud Profile at a time.
 
 Store history is fetched in contiguous windows of at most 90 days from
-`/sbn/index/get_critical_indicator_curve_chart`. Shop and product self-analysis
-use the required two-step sequence: `/sbn/analyse/model_dimension` first, then
-`/sbn/analyse/search`. A rejected model request prevents the search call, so
-stale session results can never be mistaken for the requested range. Product
-analysis failures are audited independently and do not erase valid store facts.
+`/sbn/index/get_critical_indicator_curve_chart`. The official endpoint may
+return dated rows whose unavailable metrics are null outside its retained
+operating window; those nulls remain null and are never backfilled with zero.
+
+The current official merchandise-details page no longer uses
+`/sbn/analyse/model_dimension` plus `/sbn/analyse/search` for the product list.
+The production product loader uses the paginated
+`/sbn/new_goods/get_diagnose_list` contract instead. That response is aggregated
+over the requested range, so the loader fixes the request to exactly one
+business day, orders by `c1dSaleCnt`, persists positive SPU/day quantity rows,
+and stops paging once the sorted page reaches zero. The successful same-day
+fetch audit proves catalogue-zero days without writing hundreds of zero rows.
+The endpoint currently exposes quantity but not `c1dSaleAmt` for the reviewed
+Profiles; product amount therefore remains finance-backed or explicitly
+estimated, never invented from the product response.
+
+The retired two-step analysis contract remains isolated to the shop-level
+exposure supplement while that source is still authorized. Its failure is a
+partial capability result: it cannot invalidate a successful store curve.
+Profiles without that permission retain `NULL` exposure with the failed
+capability audit instead of being classified as total homepage failures.
 
 New-customer order/sales metrics and top-region evidence are not 90-day curve
 responses. The backfill therefore calls `/sbn/trade/overview` and
@@ -331,7 +347,10 @@ responses. The backfill therefore calls `/sbn/trade/overview` and
 records a body hash plus accepted-row count. Before each Profile run it reads
 successful same-day audit keys and skips those dates. This makes the long
 25-store backfill resumable without treating an aggregate range response as a
-daily fact.
+daily fact. A historical business-status failure is skipped only when that same
+store, endpoint and date has no later successful audit. Recent settled dates
+can be explicitly re-read with `--refresh-recent-days=N`; this repairs an early
+successful-but-not-yet-settled response without reopening all completed dates.
 
 The live management-analysis page sends compact `startDt` / `endDt` values.
 Trade overview requires `dtFlag=1`; the region ranking requires `statType=2`.
@@ -343,15 +362,17 @@ prohibit concurrent Profile sessions.
 
 ```bash
 npm run sync:home-history -- \
-  --stores=DL5477,MZ2406 \
+  --stores=DL5477,MZ2406,NM7418 \
   --from=2023-06-07 \
-  --to=2026-07-29
+  --to=2026-08-02 \
+  --refresh-recent-days=7
 
 touch /srv/shein-fm/runtime/webapi-history.enabled
 npm run sync:home-history -- \
-  --stores=DL5477,MZ2406 \
+  --stores=DL5477,MZ2406,NM7418 \
   --from=2023-06-07 \
-  --to=2026-07-29 \
+  --to=2026-08-02 \
+  --refresh-recent-days=7 \
   --execute
 rm -f /srv/shein-fm/runtime/webapi-history.enabled
 ```

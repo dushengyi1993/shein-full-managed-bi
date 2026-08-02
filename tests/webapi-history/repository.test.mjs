@@ -150,3 +150,34 @@ test('successful daily dates read only completed same-day endpoint audits', asyn
   assert.match(select.sql, /result_status = 'SUCCEEDED'/);
   assert.match(select.sql, /requested_start_date = requested_end_date/);
 });
+
+test('terminal unsupported dates exclude any day that later succeeded', async () => {
+  const runtime = fakePool();
+  runtime.pool.connect = async () => ({
+    async query(sql, params) {
+      runtime.calls.push({ sql: String(sql), params });
+      if (/FROM raw\.webapi_home_fetch_audit AS failed/.test(sql)) {
+        return { rows: [{ business_date: '2025-04-01' }] };
+      }
+      return { rowCount: 1, rows: [] };
+    },
+    release() {
+      runtime.calls.push({ sql: 'RELEASE' });
+    },
+  });
+  const repository = createFullHomeHistoryRepository({ pool: runtime.pool });
+  const dates = await repository.terminalUnsupportedDailyDates({
+    storeCode: 'NM7418',
+    endpointCode: 'TRADE_OVERVIEW',
+    startDate: '2025-01-01',
+    endDate: '2026-08-01',
+  });
+  assert.deepEqual([...dates], ['2025-04-01']);
+  const select = runtime.calls.find(
+    ({ sql }) => /FROM raw\.webapi_home_fetch_audit AS failed/.test(sql),
+  );
+  assert.deepEqual(select.params, ['NM7418', 'TRADE_OVERVIEW', '2025-01-01', '2026-08-01']);
+  assert.match(select.sql, /HOME_BUSINESS_STATUS_FAILED/);
+  assert.match(select.sql, /NOT EXISTS/);
+  assert.match(select.sql, /succeeded\.result_status = 'SUCCEEDED'/);
+});
