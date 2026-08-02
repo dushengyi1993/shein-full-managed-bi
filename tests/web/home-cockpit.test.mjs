@@ -125,8 +125,9 @@ test('monthly trend uses source-aware sales and non-additive stock boundaries', 
   assert.match(monthly, /definition\.aggregate === 'last'/);
   assert.match(monthly, /availableMetricSum\(visible, key\)/);
   assert.match(period, /resolvedHomeDaily\(bundle\)/);
-  assert.match(rankings, /storeQuantityProvisional/);
-  assert.match(rankings, /含未出台账日期实时暂估/);
+  assert.match(rankings, /storeQuantityBasisNote/);
+  assert.match(rankings, /历史日经营口径/);
+  assert.match(rankings, /含今日实时暂估/);
 });
 
 test('historical KPI cards stay row-balanced and expose only evidence-backed traffic derivations', async () => {
@@ -162,6 +163,7 @@ test('approved homepage uses eight paired cards and source-aware full-store rank
     read('src/web/home-parity.css'),
   ]);
   const resolved = functionBody(app, 'resolvedHomeDaily');
+  const operatingBasis = functionBody(app, 'homeOperatingBasis');
   const kpis = functionBody(app, 'renderHistoryKpis');
   const rankings = functionBody(app, 'renderHistoryRankings');
   assert.equal((kpis.match(/homeMetricTable\('/g) || []).length, 7);
@@ -173,7 +175,9 @@ test('approved homepage uses eight paired cards and source-aware full-store rank
   assert.match(kpis, />销量</);
   assert.match(resolved, /confirmedLedger\?\.customerOutboundCount/);
   assert.match(resolved, /confirmedBill\?\.salesAmount/);
-  assert.match(resolved, /WEBAPI_REALTIME/);
+  assert.match(resolved, /homeOperatingBasis\(live\)/);
+  assert.match(operatingBasis, /WEBAPI_REALTIME/);
+  assert.match(operatingBasis, /WEBAPI_INDEX/);
   assert.match(rankings, /'salesAmount',\s*null/);
   assert.match(rankings, /'salesQuantity',\s*null/);
   assert.match(rankings, /'estimatedDealAmount',\s*20/);

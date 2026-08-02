@@ -57,6 +57,8 @@ test('store daily upsert selects the narrow WebAPI role and never null-coerces m
     /ARRAY\['WEBAPI_INDEX', 'WEBAPI_REALTIME'\]::text\[\]/,
   );
   assert.match(upsert.sql, /'WEBAPI_TRADE' = ANY\(EXCLUDED\.source_codes\)/);
+  assert.match(upsert.sql, /array_remove\([\s\S]*'WEBAPI_REALTIME'/);
+  assert.match(upsert.sql, /A late realtime replay must not downgrade/);
   assert.equal(runtime.calls.at(-2).sql, 'COMMIT');
   assert.equal(runtime.calls.at(-1).sql, 'RELEASE');
 });

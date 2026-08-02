@@ -378,7 +378,24 @@ export function createFullHomeHistoryRepository({ pool } = {}) {
             source_codes = ARRAY(
               SELECT DISTINCT code
               FROM unnest(
-                fact.full_home_store_daily.source_codes || EXCLUDED.source_codes
+                CASE
+                  -- Once the settled daily index arrives, the earlier hourly
+                  -- subtotal is no longer the active operating basis.
+                  WHEN 'WEBAPI_INDEX' = ANY(EXCLUDED.source_codes)
+                    THEN array_remove(
+                      fact.full_home_store_daily.source_codes,
+                      'WEBAPI_REALTIME'
+                    ) || EXCLUDED.source_codes
+                  -- A late realtime replay must not downgrade an already
+                  -- settled date back to provisional.
+                  WHEN 'WEBAPI_REALTIME' = ANY(EXCLUDED.source_codes)
+                       AND 'WEBAPI_INDEX' = ANY(
+                         fact.full_home_store_daily.source_codes
+                       )
+                    THEN fact.full_home_store_daily.source_codes
+                  ELSE fact.full_home_store_daily.source_codes
+                    || EXCLUDED.source_codes
+                END
               ) AS code
               ORDER BY code
             ),

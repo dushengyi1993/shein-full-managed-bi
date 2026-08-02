@@ -160,6 +160,37 @@ test('whitelists full-managed homepage history while preserving unavailable metr
         basis: 'REPORT_GENERATED_DATE',
         reportOrderNo: 'must-not-leak',
       }],
+      ledgerDaily: [{
+        storeCode: 'dl5477',
+        date: '2026-07-29',
+        currency: 'sar',
+        beginBalanceCount: 700,
+        inboundCount: 20,
+        outboundCount: 15,
+        endBalanceCount: 705,
+        customerOutboundCount: 12,
+        beginBalanceAmount: '8000.50',
+        outboundAmount: '450.25',
+        qualityStatus: 'COMPLETE',
+        basis: 'OFFICIAL_INVENTORY_LEDGER',
+        rawResponse: 'must-not-leak',
+      }],
+      billDaily: [{
+        storeCode: 'dl5477',
+        date: '2026-07-29',
+        currency: 'sar',
+        salesAmount: '16631.27',
+        supplementAmount: '20.00',
+        deductionAmount: '207.09',
+        calculatedSettlementAmount: '16444.18',
+        reportedSettlementAmount: '16444.18',
+        reportCount: 3,
+        settledReportCount: 3,
+        pendingReportCount: 0,
+        reconciliationStatus: 'MATCHED',
+        basis: 'REPORT_GENERATED_DATE',
+        reportOrderNoHash: 'must-not-leak',
+      }],
     },
   });
 
@@ -171,8 +202,21 @@ test('whitelists full-managed homepage history while preserving unavailable metr
   assert.equal(dashboard.home.financeDaily[0].currency, 'SAR');
   assert.equal(dashboard.home.financeDaily[0].netAmount, -11.75);
   assert.equal(dashboard.home.financeDaily[0].basis, 'REPORT_GENERATED_DATE');
+  assert.equal(dashboard.home.ledgerDaily[0].customerOutboundCount, 12);
+  assert.equal(dashboard.home.ledgerDaily[0].outboundAmount, 450.25);
+  assert.equal(
+    dashboard.home.ledgerDaily[0].basis,
+    'OFFICIAL_INVENTORY_LEDGER',
+  );
+  assert.equal(dashboard.home.billDaily[0].salesAmount, 16631.27);
+  assert.equal(dashboard.home.billDaily[0].reconciliationStatus, 'MATCHED');
   assert.equal(dashboard.home.coverage.storeDailyRows, 1);
-  assert.doesNotMatch(JSON.stringify(dashboard.home), /secret|drop-me|reportOrderNo/);
+  assert.equal(dashboard.home.coverage.ledgerDailyRows, 1);
+  assert.equal(dashboard.home.coverage.billDailyRows, 1);
+  assert.doesNotMatch(
+    JSON.stringify(dashboard.home),
+    /secret|drop-me|reportOrderNo|rawResponse/,
+  );
 });
 
 test('uses FULL_BI_DATA_FILE when no function argument is supplied', async () => {

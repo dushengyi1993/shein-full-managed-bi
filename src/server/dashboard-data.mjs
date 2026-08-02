@@ -1270,6 +1270,90 @@ function normalizeHomeFinanceDaily(item) {
   };
 }
 
+const HOME_LEDGER_COUNT_FIELDS = Object.freeze([
+  'beginBalanceCount',
+  'inboundCount',
+  'outboundCount',
+  'endBalanceCount',
+  'urgentOrderEntryCount',
+  'prepareOrderEntryCount',
+  'inboundGainCount',
+  'inboundReturnCount',
+  'supplyChangeInCount',
+  'adjustmentInCount',
+  'customerOutboundCount',
+  'directCustomerOutboundCount',
+  'platformCustomerOutboundCount',
+  'outboundLossCount',
+  'supplierOutboundCount',
+  'inventoryClearCount',
+  'reportClearCount',
+  'scrapCount',
+  'supplyChangeOutCount',
+  'adjustmentOutCount',
+  'customerLossCount',
+]);
+
+const HOME_LEDGER_AMOUNT_FIELDS = Object.freeze(
+  HOME_LEDGER_COUNT_FIELDS.map((field) => field.replace(/Count$/, 'Amount')),
+);
+
+function normalizeHomeLedgerDaily(item) {
+  const source = record(item);
+  const storeCode = text(source.storeCode, '', 24).toUpperCase();
+  const date = isoDate(source.date);
+  const currency = text(source.currency, '', 3).toUpperCase();
+  if (!storeCode || !date) return null;
+  return {
+    storeCode,
+    date,
+    currency: /^[A-Z]{3}$/.test(currency) ? currency : null,
+    ...Object.fromEntries(HOME_LEDGER_COUNT_FIELDS.map((field) => [
+      field,
+      optionalNonNegativeInteger(source[field]),
+    ])),
+    ...Object.fromEntries(HOME_LEDGER_AMOUNT_FIELDS.map((field) => [
+      field,
+      optionalNonNegativeDecimal(source[field]),
+    ])),
+    observedAt: isoInstant(source.observedAt),
+    qualityStatus: ['COMPLETE', 'LEGAL_ZERO', 'PARTIAL'].includes(
+      source.qualityStatus,
+    ) ? source.qualityStatus : 'PARTIAL',
+    basis: source.basis === 'OFFICIAL_INVENTORY_LEDGER'
+      ? 'OFFICIAL_INVENTORY_LEDGER'
+      : null,
+  };
+}
+
+function normalizeHomeBillDaily(item) {
+  const source = record(item);
+  const storeCode = text(source.storeCode, '', 24).toUpperCase();
+  const date = isoDate(source.date);
+  const currency = text(source.currency, '', 3).toUpperCase();
+  if (!storeCode || !date || !/^[A-Z]{3}$/.test(currency)) return null;
+  return {
+    storeCode,
+    date,
+    currency,
+    salesAmount: optionalDecimal(source.salesAmount),
+    supplementAmount: optionalNonNegativeDecimal(source.supplementAmount),
+    deductionAmount: optionalNonNegativeDecimal(source.deductionAmount),
+    calculatedSettlementAmount: optionalDecimal(source.calculatedSettlementAmount),
+    reportedSettlementAmount: optionalDecimal(source.reportedSettlementAmount),
+    reportCount: optionalNonNegativeInteger(source.reportCount),
+    settledReportCount: optionalNonNegativeInteger(source.settledReportCount),
+    pendingReportCount: optionalNonNegativeInteger(source.pendingReportCount),
+    reconciliationStatus: ['MATCHED', 'MISMATCH', 'UNAVAILABLE'].includes(
+      source.reconciliationStatus,
+    ) ? source.reconciliationStatus : 'UNAVAILABLE',
+    observedAt: isoInstant(source.observedAt),
+    basis: source.basis === 'REPORT_GENERATED_DATE'
+      ? 'REPORT_GENERATED_DATE'
+      : null,
+  };
+}
+
 function normalizeHomeProductFinanceDaily(item) {
   const source = record(item);
   const storeCode = text(source.storeCode, '', 24).toUpperCase();
@@ -1312,6 +1396,12 @@ export function normalizeHome(value) {
   const financeDaily = Array.isArray(source.financeDaily)
     ? source.financeDaily.map(normalizeHomeFinanceDaily).filter(Boolean)
     : [];
+  const ledgerDaily = Array.isArray(source.ledgerDaily)
+    ? source.ledgerDaily.map(normalizeHomeLedgerDaily).filter(Boolean)
+    : [];
+  const billDaily = Array.isArray(source.billDaily)
+    ? source.billDaily.map(normalizeHomeBillDaily).filter(Boolean)
+    : [];
   const productFinanceDaily = Array.isArray(source.productFinanceDaily)
     ? source.productFinanceDaily.map(normalizeHomeProductFinanceDaily).filter(Boolean)
     : [];
@@ -1324,6 +1414,8 @@ export function normalizeHome(value) {
     productDaily,
     regionDaily,
     financeDaily,
+    ledgerDaily,
+    billDaily,
     productFinanceDaily,
     coverage: {
       earliestDate: isoDate(coverage.earliestDate),
@@ -1333,6 +1425,8 @@ export function normalizeHome(value) {
       productDailyRows: productDaily.length,
       regionDailyRows: regionDaily.length,
       financeDailyRows: financeDaily.length,
+      ledgerDailyRows: ledgerDaily.length,
+      billDailyRows: billDaily.length,
       productFinanceDailyRows: productFinanceDaily.length,
       latestObservedAt: isoInstant(coverage.latestObservedAt),
     },

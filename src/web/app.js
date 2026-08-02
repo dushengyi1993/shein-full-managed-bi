@@ -5965,6 +5965,13 @@ function firstRowByStoreDate(rows) {
   return new Map(rows.map((row) => [homeStoreDateKey(row), row]));
 }
 
+function homeOperatingBasis(row) {
+  const codes = Array.isArray(row?.sourceCodes) ? row.sourceCodes : [];
+  if (codes.includes('WEBAPI_REALTIME')) return 'WEBAPI_REALTIME';
+  if (codes.includes('WEBAPI_INDEX')) return 'WEBAPI_INDEX';
+  return 'WEBAPI';
+}
+
 function resolvedHomeDaily(bundle) {
   if (bundle.productMode) {
     const group = (rows) => {
@@ -6018,6 +6025,7 @@ function resolvedHomeDaily(bundle) {
     const confirmedLedger = ledger.get(key);
     const confirmedBill = bill.get(key);
     const seed = live || confirmedLedger || confirmedBill;
+    const operatingBasis = homeOperatingBasis(live);
     return {
       storeCode: seed?.storeCode,
       date: seed?.date,
@@ -6032,12 +6040,12 @@ function resolvedHomeDaily(bundle) {
       salesAmountBasis: finiteMetric(confirmedBill?.salesAmount)
         ? 'BILL_CONFIRMED'
         : finiteMetric(live?.dealAmount)
-          ? 'WEBAPI_REALTIME'
+          ? operatingBasis
           : 'UNAVAILABLE',
       salesQuantityBasis: isUnit(confirmedLedger?.customerOutboundCount)
         ? 'LEDGER_CONFIRMED'
         : isUnit(live?.salesQuantity)
-          ? 'WEBAPI_REALTIME'
+          ? operatingBasis
           : 'UNAVAILABLE',
       buyerCount: live?.buyerCount ?? null,
       paymentOrderCount: live?.paymentOrderCount ?? null,
@@ -6207,10 +6215,12 @@ function homeMetricSourceNote(bundle, key) {
         ? row[basisKey] === 'LEDGER_CONFIRMED'
         : row[basisKey] === 'BILL_CONFIRMED'
     )).length;
+    const settled = rows.filter((row) => row[basisKey] === 'WEBAPI_INDEX').length;
     const realtime = rows.filter((row) => row[basisKey] === 'WEBAPI_REALTIME').length;
     const parts = [
       confirmed ? `${key === 'salesQuantity' ? '台账' : '账单'}确认 ${confirmed} 店日` : null,
-      realtime ? `实时暂估 ${realtime} 店日` : null,
+      settled ? `历史日经营 ${settled} 店日` : null,
+      realtime ? `今日实时 ${realtime} 店日` : null,
     ].filter(Boolean);
     return parts.join(' · ') || '当前范围暂无可用来源';
   }
@@ -6476,7 +6486,10 @@ function groupHistoryByDate(bundle) {
       const basisByMetric = {
         salesAmount: rows.some(({ salesAmountBasis }) => salesAmountBasis === 'WEBAPI_REALTIME')
           ? 'PROVISIONAL'
-          : rows.some(({ salesAmountBasis }) => salesAmountBasis === 'BILL_CONFIRMED')
+          : rows.some(({ salesAmountBasis }) => (
+              salesAmountBasis === 'BILL_CONFIRMED'
+              || salesAmountBasis === 'WEBAPI_INDEX'
+            ))
             ? 'CONFIRMED'
             : 'UNAVAILABLE',
         salesQuantity: rows.some(
@@ -6484,7 +6497,10 @@ function groupHistoryByDate(bundle) {
         )
           ? 'PROVISIONAL'
           : rows.some(
-              ({ salesQuantityBasis }) => salesQuantityBasis === 'LEDGER_CONFIRMED',
+              ({ salesQuantityBasis }) => (
+                salesQuantityBasis === 'LEDGER_CONFIRMED'
+                || salesQuantityBasis === 'WEBAPI_INDEX'
+              ),
             )
             ? 'CONFIRMED'
             : 'UNAVAILABLE',
@@ -6835,8 +6851,18 @@ function renderHistoryRankings() {
   };
   const resolvedStoreRows = resolvedHomeDaily({ ...bundle, productMode: false });
   const rankedFinanceCurrency = financeCurrency(bundle);
-  const storeAmountProvisional = resolvedStoreRows.some(
-    ({ salesAmountBasis }) => salesAmountBasis === 'WEBAPI_REALTIME',
+  const rankingBasisNote = (basisKey, confirmedBasis, confirmedLabel) => {
+    const bases = new Set(resolvedStoreRows.map((row) => row[basisKey]));
+    return [
+      bases.has(confirmedBasis) ? confirmedLabel : null,
+      bases.has('WEBAPI_INDEX') ? '历史日经营口径' : null,
+      bases.has('WEBAPI_REALTIME') ? '含今日实时暂估' : null,
+    ].filter(Boolean).join(' + ') || '当前可用口径';
+  };
+  const storeAmountBasisNote = rankingBasisNote(
+    'salesAmountBasis',
+    'BILL_CONFIRMED',
+    '账单确认',
   );
   const storeAmountCurrency = homeCurrency(bundle) || rankedFinanceCurrency;
   const storeAmount = aggregateHistoryRanking(
@@ -6854,8 +6880,10 @@ function renderHistoryRankings() {
     };
     return { ...next, sub: storeHistoryRankMeta(next, 'amount') };
   });
-  const storeQuantityProvisional = resolvedStoreRows.some(
-    ({ salesQuantityBasis }) => salesQuantityBasis === 'WEBAPI_REALTIME',
+  const storeQuantityBasisNote = rankingBasisNote(
+    'salesQuantityBasis',
+    'LEDGER_CONFIRMED',
+    '台账确认',
   );
   const storeQuantity = aggregateHistoryRanking(
     resolvedStoreRows,
@@ -6943,13 +6971,13 @@ function renderHistoryRankings() {
       <div class="rank-grid home-rank-grid">
         ${historyRankTable(
           '店铺销售金额排行',
-          `${note} · ${storeAmountProvisional ? '含未出账日期实时暂估' : '账单确认'}`,
+          `${note} · ${storeAmountBasisNote}`,
           storeAmount,
           { money: true, defaultTone: 'store-amount' },
         )}
         ${historyRankTable(
           '店铺销量排行',
-          `${note} · ${storeQuantityProvisional ? '含未出台账日期实时暂估' : '台账确认'}`,
+          `${note} · ${storeQuantityBasisNote}`,
           storeQuantity,
           { defaultTone: 'store-quantity' },
         )}
@@ -7031,7 +7059,7 @@ function renderHome() {
     ${renderHistoryKpis()}
     ${renderHistoryTrends()}
     ${renderHistoryRankings()}
-    <footer class="home-footnote"><p>口径：未出台账或账单的日期保留 WebAPI 实时暂估；台账更新后销量切换为客单出库数量，账单更新后金额切换为账单销售款。台账总出库与库存金额不等同销量或销售收入；货号尚未归并，当前仅展示各 Top 20；未知显示 —，不会补 0。</p></footer>`;
+    <footer class="home-footnote"><p>口径：未出台账或账单的历史日期使用 WebAPI 日经营口径，今天使用小时实时累计；台账更新后销量切换为客单出库数量，账单更新后金额切换为账单销售款。台账总出库与库存金额不等同销量或销售收入；货号尚未归并，当前仅展示各 Top 20；未知显示 —，不会补 0。</p></footer>`;
 }
 
 function permissionBadge(permission) {
