@@ -1817,7 +1817,7 @@ export function splitDashboardArtifacts(dashboardValue) {
     }),
     home: Object.freeze({
       schemaVersion: 1,
-      updatedAt: dashboard.updatedAt ?? null,
+      updatedAt: home.coverage?.latestObservedAt ?? dashboard.updatedAt ?? null,
       home,
     }),
   });
