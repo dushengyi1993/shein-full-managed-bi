@@ -82,9 +82,9 @@ test('home assembles KPI tables, vertical trends and rankings without a redundan
 
   assert.doesNotMatch(home, /homeBusinessPulse|supplyRadar|renderOperationalPriorities/);
   assert.doesNotMatch(home, /homeTruthStrip|trendCoverageBanner|homeSectionHeading/);
-  assert.match(home, /缺失金额时回退为 OpenAPI 财务报账收入\/净额/);
-  assert.match(home, /不等同消费者下单日 GMV/);
-  assert.match(home, /“销量 × 最新财务单价”得到会单独标记估算/);
+  assert.match(home, /台账更新后销量切换为客单出库数量/);
+  assert.match(home, /账单更新后金额切换为账单销售款/);
+  assert.match(home, /台账总出库与库存金额不等同销量或销售收入/);
   assert.doesNotMatch(app, /function renderHistoryHomeHeader\(\)/);
   const trends = functionBody(app, 'renderHistoryTrends');
   assert.ok(trends.indexOf("'日趋势'") < trends.indexOf("'月趋势'"));
@@ -101,10 +101,10 @@ test('home names every loading group and offers an explicit cache refresh', asyn
   const homePath = functionBody(app, 'homeApiPath');
   const dashboardLoad = functionBody(app, 'loadDashboard');
   assert.match(home, /店铺经营日数据/);
-  assert.match(home, /财务日报与净成交额/);
-  assert.match(home, /主销地区与销量趋势/);
-  assert.match(home, /货号金额 \/ 销量排行候选/);
-  assert.match(home, /data-home-force-refresh/);
+  assert.match(home, /商家账单、补款与扣款/);
+  assert.match(home, /库存台账数量与金额/);
+  assert.match(home, /主销地区、趋势与排行榜/);
+  assert.equal((home.match(/data-home-force-refresh/g) || []).length, 1);
   assert.match(home, /当前日期范围已经加载完成，但没有经营历史数据/);
   assert.match(home, /data-home-latest-date/);
   assert.match(home, /首页数据已就绪/);
@@ -115,17 +115,18 @@ test('home names every loading group and offers an explicit cache refresh', asyn
   assert.match(styles, /\.home-cache-status\s*\{/);
 });
 
-test('monthly trend and store quantity stay useful with explicitly labelled finance fallback', async () => {
+test('monthly trend uses source-aware sales and non-additive stock boundaries', async () => {
   const app = await read('src/web/app.js');
   const monthly = functionBody(app, 'groupHistoryByMonth');
   const period = functionBody(app, 'periodMetric');
   const rankings = functionBody(app, 'renderHistoryRankings');
 
-  assert.match(monthly, /availableMetricSum\(item\.rows, key\)/);
-  assert.match(monthly, /availableSignedMetricSum\(item\.rows, key\)/);
-  assert.match(period, /key === 'salesQuantity'[\s\S]*bundle\.financeDaily, 'goodsCount'/);
-  assert.match(rankings, /storeQuantityBasis === 'FINANCE' \? '店铺财务明细件数排行'/);
-  assert.match(rankings, /来自报账销售款明细 goodsCount/);
+  assert.match(monthly, /definition\.aggregate === 'first'/);
+  assert.match(monthly, /definition\.aggregate === 'last'/);
+  assert.match(monthly, /availableMetricSum\(visible, key\)/);
+  assert.match(period, /resolvedHomeDaily\(bundle\)/);
+  assert.match(rankings, /storeQuantityProvisional/);
+  assert.match(rankings, /含未出台账日期实时暂估/);
 });
 
 test('historical KPI cards stay row-balanced and expose only evidence-backed traffic derivations', async () => {
@@ -134,11 +135,15 @@ test('historical KPI cards stay row-balanced and expose only evidence-backed tra
   const kpis = functionBody(app, 'renderHistoryKpis');
 
   assert.match(metrics, /'paymentOrderCount'/);
-  assert.match(metrics, /key: 'detailPaymentRate'/);
-  assert.match(metrics, /ratePointChange\(trafficRate, previousTrafficRate\)/);
-  assert.match(kpis, /homeMetricTable\('成交与支付'[^]*summary\.transactionRows, summary\.range, previousRange\)/);
+  assert.match(metrics, /'detailPaymentRate'/);
+  assert.match(metrics, /ratePointChange\(currentValue, previousValue\)/);
+  assert.match(kpis, /homeMetricTable\('销售与支付'[^]*summary\.salesRows, summary\.range, previousRange\)/);
+  assert.match(kpis, /homeMetricTable\('商家账单'[^]*summary\.billRows, summary\.range, previousRange\)/);
   assert.match(kpis, /homeMetricTable\('流量表现'[^]*summary\.trafficRows, summary\.range, previousRange\)/);
-  assert.match(kpis, /homeMetricTable\('供给与新客'[^]*summary\.supplyRows, summary\.range, previousRange\)/);
+  assert.match(kpis, /homeMetricTable\('采购履约'[^]*summary\.supplyRows, summary\.range, previousRange\)/);
+  assert.match(kpis, /homeMetricTable\('台账数量'[^]*summary\.ledgerCountRows, summary\.range, previousRange\)/);
+  assert.match(kpis, /homeMetricTable\('台账金额'[^]*summary\.ledgerAmountRows, summary\.range, previousRange\)/);
+  assert.match(kpis, /homeMetricTable\('客户结构'[^]*summary\.customerRows, summary\.range, previousRange\)/);
   assert.match(kpis, /Array\.from\(\{ length: 4 \}/);
   assert.match(kpis, /销量 Top 4/);
   assert.match(kpis, /previousHomeDateRange\(summary\.range\)/);
@@ -147,6 +152,30 @@ test('historical KPI cards stay row-balanced and expose only evidence-backed tra
   assert.match(table, /<strong>前期<\/strong>/);
   assert.match(table, />较前期</);
   assert.doesNotMatch(table, /当前区间|上个等长区间/);
+});
+
+test('approved homepage uses eight paired cards and source-aware full-store rankings', async () => {
+  const [app, parity] = await Promise.all([
+    read('src/web/app.js'),
+    read('src/web/home-parity.css'),
+  ]);
+  const resolved = functionBody(app, 'resolvedHomeDaily');
+  const kpis = functionBody(app, 'renderHistoryKpis');
+  const rankings = functionBody(app, 'renderHistoryRankings');
+  assert.equal((kpis.match(/homeMetricTable\('/g) || []).length, 7);
+  assert.match(kpis, /home-region-card/);
+  assert.match(parity, /\.kpi-six\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/s);
+  assert.match(kpis, /metric-matrix cols-region/);
+  assert.match(kpis, />排名</);
+  assert.match(kpis, />地区</);
+  assert.match(kpis, />销量</);
+  assert.match(resolved, /confirmedLedger\?\.customerOutboundCount/);
+  assert.match(resolved, /confirmedBill\?\.salesAmount/);
+  assert.match(resolved, /WEBAPI_REALTIME/);
+  assert.match(rankings, /'salesAmount',\s*null/);
+  assert.match(rankings, /'salesQuantity',\s*null/);
+  assert.match(rankings, /'estimatedDealAmount',\s*20/);
+  assert.match(rankings, /'goodsCount',\s*20/);
 });
 
 test('KPI matrix is one dense real table with legal comparisons only', async () => {
@@ -427,10 +456,10 @@ test('ranking tables show four windows, tiered magnitude and scope-preserving dr
   assert.match(rankMeta, /已截断，未命中不代表没有销量/);
   assert.match(home, /renderHistoryRankings\(\)/);
   const historical = functionBody(app, 'renderHistoryRankings');
-  assert.match(historical, /店铺成交金额排行/);
+  assert.match(historical, /店铺销售金额排行/);
   assert.match(historical, /店铺销量排行/);
-  assert.match(historical, /货号成交金额排行（估算）/);
-  assert.match(historical, /货号销量排行/);
+  assert.match(historical, /货号销售金额 Top 20（估算）/);
+  assert.match(historical, /货号销量 Top 20（待归并）/);
   assert.match(historical, /无匹配单价则不入榜/);
 });
 
@@ -484,7 +513,7 @@ test('limited day-grain history is stated exactly and never padded into a full s
   assert.match(historicalChart, /for \(const index of \[maxIndex, minIndex, 0, points\.length - 1\]\)/);
   assert.match(historicalChart, /minimumLabelGap/);
   assert.match(historicalChart, /class="chart-value-label"/);
-  assert.match(historicalChart, /class="history-bar"/);
+  assert.match(historicalChart, /class="history-bar/);
 
   // The banner helper stays available for callers outside home.
   assert.match(banner, /class="quality-notice/);
@@ -586,7 +615,7 @@ test('semi-managed parity keeps proportional ranking bars and reduced-motion sup
   assert.match(app, /ownerDisplayTone\(ownerKey\)/);
   assert.match(app, /shortOwnerName\(row\.ownerName\)/);
   assert.match(app, /storeHistoryRankMeta\(next, 'amount'\)/);
-  assert.match(app, /SKC 财务报账收入排行（待归并）/);
+  assert.match(app, /货号报账销售款 Top 20（待归并）/);
   assert.match(parity, /\.rank-item\.rank-fill-10::before \{ width: 100%; \}/);
   assert.match(parity, /\.rank-tone-owner-1,[\s\S]*--owner-color: #0f766e/);
   assert.match(parity, /\.rank-item::after[\s\S]*background: var\(--bar-color\)/);

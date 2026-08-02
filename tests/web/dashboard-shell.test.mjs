@@ -78,10 +78,10 @@ test('home shell keeps the historical filter, KPI tables, vertical trends and fo
   assert.match(app, /关键经营数据/);
   assert.match(app, /日趋势/);
   assert.match(app, /月趋势/);
-  assert.match(app, /店铺成交金额排行/);
+  assert.match(app, /店铺销售金额排行/);
   assert.match(app, /店铺销量排行/);
-  assert.match(app, /货号成交金额排行（估算）/);
-  assert.match(app, /货号销量排行/);
+  assert.match(app, /货号销售金额 Top 20（估算）/);
+  assert.match(app, /货号销量 Top 20（待归并）/);
   assert.doesNotMatch(app, /function renderHistoryHomeHeader\(\)/);
   assert.match(app, /function renderHistoryKpis\(\)/);
   assert.match(app, /function renderHistoryTrends\(\)/);
@@ -125,9 +125,24 @@ test('full-managed homepage exposes the confirmed metrics without inventing unsu
   assert.doesNotMatch(homeFunctions, /\bGMV\b/i);
   assert.doesNotMatch(homeFunctions, /\bCOD\b/i);
   assert.doesNotMatch(homeFunctions, /利润|消费者退货/);
-  for (const metric of ['成交金额', '净成交金额', '支付人数', '销量', '曝光量', '商详访客', '备货订单数', '集采订单数', '新客销量', '新客支付订单数']) {
+  for (const metric of [
+    '销售金额',
+    '账单销售款',
+    '账单应结金额',
+    '支付人数',
+    '销量',
+    '曝光量',
+    '商详访客',
+    '备货订单数',
+    '集采订单数',
+    '期初库存数量',
+    '期末库存金额',
+    '新客销量',
+    '新客支付订单数',
+  ]) {
     assert.match(homeFunctions, new RegExp(metric));
   }
+  assert.doesNotMatch(homeFunctions, /净成交金额/);
   assert.match(homeFunctions, /销量 Top 主销地区/);
 });
 

@@ -1994,6 +1994,8 @@ body {
 }
 
 .overview-matrix-card {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   padding: 16px;
   overflow: visible;
@@ -2002,6 +2004,10 @@ body {
   border-radius: 24px;
   background: rgba(255, 253, 248, 0.94);
   box-shadow: var(--shadow);
+}
+
+.overview-matrix-card > .metric-matrix {
+  flex: 1;
 }
 
 .matrix-card-head {
@@ -2044,6 +2050,10 @@ body {
   grid-template-columns: minmax(100px, 0.72fr) repeat(3, minmax(118px, 1fr));
 }
 
+.metric-matrix.cols-region {
+  grid-template-columns: minmax(86px, 0.55fr) minmax(160px, 1.45fr) minmax(120px, 0.8fr);
+}
+
 .metric-matrix .matrix-cell {
   display: flex;
   min-width: 0;
@@ -2060,10 +2070,12 @@ body {
 }
 
 .metric-matrix.cols-1 .matrix-cell:nth-child(2n),
-.metric-matrix.cols-3 .matrix-cell:nth-child(4n) { border-right: 0; }
+.metric-matrix.cols-3 .matrix-cell:nth-child(4n),
+.metric-matrix.cols-region .matrix-cell:nth-child(3n) { border-right: 0; }
 
 .metric-matrix.cols-1 .matrix-cell:nth-last-child(-n + 2),
-.metric-matrix.cols-3 .matrix-cell:nth-last-child(-n + 4) { border-bottom: 0; }
+.metric-matrix.cols-3 .matrix-cell:nth-last-child(-n + 4),
+.metric-matrix.cols-region .matrix-cell:nth-last-child(-n + 3) { border-bottom: 0; }
 
 .metric-matrix .matrix-cell.head {
   min-height: 38px;
@@ -2117,6 +2129,12 @@ body {
   font-size: 14px;
 }
 
+.metric-matrix .region-name {
+  align-items: flex-start;
+  padding-left: 14px;
+  text-align: left;
+}
+
 .metric-subvalue {
   display: block;
   margin-top: 5px;
@@ -2132,6 +2150,25 @@ body {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.trend-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px;
+  border: 1px solid rgba(222, 215, 204, 0.88);
+  border-radius: 999px;
+  background: #f7f2ea;
+}
+
+.trend-group em {
+  padding: 0 7px;
+  color: #7b746b;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .trend-toggle button {
@@ -2216,6 +2253,12 @@ body {
   stroke-width: 2.2;
 }
 
+.home-history-chart .chart-point.provisional {
+  fill: #fffdf8;
+  stroke-dasharray: 2 2;
+  stroke-width: 3;
+}
+
 .home-history-chart .chart-zero {
   stroke: rgba(70, 65, 58, 0.36);
   stroke-width: 1;
@@ -2244,6 +2287,13 @@ body {
 .home-history-chart .history-bar:hover,
 .home-history-chart .history-bar:focus {
   opacity: 1;
+}
+
+.home-history-chart .history-bar.provisional {
+  opacity: 0.42;
+  stroke: var(--accent);
+  stroke-dasharray: 3 2;
+  stroke-width: 1.5;
 }
 
 .home-history-chart .chart-axis {
