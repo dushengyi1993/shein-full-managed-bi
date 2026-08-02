@@ -18,7 +18,7 @@ WorkingDirectory=/opt/shein-fm/current
 # Web Data, Local Storage, IndexedDB and Sessions are fingerprinted before and
 # after the run and the unit fails if any of them changed.
 ExecStart=/usr/bin/node scripts/prune_full_managed_profile_caches.mjs --apply
-ReadWritePaths=/srv/shein-fm/webapi/profiles
+ReadWritePaths=/srv/shein-fm/runtime /srv/shein-fm/webapi/profiles
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true

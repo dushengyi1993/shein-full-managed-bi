@@ -119,6 +119,20 @@ test('domain sync units never materialize and trigger the independent projection
   }
 });
 
+test('profile cache pruning can write only its runtime lock and guarded Profile root', async () => {
+  const service = await text(
+    'infra/systemd/shein-fm-profile-cache-prune.service',
+  );
+  assert.equal(unitUser(service), 'root');
+  assert.match(
+    service,
+    /^ReadWritePaths=\/srv\/shein-fm\/runtime \/srv\/shein-fm\/webapi\/profiles$/m,
+  );
+  assert.match(service, /ProtectSystem=strict/);
+  assert.match(service, /ProtectHome=true/);
+  assert.doesNotMatch(service, /ReadWritePaths=.*(?:backups|releases|secrets)/);
+});
+
 test('all mutable application runtimes and timers are fail-closed behind explicit gates', async () => {
   const expectations = new Map([
     ['infra/systemd/shein-fm-authorization.service', 'authorization.enabled'],
