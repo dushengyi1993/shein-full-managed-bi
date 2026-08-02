@@ -13,6 +13,11 @@ import {
   fullManagedProfileKey,
   normalizeFullManagedStoreCode,
 } from '../src/config/full-managed-stores.mjs';
+import {
+  fullManagedLoginIdentityMarkers,
+  loadFullManagedLoginIdentityAliases,
+  parseFullManagedLoginIdentityAliases,
+} from '../src/config/full-managed-login-identities.mjs';
 
 const HOST = process.env.FULL_FM_STORE_LOGIN_HOST || '127.0.0.1';
 const PORT = Number(process.env.FULL_FM_STORE_LOGIN_PORT || 8794);
@@ -45,61 +50,12 @@ const RUNTIME = Object.freeze({
 });
 const SESSION_MINUTES = 60;
 
-export function parseStoreLoginIdentityAliases(raw) {
-  if (
-    !raw
-    || raw.schemaVersion !== 1
-    || !raw.aliases
-    || typeof raw.aliases !== 'object'
-    || Array.isArray(raw.aliases)
-  ) {
-    throw new Error('STORE_LOGIN_IDENTITY_ALIASES_INVALID');
-  }
-  const result = {};
-  const seenAliases = new Set();
-  for (const [storeCode, rawAliases] of Object.entries(raw.aliases)) {
-    const canonical = normalizeFullManagedStoreCode(storeCode);
-    if (canonical !== storeCode || !Array.isArray(rawAliases) || rawAliases.length > 4) {
-      throw new Error('STORE_LOGIN_IDENTITY_ALIASES_INVALID');
-    }
-    const aliases = [];
-    for (const rawAlias of rawAliases) {
-      const alias = String(rawAlias || '').trim();
-      if (
-        !/^[A-Za-z0-9._@-]{3,64}$/.test(alias)
-        || seenAliases.has(alias)
-        || aliases.includes(alias)
-      ) {
-        throw new Error('STORE_LOGIN_IDENTITY_ALIASES_INVALID');
-      }
-      seenAliases.add(alias);
-      aliases.push(alias);
-    }
-    result[canonical] = Object.freeze(aliases);
-  }
-  return Object.freeze(result);
-}
+export const parseStoreLoginIdentityAliases = parseFullManagedLoginIdentityAliases;
 
-const LOGIN_IDENTITY_ALIASES = (() => {
-  if (!IDENTITY_ALIASES_FILE || !fssync.existsSync(IDENTITY_ALIASES_FILE)) {
-    return Object.freeze({});
-  }
-  try {
-    return parseStoreLoginIdentityAliases(
-      JSON.parse(fssync.readFileSync(IDENTITY_ALIASES_FILE, 'utf8')),
-    );
-  } catch {
-    throw new Error('STORE_LOGIN_IDENTITY_ALIASES_INVALID');
-  }
-})();
+const LOGIN_IDENTITY_ALIASES = loadFullManagedLoginIdentityAliases(IDENTITY_ALIASES_FILE);
 
 export function storeLoginIdentityMarkers(storeCode, aliases = LOGIN_IDENTITY_ALIASES) {
-  const canonical = normalizeFullManagedStoreCode(storeCode);
-  if (!canonical) throw new Error('STORE_INVALID');
-  return Object.freeze([
-    canonical.slice(-4),
-    ...(aliases[canonical] || []),
-  ]);
+  return fullManagedLoginIdentityMarkers(storeCode, aliases);
 }
 
 const INTERNAL_TOKEN = (() => {

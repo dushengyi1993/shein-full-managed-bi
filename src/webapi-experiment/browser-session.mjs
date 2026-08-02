@@ -26,8 +26,18 @@ import {
   WEBAPI_STORE_CODES,
 } from './profile-guard.mjs';
 import { fullManagedRuntimeSlot } from '../config/full-managed-stores.mjs';
+import {
+  DEFAULT_FULL_MANAGED_LOGIN_IDENTITY_ALIASES_FILE,
+  fullManagedLoginIdentityMarkers,
+  loadFullManagedLoginIdentityAliases,
+} from '../config/full-managed-login-identities.mjs';
 import { createCdpClient } from './cdp-client.mjs';
 import { TRANSPORT_REJECT_CODES } from './page-transport.mjs';
+
+const LOGIN_IDENTITY_ALIASES = loadFullManagedLoginIdentityAliases(
+  process.env.FULL_FM_WEBAPI_IDENTITY_ALIASES_FILE
+    || DEFAULT_FULL_MANAGED_LOGIN_IDENTITY_ALIASES_FILE,
+);
 
 /**
  * Deterministic, bounded, loopback-only allocation per canonical store.
@@ -82,21 +92,27 @@ export class WebApiSessionError extends Error {
  *
  * The experiment runtime cannot read `dim.store` and must not expose an account
  * value, so the page is asked three yes/no questions and returns booleans only:
- * same origin, not on a login/expired view, and the store alias' last four
- * digits appear somewhere in the rendered text.
+ * same origin, not on a login/expired view, and one configured identity marker
+ * appears somewhere in the rendered text.
  */
-export function buildIdentityProofExpression({ origin, aliasDigits }) {
+export function buildIdentityProofExpression({ origin, aliasDigits, identityMarkers }) {
   const originLiteral = JSON.stringify(origin);
-  const digitsLiteral = JSON.stringify(aliasDigits);
+  const markers = Array.isArray(identityMarkers)
+    ? identityMarkers
+    : [aliasDigits];
+  const markersLiteral = JSON.stringify(
+    [...new Set(markers.map((value) => String(value || '').trim()).filter(Boolean))],
+  );
   return `(() => {
   try {
     const expectedOrigin = ${originLiteral};
-    const aliasDigits = ${digitsLiteral};
+    const identityMarkers = ${markersLiteral};
     const sameOrigin = location.origin === expectedOrigin;
     const href = String(location.href || '');
     const text = String(document.body && document.body.innerText || '');
     const onLoginView = /\\/login\\//i.test(href) || /\\u767b\\u5f55/.test(text);
-    const aliasPresent = aliasDigits.length === 4 && text.indexOf(aliasDigits) !== -1;
+    const aliasPresent = identityMarkers.length > 0
+      && identityMarkers.some((marker) => text.indexOf(marker) !== -1);
     return {
       sameOrigin: sameOrigin === true,
       onLoginView: onLoginView === true,
@@ -105,6 +121,27 @@ export function buildIdentityProofExpression({ origin, aliasDigits }) {
     };
   } catch (error) {
     return { sameOrigin: false, onLoginView: true, aliasPresent: false, textLength: 0 };
+  }
+})()`;
+}
+
+export function buildSavedCredentialAccountBoxExpression() {
+  return `(() => {
+  try {
+    const account = Array.from(document.querySelectorAll('input')).find((item) => {
+      const type = String(item.type || '').toLowerCase();
+      return type === 'text' || type === 'email' || type === 'tel';
+    });
+    if (!account) return { found: false, x: 0, y: 0 };
+    const rect = account.getBoundingClientRect();
+    const found = rect.width > 0 && rect.height > 0;
+    return {
+      found,
+      x: found ? rect.left + rect.width / 2 : 0,
+      y: found ? rect.top + rect.height / 2 : 0,
+    };
+  } catch {
+    return { found: false, x: 0, y: 0 };
   }
 })()`;
 }
@@ -134,11 +171,6 @@ export function buildSavedCredentialSubmitExpression() {
     return { accountReady: false, passwordReady: false, submitReady: false, clicked: false };
   }
 })()`;
-}
-
-function aliasDigitsFor(storeCode) {
-  const digits = String(storeCode).replace(/[^0-9]/g, '');
-  return digits.slice(-4);
 }
 
 function chromeArguments({ profileDirectory, debuggingPort }) {
@@ -172,6 +204,7 @@ export async function openExperimentSession({
   deps,
   gatePath = WEBAPI_EXPERIMENT_GATE_PATH,
   allowSavedCredentialLogin = false,
+  identityAliases = LOGIN_IDENTITY_ALIASES,
 } = {}) {
   const canonical = String(storeCode ?? '').trim().toUpperCase();
   if (!WEBAPI_STORE_CODES.includes(canonical)) {
@@ -327,7 +360,7 @@ export async function openExperimentSession({
     let proof = await cdp.evaluate(
       buildIdentityProofExpression({
         origin: WEBAPI_ORIGIN,
-        aliasDigits: aliasDigitsFor(canonical),
+        identityMarkers: fullManagedLoginIdentityMarkers(canonical, identityAliases),
       }),
       { timeoutMs: resolvedLimits.identityTimeoutMs },
     );
@@ -335,6 +368,26 @@ export async function openExperimentSession({
       throw new WebApiSessionError(SESSION_REJECT_CODES.ORIGIN_MISMATCH, canonical);
     }
     if (proof?.onLoginView === true && allowSavedCredentialLogin === true) {
+      const accountBox = await cdp.evaluate(
+        buildSavedCredentialAccountBoxExpression(),
+        { timeoutMs: resolvedLimits.identityTimeoutMs },
+      );
+      if (
+        accountBox?.found === true
+        && Number.isFinite(accountBox.x)
+        && Number.isFinite(accountBox.y)
+      ) {
+        await cdp.savedCredentialGesture('focus', {
+          x: accountBox.x,
+          y: accountBox.y,
+        });
+        await sleep(800);
+        await cdp.savedCredentialGesture('next');
+        await sleep(500);
+        await cdp.savedCredentialGesture('confirm');
+        await sleep(500);
+        await sleep(1_200);
+      }
       const renewal = await cdp.evaluate(
         buildSavedCredentialSubmitExpression(),
         { timeoutMs: resolvedLimits.identityTimeoutMs },
@@ -344,7 +397,7 @@ export async function openExperimentSession({
         proof = await cdp.evaluate(
           buildIdentityProofExpression({
             origin: WEBAPI_ORIGIN,
-            aliasDigits: aliasDigitsFor(canonical),
+            identityMarkers: fullManagedLoginIdentityMarkers(canonical, identityAliases),
           }),
           { timeoutMs: resolvedLimits.identityTimeoutMs },
         );

@@ -235,6 +235,39 @@ test('the CDP client allows only four methods and rejects credential domains', a
     (error) => error.code === 'CDP_SOCKET_CLOSED');
 });
 
+test('saved credential gestures are exact and Input remains unavailable to general callers', async () => {
+  const deps = fakeCdpDeps({ messages: Array.from({ length: 8 }, () => ({})) });
+  const client = await createCdpClient(deps);
+  await client.savedCredentialGesture('focus', { x: 320, y: 240 });
+  await client.savedCredentialGesture('next');
+  await client.savedCredentialGesture('confirm');
+  assert.deepEqual(
+    deps.sent.slice(1).map((entry) => `${entry.method}:${entry.params.type}:${entry.params.key || ''}`),
+    [
+      'Input.dispatchMouseEvent:mouseMoved:',
+      'Input.dispatchMouseEvent:mousePressed:',
+      'Input.dispatchMouseEvent:mouseReleased:',
+      'Input.dispatchKeyEvent:keyDown:ArrowDown',
+      'Input.dispatchKeyEvent:keyUp:ArrowDown',
+      'Input.dispatchKeyEvent:keyDown:Enter',
+      'Input.dispatchKeyEvent:keyUp:Enter',
+    ],
+  );
+  assert.throws(
+    () => client.send('Input.dispatchKeyEvent'),
+    (error) => error.code === 'CDP_METHOD_DOMAIN_FORBIDDEN',
+  );
+  await assert.rejects(
+    () => client.savedCredentialGesture('focus', { x: -1, y: 20 }),
+    (error) => error.code === 'CDP_SAVED_CREDENTIAL_POINT_INVALID',
+  );
+  await assert.rejects(
+    () => client.savedCredentialGesture('type-password'),
+    (error) => error.code === 'CDP_SAVED_CREDENTIAL_GESTURE_INVALID',
+  );
+  client.close();
+});
+
 test('the CDP client refuses a non-loopback target and a rejected command', async () => {
   await assert.rejects(
     () => createCdpClient({

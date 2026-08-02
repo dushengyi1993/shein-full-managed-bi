@@ -6,6 +6,7 @@ import {
   SESSION_STATES,
   STORE_RUNTIME_SLOTS,
   buildIdentityProofExpression,
+  buildSavedCredentialAccountBoxExpression,
   openExperimentSession,
   sessionStateForFailure,
 } from '../../src/webapi-experiment/browser-session.mjs';
@@ -196,6 +197,66 @@ test('the identity proof returns booleans only and never an identity value', () 
   // The rendered text is never returned, only its length and three booleans.
   assert.doesNotMatch(expression, /return[^;]*text\s*[,}]/);
   assert.doesNotMatch(expression, /document\.cookie|localStorage/);
+});
+
+test('saved credential renewal uses a browser gesture without reading a credential value', async () => {
+  const commands = [];
+  const gestures = [];
+  const evaluated = [];
+  let evaluation = 0;
+  const { deps } = sessionDeps({
+    cdpFactory: async () => ({
+      async send(method, params) {
+        commands.push({ method, params });
+        return {};
+      },
+      async savedCredentialGesture(stage, point) {
+        gestures.push({ stage, point });
+        return { completed: true };
+      },
+      async evaluate(expression) {
+        evaluated.push(String(expression));
+        evaluation += 1;
+        if (evaluation === 1) {
+          return { sameOrigin: true, onLoginView: true, aliasPresent: false, textLength: 100 };
+        }
+        if (evaluation === 2) return { found: true, x: 320, y: 240 };
+        if (evaluation === 3) {
+          return {
+            accountReady: true,
+            passwordReady: true,
+            submitReady: true,
+            clicked: true,
+          };
+        }
+        return { sameOrigin: true, onLoginView: false, aliasPresent: true, textLength: 1200 };
+      },
+      close() {},
+    }),
+  });
+  const session = await openExperimentSession({
+    storeCode: 'NM7397',
+    deps,
+    allowSavedCredentialLogin: true,
+    identityAliases: { NM7397: ['test-subaccount-7343'] },
+  });
+  assert.equal(session.identityProven, true);
+  assert.match(evaluated[0], /test-subaccount-7343/);
+  assert.match(evaluated[1], /getBoundingClientRect/);
+  assert.doesNotMatch(evaluated.join('\n'), /document\.cookie|localStorage|sessionStorage/);
+  assert.deepEqual(gestures, [
+    { stage: 'focus', point: { x: 320, y: 240 } },
+    { stage: 'next', point: undefined },
+    { stage: 'confirm', point: undefined },
+  ]);
+  assert.deepEqual(commands.filter((entry) => entry.method.startsWith('Input.')), []);
+  await session.close();
+});
+
+test('the saved credential account probe returns coordinates and never a field value', () => {
+  const expression = buildSavedCredentialAccountBoxExpression();
+  assert.match(expression, /getBoundingClientRect/);
+  assert.doesNotMatch(expression, /\.value|password|document\.cookie|localStorage/);
 });
 
 test('origin mismatch, login view and a wrong account all fail closed and clean up', async () => {

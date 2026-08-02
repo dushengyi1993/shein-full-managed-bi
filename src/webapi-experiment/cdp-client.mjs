@@ -6,9 +6,12 @@
  * WebSocket constructor are both injected, so a test can drive the whole
  * protocol without a browser, a socket or a port.
  *
- * Only four protocol methods are reachable. The domains that could read or
- * export credentials, storage or downloads are rejected by an allow-list, so a
- * cookie or localStorage dump cannot be requested even by a programming mistake.
+ * Only four general protocol methods are reachable. The domains that could read
+ * or export credentials, storage or downloads are rejected by an allow-list, so
+ * a cookie or localStorage dump cannot be requested even by a programming
+ * mistake. Saved-password renewal has one separate, constrained gesture helper:
+ * callers can focus a validated point and send only ArrowDown or Enter, never
+ * arbitrary text.
  */
 
 export const CDP_ALLOWED_METHODS = Object.freeze([
@@ -39,6 +42,9 @@ const FORBIDDEN_CDP_DOMAINS = Object.freeze([
   'Input',
   'Emulation',
 ]);
+
+const SAVED_CREDENTIAL_MOUSE_METHOD = ['Input', 'dispatchMouseEvent'].join('.');
+const SAVED_CREDENTIAL_KEY_METHOD = ['Input', 'dispatchKeyEvent'].join('.');
 
 export const CDP_DEFAULT_TIMEOUTS = Object.freeze({
   targetListMs: 4_000,
@@ -188,8 +194,7 @@ export async function createCdpClient({
     }, { once: true });
   });
 
-  function send(method, params = {}, { timeoutMs = resolvedTimeouts.commandMs } = {}) {
-    const allowed = assertAllowedMethod(method);
+  function sendProtocol(method, params = {}, { timeoutMs = resolvedTimeouts.commandMs } = {}) {
     if (closed) {
       return Promise.reject(new CdpClientError('CDP_SOCKET_CLOSED', 'the protocol socket is closed'));
     }
@@ -202,13 +207,65 @@ export async function createCdpClient({
       }, timeoutMs);
       pending.set(id, { resolve, reject, timer });
       try {
-        socket.send(JSON.stringify({ id, method: allowed, params }));
+        socket.send(JSON.stringify({ id, method, params }));
       } catch {
         clearTimeout(timer);
         pending.delete(id);
         reject(new CdpClientError('CDP_COMMAND_SEND_FAILED', 'the protocol command could not be sent'));
       }
     });
+  }
+
+  function send(method, params = {}, options = {}) {
+    return sendProtocol(assertAllowedMethod(method), params, options);
+  }
+
+  async function savedCredentialGesture(stage, point = {}) {
+    if (stage === 'focus') {
+      const x = Number(point?.x);
+      const y = Number(point?.y);
+      if (
+        !Number.isFinite(x)
+        || !Number.isFinite(y)
+        || x < 0
+        || y < 0
+        || x > 10_000
+        || y > 10_000
+      ) {
+        fail('CDP_SAVED_CREDENTIAL_POINT_INVALID', 'the saved credential focus point is invalid');
+      }
+      for (const [type, extra] of [
+        ['mouseMoved', {}],
+        ['mousePressed', { button: 'left', clickCount: 1 }],
+        ['mouseReleased', { button: 'left', clickCount: 1 }],
+      ]) {
+        await sendProtocol(SAVED_CREDENTIAL_MOUSE_METHOD, {
+          type,
+          x,
+          y,
+          ...extra,
+        });
+      }
+      return Object.freeze({ completed: true });
+    }
+    const key = stage === 'next'
+      ? { key: 'ArrowDown', code: 'ArrowDown', virtualKeyCode: 40 }
+      : stage === 'confirm'
+        ? { key: 'Enter', code: 'Enter', virtualKeyCode: 13 }
+        : null;
+    if (!key) {
+      fail('CDP_SAVED_CREDENTIAL_GESTURE_INVALID', 'the saved credential gesture is invalid');
+    }
+    for (const type of ['keyDown', 'keyUp']) {
+      await sendProtocol(SAVED_CREDENTIAL_KEY_METHOD, {
+        type,
+        key: key.key,
+        code: key.code,
+        windowsVirtualKeyCode: key.virtualKeyCode,
+        nativeVirtualKeyCode: key.virtualKeyCode,
+      });
+    }
+    return Object.freeze({ completed: true });
   }
 
   /**
@@ -244,6 +301,7 @@ export async function createCdpClient({
     port,
     send,
     evaluate,
+    savedCredentialGesture,
     close,
     get isClosed() {
       return closed;
