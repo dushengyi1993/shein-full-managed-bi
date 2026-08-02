@@ -67,7 +67,8 @@ async function succeededWindowKeys(pool, { stores, from, to }) {
        WHERE store_code = ANY($1::text[])
          AND start_date >= $2::date
          AND end_date <= $3::date
-         AND result_status = 'SUCCEEDED'`,
+         AND result_status = 'SUCCEEDED'
+         AND source_contract_version >= 2`,
       [stores, from, to],
     );
     await client.query('COMMIT');
@@ -180,6 +181,7 @@ async function main() {
             ok: true,
             reportCount: fetched.reports.length,
             detailCount: fetched.details.length,
+            adjustmentCount: fetched.adjustments.length,
             ...loaded,
           });
         } catch (error) {

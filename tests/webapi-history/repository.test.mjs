@@ -55,6 +55,36 @@ test('store daily upsert selects the narrow WebAPI role and never null-coerces m
   assert.equal(runtime.calls.at(-1).sql, 'RELEASE');
 });
 
+test('ledger upsert persists every reviewed subtotal under the narrow WebAPI role', async () => {
+  const runtime = fakePool();
+  const repository = createFullHomeHistoryRepository({ pool: runtime.pool });
+  await repository.upsertLedgerDaily([{
+    storeCode: 'MZ2406',
+    businessDate: '2026-08-01',
+    beginBalanceCount: 5247,
+    inboundCount: 521,
+    outboundCount: 546,
+    endBalanceCount: 5222,
+    customerOutboundCount: 521,
+    supplierOutboundCount: 25,
+    beginBalanceAmount: 215645.94,
+    inboundAmount: 16914.6,
+    outboundAmount: 17533.47,
+    endBalanceAmount: 212213.16,
+    observedAt: '2026-08-02T10:00:00.000Z',
+  }]);
+  assert.equal(runtime.calls[1].sql, 'SET LOCAL ROLE sheinfm_webapi_loader');
+  const insert = runtime.calls.find(
+    ({ sql }) => /INSERT INTO fact\.full_home_ledger_daily/.test(sql),
+  );
+  assert.ok(insert);
+  const payload = JSON.parse(insert.params[0]);
+  assert.equal(payload[0].outbound_count, 546);
+  assert.equal(payload[0].customer_outbound_count, 521);
+  assert.equal(payload[0].quality_status, 'COMPLETE');
+  assert.match(insert.sql, /ON CONFLICT \(store_code, business_date\) DO UPDATE/);
+});
+
 test('fetch audit stores bounded hashes and counts, never a response body', async () => {
   const runtime = fakePool();
   const repository = createFullHomeHistoryRepository({ pool: runtime.pool });

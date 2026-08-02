@@ -152,6 +152,91 @@ function productValues(input) {
   ];
 }
 
+const LEDGER_COUNT_FIELDS = Object.freeze([
+  'beginBalanceCount',
+  'inboundCount',
+  'outboundCount',
+  'endBalanceCount',
+  'urgentOrderEntryCount',
+  'prepareOrderEntryCount',
+  'inboundGainCount',
+  'inboundReturnCount',
+  'supplyChangeInCount',
+  'adjustmentInCount',
+  'customerOutboundCount',
+  'directCustomerOutboundCount',
+  'platformCustomerOutboundCount',
+  'outboundLossCount',
+  'supplierOutboundCount',
+  'inventoryClearCount',
+  'reportClearCount',
+  'scrapCount',
+  'supplyChangeOutCount',
+  'adjustmentOutCount',
+  'customerLossCount',
+]);
+
+const LEDGER_AMOUNT_FIELDS = Object.freeze([
+  'beginBalanceAmount',
+  'inboundAmount',
+  'outboundAmount',
+  'endBalanceAmount',
+  'urgentOrderEntryAmount',
+  'prepareOrderEntryAmount',
+  'inboundGainAmount',
+  'inboundReturnAmount',
+  'supplyChangeInAmount',
+  'adjustmentInAmount',
+  'customerOutboundAmount',
+  'directCustomerOutboundAmount',
+  'platformCustomerOutboundAmount',
+  'outboundLossAmount',
+  'supplierOutboundAmount',
+  'inventoryClearAmount',
+  'reportClearAmount',
+  'scrapAmount',
+  'supplyChangeOutAmount',
+  'adjustmentOutAmount',
+  'customerLossAmount',
+]);
+
+function ledgerRow(input) {
+  const row = record(input);
+  const output = {
+    store_code: storeCode(row.storeCode),
+    business_date: date(row.businessDate, 'businessDate'),
+    currency: row.currency === null || row.currency === undefined
+      ? null
+      : text(row.currency, 'currency', 3).toUpperCase(),
+    observed_at: instant(row.observedAt ?? new Date(), 'observedAt'),
+    source_contract_version: HOME_HISTORY_CONTRACT_VERSION,
+  };
+  for (const field of LEDGER_COUNT_FIELDS) {
+    output[field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)] = nullableNumber(
+      row[field],
+      field,
+      { integer: true },
+    );
+  }
+  for (const field of LEDGER_AMOUNT_FIELDS) {
+    output[field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)] = nullableNumber(
+      row[field],
+      field,
+    );
+  }
+  const core = [
+    output.begin_balance_count,
+    output.inbound_count,
+    output.outbound_count,
+    output.end_balance_count,
+    output.customer_outbound_count,
+  ];
+  output.quality_status = core.every((value) => value !== null)
+    ? core.some((value) => value !== 0) ? 'COMPLETE' : 'LEGAL_ZERO'
+    : 'PARTIAL';
+  return output;
+}
+
 async function inCapabilityTransaction(pool, work) {
   const client = await pool.connect();
   let open = false;
@@ -367,6 +452,289 @@ export function createFullHomeHistoryRepository({ pool } = {}) {
     });
   }
 
+  async function upsertLedgerDaily(rows) {
+    const values = rows.map(ledgerRow);
+    if (values.length === 0) return { upserted: 0 };
+    return inCapabilityTransaction(pool, async (client) => {
+      const result = await client.query(`
+        INSERT INTO fact.full_home_ledger_daily (
+          store_code, business_date, currency,
+          begin_balance_count, inbound_count, outbound_count, end_balance_count,
+          urgent_order_entry_count, prepare_order_entry_count,
+          inbound_gain_count, inbound_return_count, supply_change_in_count,
+          adjustment_in_count, customer_outbound_count,
+          direct_customer_outbound_count, platform_customer_outbound_count,
+          outbound_loss_count, supplier_outbound_count, inventory_clear_count,
+          report_clear_count, scrap_count, supply_change_out_count,
+          adjustment_out_count, customer_loss_count,
+          begin_balance_amount, inbound_amount, outbound_amount, end_balance_amount,
+          urgent_order_entry_amount, prepare_order_entry_amount,
+          inbound_gain_amount, inbound_return_amount, supply_change_in_amount,
+          adjustment_in_amount, customer_outbound_amount,
+          direct_customer_outbound_amount, platform_customer_outbound_amount,
+          outbound_loss_amount, supplier_outbound_amount, inventory_clear_amount,
+          report_clear_amount, scrap_amount, supply_change_out_amount,
+          adjustment_out_amount, customer_loss_amount,
+          observed_at, source_contract_version, quality_status
+        )
+        SELECT
+          x.store_code, x.business_date, x.currency,
+          x.begin_balance_count, x.inbound_count, x.outbound_count,
+          x.end_balance_count, x.urgent_order_entry_count,
+          x.prepare_order_entry_count, x.inbound_gain_count,
+          x.inbound_return_count, x.supply_change_in_count,
+          x.adjustment_in_count, x.customer_outbound_count,
+          x.direct_customer_outbound_count, x.platform_customer_outbound_count,
+          x.outbound_loss_count, x.supplier_outbound_count,
+          x.inventory_clear_count, x.report_clear_count, x.scrap_count,
+          x.supply_change_out_count, x.adjustment_out_count,
+          x.customer_loss_count, x.begin_balance_amount, x.inbound_amount,
+          x.outbound_amount, x.end_balance_amount, x.urgent_order_entry_amount,
+          x.prepare_order_entry_amount, x.inbound_gain_amount,
+          x.inbound_return_amount, x.supply_change_in_amount,
+          x.adjustment_in_amount, x.customer_outbound_amount,
+          x.direct_customer_outbound_amount, x.platform_customer_outbound_amount,
+          x.outbound_loss_amount, x.supplier_outbound_amount,
+          x.inventory_clear_amount, x.report_clear_amount, x.scrap_amount,
+          x.supply_change_out_amount, x.adjustment_out_amount,
+          x.customer_loss_amount, x.observed_at, x.source_contract_version,
+          x.quality_status
+        FROM jsonb_to_recordset($1::jsonb) AS x(
+          store_code text,
+          business_date date,
+          currency character(3),
+          begin_balance_count bigint,
+          inbound_count bigint,
+          outbound_count bigint,
+          end_balance_count bigint,
+          urgent_order_entry_count bigint,
+          prepare_order_entry_count bigint,
+          inbound_gain_count bigint,
+          inbound_return_count bigint,
+          supply_change_in_count bigint,
+          adjustment_in_count bigint,
+          customer_outbound_count bigint,
+          direct_customer_outbound_count bigint,
+          platform_customer_outbound_count bigint,
+          outbound_loss_count bigint,
+          supplier_outbound_count bigint,
+          inventory_clear_count bigint,
+          report_clear_count bigint,
+          scrap_count bigint,
+          supply_change_out_count bigint,
+          adjustment_out_count bigint,
+          customer_loss_count bigint,
+          begin_balance_amount numeric,
+          inbound_amount numeric,
+          outbound_amount numeric,
+          end_balance_amount numeric,
+          urgent_order_entry_amount numeric,
+          prepare_order_entry_amount numeric,
+          inbound_gain_amount numeric,
+          inbound_return_amount numeric,
+          supply_change_in_amount numeric,
+          adjustment_in_amount numeric,
+          customer_outbound_amount numeric,
+          direct_customer_outbound_amount numeric,
+          platform_customer_outbound_amount numeric,
+          outbound_loss_amount numeric,
+          supplier_outbound_amount numeric,
+          inventory_clear_amount numeric,
+          report_clear_amount numeric,
+          scrap_amount numeric,
+          supply_change_out_amount numeric,
+          adjustment_out_amount numeric,
+          customer_loss_amount numeric,
+          observed_at timestamptz,
+          source_contract_version smallint,
+          quality_status text
+        )
+        ON CONFLICT (store_code, business_date) DO UPDATE SET
+          currency = COALESCE(EXCLUDED.currency, fact.full_home_ledger_daily.currency),
+          begin_balance_count = COALESCE(
+            EXCLUDED.begin_balance_count,
+            fact.full_home_ledger_daily.begin_balance_count
+          ),
+          inbound_count = COALESCE(
+            EXCLUDED.inbound_count,
+            fact.full_home_ledger_daily.inbound_count
+          ),
+          outbound_count = COALESCE(
+            EXCLUDED.outbound_count,
+            fact.full_home_ledger_daily.outbound_count
+          ),
+          end_balance_count = COALESCE(
+            EXCLUDED.end_balance_count,
+            fact.full_home_ledger_daily.end_balance_count
+          ),
+          urgent_order_entry_count = COALESCE(
+            EXCLUDED.urgent_order_entry_count,
+            fact.full_home_ledger_daily.urgent_order_entry_count
+          ),
+          prepare_order_entry_count = COALESCE(
+            EXCLUDED.prepare_order_entry_count,
+            fact.full_home_ledger_daily.prepare_order_entry_count
+          ),
+          inbound_gain_count = COALESCE(
+            EXCLUDED.inbound_gain_count,
+            fact.full_home_ledger_daily.inbound_gain_count
+          ),
+          inbound_return_count = COALESCE(
+            EXCLUDED.inbound_return_count,
+            fact.full_home_ledger_daily.inbound_return_count
+          ),
+          supply_change_in_count = COALESCE(
+            EXCLUDED.supply_change_in_count,
+            fact.full_home_ledger_daily.supply_change_in_count
+          ),
+          adjustment_in_count = COALESCE(
+            EXCLUDED.adjustment_in_count,
+            fact.full_home_ledger_daily.adjustment_in_count
+          ),
+          customer_outbound_count = COALESCE(
+            EXCLUDED.customer_outbound_count,
+            fact.full_home_ledger_daily.customer_outbound_count
+          ),
+          direct_customer_outbound_count = COALESCE(
+            EXCLUDED.direct_customer_outbound_count,
+            fact.full_home_ledger_daily.direct_customer_outbound_count
+          ),
+          platform_customer_outbound_count = COALESCE(
+            EXCLUDED.platform_customer_outbound_count,
+            fact.full_home_ledger_daily.platform_customer_outbound_count
+          ),
+          outbound_loss_count = COALESCE(
+            EXCLUDED.outbound_loss_count,
+            fact.full_home_ledger_daily.outbound_loss_count
+          ),
+          supplier_outbound_count = COALESCE(
+            EXCLUDED.supplier_outbound_count,
+            fact.full_home_ledger_daily.supplier_outbound_count
+          ),
+          inventory_clear_count = COALESCE(
+            EXCLUDED.inventory_clear_count,
+            fact.full_home_ledger_daily.inventory_clear_count
+          ),
+          report_clear_count = COALESCE(
+            EXCLUDED.report_clear_count,
+            fact.full_home_ledger_daily.report_clear_count
+          ),
+          scrap_count = COALESCE(
+            EXCLUDED.scrap_count,
+            fact.full_home_ledger_daily.scrap_count
+          ),
+          supply_change_out_count = COALESCE(
+            EXCLUDED.supply_change_out_count,
+            fact.full_home_ledger_daily.supply_change_out_count
+          ),
+          adjustment_out_count = COALESCE(
+            EXCLUDED.adjustment_out_count,
+            fact.full_home_ledger_daily.adjustment_out_count
+          ),
+          customer_loss_count = COALESCE(
+            EXCLUDED.customer_loss_count,
+            fact.full_home_ledger_daily.customer_loss_count
+          ),
+          begin_balance_amount = COALESCE(
+            EXCLUDED.begin_balance_amount,
+            fact.full_home_ledger_daily.begin_balance_amount
+          ),
+          inbound_amount = COALESCE(
+            EXCLUDED.inbound_amount,
+            fact.full_home_ledger_daily.inbound_amount
+          ),
+          outbound_amount = COALESCE(
+            EXCLUDED.outbound_amount,
+            fact.full_home_ledger_daily.outbound_amount
+          ),
+          end_balance_amount = COALESCE(
+            EXCLUDED.end_balance_amount,
+            fact.full_home_ledger_daily.end_balance_amount
+          ),
+          urgent_order_entry_amount = COALESCE(
+            EXCLUDED.urgent_order_entry_amount,
+            fact.full_home_ledger_daily.urgent_order_entry_amount
+          ),
+          prepare_order_entry_amount = COALESCE(
+            EXCLUDED.prepare_order_entry_amount,
+            fact.full_home_ledger_daily.prepare_order_entry_amount
+          ),
+          inbound_gain_amount = COALESCE(
+            EXCLUDED.inbound_gain_amount,
+            fact.full_home_ledger_daily.inbound_gain_amount
+          ),
+          inbound_return_amount = COALESCE(
+            EXCLUDED.inbound_return_amount,
+            fact.full_home_ledger_daily.inbound_return_amount
+          ),
+          supply_change_in_amount = COALESCE(
+            EXCLUDED.supply_change_in_amount,
+            fact.full_home_ledger_daily.supply_change_in_amount
+          ),
+          adjustment_in_amount = COALESCE(
+            EXCLUDED.adjustment_in_amount,
+            fact.full_home_ledger_daily.adjustment_in_amount
+          ),
+          customer_outbound_amount = COALESCE(
+            EXCLUDED.customer_outbound_amount,
+            fact.full_home_ledger_daily.customer_outbound_amount
+          ),
+          direct_customer_outbound_amount = COALESCE(
+            EXCLUDED.direct_customer_outbound_amount,
+            fact.full_home_ledger_daily.direct_customer_outbound_amount
+          ),
+          platform_customer_outbound_amount = COALESCE(
+            EXCLUDED.platform_customer_outbound_amount,
+            fact.full_home_ledger_daily.platform_customer_outbound_amount
+          ),
+          outbound_loss_amount = COALESCE(
+            EXCLUDED.outbound_loss_amount,
+            fact.full_home_ledger_daily.outbound_loss_amount
+          ),
+          supplier_outbound_amount = COALESCE(
+            EXCLUDED.supplier_outbound_amount,
+            fact.full_home_ledger_daily.supplier_outbound_amount
+          ),
+          inventory_clear_amount = COALESCE(
+            EXCLUDED.inventory_clear_amount,
+            fact.full_home_ledger_daily.inventory_clear_amount
+          ),
+          report_clear_amount = COALESCE(
+            EXCLUDED.report_clear_amount,
+            fact.full_home_ledger_daily.report_clear_amount
+          ),
+          scrap_amount = COALESCE(
+            EXCLUDED.scrap_amount,
+            fact.full_home_ledger_daily.scrap_amount
+          ),
+          supply_change_out_amount = COALESCE(
+            EXCLUDED.supply_change_out_amount,
+            fact.full_home_ledger_daily.supply_change_out_amount
+          ),
+          adjustment_out_amount = COALESCE(
+            EXCLUDED.adjustment_out_amount,
+            fact.full_home_ledger_daily.adjustment_out_amount
+          ),
+          customer_loss_amount = COALESCE(
+            EXCLUDED.customer_loss_amount,
+            fact.full_home_ledger_daily.customer_loss_amount
+          ),
+          observed_at = GREATEST(
+            EXCLUDED.observed_at,
+            fact.full_home_ledger_daily.observed_at
+          ),
+          source_contract_version = GREATEST(
+            EXCLUDED.source_contract_version,
+            fact.full_home_ledger_daily.source_contract_version
+          ),
+          quality_status = EXCLUDED.quality_status,
+          updated_at = clock_timestamp()`,
+        [JSON.stringify(values)],
+      );
+      return { upserted: result.rowCount ?? values.length };
+    });
+  }
+
   async function recordFetchAudit(input = {}) {
     const audit = record(input);
     const requestedStartDate = audit.requestedStartDate
@@ -465,6 +833,7 @@ export function createFullHomeHistoryRepository({ pool } = {}) {
     upsertStoreDaily,
     upsertRegions,
     upsertProducts,
+    upsertLedgerDaily,
     recordFetchAudit,
     successfulDailyDates,
   });

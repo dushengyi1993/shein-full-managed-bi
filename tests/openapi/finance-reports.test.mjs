@@ -5,6 +5,7 @@ import {
   FINANCE_HISTORY_EARLIEST_DATE,
   fetchFinanceWindow,
   financeWindows,
+  mapFinanceAdjustmentDetailResponse,
   mapFinanceReportListResponse,
   mapFinanceSalesDetailResponse,
 } from '../../src/openapi/finance-reports.mjs';
@@ -33,11 +34,19 @@ test('finance response mapper hashes report identifiers and keeps signed directi
       addTime: '2026-07-28 15:30:00',
       currencyCode: 'sar',
       salesTotal: 1,
+      replenishTotal: 1,
+      estimateIncomeMoneyTotal: 18.5,
+      settlementStatus: 2,
+      estimatePayTime: '2026-08-15 00:00:00',
+      completedPayTime: '',
       expenseType: 3,
     }],
   }), { page: 1, pageSize: 200 });
   assert.equal(reports.reports[0].reportOrderNoHash.length, 64);
   assert.notEqual(reports.reports[0].reportOrderNoHash, 'REPORT-SECRET');
+  assert.equal(reports.reports[0].expectedSettlementAmount, 18.5);
+  assert.equal(reports.reports[0].settlementStatus, 2);
+  assert.equal(reports.reports[0].completedPayAt, null);
 
   const details = mapFinanceSalesDetailResponse(response({
     count: 1,
@@ -62,6 +71,26 @@ test('finance response mapper hashes report identifiers and keeps signed directi
   assert.equal(details.rows[0].productKey, 'SUP-1');
   assert.equal(details.rows[0].detailRowKeyHash.length, 64);
   assert.doesNotMatch(JSON.stringify(details), /DETAIL-SECRET/);
+
+  const adjustments = mapFinanceAdjustmentDetailResponse(response({
+    count: 1,
+    query: null,
+    reportReplenishDetail: [{
+      id: 'ADJUSTMENT-SECRET',
+      addTime: '2026-07-28 17:00:00',
+      settleCurrencyCode: 'SAR',
+      replenishType: 2,
+      replenishCategory: '物流扣款',
+      amount: 4.5,
+      goodsCount: 1,
+      unitPrice: 4.5,
+      skcName: 'SKC-1',
+    }],
+  }), { reportOrderNoHash: reports.reports[0].reportOrderNoHash });
+  assert.equal(adjustments.rows[0].direction, 'DEDUCTION');
+  assert.equal(adjustments.rows[0].amount, 4.5);
+  assert.equal(adjustments.rows[0].category, '物流扣款');
+  assert.doesNotMatch(JSON.stringify(adjustments), /ADJUSTMENT-SECRET/);
 });
 
 test('finance mapper accepts the platform null-list sentinel only for a proven zero count', () => {
@@ -101,6 +130,15 @@ test('finance mapper accepts the platform null-list sentinel only for a proven z
     nextQuery: null,
     rows: [],
   });
+  assert.deepEqual(mapFinanceAdjustmentDetailResponse(response({
+    count: 0,
+    query: null,
+    reportReplenishDetail: null,
+  }), { reportOrderNoHash: 'a'.repeat(64) }), {
+    count: 0,
+    nextQuery: null,
+    rows: [],
+  });
 });
 
 test('finance fetch follows report pages and detail cursors without widening the window', async () => {
@@ -116,10 +154,14 @@ test('finance fetch follows report pages and detail cursors without widening the
             addTime: '2026-07-28 09:00:00',
             currencyCode: 'SAR',
             salesTotal: 1,
+            replenishTotal: 1,
+            estimateIncomeMoneyTotal: 12,
+            settlementStatus: 2,
+            estimatePayTime: '2026-08-15 00:00:00',
           }],
         });
       }
-      return response({
+      if (path.endsWith('/report-sales-detail')) return response({
         count: 1,
         query: null,
         reportSalesDetails: [{
@@ -134,6 +176,21 @@ test('finance fetch follows report pages and detail cursors without widening the
           supplierSku: 'SUP-1',
         }],
       });
+      return response({
+        count: 1,
+        query: null,
+        reportReplenishDetail: [{
+          id: 'A-1',
+          addTime: '2026-07-28 11:00:00',
+          settleCurrencyCode: 'SAR',
+          replenishType: 2,
+          replenishCategory: '物流扣款',
+          amount: 3,
+          goodsCount: 1,
+          unitPrice: 3,
+          supplierSku: 'SUP-1',
+        }],
+      });
     },
   };
   const result = await fetchFinanceWindow(client, {
@@ -142,6 +199,8 @@ test('finance fetch follows report pages and detail cursors without widening the
   });
   assert.equal(result.reports.length, 1);
   assert.equal(result.details.length, 1);
+  assert.equal(result.adjustments.length, 1);
+  assert.ok(calls.some(({ path }) => path.endsWith('/report-adjustment-detail')));
   assert.deepEqual(calls[0].body, {
     addTimeStart: '2026-07-23 00:00:00',
     addTimeEnd: '2026-07-29 23:59:59',

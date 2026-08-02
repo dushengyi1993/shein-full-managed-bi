@@ -25,6 +25,14 @@ const history = {
     productDaily: [],
     regionDaily: [],
     financeDaily: [],
+    ledgerDaily: [
+      { storeCode: 'DL5477', date: '2026-07-31', customerOutboundCount: 3 },
+      { storeCode: 'MZ2406', date: '2026-07-31', customerOutboundCount: 4 },
+    ],
+    billDaily: [
+      { storeCode: 'DL5477', date: '2026-07-31', salesAmount: 12 },
+      { storeCode: 'MZ2406', date: '2026-07-31', salesAmount: 20 },
+    ],
     productFinanceDaily: [
       {
         storeCode: 'DL5477',
@@ -72,9 +80,13 @@ test('home query returns only the selected current and comparison window', () =>
   ]);
   assert.equal(result.home.productFinanceDaily.length, 1);
   assert.equal(result.home.productFinanceDaily[0].supplierSku, 'DL-HOT');
+  assert.equal(result.home.ledgerDaily.length, 1);
+  assert.equal(result.home.billDaily.length, 1);
   assert.equal(result.source.latestAvailableDate, '2026-07-31');
   assert.equal(result.source.returnedCurrentRows.storeDaily, 1);
   assert.equal(result.source.returnedComparisonRows.storeDaily, 1);
+  assert.equal(result.source.returnedCurrentRows.ledgerDaily, 1);
+  assert.equal(result.source.returnedCurrentRows.billDaily, 1);
 });
 
 test('home query searches products without leaking another store', () => {

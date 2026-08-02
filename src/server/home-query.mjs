@@ -113,17 +113,22 @@ function topProductKeys(inputRows, limit = PRODUCT_LIMIT) {
   const grouped = new Map();
   for (const row of inputRows) {
     const key = `${row.storeCode}:${row.productKey}`;
-    const item = grouped.get(key) || { income: 0, goods: 0 };
+    const item = grouped.get(key) || { income: 0, net: 0, goods: 0 };
     if (typeof row.incomeAmount === 'number' && Number.isFinite(row.incomeAmount)) {
       item.income += row.incomeAmount;
+    }
+    if (typeof row.netAmount === 'number' && Number.isFinite(row.netAmount)) {
+      item.net += row.netAmount;
     }
     if (Number.isSafeInteger(row.goodsCount) && row.goodsCount >= 0) item.goods += row.goodsCount;
     grouped.set(key, item);
   }
   const byIncome = [...grouped].sort((left, right) => right[1].income - left[1].income);
+  const byNet = [...grouped].sort((left, right) => right[1].net - left[1].net);
   const byGoods = [...grouped].sort((left, right) => right[1].goods - left[1].goods);
   return new Set([
     ...byIncome.slice(0, limit).map(([key]) => key),
+    ...byNet.slice(0, limit).map(([key]) => key),
     ...byGoods.slice(0, limit).map(([key]) => key),
   ]);
 }
@@ -173,6 +178,8 @@ export function queryHomeDashboard(
     : productDailyCandidates.filter(storeMatches);
   const regionDaily = rows(history.regionDaily).filter(dateMatches).filter(storeMatches);
   const financeDaily = rows(history.financeDaily).filter(dateMatches).filter(storeMatches);
+  const ledgerDaily = rows(history.ledgerDaily).filter(dateMatches).filter(storeMatches);
+  const billDaily = rows(history.billDaily).filter(dateMatches).filter(storeMatches);
   let productFinanceCandidates = rows(history.productFinanceDaily)
     .filter(dateMatches)
     .filter(baseStoreMatches);
@@ -198,6 +205,8 @@ export function queryHomeDashboard(
     productDaily: productDaily.length,
     regionDaily: regionDaily.length,
     financeDaily: financeDaily.length,
+    ledgerDaily: ledgerDaily.length,
+    billDaily: billDaily.length,
     productFinanceDaily: productFinanceDaily.length,
   };
   const returnedCurrentRows = {
@@ -205,6 +214,8 @@ export function queryHomeDashboard(
     productDaily: countWindowRows(productDaily, start, end),
     regionDaily: countWindowRows(regionDaily, start, end),
     financeDaily: countWindowRows(financeDaily, start, end),
+    ledgerDaily: countWindowRows(ledgerDaily, start, end),
+    billDaily: countWindowRows(billDaily, start, end),
     productFinanceDaily: countWindowRows(productFinanceDaily, start, end),
   };
   const returnedComparisonRows = {
@@ -212,6 +223,8 @@ export function queryHomeDashboard(
     productDaily: countWindowRows(productDaily, previousStart, previousEnd),
     regionDaily: countWindowRows(regionDaily, previousStart, previousEnd),
     financeDaily: countWindowRows(financeDaily, previousStart, previousEnd),
+    ledgerDaily: countWindowRows(ledgerDaily, previousStart, previousEnd),
+    billDaily: countWindowRows(billDaily, previousStart, previousEnd),
     productFinanceDaily: countWindowRows(productFinanceDaily, previousStart, previousEnd),
   };
 
@@ -236,6 +249,8 @@ export function queryHomeDashboard(
         productDaily: rows(history.productDaily).length,
         regionDaily: rows(history.regionDaily).length,
         financeDaily: rows(history.financeDaily).length,
+        ledgerDaily: rows(history.ledgerDaily).length,
+        billDaily: rows(history.billDaily).length,
         productFinanceDaily: rows(history.productFinanceDaily).length,
       }),
       returnedRows: Object.freeze(returnedRows),
@@ -248,6 +263,8 @@ export function queryHomeDashboard(
       productDaily: Object.freeze(productDaily),
       regionDaily: Object.freeze(regionDaily),
       financeDaily: Object.freeze(financeDaily),
+      ledgerDaily: Object.freeze(ledgerDaily),
+      billDaily: Object.freeze(billDaily),
       productFinanceDaily: Object.freeze(productFinanceDaily),
       coverage: Object.freeze(record(history.coverage)),
     }),

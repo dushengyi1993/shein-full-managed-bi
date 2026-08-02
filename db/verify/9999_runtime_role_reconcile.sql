@@ -72,6 +72,10 @@ BEGIN
         'fact.full_home_finance_daily',
         'fact.full_home_product_finance_daily',
         'fact.full_home_finance_detail_observation',
+        'fact.full_home_ledger_daily',
+        'fact.full_home_finance_report_observation',
+        'fact.full_home_finance_adjustment_observation',
+        'fact.full_home_bill_daily',
         'ops.full_home_finance_sync_window'
     ]
     LOOP
@@ -424,6 +428,8 @@ BEGIN
         'fact.full_sku_sales_snapshot',
         'fact.full_home_finance_daily',
         'fact.full_home_product_finance_daily',
+        'fact.full_home_ledger_daily',
+        'fact.full_home_bill_daily',
         'fact.purchase_order',
         'fact.purchase_order_line',
         'fact.delivery',
@@ -503,6 +509,12 @@ BEGIN
         'sheinfm_sales_login', 'fact.full_home_product_finance_daily', 'DELETE'
     ) OR NOT has_table_privilege(
         'sheinfm_sales_login', 'fact.full_home_finance_detail_observation', 'DELETE'
+    ) OR NOT has_table_privilege(
+        'sheinfm_sales_login', 'fact.full_home_finance_report_observation', 'DELETE'
+    ) OR NOT has_table_privilege(
+        'sheinfm_sales_login', 'fact.full_home_finance_adjustment_observation', 'DELETE'
+    ) OR NOT has_table_privilege(
+        'sheinfm_sales_login', 'fact.full_home_bill_daily', 'DELETE'
     ) OR NOT has_table_privilege(
         'sheinfm_sales_login', 'ops.full_home_finance_sync_window', 'UPDATE'
     ) OR has_table_privilege(
@@ -775,7 +787,8 @@ BEGIN
     FOREACH required_name IN ARRAY ARRAY[
         'fact.full_home_store_daily',
         'fact.full_home_region_daily',
-        'fact.full_home_product_daily'
+        'fact.full_home_product_daily',
+        'fact.full_home_ledger_daily'
     ]
     LOOP
         IF NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'SELECT')
@@ -802,6 +815,9 @@ BEGIN
         'fact.full_home_finance_daily',
         'fact.full_home_product_finance_daily',
         'fact.full_home_finance_detail_observation',
+        'fact.full_home_finance_report_observation',
+        'fact.full_home_finance_adjustment_observation',
+        'fact.full_home_bill_daily',
         'fact.inventory_snapshot',
         'fact.purchase_order',
         'fact.delivery',
@@ -851,7 +867,8 @@ BEGIN
         'raw.webapi_home_fetch_audit',
         'fact.full_home_store_daily',
         'fact.full_home_region_daily',
-        'fact.full_home_product_daily'
+        'fact.full_home_product_daily',
+        'fact.full_home_ledger_daily'
     ]
     LOOP
         FOREACH expected_group IN ARRAY ARRAY[

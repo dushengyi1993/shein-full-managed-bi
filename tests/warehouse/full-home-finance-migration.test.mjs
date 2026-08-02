@@ -24,9 +24,10 @@ test('runtime roles isolate finance writes from WebAPI and expose read-only fact
     readFile(new URL('db/verify/9999_runtime_role_reconcile.sql', projectRoot), 'utf8'),
   ]);
   assert.match(migration, /GRANT SELECT, INSERT, UPDATE, DELETE ON\s+fact\.full_home_finance_daily,/s);
-  assert.match(migration, /fact\.full_home_product_finance_daily,[\s\S]*fact\.full_home_finance_detail_observation\s+TO sheinfm_sales_loader/s);
+  assert.match(migration, /fact\.full_home_product_finance_daily,[\s\S]*fact\.full_home_finance_detail_observation,[\s\S]*fact\.full_home_bill_daily\s+TO sheinfm_sales_loader/s);
   assert.match(migration, /GRANT SELECT, INSERT, UPDATE ON ops\.full_home_finance_sync_window/);
   assert.match(migration, /fact\.full_home_finance_daily,[\s\S]*fact\.full_home_product_finance_daily,[\s\S]*TO sheinfm_materializer_ro, sheinfm_app/);
+  assert.match(migration, /fact\.full_home_ledger_daily,[\s\S]*fact\.full_home_bill_daily/);
   assert.match(verify, /WebAPI experiment loader retained % on %/);
   assert.match(verify, /'fact\.full_home_finance_daily'/);
   assert.match(verify, /'ops\.full_home_finance_sync_window'/);

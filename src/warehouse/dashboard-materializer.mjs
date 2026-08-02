@@ -1328,6 +1328,8 @@ const UNAVAILABLE_FULL_HOME_HISTORY = Object.freeze({
   regionDaily: Object.freeze([]),
   financeDaily: Object.freeze([]),
   productFinanceDaily: Object.freeze([]),
+  ledgerDaily: Object.freeze([]),
+  billDaily: Object.freeze([]),
   coverage: Object.freeze({
     earliestDate: null,
     latestDate: null,
@@ -1337,6 +1339,8 @@ const UNAVAILABLE_FULL_HOME_HISTORY = Object.freeze({
     regionDailyRows: 0,
     financeDailyRows: 0,
     productFinanceDailyRows: 0,
+    ledgerDailyRows: 0,
+    billDailyRows: 0,
     latestObservedAt: null,
   }),
 });
@@ -1358,7 +1362,9 @@ export async function readFullHomeHistory(pool) {
         to_regclass('fact.full_home_region_daily') IS NOT NULL AS has_region_daily,
         to_regclass('fact.full_home_finance_daily') IS NOT NULL AS has_finance_daily,
         to_regclass('fact.full_home_product_finance_daily') IS NOT NULL
-          AS has_product_finance_daily`);
+          AS has_product_finance_daily,
+        to_regclass('fact.full_home_ledger_daily') IS NOT NULL AS has_ledger_daily,
+        to_regclass('fact.full_home_bill_daily') IS NOT NULL AS has_bill_daily`);
     const schema = schemaResult.rows[0] ?? {};
     if (
       schema.has_store_daily !== true
@@ -1368,7 +1374,7 @@ export async function readFullHomeHistory(pool) {
       return UNAVAILABLE_FULL_HOME_HISTORY;
     }
 
-    const [storeResult, productResult, regionResult] = await Promise.all([
+    const [storeResult, productResult, regionResult, ledgerResult] = await Promise.all([
       client.query(`
         SELECT store_code, to_char(business_date, 'YYYY-MM-DD') AS business_date,
                currency, deal_amount, net_deal_amount, sales_quantity,
@@ -1397,6 +1403,36 @@ export async function readFullHomeHistory(pool) {
         FROM fact.full_home_region_daily
         ORDER BY business_date, store_code,
                  sales_quantity DESC NULLS LAST, region_key`),
+      schema.has_ledger_daily === true
+        ? client.query(`
+            SELECT
+              store_code,
+              to_char(business_date, 'YYYY-MM-DD') AS business_date,
+              currency,
+              begin_balance_count, inbound_count, outbound_count,
+              end_balance_count, urgent_order_entry_count,
+              prepare_order_entry_count, inbound_gain_count,
+              inbound_return_count, supply_change_in_count,
+              adjustment_in_count, customer_outbound_count,
+              direct_customer_outbound_count,
+              platform_customer_outbound_count, outbound_loss_count,
+              supplier_outbound_count, inventory_clear_count,
+              report_clear_count, scrap_count, supply_change_out_count,
+              adjustment_out_count, customer_loss_count,
+              begin_balance_amount, inbound_amount, outbound_amount,
+              end_balance_amount, urgent_order_entry_amount,
+              prepare_order_entry_amount, inbound_gain_amount,
+              inbound_return_amount, supply_change_in_amount,
+              adjustment_in_amount, customer_outbound_amount,
+              direct_customer_outbound_amount,
+              platform_customer_outbound_amount, outbound_loss_amount,
+              supplier_outbound_amount, inventory_clear_amount,
+              report_clear_amount, scrap_amount, supply_change_out_amount,
+              adjustment_out_amount, customer_loss_amount,
+              observed_at, quality_status
+            FROM fact.full_home_ledger_daily
+            ORDER BY business_date, store_code`)
+        : Promise.resolve({ rows: [] }),
     ]);
     const hasFinance = (
       schema.has_finance_daily === true
@@ -1419,6 +1455,18 @@ export async function readFullHomeHistory(pool) {
             ORDER BY business_date, store_code, currency, product_key`),
         ])
       : [{ rows: [] }, { rows: [] }];
+    const billResult = schema.has_bill_daily === true
+      ? await client.query(`
+          SELECT
+            store_code,
+            to_char(business_date, 'YYYY-MM-DD') AS business_date,
+            currency, sales_amount, supplement_amount, deduction_amount,
+            calculated_settlement_amount, reported_settlement_amount,
+            report_count, settled_report_count, pending_report_count,
+            reconciliation_status, observed_at
+          FROM fact.full_home_bill_daily
+          ORDER BY business_date, store_code, currency`)
+      : { rows: [] };
 
     const storeDaily = storeResult.rows.map((row, index) => ({
       storeCode: row.store_code,
@@ -1520,6 +1568,68 @@ export async function readFullHomeHistory(pool) {
       sourceUpdatedAt: pgInstant(row.source_updated_at),
       observedAt: pgInstant(row.observed_at),
     }));
+    const ledgerCountFields = Object.freeze([
+      ['beginBalanceCount', 'begin_balance_count'],
+      ['inboundCount', 'inbound_count'],
+      ['outboundCount', 'outbound_count'],
+      ['endBalanceCount', 'end_balance_count'],
+      ['urgentOrderEntryCount', 'urgent_order_entry_count'],
+      ['prepareOrderEntryCount', 'prepare_order_entry_count'],
+      ['inboundGainCount', 'inbound_gain_count'],
+      ['inboundReturnCount', 'inbound_return_count'],
+      ['supplyChangeInCount', 'supply_change_in_count'],
+      ['adjustmentInCount', 'adjustment_in_count'],
+      ['customerOutboundCount', 'customer_outbound_count'],
+      ['directCustomerOutboundCount', 'direct_customer_outbound_count'],
+      ['platformCustomerOutboundCount', 'platform_customer_outbound_count'],
+      ['outboundLossCount', 'outbound_loss_count'],
+      ['supplierOutboundCount', 'supplier_outbound_count'],
+      ['inventoryClearCount', 'inventory_clear_count'],
+      ['reportClearCount', 'report_clear_count'],
+      ['scrapCount', 'scrap_count'],
+      ['supplyChangeOutCount', 'supply_change_out_count'],
+      ['adjustmentOutCount', 'adjustment_out_count'],
+      ['customerLossCount', 'customer_loss_count'],
+    ]);
+    const ledgerAmountFields = Object.freeze([
+      ['beginBalanceAmount', 'begin_balance_amount'],
+      ['inboundAmount', 'inbound_amount'],
+      ['outboundAmount', 'outbound_amount'],
+      ['endBalanceAmount', 'end_balance_amount'],
+      ['urgentOrderEntryAmount', 'urgent_order_entry_amount'],
+      ['prepareOrderEntryAmount', 'prepare_order_entry_amount'],
+      ['inboundGainAmount', 'inbound_gain_amount'],
+      ['inboundReturnAmount', 'inbound_return_amount'],
+      ['supplyChangeInAmount', 'supply_change_in_amount'],
+      ['adjustmentInAmount', 'adjustment_in_amount'],
+      ['customerOutboundAmount', 'customer_outbound_amount'],
+      ['directCustomerOutboundAmount', 'direct_customer_outbound_amount'],
+      ['platformCustomerOutboundAmount', 'platform_customer_outbound_amount'],
+      ['outboundLossAmount', 'outbound_loss_amount'],
+      ['supplierOutboundAmount', 'supplier_outbound_amount'],
+      ['inventoryClearAmount', 'inventory_clear_amount'],
+      ['reportClearAmount', 'report_clear_amount'],
+      ['scrapAmount', 'scrap_amount'],
+      ['supplyChangeOutAmount', 'supply_change_out_amount'],
+      ['adjustmentOutAmount', 'adjustment_out_amount'],
+      ['customerLossAmount', 'customer_loss_amount'],
+    ]);
+    const ledgerDaily = ledgerResult.rows.map((row, index) => ({
+      storeCode: row.store_code,
+      date: pgDate(row.business_date),
+      currency: row.currency ?? null,
+      ...Object.fromEntries(ledgerCountFields.map(([target, source]) => [
+        target,
+        pgCount(row[source], `home.ledgerDaily[${index}].${target}`),
+      ])),
+      ...Object.fromEntries(ledgerAmountFields.map(([target, source]) => [
+        target,
+        pgDecimal(row[source], `home.ledgerDaily[${index}].${target}`),
+      ])),
+      observedAt: pgInstant(row.observed_at),
+      qualityStatus: row.quality_status,
+      basis: 'OFFICIAL_INVENTORY_LEDGER',
+    }));
     const financeDaily = financeResult.rows.map((row, index) => ({
       storeCode: row.store_code,
       date: pgDate(row.business_date),
@@ -1541,6 +1651,46 @@ export async function readFullHomeHistory(pool) {
         row.report_count,
         `home.financeDaily[${index}].reportCount`,
       ),
+      observedAt: pgInstant(row.observed_at),
+      basis: 'REPORT_GENERATED_DATE',
+    }));
+    const billDaily = billResult.rows.map((row, index) => ({
+      storeCode: row.store_code,
+      date: pgDate(row.business_date),
+      currency: row.currency,
+      salesAmount: pgSignedDecimal(
+        row.sales_amount,
+        `home.billDaily[${index}].salesAmount`,
+      ),
+      supplementAmount: pgDecimal(
+        row.supplement_amount,
+        `home.billDaily[${index}].supplementAmount`,
+      ),
+      deductionAmount: pgDecimal(
+        row.deduction_amount,
+        `home.billDaily[${index}].deductionAmount`,
+      ),
+      calculatedSettlementAmount: pgSignedDecimal(
+        row.calculated_settlement_amount,
+        `home.billDaily[${index}].calculatedSettlementAmount`,
+      ),
+      reportedSettlementAmount: pgSignedDecimal(
+        row.reported_settlement_amount,
+        `home.billDaily[${index}].reportedSettlementAmount`,
+      ),
+      reportCount: pgCount(
+        row.report_count,
+        `home.billDaily[${index}].reportCount`,
+      ),
+      settledReportCount: pgCount(
+        row.settled_report_count,
+        `home.billDaily[${index}].settledReportCount`,
+      ),
+      pendingReportCount: pgCount(
+        row.pending_report_count,
+        `home.billDaily[${index}].pendingReportCount`,
+      ),
+      reconciliationStatus: row.reconciliation_status,
       observedAt: pgInstant(row.observed_at),
       basis: 'REPORT_GENERATED_DATE',
     }));
@@ -1576,7 +1726,7 @@ export async function readFullHomeHistory(pool) {
       observedAt: pgInstant(row.observed_at),
       basis: 'REPORT_GENERATED_DATE',
     }));
-    const allDates = [...storeDaily, ...financeDaily]
+    const allDates = [...storeDaily, ...financeDaily, ...ledgerDaily, ...billDaily]
       .map(({ date }) => date)
       .filter(Boolean)
       .sort();
@@ -1586,28 +1736,40 @@ export async function readFullHomeHistory(pool) {
       ...regionDaily,
       ...financeDaily,
       ...productFinanceDaily,
+      ...ledgerDaily,
+      ...billDaily,
     ]
       .map(({ observedAt }) => observedAt)
       .filter(Boolean)
       .sort();
     return {
-      status: storeDaily.length > 0 || financeDaily.length > 0 ? 'available' : 'empty',
+      status: storeDaily.length > 0
+        || financeDaily.length > 0
+        || ledgerDaily.length > 0
+        || billDaily.length > 0
+        ? 'available'
+        : 'empty',
       storeDaily,
       productDaily,
       regionDaily,
       financeDaily,
       productFinanceDaily,
+      ledgerDaily,
+      billDaily,
       coverage: {
         earliestDate: allDates[0] ?? null,
         latestDate: allDates.at(-1) ?? null,
         storeCount: new Set(
-          [...storeDaily, ...financeDaily].map(({ storeCode }) => storeCode),
+          [...storeDaily, ...financeDaily, ...ledgerDaily, ...billDaily]
+            .map(({ storeCode }) => storeCode),
         ).size,
         storeDailyRows: storeDaily.length,
         productDailyRows: productDaily.length,
         regionDailyRows: regionDaily.length,
         financeDailyRows: financeDaily.length,
         productFinanceDailyRows: productFinanceDaily.length,
+        ledgerDailyRows: ledgerDaily.length,
+        billDailyRows: billDaily.length,
         latestObservedAt: observed.at(-1) ?? null,
       },
     };

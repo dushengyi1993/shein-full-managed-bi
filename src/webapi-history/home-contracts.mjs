@@ -31,6 +31,10 @@ export const HOME_ENDPOINTS = Object.freeze({
     method: 'POST',
     path: '/sbn/analyse/search',
   }),
+  LEDGER_DAILY: Object.freeze({
+    method: 'POST',
+    path: '/mils/report/date/list',
+  }),
 });
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -314,6 +318,31 @@ export function buildAnalyseSearchRequest({ pageNum = 1, pageSize = 200 } = {}) 
   return Object.freeze({ pageNum, pageSize });
 }
 
+export function buildLedgerDailyRequest({
+  startDate,
+  endDate,
+  pageNumber = 1,
+  pageSize = 200,
+} = {}) {
+  const start = isoDate(startDate, 'startDate');
+  const end = isoDate(endDate, 'endDate');
+  if (start > end || dateDistanceDays(start, end) > HOME_HISTORY_MAX_WINDOW_DAYS) {
+    fail('HOME_LEDGER_RANGE_INVALID', 'ledger window exceeds the reviewed 90-day limit');
+  }
+  if (!Number.isSafeInteger(pageNumber) || pageNumber < 1 || pageNumber > 100_000) {
+    fail('HOME_PAGE_INVALID', 'pageNumber is invalid');
+  }
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 200) {
+    fail('HOME_PAGE_SIZE_INVALID', 'pageSize is invalid');
+  }
+  return Object.freeze({
+    reportDateStart: start,
+    reportDateEnd: end,
+    pageNumber,
+    pageSize,
+  });
+}
+
 export function parseStoreDailyHistory(body, {
   storeCode,
   observedAt = new Date().toISOString(),
@@ -512,4 +541,97 @@ export function parseRegionRows(body, {
       sourceUpdatedAt: row.updateTime ?? null,
     });
   }).filter(Boolean));
+}
+
+function ledgerPage(body) {
+  const envelope = record(body);
+  const info = record(envelope.info ?? envelope.data ?? envelope);
+  const data = record(info.data);
+  const list = Array.isArray(data.list) ? data.list : [];
+  const count = optionalCount(data.count);
+  if (count === null || list.length > count) {
+    fail('HOME_LEDGER_RESPONSE_INVALID', 'ledger page count is invalid');
+  }
+  return { count, list, containAmount: optionalCount(info.containAmount) };
+}
+
+export function parseLedgerDailyRows(body, {
+  storeCode,
+  observedAt = new Date().toISOString(),
+} = {}) {
+  const store = canonicalStore(storeCode);
+  const page = ledgerPage(body);
+  const fieldMap = Object.freeze({
+    beginBalanceCount: 'beginBalanceCnt',
+    inboundCount: 'inCnt',
+    outboundCount: 'outCnt',
+    endBalanceCount: 'endBalanceCnt',
+    urgentOrderEntryCount: 'urgentOrderEntryCnt',
+    prepareOrderEntryCount: 'prepareOrderEntryCnt',
+    inboundGainCount: 'inGainCnt',
+    inboundReturnCount: 'inReturnCnt',
+    supplyChangeInCount: 'supplyChangeInCnt',
+    adjustmentInCount: 'adjustInCnt',
+    customerOutboundCount: 'totalCustomerCnt',
+    directCustomerOutboundCount: 'customerCnt',
+    platformCustomerOutboundCount: 'platformCustomerCnt',
+    outboundLossCount: 'outLossCnt',
+    supplierOutboundCount: 'outSupplierCnt',
+    inventoryClearCount: 'inventoryClearCnt',
+    reportClearCount: 'reportClearCnt',
+    scrapCount: 'scrapCnt',
+    supplyChangeOutCount: 'supplyChangeOutCnt',
+    adjustmentOutCount: 'adjustOutCnt',
+    customerLossCount: 'customerLoseCnt',
+  });
+  const amountMap = Object.freeze({
+    beginBalanceAmount: 'beginBalanceAmount',
+    inboundAmount: 'inAmount',
+    outboundAmount: 'outAmount',
+    endBalanceAmount: 'endBalanceAmount',
+    urgentOrderEntryAmount: 'urgentOrderEntryAmount',
+    prepareOrderEntryAmount: 'prepareOrderEntryAmount',
+    inboundGainAmount: 'inGainAmount',
+    inboundReturnAmount: 'inReturnAmount',
+    supplyChangeInAmount: 'inSupplyChangeAmount',
+    adjustmentInAmount: 'adjustInAmount',
+    customerOutboundAmount: 'totalCustomerAmount',
+    directCustomerOutboundAmount: 'customerAmount',
+    platformCustomerOutboundAmount: 'platformCustomerAmount',
+    outboundLossAmount: 'outLossAmount',
+    supplierOutboundAmount: 'outSupplierAmount',
+    inventoryClearAmount: 'inventoryClearAmount',
+    reportClearAmount: 'reportClearAmount',
+    scrapAmount: 'scrapAmount',
+    supplyChangeOutAmount: 'outSupplyChangeAmount',
+    adjustmentOutAmount: 'adjustOutAmount',
+    customerLossAmount: 'customerLoseAmount',
+  });
+  const rows = page.list.map((input) => {
+    const row = record(input);
+    const businessDate = dateFromRow(row);
+    if (!businessDate) {
+      fail('HOME_LEDGER_RESPONSE_INVALID', 'ledger reportDate is invalid');
+    }
+    const output = {
+      storeCode: store,
+      businessDate,
+      currency: typeof row.currency === 'string' && /^[A-Za-z]{3}$/.test(row.currency)
+        ? row.currency.toUpperCase()
+        : null,
+      observedAt,
+      sourceCode: 'WEBAPI_LEDGER',
+    };
+    for (const [target, source] of Object.entries(fieldMap)) {
+      output[target] = optionalCount(row[source]);
+    }
+    for (const [target, source] of Object.entries(amountMap)) {
+      output[target] = page.containAmount === 0 ? null : optionalDecimal(row[source]);
+    }
+    return Object.freeze(output);
+  });
+  return Object.freeze({
+    count: page.count,
+    rows: Object.freeze(rows),
+  });
 }

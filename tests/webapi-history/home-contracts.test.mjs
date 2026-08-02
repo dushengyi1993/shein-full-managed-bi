@@ -3,16 +3,64 @@ import test from 'node:test';
 
 import {
   buildAnalyseSearchRequest,
+  buildLedgerDailyRequest,
   buildProductDailyRequest,
   buildRegionRankRequest,
   buildStoreDailyHistoryRequest,
   buildTradeOverviewRequest,
   historyWindows,
   parseProductDailyRows,
+  parseLedgerDailyRows,
   parseShopAnalysisRows,
   parseStoreDailyHistory,
   parseTradeOverview,
 } from '../../src/webapi-history/home-contracts.mjs';
+
+test('ledger daily contract keeps customer shipment separate from total outbound', () => {
+  assert.deepEqual(buildLedgerDailyRequest({
+    startDate: '2026-08-01',
+    endDate: '2026-08-02',
+  }), {
+    reportDateStart: '2026-08-01',
+    reportDateEnd: '2026-08-02',
+    pageNumber: 1,
+    pageSize: 200,
+  });
+  const parsed = parseLedgerDailyRows({
+    code: '0',
+    info: {
+      containAmount: 1,
+      data: {
+        count: 1,
+        list: [{
+          reportDate: '2026-08-01',
+          beginBalanceCnt: 5247,
+          inCnt: 521,
+          outCnt: 546,
+          endBalanceCnt: 5222,
+          totalCustomerCnt: 521,
+          customerCnt: 436,
+          platformCustomerCnt: 85,
+          outSupplierCnt: 25,
+          beginBalanceAmount: 215645.94,
+          inAmount: 16914.6,
+          outAmount: 17533.47,
+          endBalanceAmount: 212213.16,
+          totalCustomerAmount: 16666.27,
+        }],
+      },
+    },
+  }, {
+    storeCode: 'MZ2406',
+    observedAt: '2026-08-02T10:00:00.000Z',
+  });
+  assert.equal(parsed.count, 1);
+  assert.equal(parsed.rows[0].outboundCount, 546);
+  assert.equal(parsed.rows[0].customerOutboundCount, 521);
+  assert.equal(parsed.rows[0].supplierOutboundCount, 25);
+  assert.equal(parsed.rows[0].customerOutboundAmount, 16666.27);
+  assert.equal(parsed.rows[0].currency, null);
+});
 
 test('history windows are contiguous and never exceed the official 90-day bound', () => {
   const windows = historyWindows({

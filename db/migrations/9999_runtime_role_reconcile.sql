@@ -79,6 +79,10 @@ BEGIN
         'fact.full_home_finance_daily',
         'fact.full_home_product_finance_daily',
         'fact.full_home_finance_detail_observation',
+        'fact.full_home_finance_report_observation',
+        'fact.full_home_finance_adjustment_observation',
+        'fact.full_home_bill_daily',
+        'fact.full_home_ledger_daily',
         'ops.full_home_finance_sync_window'
     ]
     LOOP
@@ -415,6 +419,8 @@ GRANT SELECT ON
     fact.full_product_price_observation,
     fact.full_home_finance_daily,
     fact.full_home_product_finance_daily,
+    fact.full_home_ledger_daily,
+    fact.full_home_bill_daily,
     raw.openapi_fetch_batch,
     -- Identity pipeline aggregates only. The dashboard counts sealed evidence
     -- sets, candidates and decisions; it never reads raw.identifier_observation
@@ -471,7 +477,10 @@ TO sheinfm_sales_loader;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
     fact.full_home_finance_daily,
     fact.full_home_product_finance_daily,
-    fact.full_home_finance_detail_observation
+    fact.full_home_finance_detail_observation,
+    fact.full_home_finance_report_observation,
+    fact.full_home_finance_adjustment_observation,
+    fact.full_home_bill_daily
 TO sheinfm_sales_loader;
 GRANT SELECT, INSERT, UPDATE ON ops.full_home_finance_sync_window
 TO sheinfm_sales_loader;
@@ -603,6 +612,11 @@ GRANT SELECT, INSERT, UPDATE ON
     fact.full_home_store_daily,
     fact.full_home_region_daily,
     fact.full_home_product_daily
+TO sheinfm_webapi_loader;
+-- The inventory ledger is a separate reviewed WebAPI contract. Keep its grant
+-- explicit so adding ledger ingestion cannot silently widen the older homepage
+-- fact boundary.
+GRANT SELECT, INSERT, UPDATE ON fact.full_home_ledger_daily
 TO sheinfm_webapi_loader;
 
 -- Backfill control plane. Only the two OpenAPI domain loaders may open runs and
@@ -955,7 +969,8 @@ BEGIN
     FOREACH required_name IN ARRAY ARRAY[
         'fact.full_home_store_daily',
         'fact.full_home_region_daily',
-        'fact.full_home_product_daily'
+        'fact.full_home_product_daily',
+        'fact.full_home_ledger_daily'
     ]
     LOOP
         IF NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'SELECT')
@@ -978,6 +993,12 @@ BEGIN
     -- WebAPI experiment loader: negative on every other component's objects.
     FOREACH required_name IN ARRAY ARRAY[
         'fact.full_sku_sales_snapshot',
+        'fact.full_home_finance_daily',
+        'fact.full_home_product_finance_daily',
+        'fact.full_home_finance_detail_observation',
+        'fact.full_home_finance_report_observation',
+        'fact.full_home_finance_adjustment_observation',
+        'fact.full_home_bill_daily',
         'fact.inventory_snapshot',
         'fact.purchase_order',
         'fact.delivery',
@@ -1021,7 +1042,8 @@ BEGIN
         'raw.webapi_home_fetch_audit',
         'fact.full_home_store_daily',
         'fact.full_home_region_daily',
-        'fact.full_home_product_daily'
+        'fact.full_home_product_daily',
+        'fact.full_home_ledger_daily'
     ]
     LOOP
         FOREACH principal_check IN ARRAY ARRAY[

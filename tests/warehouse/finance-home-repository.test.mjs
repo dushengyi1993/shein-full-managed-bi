@@ -14,6 +14,9 @@ function runtime() {
       if (/INSERT INTO fact\.full_home_product_finance_daily/.test(sql)) {
         return { rows: [], rowCount: 1 };
       }
+      if (/INSERT INTO fact\.full_home_bill_daily/.test(sql)) {
+        return { rows: [], rowCount: 1 };
+      }
       return { rows: [], rowCount: 0 };
     },
     release() {},
@@ -38,6 +41,10 @@ test('finance repository replaces only its bounded derived window and hashes pri
       reportOrderNoHash: 'a'.repeat(64),
       addTime: '2026-07-28T01:00:00.000Z',
       currency: 'SAR',
+      expectedSettlementAmount: 22,
+      settlementStatus: 2,
+      completedPayAt: null,
+      estimatedPayAt: '2026-08-15T16:00:00.000Z',
     }],
     details: [{
       businessDate: '2026-07-28',
@@ -55,11 +62,26 @@ test('finance repository replaces only its bounded derived window and hashes pri
       reportOrderNoHash: 'a'.repeat(64),
       detailRowKeyHash: 'b'.repeat(64),
     }],
+    adjustments: [{
+      currency: 'SAR',
+      direction: 'DEDUCTION',
+      amount: 3,
+      goodsCount: 1,
+      category: '物流扣款',
+      productKey: 'SUP-1',
+      platformSkuId: 'SKU-1',
+      platformSkcId: 'SKC-1',
+      supplierSku: 'SUP-1',
+      unitPrice: 3,
+      reportOrderNoHash: 'a'.repeat(64),
+      detailRowKeyHash: 'c'.repeat(64),
+    }],
   });
 
   assert.deepEqual(loaded, {
     financeDailyRows: 1,
     productFinanceRows: 1,
+    billDailyRows: 1,
     priceObservations: 1,
   });
   assert.ok(calls.some(({ sql }) => /SET LOCAL ROLE sheinfm_sales_loader/.test(sql)));
@@ -82,6 +104,13 @@ test('finance repository replaces only its bounded derived window and hashes pri
   ));
   const price = calls.find(({ sql }) => /INSERT INTO fact\.full_product_price_observation/.test(sql));
   assert.equal(JSON.parse(price.params[0])[0].observation_key.length, 64);
+  const adjustment = calls.find(
+    ({ sql }) => /INSERT INTO fact\.full_home_finance_adjustment_observation/.test(sql),
+  );
+  assert.equal(JSON.parse(adjustment.params[0])[0].direction, 'DEDUCTION');
+  assert.ok(calls.some(
+    ({ sql }) => /INSERT INTO fact\.full_home_bill_daily/.test(sql),
+  ));
   assert.doesNotMatch(JSON.stringify(calls), /REPORT-SECRET|DETAIL-SECRET/);
   assert.equal(calls.at(-1).sql, 'COMMIT');
 });

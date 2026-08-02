@@ -5,6 +5,8 @@ import { SheinOpenApiError } from './shein-client.mjs';
 export const FINANCE_REPORT_LIST_PATH = '/open-api/finance/report-list';
 export const FINANCE_REPORT_SALES_DETAIL_PATH =
   '/open-api/finance/report-sales-detail';
+export const FINANCE_REPORT_ADJUSTMENT_DETAIL_PATH =
+  '/open-api/finance/report-adjustment-detail';
 // Live OpenAPI evidence (2026-07-30) rejects earlier report-list ranges with
 // platform code gsfs94190: 查询时间不能小于2024-01-01 00:00:00.
 export const FINANCE_HISTORY_EARLIEST_DATE = '2024-01-01';
@@ -44,6 +46,14 @@ function decimal(value, location) {
   const number = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(number) || number < 0) {
     fail('INVALID_RESPONSE_SHAPE', `${location} must be a non-negative decimal`);
+  }
+  return number;
+}
+
+function signedDecimal(value, location) {
+  const number = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(number)) {
+    fail('INVALID_RESPONSE_SHAPE', `${location} must be a decimal`);
   }
   return number;
 }
@@ -90,6 +100,12 @@ function isoInstantFromShanghai(value, location) {
   return parsed.toISOString();
 }
 
+function optionalInstantFromShanghai(value, location) {
+  return value === null || value === undefined || String(value).trim() === ''
+    ? null
+    : isoInstantFromShanghai(value, location);
+}
+
 export function financeWindows({
   startDate = FINANCE_HISTORY_EARLIEST_DATE,
   endDate,
@@ -131,14 +147,40 @@ export function mapFinanceReportListResponse(response, { page, pageSize } = {}) 
     const row = record(input, `response.info.reportOrderInfos[${index}]`);
     const reportOrderNo = optionalText(row.reportOrderNo);
     if (!reportOrderNo) fail('INVALID_RESPONSE_SHAPE', 'reportOrderNo is required');
+    const settlementStatus = row.settlementStatus === null
+      || row.settlementStatus === undefined
+      ? null
+      : integer(row.settlementStatus, 'report.settlementStatus', { minimum: 1 });
+    if (settlementStatus !== null && ![1, 2, 3].includes(settlementStatus)) {
+      fail('INVALID_RESPONSE_SHAPE', 'report settlementStatus is invalid');
+    }
     return {
       reportOrderNo,
       reportOrderNoHash: crypto.createHash('sha256').update(reportOrderNo).digest('hex'),
       addTime: isoInstantFromShanghai(row.addTime, 'report.addTime'),
       currency: currency(row.currencyCode, 'report.currencyCode'),
+      expectedSettlementAmount: row.estimateIncomeMoneyTotal === null
+        || row.estimateIncomeMoneyTotal === undefined
+        ? null
+        : signedDecimal(
+          row.estimateIncomeMoneyTotal,
+          'report.estimateIncomeMoneyTotal',
+        ),
+      settlementStatus,
+      completedPayAt: optionalInstantFromShanghai(
+        row.completedPayTime,
+        'report.completedPayTime',
+      ),
+      estimatedPayAt: optionalInstantFromShanghai(
+        row.estimatePayTime,
+        'report.estimatePayTime',
+      ),
       salesTotal: row.salesTotal === null || row.salesTotal === undefined
         ? null
         : integer(row.salesTotal, 'report.salesTotal'),
+      adjustmentTotal: row.replenishTotal === null || row.replenishTotal === undefined
+        ? null
+        : integer(row.replenishTotal, 'report.replenishTotal'),
       expenseType: row.expenseType === null || row.expenseType === undefined
         ? null
         : integer(row.expenseType, 'report.expenseType'),
@@ -205,6 +247,63 @@ export function mapFinanceSalesDetailResponse(response, {
   };
 }
 
+export function mapFinanceAdjustmentDetailResponse(response, {
+  reportOrderNoHash,
+} = {}) {
+  if (!/^[0-9a-f]{64}$/.test(String(reportOrderNoHash ?? ''))) {
+    fail('FINANCE_REPORT_HASH_INVALID', 'reportOrderNoHash is invalid');
+  }
+  const info = successfulInfo(response, FINANCE_REPORT_ADJUSTMENT_DETAIL_PATH);
+  const count = integer(info.count, 'response.info.count');
+  const reportReplenishDetail = count === 0 && info.reportReplenishDetail == null
+    ? []
+    : info.reportReplenishDetail;
+  if (!Array.isArray(reportReplenishDetail)) {
+    fail(
+      'INVALID_RESPONSE_SHAPE',
+      'response.info.reportReplenishDetail must be an array',
+    );
+  }
+  const rows = reportReplenishDetail.map((input, index) => {
+    const row = record(input, `response.info.reportReplenishDetail[${index}]`);
+    const id = optionalText(row.id);
+    if (!id) fail('INVALID_RESPONSE_SHAPE', 'finance adjustment id is required');
+    const directionCode = integer(
+      row.replenishType,
+      'adjustment.replenishType',
+      { minimum: 1 },
+    );
+    if (![1, 2].includes(directionCode)) {
+      fail('INVALID_RESPONSE_SHAPE', 'finance adjustment direction is invalid');
+    }
+    const platformSkuId = optionalText(row.skuCode);
+    const platformSkcId = optionalText(row.skcName);
+    const supplierSku = optionalText(row.supplierSku);
+    return {
+      reportOrderNoHash,
+      detailRowKeyHash: crypto.createHash('sha256').update(id).digest('hex'),
+      sourceBusinessAt: isoInstantFromShanghai(row.addTime, 'adjustment.addTime'),
+      currency: currency(row.settleCurrencyCode, 'adjustment.settleCurrencyCode'),
+      direction: directionCode === 1 ? 'SUPPLEMENT' : 'DEDUCTION',
+      amount: decimal(row.amount, 'adjustment.amount'),
+      goodsCount: integer(row.goodsCount, 'adjustment.goodsCount'),
+      category: optionalText(row.replenishCategory, 240),
+      productKey: supplierSku || platformSkcId || platformSkuId,
+      platformSkuId,
+      platformSkcId,
+      supplierSku,
+      unitPrice: row.unitPrice === null || row.unitPrice === undefined || row.unitPrice === ''
+        ? null
+        : decimal(row.unitPrice, 'adjustment.unitPrice'),
+    };
+  });
+  return {
+    count,
+    nextQuery: optionalText(info.query, 512),
+    rows,
+  };
+}
+
 export async function fetchFinanceWindow(client, {
   startDate,
   endDate,
@@ -212,6 +311,7 @@ export async function fetchFinanceWindow(client, {
   detailPageSize = 200,
   maxReports = 20_000,
   maxDetails = 2_000_000,
+  maxAdjustments = 2_000_000,
   detailConcurrency = 4,
 } = {}) {
   const [window] = financeWindows({ startDate, endDate });
@@ -277,19 +377,61 @@ export async function fetchFinanceWindow(client, {
     }
     return reportDetails;
   };
+  const fetchReportAdjustments = async (report) => {
+    if (report.adjustmentTotal === 0) return [];
+    const reportAdjustments = [];
+    let query;
+    let received = 0;
+    for (;;) {
+      const response = await client.request(FINANCE_REPORT_ADJUSTMENT_DETAIL_PATH, {
+        method: 'POST',
+        body: {
+          reportOrderNo: report.reportOrderNo,
+          perPage: detailPageSize,
+          ...(query ? { query } : {}),
+        },
+      });
+      const mapped = mapFinanceAdjustmentDetailResponse(response, {
+        reportOrderNoHash: report.reportOrderNoHash,
+      });
+      reportAdjustments.push(...mapped.rows);
+      received += mapped.rows.length;
+      if (reportAdjustments.length > maxAdjustments) {
+        fail('FINANCE_ADJUSTMENT_LIMIT', 'finance adjustment limit exceeded');
+      }
+      if (!mapped.nextQuery) {
+        if (received !== mapped.count) {
+          fail('PAGINATION_COUNT_MISMATCH', 'finance adjustment count did not match');
+        }
+        break;
+      }
+      if (mapped.rows.length === 0) {
+        fail('PAGINATION_EMPTY_GAP', 'finance adjustment cursor returned no rows');
+      }
+      query = mapped.nextQuery;
+    }
+    return reportAdjustments;
+  };
   const detailsByReport = new Array(reports.length);
+  const adjustmentsByReport = new Array(reports.length);
   let nextReport = 0;
   const workerCount = Math.min(detailConcurrency, reports.length);
   await Promise.all(Array.from({ length: workerCount }, async () => {
     while (nextReport < reports.length) {
       const index = nextReport;
       nextReport += 1;
-      detailsByReport[index] = await fetchReportDetails(reports[index]);
+      const report = reports[index];
+      detailsByReport[index] = await fetchReportDetails(report);
+      adjustmentsByReport[index] = await fetchReportAdjustments(report);
     }
   }));
   const details = detailsByReport.flat();
+  const adjustments = adjustmentsByReport.flat();
   if (details.length > maxDetails) {
     fail('FINANCE_DETAIL_LIMIT', 'finance detail limit exceeded');
   }
-  return { reports, details };
+  if (adjustments.length > maxAdjustments) {
+    fail('FINANCE_ADJUSTMENT_LIMIT', 'finance adjustment limit exceeded');
+  }
+  return { reports, details, adjustments };
 }

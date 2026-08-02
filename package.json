@@ -24,6 +24,7 @@
     "sync:supply": "node scripts/sync_full_managed_supply.mjs",
     "sync:home-history": "node scripts/sync_full_managed_home_history.mjs",
     "sync:home-finance": "node scripts/sync_full_managed_home_finance.mjs",
+    "sync:home-ledger": "node scripts/sync_full_managed_home_ledger.mjs",
     "start:store-login": "node scripts/serve_full_managed_store_login.mjs",
     "store-login:create-batch": "node scripts/create_full_managed_store_login_batch.mjs",
     "webapi:renew-sessions": "node scripts/renew_full_managed_webapi_sessions.mjs",
