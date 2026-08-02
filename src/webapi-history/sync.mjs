@@ -1,5 +1,6 @@
 import {
   buildAnalyseSearchRequest,
+  buildIndexUpdateTimeRequest,
   buildProductDiagnoseListRequest,
   buildRealtimeRequest,
   buildRegionRankRequest,
@@ -7,6 +8,7 @@ import {
   buildStoreDailyHistoryRequest,
   buildTradeOverviewRequest,
   historyWindows,
+  parseIndexUpdateTime,
   parseProductDiagnosePage,
   parseRegionRows,
   parseShopAnalysisRows,
@@ -315,6 +317,35 @@ async function syncRealtimeDay({
   });
 }
 
+async function resolveDataAnchor({
+  storeCode,
+  requestedEndDate,
+  transport,
+  repository,
+  clock,
+}) {
+  const result = await requestAndAudit({
+    transport,
+    repository,
+    storeCode,
+    endpointCode: 'UPDATE_TIME',
+    request: buildIndexUpdateTimeRequest(),
+    startDate: requestedEndDate,
+    endDate: requestedEndDate,
+    clock,
+    handle: async (body) => {
+      const parsed = parseIndexUpdateTime(body);
+      return { accepted: 1, payload: parsed };
+    },
+  });
+  if (!result.ok || !result.payload?.dataAnchorDate) {
+    throw new FullHomeSyncError(
+      result.errorCode ?? 'HOME_UPDATE_TIME_UNAVAILABLE',
+    );
+  }
+  return result.payload;
+}
+
 async function syncProductDate({
   storeCode,
   businessDate,
@@ -407,11 +438,12 @@ async function syncStoreWindow({
   completedProductDates,
   unsupportedTradeDates,
   unsupportedRegionDates,
-  productAnchorDate,
+  dataAnchor,
 }) {
   const result = {
     storeCode,
     ...window,
+    dataAnchor,
     storeDaily: null,
     shopDaily: null,
     productDaily: null,
@@ -419,7 +451,10 @@ async function syncStoreWindow({
     regionDaily: null,
     realtime: null,
   };
-  const storeRequest = buildStoreDailyHistoryRequest(window);
+  const storeRequest = buildStoreDailyHistoryRequest({
+    ...window,
+    observedDate: dataAnchor.dataAnchorDate,
+  });
   result.storeDaily = await requestAndAudit({
     transport,
     repository,
@@ -547,7 +582,7 @@ async function syncStoreWindow({
         const request = buildTradeOverviewRequest({
           startDate: businessDate,
           endDate: businessDate,
-          observedDate: businessDate,
+          observedDate: dataAnchor.dataAnchorDate,
         });
         const trade = await requestAndAudit({
           transport,
@@ -588,7 +623,7 @@ async function syncStoreWindow({
         const request = buildRegionRankRequest({
           startDate: businessDate,
           endDate: businessDate,
-          observedDate: businessDate,
+          observedDate: dataAnchor.dataAnchorDate,
         });
         const region = await requestAndAudit({
           transport,
@@ -652,7 +687,7 @@ async function syncStoreWindow({
     const product = await syncProductDate({
       storeCode,
       businessDate,
-      observedDate: productAnchorDate,
+      observedDate: dataAnchor.dataAnchorDate,
       transport,
       repository,
       clock,
@@ -736,6 +771,15 @@ export async function runFullHomeHistorySync({
       const storeResults = [];
       const historicalStartDate = windows[0]?.startDate ?? null;
       const historicalEndDate = windows.at(-1)?.endDate ?? null;
+      const dataAnchor = windows.length > 0
+        ? await resolveDataAnchor({
+            storeCode,
+            requestedEndDate: historicalEndDate,
+            transport,
+            repository,
+            clock,
+          })
+        : null;
       const [
         completedTradeDates,
         completedRegionDates,
@@ -812,7 +856,7 @@ export async function runFullHomeHistorySync({
           completedProductDates,
           unsupportedTradeDates,
           unsupportedRegionDates,
-          productAnchorDate: settledEndDate,
+          dataAnchor,
         }));
       }
       if (realtime) {

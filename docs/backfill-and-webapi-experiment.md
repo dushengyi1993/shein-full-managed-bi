@@ -322,6 +322,12 @@ Store history is fetched in contiguous windows of at most 90 days from
 `/sbn/index/get_critical_indicator_curve_chart`. The official endpoint may
 return dated rows whose unavailable metrics are null outside its retained
 operating window; those nulls remain null and are never backfilled with zero.
+Before any window request, the loader reads
+`/sbn/common/get_update_time` with `{pageCode: "Index", areaCd: "cn"}` and
+pins every store, trade, region and product request to that returned `dt`.
+The range end is not a valid substitute for this data-version anchor: during
+the platform settlement interval a newer requested date can legally exist
+while the official `dt` is still the prior day.
 
 The current official merchandise-details page no longer uses
 `/sbn/analyse/model_dimension` plus `/sbn/analyse/search` for the product list.

@@ -41,6 +41,16 @@ test('homepage history sync uses the current paginated product contract and pres
     },
     transportFactory: ({ session }) => async (endpointCode, request) => {
       events.push(`${session.storeCode}:${endpointCode}`);
+      if (endpointCode === 'UPDATE_TIME') {
+        return response({
+          code: '0',
+          info: {
+            areaCd: 'cn',
+            dt: '20260728',
+            updateTime: '2026-07-29 05:00:00',
+          },
+        });
+      }
       if (endpointCode === 'STORE_DAILY_HISTORY') {
         return response({
           code: '0',
@@ -146,6 +156,16 @@ test('homepage history sync resumes successful daily trade and region requests',
     }),
     transportFactory: () => async (endpointCode, request) => {
       events.push(`${endpointCode}:${request.startDate ?? request.startDt ?? request.time?.startDate}`);
+      if (endpointCode === 'UPDATE_TIME') {
+        return response({
+          code: '0',
+          info: {
+            areaCd: 'cn',
+            dt: '20260730',
+            updateTime: '2026-07-31 05:00:00',
+          },
+        });
+      }
       if (['TRADE_OVERVIEW', 'REGION_RANK'].includes(endpointCode)) {
         activeDailyRequests += 1;
         maximumDailyRequests = Math.max(maximumDailyRequests, activeDailyRequests);
@@ -283,6 +303,16 @@ test('current-day sync aggregates only additive hourly realtime metrics', async 
     openSession: async () => ({ async close() {} }),
     transportFactory: () => async (endpointCode) => {
       endpoints.push(endpointCode);
+      if (endpointCode === 'UPDATE_TIME') {
+        return response({
+          code: '0',
+          info: {
+            areaCd: 'cn',
+            dt: '20260801',
+            updateTime: '2026-08-02 05:00:00',
+          },
+        });
+      }
       if (endpointCode === 'STORE_DAILY_HISTORY') {
         return response({ code: '0', info: [] });
       }
@@ -370,6 +400,16 @@ test('a range ending today anchors settled endpoints to yesterday', async () => 
     openSession: async () => ({ async close() {} }),
     transportFactory: () => async (endpointCode, request) => {
       requests.push({ endpointCode, request });
+      if (endpointCode === 'UPDATE_TIME') {
+        return response({
+          code: '0',
+          info: {
+            areaCd: 'cn',
+            dt: '20260801',
+            updateTime: '2026-08-02 05:00:00',
+          },
+        });
+      }
       if (endpointCode === 'STORE_DAILY_HISTORY') {
         return response({
           code: '0',

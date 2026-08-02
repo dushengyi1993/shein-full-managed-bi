@@ -7,6 +7,10 @@ export const HOME_HISTORY_MAX_WINDOW_DAYS = 90;
 export const HOME_HISTORY_CONTRACT_VERSION = 3;
 
 export const HOME_ENDPOINTS = Object.freeze({
+  UPDATE_TIME: Object.freeze({
+    method: 'POST',
+    path: '/sbn/common/get_update_time',
+  }),
   STORE_DAILY_HISTORY: Object.freeze({
     method: 'POST',
     path: '/sbn/index/get_critical_indicator_curve_chart',
@@ -209,6 +213,13 @@ export function buildStoreDailyHistoryRequest(input = {}) {
     queryType: 1,
     pageNum: 1,
     pageSize: 1000,
+  });
+}
+
+export function buildIndexUpdateTimeRequest() {
+  return Object.freeze({
+    pageCode: 'Index',
+    areaCd: 'cn',
   });
 }
 
@@ -423,6 +434,26 @@ export function parseStoreDailyHistory(body, {
     }));
   }
   return Object.freeze(result);
+}
+
+export function parseIndexUpdateTime(body) {
+  const envelope = record(body);
+  const info = record(envelope.info ?? envelope.data ?? envelope);
+  const compactDate = String(info.dt ?? '').trim();
+  if (!/^\d{8}$/.test(compactDate)) {
+    fail('HOME_UPDATE_TIME_INVALID', 'index update date is invalid');
+  }
+  const dataAnchorDate = isoDate(
+    `${compactDate.slice(0, 4)}-${compactDate.slice(4, 6)}-${compactDate.slice(6)}`,
+    'index update date',
+  );
+  if (String(info.areaCd ?? '').toLowerCase() !== 'cn') {
+    fail('HOME_UPDATE_TIME_INVALID', 'index update timezone is invalid');
+  }
+  return Object.freeze({
+    dataAnchorDate,
+    sourceUpdatedAt: String(info.updateTime ?? '').trim() || null,
+  });
 }
 
 function flattenAnalysisRow(input) {

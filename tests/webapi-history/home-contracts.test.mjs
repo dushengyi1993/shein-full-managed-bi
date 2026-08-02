@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildAnalyseSearchRequest,
+  buildIndexUpdateTimeRequest,
   buildLedgerDailyRequest,
   buildProductDailyRequest,
   buildProductDiagnoseListRequest,
@@ -10,6 +11,7 @@ import {
   buildStoreDailyHistoryRequest,
   buildTradeOverviewRequest,
   historyWindows,
+  parseIndexUpdateTime,
   parseProductDiagnosePage,
   parseProductDailyRows,
   parseLedgerDailyRows,
@@ -96,6 +98,29 @@ test('store history request is fixed to the full-managed all-site contract', () 
       endDate: '2026-07-29',
     }),
     { code: 'HOME_DATE_RANGE_INVALID' },
+  );
+});
+
+test('index update time pins the official data-version anchor', () => {
+  assert.deepEqual(buildIndexUpdateTimeRequest(), {
+    pageCode: 'Index',
+    areaCd: 'cn',
+  });
+  assert.deepEqual(parseIndexUpdateTime({
+    code: '0',
+    info: {
+      pageNm: '首页概览',
+      areaCd: 'cn',
+      dt: '20260801',
+      updateTime: '2026-08-02 05:44:33',
+    },
+  }), {
+    dataAnchorDate: '2026-08-01',
+    sourceUpdatedAt: '2026-08-02 05:44:33',
+  });
+  assert.throws(
+    () => parseIndexUpdateTime({ info: { areaCd: 'cn', dt: '' } }),
+    { code: 'HOME_UPDATE_TIME_INVALID' },
   );
 });
 
