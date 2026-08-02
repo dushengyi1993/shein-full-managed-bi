@@ -177,7 +177,7 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.doesNotMatch(html, /<script[^>]+src="(?!\/app\.js)/);
   const assetVersions = [];
   for (const asset of ['favicon.svg', 'styles.css', 'home-parity.css', 'app.js']) {
-    const match = html.match(new RegExp(`/${asset.replace('.', '\\.')}\\?v=(20260801\\.\\d+)`));
+    const match = html.match(new RegExp(`/${asset.replace('.', '\\.')}\\?v=(20260802\\.\\d+)`));
     assert.ok(match, `${asset} must use a dated local cache key`);
     assetVersions.push(match[1]);
   }

@@ -589,9 +589,9 @@ test('serves the local dashboard and its static assets', async () => {
   assert.match(pageResponse.headers.get('content-type'), /^text\/html/);
   const pageHtml = await pageResponse.text();
   assert.match(pageHtml, /全托运营驾驶舱/);
-  assert.match(pageHtml, /\/app\.js\?v=20260801\.\d+/);
-  assert.match(pageHtml, /\/styles\.css\?v=20260801\.\d+/);
-  assert.match(pageHtml, /\/home-parity\.css\?v=20260801\.\d+/);
+  assert.match(pageHtml, /\/app\.js\?v=20260802\.\d+/);
+  assert.match(pageHtml, /\/styles\.css\?v=20260802\.\d+/);
+  assert.match(pageHtml, /\/home-parity\.css\?v=20260802\.\d+/);
 
   assert.equal(scriptResponse.status, 200);
   assert.match(scriptResponse.headers.get('content-type'), /^text\/javascript/);
