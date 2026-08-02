@@ -149,5 +149,5 @@ sudo env \
 
 Nginx 对 `/authorize` 与 `/openapi/authorize/callback` 使用独立安全日志，只记录请求方法和
 `$uri`，明确不记录 `$args` 或 `$request`；回调处理后立即 `303` 到不含参数的结果页。该日志按
-20 MB / 14 天轮转。Caddy 不为该站点启用 URI 访问日志，HAProxy 保持 TCP 模式。部署时还需
-复核 Cloudflare 未开启会保存完整查询串的调试日志或 Logpush 数据集。
+20 MB / 14 天轮转。Caddy 不为该站点启用 URI 访问日志，HAProxy 保持 TCP 模式。公网入口
+采用源站直连 HTTPS，不依赖 Cloudflare 代理或其日志能力。

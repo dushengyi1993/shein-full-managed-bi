@@ -1,14 +1,14 @@
 # 全托 BI 云端部署手册
 
-最后更新：2026-07-26
+最后更新：2026-08-02
 
 ## 1. 生产拓扑与边界
 
 `fm.dushengyi.cc` 的公网链路为：
 
 ```text
-Cloudflare
-  -> HAProxy 443
+Public DNS -> origin
+  -> HAProxy 443 (SSH/TLS multiplexing)
   -> Caddy 127.0.0.1:11443
   -> Nginx 127.0.0.1:8081
        -> Portal 127.0.0.1:8788
@@ -17,6 +17,10 @@ Cloudflare
 ```
 
 PostgreSQL 独立监听 `127.0.0.1:54330`。全托与半托只共享服务器和边缘反代进程；发布目录、运行身份、数据库、端口、凭据、事实表和 systemd 单元全部隔离。
+
+`fm.dushengyi.cc` 直接解析到源站，不依赖 Cloudflare 代理。HAProxy 仍按
+ClientHello/SNI 将全托 TLS 路由到仅监听回环地址的 Caddy；Caddy 不信任
+外部请求携带的 `CF-Connecting-IP`。
 
 - 发布目录：`/opt/shein-fm/releases/<git-commit>`
 - 当前版本：`/opt/shein-fm/current`

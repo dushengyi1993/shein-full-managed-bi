@@ -10,10 +10,10 @@ https://fm.dushengyi.cc:11443 {
 		protocols tls1.2 tls1.3
 	}
 	reverse_proxy 127.0.0.1:8081 {
-		# HAProxy only admits Cloudflare peers for this SNI, so the original
-		# client address supplied by Cloudflare can be trusted on this hop.
-		header_up X-Real-IP {http.request.header.CF-Connecting-IP}
-		header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+		# Direct HTTPS is accepted. Do not trust caller-supplied Cloudflare
+		# headers; record only the immediate trusted HAProxy hop.
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
 		header_up X-Forwarded-Proto https
 		header_up Host {host}
 	}
