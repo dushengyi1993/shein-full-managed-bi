@@ -1692,7 +1692,7 @@ export async function readFullHomeHistory(pool) {
       ),
       reconciliationStatus: row.reconciliation_status,
       observedAt: pgInstant(row.observed_at),
-      basis: 'FINANCE_DETAIL_BUSINESS_DATE',
+      basis: 'ACTUAL_SETTLEMENT_DATE',
     }));
     const productFinanceDaily = productFinanceResult.rows.map((row, index) => ({
       storeCode: row.store_code,
@@ -1724,7 +1724,7 @@ export async function readFullHomeHistory(pool) {
       ),
       priceObservedAt: pgInstant(row.price_observed_at),
       observedAt: pgInstant(row.observed_at),
-      basis: 'ACTUAL_SETTLEMENT_DATE',
+      basis: 'FINANCE_DETAIL_BUSINESS_DATE',
     }));
     const allDates = [...storeDaily, ...financeDaily, ...ledgerDaily, ...billDaily]
       .map(({ date }) => date)

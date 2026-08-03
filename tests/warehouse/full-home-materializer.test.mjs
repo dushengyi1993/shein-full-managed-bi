@@ -168,8 +168,8 @@ test('materializes ledger shipment and merchant bill as separate homepage facts'
           calculated_settlement_amount: '16424.18',
           reported_settlement_amount: '16424.18',
           report_count: '2',
-          settled_report_count: '0',
-          pending_report_count: '2',
+          settled_report_count: '2',
+          pending_report_count: '0',
           reconciliation_status: 'MATCHED',
           observed_at: '2026-08-02T02:10:00.000Z',
         }] };
@@ -184,4 +184,5 @@ test('materializes ledger shipment and merchant bill as separate homepage facts'
   assert.equal(result.billDaily[0].salesAmount, 16631.27);
   assert.equal(result.billDaily[0].deductionAmount, 207.09);
   assert.equal(result.billDaily[0].reconciliationStatus, 'MATCHED');
+  assert.equal(result.billDaily[0].basis, 'ACTUAL_SETTLEMENT_DATE');
 });
