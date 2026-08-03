@@ -15,7 +15,7 @@ const ROUTES = Object.freeze({
   returns: { title: '采购退货', code: 'RETURNS' },
   compliance: { title: '合规与价格', code: 'COMPLIANCE' },
   finance: { title: '财务结算', code: 'FINANCE' },
-  platform: { title: '紧急事项', code: 'WEBHOOK' },
+  platform: { title: '平台动态', code: 'WEBHOOK' },
   ops: { title: '运营待办', code: 'AUTOMATION' },
   system: { title: '系统管理', code: 'SYSTEM' },
 });
@@ -50,10 +50,10 @@ const HOME_TREND_METRICS = Object.freeze({
   paymentOrderCount: { label: '支付订单', group: '经营', aggregate: 'sum' },
   exposureUsers: { label: '曝光量', group: '流量', aggregate: 'sum' },
   goodsDetailVisitors: { label: '商详访客', group: '流量', aggregate: 'sum' },
-  billSalesAmount: { label: '账单销售款', money: true, group: '账单', aggregate: 'sum' },
+  billSalesAmount: { label: '结算销售款', money: true, group: '结算', aggregate: 'sum' },
   supplementAmount: { label: '补款', money: true, group: '账单', aggregate: 'sum' },
   deductionAmount: { label: '扣款', money: true, group: '账单', aggregate: 'sum' },
-  settlementAmount: { label: '应结金额', money: true, group: '账单', aggregate: 'sum' },
+  settlementAmount: { label: '实际结算金额', money: true, group: '结算', aggregate: 'sum' },
   ledgerBeginCount: { label: '期初数量', suffix: '件', group: '台账数量', aggregate: 'first' },
   ledgerInboundCount: { label: '入库数量', suffix: '件', group: '台账数量', aggregate: 'sum' },
   ledgerOutboundCount: { label: '出库数量', suffix: '件', group: '台账数量', aggregate: 'sum' },
@@ -5883,6 +5883,7 @@ function homeScopedRows(range = selectedHomeDateRange()) {
         (row) => effectiveCodes.has(String(row.storeCode)),
       );
   return {
+    range,
     storeDaily,
     productDaily,
     regionDaily,
@@ -5987,42 +5988,55 @@ function resolvedHomeDaily(bundle) {
         webapiSalesQuantity: directQuantity,
         currency: billedRows[0]?.currency || directRows[0]?.estimationCurrency || null,
         salesAmountBasis: billedAmount !== null
-          ? 'BILL_CONFIRMED'
+          ? 'FINANCE_CONFIRMED'
           : estimatedAmount !== null
             ? 'ESTIMATED'
             : 'UNAVAILABLE',
         salesQuantityBasis: directQuantity !== null
           ? 'WEBAPI'
           : billedQuantity !== null
-            ? 'BILL_CONFIRMED'
+              ? 'FINANCE_CONFIRMED'
             : 'UNAVAILABLE',
       };
     });
   }
 
   const operating = firstRowByStoreDate(bundle.storeDaily);
+  const finance = firstRowByStoreDate(bundle.financeDaily);
   const ledger = firstRowByStoreDate(bundle.ledgerDaily);
   const bill = firstRowByStoreDate(bundle.billDaily);
-  const keys = new Set([...operating.keys(), ...ledger.keys(), ...bill.keys()]);
+  const keys = new Set([
+    ...operating.keys(),
+    ...finance.keys(),
+    ...ledger.keys(),
+    ...bill.keys(),
+  ]);
   return [...keys].map((key) => {
     const live = operating.get(key);
+    const confirmedFinance = finance.get(key);
     const confirmedLedger = ledger.get(key);
     const confirmedBill = bill.get(key);
-    const seed = live || confirmedLedger || confirmedBill;
+    const seed = live || confirmedFinance || confirmedLedger || confirmedBill;
     const operatingBasis = homeOperatingBasis(live);
     return {
       storeCode: seed?.storeCode,
       date: seed?.date,
-      currency: confirmedBill?.currency || live?.currency || confirmedLedger?.currency || null,
-      salesAmount: finiteMetric(confirmedBill?.salesAmount)
-        ? confirmedBill.salesAmount
+      currency: confirmedFinance?.currency
+        || confirmedBill?.currency
+        || live?.currency
+        || confirmedLedger?.currency
+        || null,
+      salesAmount: typeof confirmedFinance?.netAmount === 'number'
+          && Number.isFinite(confirmedFinance.netAmount)
+        ? confirmedFinance.netAmount
         : live?.dealAmount ?? null,
       salesQuantity: isUnit(confirmedLedger?.customerOutboundCount)
         ? confirmedLedger.customerOutboundCount
         : live?.salesQuantity ?? null,
       webapiSalesQuantity: live?.salesQuantity ?? null,
-      salesAmountBasis: finiteMetric(confirmedBill?.salesAmount)
-        ? 'BILL_CONFIRMED'
+      salesAmountBasis: typeof confirmedFinance?.netAmount === 'number'
+          && Number.isFinite(confirmedFinance.netAmount)
+        ? 'FINANCE_CONFIRMED'
         : finiteMetric(live?.dealAmount)
           ? operatingBasis
           : 'UNAVAILABLE',
@@ -6057,6 +6071,7 @@ function resolvedHomeDaily(bundle) {
       ledgerPrepareEntryCount: confirmedLedger?.prepareOrderEntryCount ?? null,
       ledgerUrgentEntryCount: confirmedLedger?.urgentOrderEntryCount ?? null,
       ledgerObservedAt: confirmedLedger?.observedAt ?? null,
+      financeObservedAt: confirmedFinance?.observedAt ?? null,
       billObservedAt: confirmedBill?.observedAt ?? null,
     };
   }).sort((left, right) => (
@@ -6192,38 +6207,81 @@ function formatPlainAmount(value) {
 
 function homeMetricSourceNote(bundle, key) {
   const rows = resolvedHomeDaily(bundle);
+  const storeCodes = [...bundle.storeCodes].sort();
+  const expectedDays = dateSpanDays(bundle.range);
+  const signedKeys = new Set([
+    'salesAmount',
+    'billSalesAmount',
+    'settlementAmount',
+    'ledgerBeginAmount',
+    'ledgerInboundAmount',
+    'ledgerOutboundAmount',
+    'ledgerEndAmount',
+  ]);
+  const hasValue = (value) => (
+    typeof value === 'number'
+    && Number.isFinite(value)
+    && (signedKeys.has(key) || value >= 0)
+  );
+  const datesByStore = new Map(storeCodes.map((storeCode) => [storeCode, new Set()]));
+  for (const row of rows) {
+    if (datesByStore.has(row.storeCode) && hasValue(row[key])) {
+      datesByStore.get(row.storeCode).add(row.date);
+    }
+  }
+  const complete = [];
+  const partial = [];
+  const missing = [];
+  for (const storeCode of storeCodes) {
+    const count = datesByStore.get(storeCode)?.size || 0;
+    if (count >= expectedDays) complete.push(storeCode);
+    else if (count > 0) partial.push(storeCode);
+    else missing.push(storeCode);
+  }
+  const compactStores = (codes) => (
+    codes.length <= 3 ? codes.join('、') : `${codes.slice(0, 3).join('、')}等${codes.length}家`
+  );
+  const coverage = [
+    `完整 ${complete.length}/${storeCodes.length}家`,
+    partial.length ? `部分 ${compactStores(partial)}` : null,
+    missing.length ? `缺失 ${compactStores(missing)}` : null,
+  ].filter(Boolean).join(' · ');
+  const latestDate = (sourceRows) => sourceRows
+    .map(({ date }) => date)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  const shortDate = (value) => String(value || '').replace(/^\d{4}-/, '').replace('-', '/');
   if (key === 'salesQuantity' || key === 'salesAmount') {
-    const basisKey = key === 'salesQuantity' ? 'salesQuantityBasis' : 'salesAmountBasis';
-    const confirmed = rows.filter((row) => (
-      key === 'salesQuantity'
-        ? row[basisKey] === 'LEDGER_CONFIRMED'
-        : row[basisKey] === 'BILL_CONFIRMED'
-    )).length;
-    const settled = rows.filter((row) => row[basisKey] === 'WEBAPI_INDEX').length;
-    const realtime = rows.filter((row) => row[basisKey] === 'WEBAPI_REALTIME').length;
-    const parts = [
-      confirmed ? `${key === 'salesQuantity' ? '台账' : '账单'}确认 ${confirmed} 店日` : null,
-      settled ? `历史日经营 ${settled} 店日` : null,
-      realtime ? `日内实时暂估 ${realtime} 店日` : null,
-    ].filter(Boolean);
-    return parts.join(' · ') || '当前范围暂无可用来源';
+    const sourceRows = key === 'salesQuantity' ? bundle.ledgerDaily : bundle.financeDaily;
+    const latest = latestDate(sourceRows);
+    return [
+      latest ? `${key === 'salesQuantity' ? '台账' : '财务明细'}至 ${shortDate(latest)}` : null,
+      coverage,
+    ].filter(Boolean).join(' · ') || '当前范围暂无可用来源';
   }
   if (key.startsWith('ledger')) {
-    const dates = bundle.ledgerDaily.map(({ date }) => date).filter(Boolean).sort();
-    return dates.length ? `台账更新至 ${dates.at(-1)}` : '台账尚未返回';
+    const latest = latestDate(bundle.ledgerDaily);
+    return latest ? `台账至 ${shortDate(latest)} · ${coverage}` : `台账尚未返回 · ${coverage}`;
   }
   if (['billSalesAmount', 'supplementAmount', 'deductionAmount', 'settlementAmount']
     .includes(key)) {
     const mismatches = bundle.billDaily.filter(
       ({ reconciliationStatus }) => reconciliationStatus === 'MISMATCH',
     ).length;
-    return mismatches
-      ? `${mismatches} 个店日账单待核对`
+    const latest = latestDate(bundle.billDaily);
+    const reconciliation = mismatches
+      ? `${mismatches}个账单日金额不一致`
       : bundle.billDaily.length
-        ? '按报账单生成日 · 已自动核对'
+        ? '应结金额一致'
         : '所选日期尚未出账';
+    return [
+      latest ? `实际结算至 ${shortDate(latest)}` : null,
+      reconciliation,
+      coverage,
+    ].filter(Boolean).join(' · ');
   }
-  return '';
+  return coverage;
 }
 
 function historyMetricRows() {
@@ -6273,16 +6331,16 @@ function historyMetricRows() {
   );
 
   const salesRows = [
-    metric('销售金额', 'salesAmount', 'money', '出账日使用账单销售款；未出账日期保留实时成交金额暂估'),
+    metric('销售金额', 'salesAmount', 'money', '财务明细收入减支出，按明细业务发生日归属；尚未形成财务明细的日期使用经营后台成交金额暂估'),
     metric('销量', 'salesQuantity', 'count', '优先台账客单出库数量；未出台账日期使用实时销量'),
     metric('支付人数', 'buyerCount', 'count', '支付买家去重人数'),
     metric('支付订单数', 'paymentOrderCount', 'count', '支付成功订单数'),
   ];
   const billRows = [
-    metric('账单销售款', 'billSalesAmount', 'money', '销售明细收入减销售明细支出'),
+    metric('结算销售款', 'billSalesAmount', 'money', '已完成结算账单中的销售明细收入减销售明细支出，按平台实际完成结算日归属'),
     metric('补款', 'supplementAmount', 'money', '已进入商家账单的补款'),
     metric('扣款', 'deductionAmount', 'money', '已进入商家账单的扣款'),
-    metric('账单应结金额', 'settlementAmount', 'money', '销售款 + 补款 - 扣款，并与官方预计结算金额核对'),
+    metric('实际结算金额', 'settlementAmount', 'money', '已完成结算账单的销售款 + 补款 - 扣款，并与平台账单金额核对'),
   ];
   const exposureVisitRate = ratioFrom(
     resolvedCurrent,
@@ -6399,16 +6457,20 @@ function homeHelpTip(text, label = '查看口径说明') {
 }
 
 function homeMetricTable(title, subtitle, metrics, currentRange, previousRange) {
-  const comparisonNote = [
-    subtitle,
-    `本期 ${currentRange.start} → ${currentRange.end}`,
-    `前期 ${previousRange.start} → ${previousRange.end}，为紧邻本期且天数完全相同的上一窗口`,
-    '未知显示 —，不会补零',
-  ].join('；');
+  const tableNotes = {
+    销售与支付: '用于判断所选范围的销售规模与转化结果。销售金额优先取财务明细净额（收入－支出，按业务发生日），销量优先取官方台账客单出库；尚未确认的日期用经营后台实时数据暂估。各指标按店铺、日期汇总，未知显示 —，不会补零。',
+    商家账单: '用于核对平台已经实际完成的结算，不代表销售发生日。数据来自 OpenAPI 商家账单、销售明细和补扣款；主时间轴使用平台 completedPayTime（实际完成结算日），报表生成时间只表示数据新鲜度。结算销售款＝销售明细收入－支出；实际结算金额＝销售款＋补款－扣款，并与平台账单金额比较，差额不超过 0.01 视为一致。尚未完成结算的预计日期不混入本表。',
+    流量表现: '用于判断曝光到商详、商详到支付的转化效率。数据来自全托经营后台；曝光到访率＝商详访客÷曝光量，商详支付率＝支付订单数÷商详访客。跨店汇总为各店数据求和，不冒充平台去重人数。',
+    采购履约: '用于观察备货与集采规模及实际入库承接。订单数来自全托经营后台，入库件数来自官方库存台账；所选范围内按店铺、日期求和。',
+    台账数量: '用于复盘库存数量流转，数据来自官方财务台账。期初取每家店所选范围第一天，期末取最后一天；入库、出库为范围累计。总出库包含多种出库类型，不等于销量。',
+    台账金额: '用于复盘库存价值流转，不代表销售收入。数据来自官方财务台账；期初、期末分别取每家店范围首尾值，入库、出库为范围累计。',
+    客户结构: '用于判断新客贡献，数据来自全托经营后台。新客销量占比＝新客销量÷同口径经营销量；新客订单占比＝新客支付订单数÷支付订单数。口径不兼容或未知时显示 —。',
+  };
+  const comparisonNote = tableNotes[title] || subtitle;
   return `
     <article class="overview-matrix-card home-history-card">
       <div class="matrix-card-head">
-        <div class="title-with-help"><h4>${escapeHtml(title)}</h4>${homeHelpTip(comparisonNote, `${title}口径说明`)}</div>
+        <div class="title-with-help"><h4>${escapeHtml(title)}</h4>${homeHelpTip(comparisonNote, `${title}用途、来源与公式`)}</div>
       </div>
       <div class="metric-matrix cols-3 home-history-matrix" role="table" aria-label="${escapeHtml(title)}">
         <span class="matrix-cell head" role="columnheader">指标</span>
@@ -6438,6 +6500,12 @@ function renderHistoryKpis() {
         <div><span class="eyebrow">BUSINESS OVERVIEW</span><h2>关键经营数据</h2></div>
         <p>${escapeHtml(`${rangeLabel} · ${summary.current.productMode ? '货号搜索范围' : `${summary.current.storeCodes.size} 家店`} · 未返回字段保持 —`)}</p>
       </header>
+      <div class="home-period-context" aria-label="本期与前期范围">
+        <span>本期 <strong>${escapeHtml(compactRangeLabel(summary.range))}</strong></span>
+        <i aria-hidden="true"></i>
+        <span>前期 <strong>${escapeHtml(compactRangeLabel(previousRange))}</strong></span>
+        <small>紧邻上一同长度窗口</small>
+      </div>
       <div class="kpi-six home-history-card-grid">
         ${homeMetricTable('销售与支付', '实时经营与台账确认自动接续', summary.salesRows, summary.range, previousRange)}
         ${homeMetricTable('商家账单', '销售款、补扣款与应结核对', summary.billRows, summary.range, previousRange)}
@@ -6448,7 +6516,7 @@ function renderHistoryKpis() {
         ${homeMetricTable('客户结构', '新客规模与占比', summary.customerRows, summary.range, previousRange)}
         <article class="overview-matrix-card home-history-card home-region-card">
           <div class="matrix-card-head">
-            <div class="title-with-help"><h4>主销地区</h4>${homeHelpTip(`按 ${summary.range.start} → ${summary.range.end} 及当前店铺范围汇总地区销量，只展示销量 Top 4；未知不补零。`, '主销地区口径说明')}</div>
+            <div class="title-with-help"><h4>主销地区</h4>${homeHelpTip('用于判断销量主要流向。数据来自经营后台地区销量，按当前日期和店铺范围汇总后降序排列，只展示 Top 4；未知不补零。', '主销地区用途与来源')}</div>
           </div>
           <div class="metric-matrix cols-region" role="table" aria-label="销量 Top 主销地区">
             <span class="matrix-cell head" role="columnheader">排名</span>
@@ -6485,7 +6553,7 @@ function groupHistoryByDate(bundle) {
         salesAmount: rows.some(({ salesAmountBasis }) => salesAmountBasis === 'WEBAPI_REALTIME')
           ? 'PROVISIONAL'
           : rows.some(({ salesAmountBasis }) => (
-              salesAmountBasis === 'BILL_CONFIRMED'
+              salesAmountBasis === 'FINANCE_CONFIRMED'
               || salesAmountBasis === 'WEBAPI_INDEX'
             ))
             ? 'CONFIRMED'
@@ -6948,8 +7016,8 @@ function renderHistoryRankings() {
   };
   const storeAmountBasisNote = rankingBasisNote(
     'salesAmountBasis',
-    'BILL_CONFIRMED',
-    '账单确认',
+    'FINANCE_CONFIRMED',
+    '财务明细确认',
   );
   const storeAmountCurrency = homeCurrency(bundle) || rankedFinanceCurrency;
   const storeAmount = aggregateHistoryRanking(
@@ -8634,50 +8702,38 @@ function platformDecisionOverview(queryData) {
   const queue = productRecord(queryData.queue);
   const summary = productRecord(queryData.summary);
   const subscription = productRecord(queryData.subscription);
-  const materialized = productRecord(queryData.source?.eventMaterialization);
-  const runtime = health.ok === true
-    ? 'Receiver / Worker 在线'
-    : health.ok === false
-      ? '运行态需关注'
-      : '运行态未知';
   const queuePending = isUnit(queue.queued) && isUnit(queue.running)
     ? queue.queued + queue.running
     : null;
-  const queueRisk = isUnit(queue.retry) && isUnit(queue.deadLetter)
-    ? `${numberFormatter.format(queue.retry)} / ${numberFormatter.format(queue.deadLetter)}`
-    : '未知';
-  const subscriptionNote = isUnit(subscription.readbackCount) && subscription.readbackCount === 0
-    ? '尚无回读记录，不等于已证明未订阅'
-    : `不一致 ${nullableUnits(subscription.mismatchedCount)} · 回调失败 ${nullableUnits(subscription.callbackFailedCount)}`;
-  const runtimeNote = [
-    health.receiver ? webhookRuntimeLabel(health.receiver, 'Receiver') : null,
-    health.worker ? webhookRuntimeLabel(health.worker, 'Worker') : null,
-  ].filter(Boolean).join(' · ') || '尚无 Receiver / Worker 心跳证据';
+  const failed = isUnit(summary.failureEventCount) && isUnit(queue.deadLetter)
+    ? summary.failureEventCount + queue.deadLetter
+    : null;
+  const subscriptionNote = isUnit(subscription.readbackCount)
+    ? `已回读 ${numberFormatter.format(subscription.readbackCount)} 项订阅`
+    : '正在读取订阅状态';
   return `
     <section class="sales-period-overview platform-decision-overview" aria-label="平台动态经营概览">
       <header class="sales-workspace-head">
         <div>
           <span class="eyebrow">PLATFORM OPERATING PULSE</span>
-          <h1>紧急事项</h1>
-          <p>默认只展示紧急、高优先或处理失败的 Webhook 事项；普通业务动态和技术回执下沉到筛选与证据区。</p>
+          <h1>平台动态</h1>
+          <p>集中查看会影响销售、履约、商品可售状态或自动化能力的变化；普通成功回执保留在审计层。</p>
         </div>
         <div class="sales-range-receipt">
-          <span>事件范围 / 当前店铺</span>
+          <span>当前店铺范围</span>
           <strong>${escapeHtml(inventoryScopeLabel())}</strong>
-          <small>${escapeHtml(`${runtime} · 评估 ${sourceTime(queryData.source?.healthEvaluatedAt)}`)}</small>
+          <small>${escapeHtml(`${subscriptionNote} · 更新 ${sourceTime(queryData.source?.healthEvaluatedAt)}`)}</small>
         </div>
       </header>
       <div class="sales-period-grid platform-decision-grid">
-        ${salesPeriodMetric('事件链路', runtime, runtimeNote, health.ok === true ? 'primary' : '')}
-        ${salesPeriodMetric('待处理任务', queuePending === null ? '未知' : `${numberFormatter.format(queuePending)} 条`, `等待 ${queueMetric(queue, 'queued')} · 处理中 ${queueMetric(queue, 'running')}`)}
-        ${salesPeriodMetric('重试 / 死信', queueRisk, '两类异常分开统计；未知不补零')}
-        ${salesPeriodMetric('近 24 小时重点动态', isUnit(summary.last24hAttentionCount) ? `${numberFormatter.format(summary.last24hAttentionCount)} 条` : '未知', '仅统计运营重点动态，不包含普通验证回调')}
-        ${salesPeriodMetric('高优先 / 处理失败', `${nullableUnits(summary.highPriorityCount)} / ${nullableUnits(summary.failureEventCount)}`, `影响 ${nullableUnits(summary.impactedStoreCount)} 家店`)}
-        ${salesPeriodMetric('订阅回读', `${nullableUnits(subscription.readbackCount)} 条`, subscriptionNote)}
+        ${salesPeriodMetric('近24小时重点动态', isUnit(summary.last24hAttentionCount) ? `${numberFormatter.format(summary.last24hAttentionCount)} 条` : '未知', `影响 ${nullableUnits(summary.impactedStoreCount)} 家店`, 'primary')}
+        ${salesPeriodMetric('系统处理中', queuePending === null ? '未知' : `${numberFormatter.format(queuePending)} 条`, `等待 ${queueMetric(queue, 'queued')} · 处理中 ${queueMetric(queue, 'running')}`)}
+        ${salesPeriodMetric('处理失败', failed === null ? '未知' : `${numberFormatter.format(failed)} 条`, `事件失败 ${nullableUnits(summary.failureEventCount)} · 死信 ${nullableUnits(queue.deadLetter)}`)}
+        ${salesPeriodMetric('近24小时需处理', isUnit(summary.highPriorityCount) ? `${numberFormatter.format(summary.highPriorityCount)} 条` : '未知', '紧急与高优先事项')}
       </div>
       <div class="sales-data-receipt">
-        <span><i></i>平台事件证据</span>
-        <p>${escapeHtml(`物化 ${nullableUnits(materialized.returned)} / 上限 ${nullableUnits(materialized.limit)} 条${materialized.truncated === true ? ' · 已截断' : materialized.truncated === false ? ' · 未截断' : ' · 截断状态未知'} · 最近事件 ${sourceTime(queryData.source?.latestEventAt)} · 最近收件 ${sourceTime(queue.lastReceivedAt)}`)}</p>
+        <span><i></i>${health.ok === true ? '事件链路运行正常' : '事件链路需要检查'}</span>
+        <p>${escapeHtml(`最后接收 ${sourceTime(queue.lastReceivedAt)} · 最后业务事件 ${sourceTime(queryData.source?.latestEventAt)} · ${subscriptionNote}`)}</p>
       </div>
     </section>`;
 }
@@ -8753,15 +8809,6 @@ function platformEventFilters(queryData) {
       ], state.platform.severity)}
       ${operationSelect('platformFamily', '业务类型', familyOptions, state.platform.family)}
       ${operationSelect('platformStatus', '平台状态', statusOptions, state.platform.status)}
-      ${operationSelect('platformSort', '排序', [
-        ['PRIORITY', '重要程度优先'],
-        ['LATEST', '发生时间最新'],
-      ], state.platform.sort)}
-      ${operationSelect('platformPageSize', '每页', [
-        ['25', '25 条'],
-        ['50', '50 条'],
-        ['100', '100 条'],
-      ], String(state.platform.pageSize))}
       ${operationSearchControls('platform')}
     </div>`;
 }
@@ -8784,22 +8831,26 @@ function webhookEventTimeline(rows, hasEvidence) {
         const technical = event.deliveryScope === 'APP_ONLY';
         return `
           <article class="platform-event-card ${priority.tone}">
-            <header>
-              <div class="platform-event-title">
-                <span class="row-status ${priority.tone}">${escapeHtml(priority.label)}</span>
-                ${event.storeCode
-                  ? `<strong>${escapeHtml(event.storeCode)}</strong>${ownerName ? `<span class="rank-owner" title="${escapeHtml(ownerName)}">${escapeHtml(shortOwnerName(ownerName))}</span>` : ''}`
-                  : '<strong>应用级验证</strong>'}
-              </div>
+            <div class="platform-event-time">
               <time>${escapeHtml(sourceTime(event.occurredAt || event.safeProjection?.receivedAt || event.createdAt))}</time>
-            </header>
-            <h3>${escapeHtml(webhookEventLabel(event))}</h3>
-            <p>${escapeHtml(webhookEventSummary(event))}</p>
-            <footer>
-              <span>${escapeHtml(technical ? '技术验证回调' : '店铺业务事件')}</span>
-              ${event.status ? `<span class="row-status ${sourceStatusTone(event.status)}">${escapeHtml(event.status)}</span>` : '<span class="row-status unknown">平台状态未知</span>'}
-              ${event.businessKey ? `<span class="platform-business-key">${escapeHtml(event.businessKey)}</span>` : ''}
-            </footer>
+              <span class="row-status ${priority.tone}">${escapeHtml(priority.label)}</span>
+            </div>
+            <div class="platform-event-body">
+              <header>
+                <div class="platform-event-title">
+                  ${event.storeCode
+                    ? `<strong>${escapeHtml(event.storeCode)}</strong>${ownerName ? `<span class="rank-owner" title="${escapeHtml(ownerName)}">${escapeHtml(shortOwnerName(ownerName))}</span>` : ''}`
+                    : '<strong>应用级验证</strong>'}
+                </div>
+                ${event.status ? `<span class="row-status ${sourceStatusTone(event.status)}">${escapeHtml(event.status)}</span>` : '<span class="row-status unknown">状态未知</span>'}
+              </header>
+              <h3>${escapeHtml(webhookEventLabel(event))}</h3>
+              <p>${escapeHtml(webhookEventSummary(event))}</p>
+              <footer>
+                <span>${escapeHtml(technical ? '技术验证回调' : '店铺业务事件')}</span>
+                ${event.businessKey ? `<span class="platform-business-key">${escapeHtml(event.businessKey)}</span>` : ''}
+              </footer>
+            </div>
           </article>`;
       }).join('')}
     </div>`;
@@ -8866,11 +8917,10 @@ function renderPlatform() {
   return `
     ${sampleNotice()}
     ${platformDecisionOverview(queryData)}
-    ${platformRankings(queryData)}
     <section class="table-section inventory-workspace platform-workspace">
       ${panelHeading(
         'OPERATOR ATTENTION',
-        '需要立即关注的事项',
+        '需要关注',
         `服务端筛选与分页 · 当前物化 ${nullableUnits(materialized.returned)} 条${materialized.truncated === true ? ' · 源明细已截断' : ''}`,
       )}
       ${platformEventFilters(queryData)}

@@ -32,6 +32,7 @@
     "resolve:product-identity": "node scripts/resolve_full_managed_product_identity.mjs",
     "start:webhook": "node scripts/serve_full_managed_webhook.mjs",
     "worker:webhook": "node scripts/run_full_managed_webhook_worker.mjs",
+    "webhook:configure-subscriptions": "node scripts/configure_full_managed_webhook_subscriptions.mjs",
     "materialize:dashboard": "node scripts/materialize_full_managed_dashboard.mjs",
     "backfill:plan": "node scripts/plan_full_managed_backfill.mjs",
     "backfill:run": "node scripts/run_full_managed_backfill.mjs",

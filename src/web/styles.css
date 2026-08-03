@@ -4049,6 +4049,10 @@ body[data-dataset="sample"] .metric-item > strong {
   justify-content: flex-start;
 }
 
+.platform-decision-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .platform-filter-bar .sales-sort-control {
   min-width: 0;
 }
@@ -4084,43 +4088,31 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .platform-event-list {
-  display: grid;
-  gap: 8px;
+  display: block;
   min-width: 0;
+  border-top: 1px solid var(--line);
 }
 
 .platform-event-card {
   position: relative;
+  display: grid;
+  grid-template-columns: 142px minmax(0, 1fr);
+  gap: 20px;
   min-width: 0;
-  padding: 14px 16px 13px 18px;
+  padding: 16px 4px;
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--paper-soft);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
 }
 
 .platform-event-card::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  content: "";
-  background: var(--line-strong);
+  display: none;
 }
 
-.platform-event-card.complete::before {
-  background: var(--success);
-}
-
-.platform-event-card.partial::before {
-  background: var(--warning);
-}
-
-.platform-event-card.blocked::before {
-  background: var(--danger);
-}
-
-.platform-event-card > header,
-.platform-event-card > footer,
+.platform-event-body > header,
+.platform-event-body > footer,
 .platform-event-title {
   display: flex;
   min-width: 0;
@@ -4128,7 +4120,7 @@ body[data-dataset="sample"] .metric-item > strong {
   gap: 8px;
 }
 
-.platform-event-card > header {
+.platform-event-body > header {
   justify-content: space-between;
 }
 
@@ -4140,10 +4132,18 @@ body[data-dataset="sample"] .metric-item > strong {
   font-size: 0.74rem;
 }
 
-.platform-event-card time {
-  flex: 0 0 auto;
+.platform-event-time {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.platform-event-time time {
   color: var(--muted);
   font-size: 0.64rem;
+  line-height: 1.45;
 }
 
 .platform-event-card h3 {
@@ -4152,7 +4152,7 @@ body[data-dataset="sample"] .metric-item > strong {
   letter-spacing: -0.015em;
 }
 
-.platform-event-card > p {
+.platform-event-body > p {
   max-width: 100ch;
   margin: 6px 0 11px;
   color: var(--muted-strong);
@@ -4161,14 +4161,36 @@ body[data-dataset="sample"] .metric-item > strong {
   overflow-wrap: anywhere;
 }
 
-.platform-event-card > footer {
+.platform-event-body > footer {
   flex-wrap: wrap;
   color: var(--muted);
   font-size: 0.62rem;
 }
 
-.platform-event-card > footer > span:first-child {
+.platform-event-body > footer > span:first-child {
   margin-right: auto;
+}
+
+@media (max-width: 920px) {
+  .platform-decision-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .platform-decision-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-event-card {
+    grid-template-columns: 1fr;
+    gap: 9px;
+  }
+
+  .platform-event-time {
+    align-items: center;
+    flex-direction: row;
+  }
 }
 
 .platform-business-key {

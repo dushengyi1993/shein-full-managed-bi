@@ -238,6 +238,18 @@ export function createFullManagedWebhookReceiver({
       return;
     }
     if (
+      request.method === 'GET'
+      && url.pathname === callbackPath
+      && !url.search
+    ) {
+      writeJson(response, 200, {
+        ok: true,
+        service: 'shein-fm-webhook-receiver',
+        callback: true,
+      });
+      return;
+    }
+    if (
       request.method !== 'POST'
       || url.pathname !== callbackPath
       || url.search

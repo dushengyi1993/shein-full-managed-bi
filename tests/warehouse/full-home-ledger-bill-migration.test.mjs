@@ -18,3 +18,30 @@ test('ledger and bill migration preserves distinct inventory and settlement trut
   assert.match(sql, /direction IN \('SUPPLEMENT', 'DEDUCTION'\)/);
   assert.doesNotMatch(sql, /\breport_order_no text\b|\breplenish_no text\b/);
 });
+
+test('merchant bill daily grain follows actual completed settlement, not report generation', async () => {
+  const [migration, verification] = await Promise.all([
+    readFile(
+      new URL(
+        'db/migrations/0022_full_home_bill_actual_settlement_date.sql',
+        projectRoot,
+      ),
+      'utf8',
+    ),
+    readFile(
+      new URL(
+        'db/verify/0022_full_home_bill_actual_settlement_date.sql',
+        projectRoot,
+      ),
+      'utf8',
+    ),
+  ]);
+  assert.match(
+    migration,
+    /\(report\.completed_pay_at AT TIME ZONE 'Asia\/Shanghai'\)::date/,
+  );
+  assert.match(migration, /report\.settlement_status = 3/);
+  assert.match(migration, /pending_report_count[\s\S]*0/);
+  assert.doesNotMatch(migration, /report_generated_date AS business_date/);
+  assert.match(verification, /actual settlement/);
+});

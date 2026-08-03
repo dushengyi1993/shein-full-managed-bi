@@ -116,7 +116,7 @@ test('materializes signed finance facts without relabeling ledger dates as order
 
   assert.equal(result.status, 'available');
   assert.equal(result.financeDaily[0].netAmount, -19.5);
-  assert.equal(result.financeDaily[0].basis, 'REPORT_GENERATED_DATE');
+  assert.equal(result.financeDaily[0].basis, 'FINANCE_DETAIL_BUSINESS_DATE');
   assert.equal(result.coverage.earliestDate, '2026-07-28');
   assert.equal(result.coverage.storeCount, 1);
 });

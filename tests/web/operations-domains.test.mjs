@@ -120,13 +120,13 @@ test('platform page prioritizes operator attention and keeps technical evidence 
   const timeline = functionBody(app, 'webhookEventTimeline');
 
   assert.match(render, /platformDecisionOverview\(queryData\)/);
-  assert.match(render, /platformRankings\(queryData\)/);
+  assert.doesNotMatch(render, /platformRankings\(queryData\)/);
   assert.match(render, /platformEventFilters\(queryData\)/);
   assert.match(render, /platformEvidenceDisclosure\(queryData\)/);
   assert.doesNotMatch(render, /process-flow|验签与快速回执/);
-  assert.match(decision, /近 24 小时重点动态/);
-  assert.match(decision, /高优先 \/ 处理失败/);
-  assert.match(decision, /尚无回读记录，不等于已证明未订阅/);
+  assert.match(decision, /近24小时重点动态/);
+  assert.match(decision, /近24小时需处理/);
+  assert.match(decision, /已回读/);
   assert.match(timeline, /当前没有需要关注的平台动态/);
   assert.match(timeline, /普通成功回执仍可能只保留在技术审计中/);
   assert.match(disclosure, /Webhook 队列健康/);

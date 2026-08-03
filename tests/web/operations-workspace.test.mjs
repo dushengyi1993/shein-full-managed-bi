@@ -94,7 +94,7 @@ test('each workspace consumes only its own independent endpoint', async () => {
   assert.match(fulfilment, /fulfilmentEvidenceDisclosure\(queryData\)/);
   assert.match(functionBody(app, 'fulfilmentEvidenceDisclosure'), /milestoneOverview/);
   assert.match(platform, /platformDecisionOverview\(queryData\)/);
-  assert.match(platform, /platformRankings\(queryData\)/);
+  assert.doesNotMatch(platform, /platformRankings\(queryData\)/);
   assert.match(platform, /platformEvidenceDisclosure\(queryData\)/);
   assert.match(ops, /opsDecisionOverview\(queryData\)/);
   assert.match(ops, /opsRankings\(queryData\)/);

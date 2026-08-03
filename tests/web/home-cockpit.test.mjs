@@ -83,7 +83,7 @@ test('home assembles KPI tables, vertical trends and rankings without a redundan
   assert.doesNotMatch(home, /homeTruthStrip|trendCoverageBanner|homeSectionHeading/);
   assert.doesNotMatch(home, /home-footnote/);
   assert.match(app, /function homeHelpTip\(/);
-  assert.match(app, /紧邻本期且天数完全相同的上一窗口/);
+  assert.match(app, /紧邻上一同长度窗口/);
   assert.match(app, /未知显示 —，不会补零/);
   assert.doesNotMatch(app, /function renderHistoryHomeHeader\(\)/);
   const trends = functionBody(app, 'renderHistoryTrends');
@@ -148,7 +148,7 @@ test('historical KPI cards stay row-balanced and expose only evidence-backed tra
   assert.match(kpis, /homeMetricTable\('台账金额'[^]*summary\.ledgerAmountRows, summary\.range, previousRange\)/);
   assert.match(kpis, /homeMetricTable\('客户结构'[^]*summary\.customerRows, summary\.range, previousRange\)/);
   assert.match(kpis, /Array\.from\(\{ length: 4 \}/);
-  assert.match(kpis, /销量 Top 4/);
+  assert.match(kpis, /只展示 Top 4/);
   assert.match(kpis, /previousHomeDateRange\(summary\.range\)/);
   const table = functionBody(app, 'homeMetricTable');
   assert.match(table, /<strong>本期<\/strong>/);
@@ -244,8 +244,9 @@ test('metric definitions live in contextual title help instead of a page-bottom 
   assert.match(helper, /data-tip=/);
   assert.match(table, /homeHelpTip\(comparisonNote/);
   assert.match(table, /data-tip="\$\{escapeHtml\(metric\.note\)\}"/);
-  assert.match(table, /紧邻本期且天数完全相同的上一窗口/);
-  assert.match(table, /未知显示 —，不会补零/);
+  assert.match(table, /用于判断所选范围的销售规模与转化结果/);
+  assert.match(table, /实际完成结算日/);
+  assert.doesNotMatch(table, /本期 \$\{currentRange\.start\}/);
   assert.doesNotMatch(home, /home-footnote/);
 });
 

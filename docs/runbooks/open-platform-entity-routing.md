@@ -51,3 +51,30 @@ Chrome 进程、没有租约时清理可再生缓存。
 WY 在 2026-08-02 首次授权失败的根因是新主体白名单为空。
 
 任何一步失败只回滚当前主体，不影响其他主体。
+
+## Webhook 回调与订阅
+
+Webhook 必须按主体应用配置，不能只部署接收器后就视为已经接入：
+
+1. 先确认 `https://fm.dushengyi.cc/api/shein/webhook/v1/events` 的 GET
+   健康探针和签名 POST 入口均可达，Receiver / Worker 均为 active。
+2. 使用该主体在
+   `config/full-managed-legal-entities.json` 中登记的本地 Chrome Profile，
+   提交正式回调地址并回读平台审核状态。
+3. 正式回调审核通过后，订阅平台对全托应用实际开放且
+   `src/webhook/event-registry.mjs` 已支持的 15 类经营事件；不订阅
+   `product_video_conversion_completed`。
+4. 每次开关后必须重新调用平台 `queryEventConfigList`，只有回读为已订阅
+   才写入 `ops.webhook_subscription_state`。未审核、未回读或回调验证失败
+   均不得在 BI 中显示为已订阅。
+5. 用平台“消息测试”验证一条技术回调：公网返回 2xx，receipt 入仓，
+   Worker 成功处理，并保持 `APP_ONLY` 隔离，不得改变店铺门禁或业务事实。
+
+本地管理命令：
+
+```powershell
+npm run webhook:configure-subscriptions -- --entity DL --inspect
+npm run webhook:configure-subscriptions -- --entity DL --submit
+```
+
+命令默认不提交；`--submit` 是真实平台写入，须逐主体执行并保存回读结果。

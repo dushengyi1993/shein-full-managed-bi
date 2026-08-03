@@ -422,9 +422,8 @@ export function createFinanceHomeRepository({ pool } = {}) {
         if (affectedReportDates.length > 0) {
           await client.query(
             `DELETE FROM fact.full_home_bill_daily
-             WHERE store_code = $1
-               AND business_date = ANY($2::date[])`,
-            [storeCode, affectedReportDates],
+             WHERE store_code = $1`,
+            [storeCode],
           );
           const billResult = await client.query(
             `WITH report_sales AS (
@@ -436,7 +435,6 @@ export function createFinanceHomeRepository({ pool } = {}) {
                    AS sales_amount
                FROM fact.full_home_finance_detail_observation
                WHERE store_code = $1
-                 AND report_generated_date = ANY($2::date[])
                GROUP BY store_code, report_order_no_hash, currency
              ),
              report_adjustments AS (
@@ -450,13 +448,13 @@ export function createFinanceHomeRepository({ pool } = {}) {
                    AS deduction_amount
                FROM fact.full_home_finance_adjustment_observation
                WHERE store_code = $1
-                 AND report_generated_date = ANY($2::date[])
                GROUP BY store_code, report_order_no_hash, currency
              ),
              report_rows AS (
                SELECT
                  report.store_code,
-                 report.report_generated_date AS business_date,
+                 (report.completed_pay_at AT TIME ZONE 'Asia/Shanghai')::date
+                   AS business_date,
                  report.currency,
                  COALESCE(sales.sales_amount, 0) AS sales_amount,
                  COALESCE(adjustment.supplement_amount, 0) AS supplement_amount,
@@ -474,7 +472,8 @@ export function createFinanceHomeRepository({ pool } = {}) {
                 AND adjustment.report_order_no_hash = report.report_order_no_hash
                 AND adjustment.currency = report.currency
                WHERE report.store_code = $1
-                 AND report.report_generated_date = ANY($2::date[])
+                 AND report.settlement_status = 3
+                 AND report.completed_pay_at IS NOT NULL
              ),
              daily AS (
                SELECT
@@ -492,10 +491,8 @@ export function createFinanceHomeRepository({ pool } = {}) {
                    ELSE NULL
                  END AS reported_settlement_amount,
                  COUNT(*) AS report_count,
-                 COUNT(*) FILTER (WHERE settlement_status = 3)
-                   AS settled_report_count,
-                 COUNT(*) FILTER (WHERE settlement_status IN (1, 2))
-                   AS pending_report_count,
+                 COUNT(*) AS settled_report_count,
+                 0::bigint AS pending_report_count,
                  MAX(observed_at) AS observed_at
                FROM report_rows
                GROUP BY store_code, business_date, currency
@@ -522,7 +519,7 @@ export function createFinanceHomeRepository({ pool } = {}) {
                observed_at,
                clock_timestamp()
              FROM daily`,
-            [storeCode, affectedReportDates],
+            [storeCode],
           );
           billDailyRows = billResult.rowCount ?? 0;
         }

@@ -1264,8 +1264,8 @@ function normalizeHomeFinanceDaily(item) {
     goodsCount: optionalNonNegativeInteger(source.goodsCount),
     reportCount: optionalNonNegativeInteger(source.reportCount),
     observedAt: isoInstant(source.observedAt),
-    basis: source.basis === 'REPORT_GENERATED_DATE'
-      ? 'REPORT_GENERATED_DATE'
+    basis: source.basis === 'FINANCE_DETAIL_BUSINESS_DATE'
+      ? 'FINANCE_DETAIL_BUSINESS_DATE'
       : null,
   };
 }
@@ -1348,8 +1348,8 @@ function normalizeHomeBillDaily(item) {
       source.reconciliationStatus,
     ) ? source.reconciliationStatus : 'UNAVAILABLE',
     observedAt: isoInstant(source.observedAt),
-    basis: source.basis === 'REPORT_GENERATED_DATE'
-      ? 'REPORT_GENERATED_DATE'
+    basis: source.basis === 'ACTUAL_SETTLEMENT_DATE'
+      ? 'ACTUAL_SETTLEMENT_DATE'
       : null,
   };
 }
@@ -1376,8 +1376,8 @@ function normalizeHomeProductFinanceDaily(item) {
     latestUnitPrice: optionalNonNegativeDecimal(source.latestUnitPrice),
     priceObservedAt: isoInstant(source.priceObservedAt),
     observedAt: isoInstant(source.observedAt),
-    basis: source.basis === 'REPORT_GENERATED_DATE'
-      ? 'REPORT_GENERATED_DATE'
+    basis: source.basis === 'FINANCE_DETAIL_BUSINESS_DATE'
+      ? 'FINANCE_DETAIL_BUSINESS_DATE'
       : null,
   };
 }

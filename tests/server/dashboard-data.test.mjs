@@ -157,7 +157,7 @@ test('whitelists full-managed homepage history while preserving unavailable metr
         netAmount: '-11.75',
         goodsCount: 4,
         reportCount: 1,
-        basis: 'REPORT_GENERATED_DATE',
+        basis: 'FINANCE_DETAIL_BUSINESS_DATE',
         reportOrderNo: 'must-not-leak',
       }],
       ledgerDaily: [{
@@ -188,7 +188,7 @@ test('whitelists full-managed homepage history while preserving unavailable metr
         settledReportCount: 3,
         pendingReportCount: 0,
         reconciliationStatus: 'MATCHED',
-        basis: 'REPORT_GENERATED_DATE',
+        basis: 'ACTUAL_SETTLEMENT_DATE',
         reportOrderNoHash: 'must-not-leak',
       }],
     },
@@ -201,7 +201,7 @@ test('whitelists full-managed homepage history while preserving unavailable metr
   assert.equal(dashboard.home.productDaily[0].estimatedDealAmount, null);
   assert.equal(dashboard.home.financeDaily[0].currency, 'SAR');
   assert.equal(dashboard.home.financeDaily[0].netAmount, -11.75);
-  assert.equal(dashboard.home.financeDaily[0].basis, 'REPORT_GENERATED_DATE');
+  assert.equal(dashboard.home.financeDaily[0].basis, 'FINANCE_DETAIL_BUSINESS_DATE');
   assert.equal(dashboard.home.ledgerDaily[0].customerOutboundCount, 12);
   assert.equal(dashboard.home.ledgerDaily[0].outboundAmount, 450.25);
   assert.equal(
