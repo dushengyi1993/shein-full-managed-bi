@@ -77,6 +77,8 @@ export const SESSION_DEFAULT_LIMITS = Object.freeze({
   navigationSettleMs: 6_000,
   identityStabilityMs: 6_000,
   identityTimeoutMs: 15_000,
+  savedCredentialVerifyMs: 30_000,
+  savedCredentialPollMs: 2_000,
   terminateGraceMs: 4_000,
 });
 
@@ -414,14 +416,25 @@ export async function openExperimentSession({
         { timeoutMs: resolvedLimits.identityTimeoutMs },
       );
       if (renewal?.clicked === true) {
-        await sleep(8_000);
-        proof = await cdp.evaluate(
-          buildIdentityProofExpression({
-            origin: WEBAPI_ORIGIN,
-            identityMarkers: fullManagedLoginIdentityMarkers(canonical, identityAliases),
-          }),
-          { timeoutMs: resolvedLimits.identityTimeoutMs },
+        const maximumAttempts = Math.max(
+          1,
+          Math.ceil(
+            resolvedLimits.savedCredentialVerifyMs
+            / resolvedLimits.savedCredentialPollMs,
+          ),
         );
+        for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+          await sleep(resolvedLimits.savedCredentialPollMs);
+          proof = await cdp.evaluate(
+            buildIdentityProofExpression({
+              origin: WEBAPI_ORIGIN,
+              identityMarkers: fullManagedLoginIdentityMarkers(canonical, identityAliases),
+            }),
+            { timeoutMs: resolvedLimits.identityTimeoutMs },
+          );
+          if (proof?.sameOrigin !== true) break;
+          if (proof?.onLoginView !== true && proof?.aliasPresent === true) break;
+        }
       }
     }
     if (proof?.onLoginView === true) {

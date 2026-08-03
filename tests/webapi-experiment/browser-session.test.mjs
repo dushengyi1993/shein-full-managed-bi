@@ -230,8 +230,10 @@ test('a late login redirect still uses saved credentials without reading a value
   const commands = [];
   const gestures = [];
   const evaluated = [];
+  const sleeps = [];
   let evaluation = 0;
   const { deps } = sessionDeps({
+    async sleep(milliseconds) { sleeps.push(milliseconds); },
     cdpFactory: async () => ({
       async send(method, params) {
         commands.push({ method, params });
@@ -259,6 +261,9 @@ test('a late login redirect still uses saved credentials without reading a value
             clicked: true,
           };
         }
+        if (evaluation < 7) {
+          return { sameOrigin: true, onLoginView: true, aliasPresent: false, textLength: 100 };
+        }
         return { sameOrigin: true, onLoginView: false, aliasPresent: true, textLength: 1200 };
       },
       close() {},
@@ -280,7 +285,56 @@ test('a late login redirect still uses saved credentials without reading a value
     { stage: 'confirm', point: undefined },
   ]);
   assert.deepEqual(commands.filter((entry) => entry.method.startsWith('Input.')), []);
+  assert.deepEqual(sleeps.slice(-3), [2_000, 2_000, 2_000]);
+  assert.equal(sleeps.includes(8_000), false);
   await session.close();
+});
+
+test('saved credential verification polls to a bounded deadline before expiring', async () => {
+  const sleeps = [];
+  let evaluation = 0;
+  const { deps } = sessionDeps({
+    async sleep(milliseconds) { sleeps.push(milliseconds); },
+    limits: {
+      navigationSettleMs: 0,
+      debuggerPollMs: 1,
+      debuggerReadyMs: 50,
+      savedCredentialVerifyMs: 6_000,
+      savedCredentialPollMs: 2_000,
+    },
+    cdpFactory: async () => ({
+      async send() { return {}; },
+      async savedCredentialGesture() { return { completed: true }; },
+      async evaluate() {
+        evaluation += 1;
+        if (evaluation === 1) {
+          return { sameOrigin: true, onLoginView: true, aliasPresent: false, textLength: 100 };
+        }
+        if (evaluation === 2) return { found: true, x: 320, y: 240 };
+        if (evaluation === 3) {
+          return {
+            accountReady: true,
+            passwordReady: true,
+            submitReady: true,
+            clicked: true,
+          };
+        }
+        return { sameOrigin: true, onLoginView: true, aliasPresent: false, textLength: 100 };
+      },
+      close() {},
+    }),
+  });
+
+  await assert.rejects(
+    () => openExperimentSession({
+      storeCode: 'DL5477',
+      deps,
+      allowSavedCredentialLogin: true,
+    }),
+    (error) => error.code === SESSION_REJECT_CODES.AUTH_EXPIRED,
+  );
+  assert.equal(evaluation, 6);
+  assert.deepEqual(sleeps.slice(-3), [2_000, 2_000, 2_000]);
 });
 
 test('the saved credential account probe returns coordinates and never a field value', () => {
