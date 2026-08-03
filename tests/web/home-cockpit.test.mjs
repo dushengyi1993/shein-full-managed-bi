@@ -250,6 +250,13 @@ test('metric definitions live in contextual title help instead of a page-bottom 
   assert.doesNotMatch(home, /home-footnote/);
 });
 
+test('homepage coverage names every partial or missing store instead of hiding the tail', async () => {
+  const app = await read('src/web/app.js');
+  const sourceNote = functionBody(app, 'homeMetricSourceNote');
+  assert.match(sourceNote, /const compactStores = \(codes\) => codes\.join\('、'\)/);
+  assert.doesNotMatch(sourceNote, /slice\(0,\s*3\)|等\$\{codes\.length\}家/);
+});
+
 test('daily trend uses real day-grain points and names the real window length', async () => {
   const app = await read('src/web/app.js');
   const daily = functionBody(app, 'renderTrendChart');

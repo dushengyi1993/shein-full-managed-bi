@@ -6238,9 +6238,7 @@ function homeMetricSourceNote(bundle, key) {
     else if (count > 0) partial.push(storeCode);
     else missing.push(storeCode);
   }
-  const compactStores = (codes) => (
-    codes.length <= 3 ? codes.join('、') : `${codes.slice(0, 3).join('、')}等${codes.length}家`
-  );
+  const compactStores = (codes) => codes.join('、');
   const coverage = [
     `完整 ${complete.length}/${storeCodes.length}家`,
     partial.length ? `部分 ${compactStores(partial)}` : null,
