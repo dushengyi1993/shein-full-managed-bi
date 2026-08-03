@@ -59,7 +59,7 @@ test('each workspace consumes only its own independent endpoint', async () => {
   assert.match(fulfilmentUrl, /allowListedToken\(state\.fulfilment\.sort, URL_FULFILMENT_SORTS, 'PRIORITY'\)/);
   assert.match(fulfilmentUrl, /operationCodeParam\(state\.fulfilment\.milestone\)/);
   assert.match(fulfilmentUrl, /pageSizeParam\(state\.fulfilment\.pageSize\)/);
-  assert.match(platformUrl, /allowListedToken\(state\.platform\.view, URL_PLATFORM_VIEWS, 'ATTENTION'\)/);
+  assert.match(platformUrl, /allowListedToken\(state\.platform\.view, URL_PLATFORM_VIEWS, 'URGENT'\)/);
   assert.match(platformUrl, /allowListedToken\(\s*state\.platform\.severity,\s*URL_PLATFORM_SEVERITIES,\s*'ALL'/);
   assert.match(platformUrl, /operationCodeParam\(state\.platform\.family\)/);
   assert.match(platformUrl, /operationCodeParam\(state\.platform\.status\)/);
@@ -304,7 +304,7 @@ test('filter and page controls update the URL and reset paging', async () => {
   assert.match(app, /const operationSelectControl = event\.target\.closest\?\.\('\[data-operation-select\]'\)/);
   assert.match(app, /state\.procurement\.status = operationCodeParam\(raw\)/);
   assert.match(app, /state\.fulfilment\.milestone = operationCodeParam\(raw\)/);
-  assert.match(app, /state\.platform\.view = allowListedToken\(raw, URL_PLATFORM_VIEWS, 'ATTENTION'\)/);
+  assert.match(app, /state\.platform\.view = allowListedToken\(raw, URL_PLATFORM_VIEWS, 'URGENT'\)/);
   assert.match(app, /state\.platform\.family = operationCodeParam\(raw\)/);
   assert.match(app, /state\.procurement\.pageSize = pageSizeParam\(raw\)/);
   assert.match(app, /state\.fulfilment\.pageSize = pageSizeParam\(raw\)/);
@@ -337,7 +337,7 @@ test('filter and page controls update the URL and reset paging', async () => {
   assert.match(app, /delete state\.quickFilters\[kind\]/);
   assert.match(app, /state\.procurement\.status = 'ALL'/);
   assert.match(app, /state\.fulfilment\.milestone = 'ALL'/);
-  assert.match(app, /state\.platform\.view = 'ATTENTION'/);
+  assert.match(app, /state\.platform\.view = 'URGENT'/);
   assert.match(app, /state\.ops\.view = 'PRIORITY'/);
 
   // Quick filters reload the matching workspace only.
@@ -617,7 +617,7 @@ test('the shared view parameter binds only to the active route', async () => {
   const inherited = {
     inventoryView: 'INVENTORY',
     productView: 'PENDING',
-    platformView: 'ATTENTION',
+    platformView: 'URGENT',
     opsView: 'PRIORITY',
   };
   const inventory = parseHashState('#inventory?view=ADVICE', inherited);
@@ -631,7 +631,7 @@ test('the shared view parameter binds only to the active route', async () => {
 
   const ops = parseHashState('#ops?view=ALL', inherited);
   assert.equal(ops.opsView, 'ALL');
-  assert.equal(ops.platformView, 'ATTENTION');
+  assert.equal(ops.platformView, 'URGENT');
   assert.equal(ops.inventoryView, 'INVENTORY');
 
   // A value valid for the other route is not accepted here.

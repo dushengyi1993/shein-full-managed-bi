@@ -15,7 +15,7 @@ const ROUTES = Object.freeze({
   returns: { title: '采购退货', code: 'RETURNS' },
   compliance: { title: '合规与价格', code: 'COMPLIANCE' },
   finance: { title: '财务结算', code: 'FINANCE' },
-  platform: { title: '平台动态', code: 'WEBHOOK' },
+  platform: { title: '紧急事项', code: 'WEBHOOK' },
   ops: { title: '运营待办', code: 'AUTOMATION' },
   system: { title: '系统管理', code: 'SYSTEM' },
 });
@@ -161,7 +161,7 @@ const URL_FULFILMENT_SORTS = Object.freeze([
   'LATEST',
   'EXPECTED_RECEIPT',
 ]);
-const URL_PLATFORM_VIEWS = Object.freeze(['ATTENTION', 'BUSINESS', 'ALL']);
+const URL_PLATFORM_VIEWS = Object.freeze(['URGENT', 'ATTENTION', 'BUSINESS', 'ALL']);
 const URL_PLATFORM_SEVERITIES = Object.freeze(['ALL', 'P0', 'P1', 'P2', 'P3']);
 const URL_PLATFORM_SORTS = Object.freeze(['PRIORITY', 'LATEST']);
 const URL_OPS_VIEWS = Object.freeze(['PRIORITY', 'ALL']);
@@ -365,7 +365,7 @@ function parseHashState(rawHash, inherited = {}) {
         : URL_DEFAULT_INVENTORY_PAGE_SIZE,
       platformView: URL_PLATFORM_VIEWS.includes(inherited.platformView)
         ? inherited.platformView
-        : 'ATTENTION',
+        : 'URGENT',
       platformSeverity: URL_PLATFORM_SEVERITIES.includes(inherited.platformSeverity)
         ? inherited.platformSeverity
         : 'ALL',
@@ -491,7 +491,7 @@ function parseHashState(rawHash, inherited = {}) {
     platformView: routeView(
       'platform',
       URL_PLATFORM_VIEWS,
-      'ATTENTION',
+      'URGENT',
       inherited.platformView,
     ),
     platformSeverity: allowListedToken(
@@ -610,8 +610,8 @@ function serializeHashState(input = {}) {
     if (dnPageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) params.set('size', String(dnPageSize));
   }
   if (route === 'platform') {
-    const view = allowListedToken(input.platformView, URL_PLATFORM_VIEWS, 'ATTENTION');
-    if (view !== 'ATTENTION') params.set('view', view);
+    const view = allowListedToken(input.platformView, URL_PLATFORM_VIEWS, 'URGENT');
+    if (view !== 'URGENT') params.set('view', view);
     const severity = allowListedToken(
       input.platformSeverity,
       URL_PLATFORM_SEVERITIES,
@@ -767,7 +767,7 @@ const state = {
     loading: false,
     error: '',
     requestSerial: 0,
-    view: initialHashState.platformView || 'ATTENTION',
+    view: initialHashState.platformView || 'URGENT',
     severity: initialHashState.platformSeverity || 'ALL',
     family: initialHashState.platformFamily || 'ALL',
     status: initialHashState.platformStatus || 'ALL',
@@ -2870,7 +2870,7 @@ function platformQueryUrl() {
     owner: state.owner,
     store: state.store,
     q: state.query,
-    view: allowListedToken(state.platform.view, URL_PLATFORM_VIEWS, 'ATTENTION'),
+    view: allowListedToken(state.platform.view, URL_PLATFORM_VIEWS, 'URGENT'),
     severity: allowListedToken(
       state.platform.severity,
       URL_PLATFORM_SEVERITIES,
@@ -8658,8 +8658,8 @@ function platformDecisionOverview(queryData) {
       <header class="sales-workspace-head">
         <div>
           <span class="eyebrow">PLATFORM OPERATING PULSE</span>
-          <h1>平台动态</h1>
-          <p>只把会影响经营、履约、商品可售状态或自动化能力的动态放到主视图；普通技术回执下沉到证据区。</p>
+          <h1>紧急事项</h1>
+          <p>默认只展示紧急、高优先或处理失败的 Webhook 事项；普通业务动态和技术回执下沉到筛选与证据区。</p>
         </div>
         <div class="sales-range-receipt">
           <span>事件范围 / 当前店铺</span>
@@ -8739,6 +8739,7 @@ function platformEventFilters(queryData) {
   return `
     <div class="operation-controls platform-filter-bar">
       ${operationSelect('platformView', '动态范围', [
+        ['URGENT', '紧急与高优先'],
         ['ATTENTION', '只看需要关注'],
         ['BUSINESS', '全部业务动态'],
         ['ALL', '含技术验证'],
@@ -8869,7 +8870,7 @@ function renderPlatform() {
     <section class="table-section inventory-workspace platform-workspace">
       ${panelHeading(
         'OPERATOR ATTENTION',
-        '需要关注的平台动态',
+        '需要立即关注的事项',
         `服务端筛选与分页 · 当前物化 ${nullableUnits(materialized.returned)} 条${materialized.truncated === true ? ' · 源明细已截断' : ''}`,
       )}
       ${platformEventFilters(queryData)}
@@ -10059,7 +10060,7 @@ function applyHashState(parsed) {
   state.platform.view = allowListedToken(
     parsed.platformView,
     URL_PLATFORM_VIEWS,
-    'ATTENTION',
+    'URGENT',
   );
   state.platform.severity = allowListedToken(
     parsed.platformSeverity,
@@ -10424,7 +10425,7 @@ elements.view.addEventListener('click', (event) => {
       scheduleFulfilmentLoad({ resetPage: true });
     }
     if (kind === 'platform') {
-      state.platform.view = 'ATTENTION';
+      state.platform.view = 'URGENT';
       state.platform.severity = 'ALL';
       state.platform.family = 'ALL';
       state.platform.status = 'ALL';
@@ -10607,7 +10608,7 @@ elements.view.addEventListener('change', (event) => {
     } else if (kind === 'fulfilmentPageSize') {
       state.fulfilment.pageSize = pageSizeParam(raw);
     } else if (kind === 'platformView') {
-      state.platform.view = allowListedToken(raw, URL_PLATFORM_VIEWS, 'ATTENTION');
+      state.platform.view = allowListedToken(raw, URL_PLATFORM_VIEWS, 'URGENT');
     } else if (kind === 'platformSeverity') {
       state.platform.severity = allowListedToken(
         raw,

@@ -48,7 +48,7 @@ test('full-managed primary navigation follows the sales-first semi-managed inter
   assert.match(html, /data-route="sales"><span>销量分析<\/span>/);
   assert.match(html, /data-route="products"><span>商品分析<\/span>/);
   assert.match(html, /data-route="inventory"><span>库存与备货<\/span>/);
-  assert.match(html, /data-route="platform"><span>平台动态<\/span>/);
+  assert.match(html, /data-route="platform"><span>紧急事项<\/span>/);
   assert.match(html, /data-route="ops"><span>运营工具<\/span>/);
   assert.match(html, /data-route="system"><span>系统管理<\/span>/);
   assert.match(html, /缺失值不补零；建议不等于已执行/);

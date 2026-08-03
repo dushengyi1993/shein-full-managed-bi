@@ -137,11 +137,11 @@ const DASHBOARD = Object.freeze({
   },
 });
 
-test('platform query defaults to operator attention with honest health and subscription evidence', () => {
+test('platform query defaults to urgent and high-priority events with honest evidence', () => {
   const result = queryPlatformDashboard(DASHBOARD);
 
   assert.equal(result.readOnly, true);
-  assert.equal(result.query.view, 'ATTENTION');
+  assert.equal(result.query.view, 'URGENT');
   assert.equal(result.summary.scopedEventCount, 5);
   assert.equal(result.summary.attentionEventCount, 3);
   assert.equal(result.summary.last24hAttentionCount, 2);
@@ -152,9 +152,9 @@ test('platform query defaults to operator attention with honest health and subsc
   assert.equal(result.summary.impactedStoreCount, 3);
   assert.deepEqual(
     result.events.rows.map(({ eventCode }) => eventCode),
-    ['3001435', '3001048', '3001441'],
+    ['3001435', '3001048'],
   );
-  assert.equal(result.events.pagination.matchedMaterializedRows, 3);
+  assert.equal(result.events.pagination.matchedMaterializedRows, 2);
   assert.deepEqual(result.summary.attentionByStore.map(({ key, count }) => ({
     key,
     count,

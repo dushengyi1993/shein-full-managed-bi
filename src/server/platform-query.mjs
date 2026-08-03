@@ -17,7 +17,7 @@ const QUERY_PARAMETERS = Object.freeze(new Set([
   'pageSize',
 ]));
 
-const VIEWS = Object.freeze(['ATTENTION', 'BUSINESS', 'ALL']);
+const VIEWS = Object.freeze(['URGENT', 'ATTENTION', 'BUSINESS', 'ALL']);
 const SEVERITIES = Object.freeze(['ALL', 'P0', 'P1', 'P2', 'P3']);
 const SORTS = Object.freeze(['PRIORITY', 'LATEST']);
 const PAGE_SIZES = Object.freeze([25, 50, 100]);
@@ -182,6 +182,7 @@ function isBusinessEvent(event) {
 }
 
 function matchesView(event, view) {
+  if (view === 'URGENT') return priorityRank(event.severity) >= 3 || isFailure(event);
   if (view === 'ATTENTION') return isOperatorAttention(event);
   if (view === 'BUSINESS') return isBusinessEvent(event);
   return true;
@@ -311,7 +312,7 @@ export function queryPlatformDashboard(dashboardValue, paramsValue = new URLSear
   }) || 'ALL').toUpperCase();
   const rawQuery = textParam(params, 'q', { maximum: 120, fallback: '' });
   const query = searchable(rawQuery);
-  const view = enumParam(params, 'view', VIEWS, 'ATTENTION');
+  const view = enumParam(params, 'view', VIEWS, 'URGENT');
   const severity = enumParam(params, 'severity', SEVERITIES, 'ALL');
   const family = (textParam(params, 'family', {
     maximum: 120,

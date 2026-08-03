@@ -206,7 +206,7 @@ test('platform workspace state survives a safe canonical link', async () => {
     '#platform?view=DROP&eventSeverity=P9&eventFamily=%3Cscript%3E'
       + '&eventStatus=bad%20status&eventSort=DROP&eventPage=0&size=99',
   );
-  assert.equal(unsafe.platformView, 'ATTENTION');
+  assert.equal(unsafe.platformView, 'URGENT');
   assert.equal(unsafe.platformSeverity, 'ALL');
   assert.equal(unsafe.platformFamily, 'ALL');
   assert.equal(unsafe.platformStatus, 'ALL');
