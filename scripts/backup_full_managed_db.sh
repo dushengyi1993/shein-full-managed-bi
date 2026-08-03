@@ -60,6 +60,8 @@ fi
 
 deploy_cooldown_seconds="${FULL_BI_DEPLOY_BACKUP_COOLDOWN_SECONDS:-7200}"
 deploy_local_max="${FULL_BI_DEPLOY_BACKUP_MAX:-3}"
+retain_days="${FULL_BI_BACKUP_RETAIN_DAYS:-3}"
+retain_extra="${FULL_BI_BACKUP_RETAIN_EXTRA:-2}"
 now_epoch="$(date -u +%s)"
 today_utc="$(date -u +%Y%m%d)"
 
@@ -144,7 +146,10 @@ fi
 # failure exits non-zero here, leaving every local dump in place.
 archive_status="skipped"
 if [[ "${FULL_BI_SKIP_BACKUP_ARCHIVE:-0}" != "1" ]]; then
-  node "$project_root/scripts/archive_full_managed_backups.mjs" --apply >&2
+  node "$project_root/scripts/archive_full_managed_backups.mjs" \
+    --apply \
+    --retain-days="$retain_days" \
+    --retain-extra="$retain_extra" >&2
   archive_status="applied"
 fi
 

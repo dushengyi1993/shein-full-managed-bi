@@ -1,10 +1,10 @@
 [Unit]
-Description=Refresh SHEIN full-managed read-only sales facts
+Description=Refresh settled SHEIN full-managed finance windows
 Wants=network-online.target
 Requires=shein-fm-db.service
 After=network-online.target shein-fm-db.service shein-fm-db-migrate.service
 OnSuccess=shein-fm-dashboard-materialize.service
-ConditionPathExists=/srv/shein-fm/runtime/sales-sync.enabled
+ConditionPathExists=/srv/shein-fm/runtime/home-finance-backfill.enabled
 
 [Service]
 Type=oneshot
@@ -18,9 +18,12 @@ Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/sales/openapi.json
 EnvironmentFile=/srv/shein-fm/secrets/sales/database.env
 RuntimeDirectory=shein-fm-sales
 RuntimeDirectoryMode=0700
-ExecStart=/usr/bin/flock -n -E 75 /run/shein-fm-sales/sync.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=sales-hourly --execute
+ExecStart=/usr/bin/flock -n -E 75 /run/shein-fm-sales/home-finance-daily.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=finance-daily --execute
 SuccessExitStatus=75
-TimeoutStartSec=45min
+TimeoutStartSec=60min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -39,6 +42,3 @@ ReadOnlyPaths=/srv/shein-fm/secrets/sales/database.env
 ReadWritePaths=/run/shein-fm-sales
 MemoryHigh=768M
 MemoryMax=1536M
-
-[Install]
-WantedBy=multi-user.target

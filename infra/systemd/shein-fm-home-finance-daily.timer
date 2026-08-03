@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh settled SHEIN full-managed finance windows once daily
+ConditionPathExists=/srv/shein-fm/runtime/home-finance-backfill.enabled
+
+[Timer]
+OnCalendar=*-*-* 04:20:00 Asia/Shanghai
+RandomizedDelaySec=2m
+Persistent=true
+Unit=shein-fm-home-finance-daily.service
+
+[Install]
+WantedBy=timers.target

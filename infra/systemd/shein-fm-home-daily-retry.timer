@@ -1,0 +1,13 @@
+[Unit]
+Description=Retry missing SHEIN full-managed settled homepage facts
+ConditionPathExists=/srv/shein-fm/runtime/webapi-history.enabled
+ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
+
+[Timer]
+OnCalendar=*-*-* 10:20:00 Asia/Shanghai
+RandomizedDelaySec=2m
+Persistent=true
+Unit=shein-fm-home-daily-retry.service
+
+[Install]
+WantedBy=timers.target

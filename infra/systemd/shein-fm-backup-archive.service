@@ -19,7 +19,7 @@ UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 # Copy -> verify size -> verify SHA-256 -> write manifest -> delete source. A COS
 # mount failure exits non-zero and leaves every local dump in place.
-ExecStart=/usr/bin/node scripts/archive_full_managed_backups.mjs --apply
+ExecStart=/usr/bin/node scripts/archive_full_managed_backups.mjs --apply --retain-days=3 --retain-extra=2
 ReadWritePaths=/srv/shein-fm/backups /lhcos-data/shein-fm-archive
 ProtectSystem=strict
 ProtectHome=true

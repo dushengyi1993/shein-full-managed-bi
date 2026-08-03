@@ -54,7 +54,7 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
     service,
     /FULL_BI_OPENAPI_CONFIG|openapi\.json|warehouse\.env/i,
   );
-  assert.match(timer, /OnUnitInactiveSec=5m/);
+  assert.match(timer, /OnUnitInactiveSec=30m/);
   assert.match(
     timer,
     /ConditionPathExists=\/srv\/shein-fm\/runtime\/materializer\.enabled/,
@@ -139,6 +139,14 @@ test('all mutable application runtimes and timers are fail-closed behind explici
     ['infra/systemd/shein-fm-portal.service', 'portal.enabled'],
     ['infra/systemd/shein-fm-dashboard-materialize.service', 'materializer.enabled'],
     ['infra/systemd/shein-fm-dashboard-materialize.timer', 'materializer.enabled'],
+    ['infra/systemd/shein-fm-home-realtime.service', 'webapi-history.enabled'],
+    ['infra/systemd/shein-fm-home-realtime.timer', 'webapi-history.enabled'],
+    ['infra/systemd/shein-fm-home-daily.service', 'webapi-history.enabled'],
+    ['infra/systemd/shein-fm-home-daily.timer', 'webapi-history.enabled'],
+    ['infra/systemd/shein-fm-home-daily-retry.service', 'webapi-history.enabled'],
+    ['infra/systemd/shein-fm-home-daily-retry.timer', 'webapi-history.enabled'],
+    ['infra/systemd/shein-fm-home-finance-daily.service', 'home-finance-backfill.enabled'],
+    ['infra/systemd/shein-fm-home-finance-daily.timer', 'home-finance-backfill.enabled'],
     ['infra/systemd/shein-fm-sales-sync.service', 'sales-sync.enabled'],
     ['infra/systemd/shein-fm-sales-sync.timer', 'sales-sync.enabled'],
     ['infra/systemd/shein-fm-supply-sync.service', 'supply-sync.enabled'],

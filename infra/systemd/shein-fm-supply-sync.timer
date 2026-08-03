@@ -1,11 +1,11 @@
 [Unit]
-Description=Refresh SHEIN full-managed read-only supply facts every two hours
+Description=Refresh SHEIN full-managed read-only supply facts once daily
 ConditionPathExists=/srv/shein-fm/runtime/supply-sync.enabled
 ConditionPathExists=/srv/shein-fm/runtime/supply-backfill.verified
 
 [Timer]
-OnCalendar=*-*-* 00/2:45:00 Asia/Shanghai
-RandomizedDelaySec=3m
+OnCalendar=*-*-* 03:40:00 Asia/Shanghai
+RandomizedDelaySec=2m
 Persistent=true
 Unit=shein-fm-supply-sync.service
 

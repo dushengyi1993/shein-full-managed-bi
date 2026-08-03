@@ -720,6 +720,7 @@ export async function runFullHomeHistorySync({
   endDate,
   includeProducts = true,
   refreshRecentSettledDays = 0,
+  requireSettledThrough = null,
   allowSavedCredentialLogin = true,
   openSession,
   transportFactory,
@@ -735,6 +736,12 @@ export async function runFullHomeHistorySync({
     || refreshRecentSettledDays > 30
   ) {
     throw new TypeError('refreshRecentSettledDays must be between 0 and 30');
+  }
+  if (
+    requireSettledThrough !== null
+    && !/^\d{4}-\d{2}-\d{2}$/.test(String(requireSettledThrough))
+  ) {
+    throw new TypeError('requireSettledThrough must be an ISO business date');
   }
   for (const dependency of [openSession, transportFactory]) {
     if (typeof dependency !== 'function') throw new TypeError('sync dependency missing');
@@ -787,6 +794,24 @@ export async function runFullHomeHistorySync({
             clock,
           })
         : null;
+      if (
+        dataAnchor
+        && requireSettledThrough
+        && dataAnchor.dataAnchorDate < requireSettledThrough
+      ) {
+        results.push({
+          storeCode,
+          startDate,
+          endDate,
+          sessionErrorCode: 'HOME_SETTLEMENT_NOT_READY',
+          settlement: {
+            requiredThrough: requireSettledThrough,
+            availableThrough: dataAnchor.dataAnchorDate,
+            sourceUpdatedAt: dataAnchor.sourceUpdatedAt ?? null,
+          },
+        });
+        continue;
+      }
       const [
         completedTradeDates,
         completedRegionDates,

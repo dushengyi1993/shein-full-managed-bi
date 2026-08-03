@@ -1,16 +1,17 @@
 [Unit]
-Description=Refresh SHEIN full-managed dashboard JSON every five minutes
+Description=Fallback refresh of SHEIN full-managed dashboard JSON
 ConditionPathExists=/srv/shein-fm/runtime/materializer.enabled
 
 [Timer]
 OnBootSec=2m
-OnUnitInactiveSec=5m
-RandomizedDelaySec=30s
+OnUnitInactiveSec=30m
+RandomizedDelaySec=2m
 Persistent=true
 Unit=shein-fm-dashboard-materialize.service
 
-# Deliberately disabled by default. Creating materializer.enabled is necessary
-# but not sufficient; deployment must also explicitly enable this timer.
+# Domain jobs trigger materialization immediately through OnSuccess. This timer
+# is only a bounded fallback if an external read-only repair writes facts without
+# an explicit projection trigger.
 
 [Install]
 WantedBy=timers.target

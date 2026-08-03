@@ -18,6 +18,7 @@ function parseArgs(argv) {
     execute: false,
     includeProducts: true,
     refreshRecentSettledDays: 0,
+    requireSettledThrough: null,
   };
   for (const token of argv) {
     const match = /^--([a-z-]+)(?:=(.*))?$/.exec(token);
@@ -34,6 +35,11 @@ function parseArgs(argv) {
       if (result.refreshRecentSettledDays > 30) {
         throw new Error('HOME_CLI_ARGUMENT_INVALID');
       }
+    } else if (
+      name === 'require-settled-through'
+      && /^\d{4}-\d{2}-\d{2}$/.test(value ?? '')
+    ) {
+      result.requireSettledThrough = value;
     } else throw new Error('HOME_CLI_ARGUMENT_INVALID');
   }
   if (result.stores.length === 0 || !result.from || !result.to) {
@@ -54,6 +60,7 @@ function dryRunReport(args) {
     to: args.to,
     includeProducts: args.includeProducts,
     refreshRecentSettledDays: args.refreshRecentSettledDays,
+    requireSettledThrough: args.requireSettledThrough,
     includeTradeOverview: true,
     includeRegionRank: true,
     dailyDimensionResume: true,
@@ -88,6 +95,7 @@ async function main() {
       endDate: args.to,
       includeProducts: args.includeProducts,
       refreshRecentSettledDays: args.refreshRecentSettledDays,
+      requireSettledThrough: args.requireSettledThrough,
       openSession: runtime.deps.openSession,
       transportFactory: ({ session }) => createFullHomePageTransport({ session }),
       repository,

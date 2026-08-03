@@ -1,0 +1,42 @@
+[Unit]
+Description=Retry only missing SHEIN full-managed settled homepage facts
+Wants=network-online.target
+Requires=shein-fm-db.service
+After=network-online.target shein-fm-db.service shein-fm-db-migrate.service
+OnSuccess=shein-fm-dashboard-materialize.service
+ConditionPathExists=/srv/shein-fm/runtime/webapi-history.enabled
+ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
+
+[Service]
+Type=oneshot
+User=sheinfm
+Group=sheinfm
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+Environment=NODE_ENV=production
+EnvironmentFile=/srv/shein-fm/secrets/webapi-experiment/database.env
+RuntimeDirectory=shein-fm-webapi
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/flock -n -E 75 /run/shein-fm-webapi/home-history.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=home-daily-retry --execute
+SuccessExitStatus=75
+TimeoutStartSec=50min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/srv/shein-fm/secrets/webapi-experiment/database.env
+ReadWritePaths=/run/shein-fm-webapi /srv/shein-fm/runtime/webapi-locks /srv/shein-fm/webapi/profiles
+MemoryHigh=1250M
+MemoryMax=2G

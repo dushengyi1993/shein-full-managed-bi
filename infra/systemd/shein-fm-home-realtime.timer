@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh SHEIN full-managed current-day homepage facts on every hour
+ConditionPathExists=/srv/shein-fm/runtime/webapi-history.enabled
+ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
+
+[Timer]
+OnCalendar=*-*-* *:00:00 Asia/Shanghai
+AccuracySec=1s
+Persistent=true
+Unit=shein-fm-home-realtime.service
+
+[Install]
+WantedBy=timers.target

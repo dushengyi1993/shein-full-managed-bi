@@ -524,3 +524,48 @@ test('a range ending today anchors settled endpoints to yesterday', async () => 
     endpointCode === 'STORE_REALTIME'
   )).length, 1);
 });
+
+test('daily settlement stops before facts when the platform anchor is stale', async () => {
+  const requests = [];
+  const result = await runFullHomeHistorySync({
+    storeCodes: ['DL5477'],
+    startDate: '2026-08-02',
+    endDate: '2026-08-02',
+    includeProducts: false,
+    requireSettledThrough: '2026-08-02',
+    clock: () => new Date('2026-08-03T00:30:00.000Z'),
+    openSession: async () => ({ async close() {} }),
+    transportFactory: () => async (endpointCode) => {
+      requests.push(endpointCode);
+      return response({
+        code: '0',
+        info: {
+          areaCd: 'cn',
+          dt: '20260801',
+          updateTime: '2026-08-02 05:00:00',
+        },
+      });
+    },
+    repository: {
+      async recordFetchAudit() {},
+      async upsertStoreDaily() {
+        assert.fail('stale settlement must not write homepage facts');
+      },
+      async upsertProducts() {},
+      async upsertRegions() {},
+      async successfulDailyDates() {
+        return new Set();
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.complete, false);
+  assert.deepEqual(requests, ['UPDATE_TIME']);
+  assert.equal(result.results[0].sessionErrorCode, 'HOME_SETTLEMENT_NOT_READY');
+  assert.deepEqual(result.results[0].settlement, {
+    requiredThrough: '2026-08-02',
+    availableThrough: '2026-08-01',
+    sourceUpdatedAt: '2026-08-02 05:00:00',
+  });
+});
