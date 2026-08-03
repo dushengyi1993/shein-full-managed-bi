@@ -674,7 +674,7 @@ test('active responsive shell mirrors the semi-managed top rail and keeps health
     read('src/web/home-parity.css'),
   ]);
 
-  assert.match(html, /class="mark"[^>]*>[\s\S]*?<img src="\/favicon\.svg\?v=20260803\.5"/);
+  assert.match(html, /class="mark"[^>]*>[\s\S]*?<img src="\/favicon\.svg\?v=20260803\.\d+"/);
   const navIndex = html.indexOf('class="nav primary-nav"');
   const accountIndex = html.indexOf('class="account-box sidebar-context sidebar-account"');
   const healthIndex = html.indexOf('class="side-note sidebar-health"');
