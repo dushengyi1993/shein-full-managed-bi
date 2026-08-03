@@ -2076,37 +2076,6 @@ body {
   box-shadow: var(--shadow);
 }
 
-.home-period-context {
-  display: flex;
-  min-height: 42px;
-  align-items: center;
-  gap: 10px;
-  margin: -3px 0 13px;
-  padding: 9px 13px;
-  color: var(--muted);
-  border: 1px solid rgba(222, 215, 204, 0.92);
-  border-radius: 15px;
-  background: rgba(255, 253, 248, 0.78);
-  font-size: 12px;
-}
-
-.home-period-context strong {
-  margin-left: 4px;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-}
-
-.home-period-context i {
-  width: 1px;
-  height: 16px;
-  background: var(--line);
-}
-
-.home-period-context small {
-  margin-left: auto;
-  font-size: 11px;
-}
-
 .overview-matrix-card > .metric-matrix {
   flex: 1;
 }
@@ -2964,16 +2933,6 @@ body {
 
   .kpi-six {
     gap: 9px;
-  }
-
-  .home-period-context {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .home-period-context small {
-    width: 100%;
-    margin-left: 0;
   }
 
   .overview-matrix-card {

@@ -83,8 +83,9 @@ test('home assembles KPI tables, vertical trends and rankings without a redundan
   assert.doesNotMatch(home, /homeTruthStrip|trendCoverageBanner|homeSectionHeading/);
   assert.doesNotMatch(home, /home-footnote/);
   assert.match(app, /function homeHelpTip\(/);
-  assert.match(app, /紧邻上一同长度窗口/);
+  assert.match(app, /前期为本期之前紧邻的同长度窗口/);
   assert.match(app, /未知显示 —，不会补零/);
+  assert.doesNotMatch(app, /home-period-context/);
   assert.doesNotMatch(app, /function renderHistoryHomeHeader\(\)/);
   const trends = functionBody(app, 'renderHistoryTrends');
   assert.ok(trends.indexOf("'日趋势'") < trends.indexOf("'月趋势'"));
@@ -107,12 +108,14 @@ test('home names every loading group and offers an explicit cache refresh', asyn
   assert.equal((home.match(/data-home-force-refresh/g) || []).length, 1);
   assert.match(home, /当前日期范围已经加载完成，但没有经营历史数据/);
   assert.match(home, /data-home-latest-date/);
-  assert.match(home, /首页数据已就绪/);
+  assert.doesNotMatch(home, /首页数据已就绪|home-cache-status/);
   assert.match(html, /id="force-refresh"[^>]*>强制刷新缓存<\/button>/);
   assert.match(homePath, /if \(force\) params\.set\('refresh', '1'\)/);
   assert.match(dashboardLoad, /\/api\/dashboard\?refresh=1/);
   assert.match(styles, /\.home-loading-list\s*\{/);
-  assert.match(styles, /\.home-cache-status\s*\{/);
+  assert.doesNotMatch(styles, /\.home-cache-status\s*\{/);
+  assert.match(app, /HOME_PREFETCH_PRESETS/);
+  assert.match(app, /cachedHomeResult\(cacheKey\)/);
 });
 
 test('monthly trend uses source-aware sales and non-additive stock boundaries', async () => {
@@ -243,18 +246,21 @@ test('metric definitions live in contextual title help instead of a page-bottom 
   assert.match(helper, /class="help"/);
   assert.match(helper, /data-tip=/);
   assert.match(table, /homeHelpTip\(comparisonNote/);
-  assert.match(table, /data-tip="\$\{escapeHtml\(metric\.note\)\}"/);
+  assert.match(table, /metric\.coverageNote/);
+  assert.match(table, /用途、来源、公式与覆盖/);
   assert.match(table, /用于判断所选范围的销售规模与转化结果/);
   assert.match(table, /实际完成结算日/);
   assert.doesNotMatch(table, /本期 \$\{currentRange\.start\}/);
   assert.doesNotMatch(home, /home-footnote/);
 });
 
-test('homepage coverage names every partial or missing store instead of hiding the tail', async () => {
+test('homepage keeps coverage details in contextual help instead of value-cell small print', async () => {
   const app = await read('src/web/app.js');
   const sourceNote = functionBody(app, 'homeMetricSourceNote');
-  assert.match(sourceNote, /const compactStores = \(codes\) => codes\.join\('、'\)/);
-  assert.doesNotMatch(sourceNote, /slice\(0,\s*3\)|等\$\{codes\.length\}家/);
+  const table = functionBody(app, 'homeMetricTable');
+  assert.match(sourceNote, /完全未返回：\$\{missing\.join\('、'\)\}/);
+  assert.match(sourceNote, /所选本期有值/);
+  assert.doesNotMatch(table, /metric-subvalue|currentNote/);
 });
 
 test('daily trend uses real day-grain points and names the real window length', async () => {
@@ -676,9 +682,11 @@ test('active responsive shell mirrors the semi-managed top rail and keeps health
   for (const id of [
     'sidebar-account-name',
     'sidebar-permission',
-    'sidebar-dataset',
+    'sidebar-operating-freshness',
+    'sidebar-finance-freshness',
+    'sidebar-ledger-freshness',
+    'sidebar-settlement-freshness',
     'live-update-badge',
-    'sidebar-home-freshness',
     'updated-at',
   ]) {
     assert.match(html, new RegExp(`id="${id}"`));

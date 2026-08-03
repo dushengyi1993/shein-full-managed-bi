@@ -92,6 +92,12 @@ test('GET /api/home is a bounded date-scoped homepage surface', async () => {
   assert.equal(payload.query.previousStart, '2026-07-30');
   assert.ok(Array.isArray(payload.home.storeDaily));
   assert.ok(Array.isArray(payload.home.productFinanceDaily));
+  assert.equal(typeof payload.source.freshness, 'object');
+  for (const key of ['operating', 'finance', 'ledger', 'settlement']) {
+    assert.equal(typeof payload.source.freshness[key], 'object');
+    assert.ok('businessDate' in payload.source.freshness[key]);
+    assert.ok('observedAt' in payload.source.freshness[key]);
+  }
 });
 
 test('dashboard and home allow an authenticated read-only cache bypass', async () => {

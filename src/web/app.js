@@ -737,6 +737,9 @@ const state = {
     requestSerial: 0,
     forceRefresh: false,
     lastLoadedAt: null,
+    cache: new Map(),
+    prefetchScope: '',
+    prefetching: false,
   },
   health: null,
   healthError: '',
@@ -859,10 +862,12 @@ const elements = {
   datasetBadge: document.querySelector('#dataset-badge'),
   liveUpdateBadge: document.querySelector('#live-update-badge'),
   updatedAt: document.querySelector('#updated-at'),
-  sidebarDataset: document.querySelector('#sidebar-dataset'),
   sidebarAccountName: document.querySelector('#sidebar-account-name'),
   sidebarPermission: document.querySelector('#sidebar-permission'),
-  sidebarHomeFreshness: document.querySelector('#sidebar-home-freshness'),
+  sidebarOperatingFreshness: document.querySelector('#sidebar-operating-freshness'),
+  sidebarFinanceFreshness: document.querySelector('#sidebar-finance-freshness'),
+  sidebarLedgerFreshness: document.querySelector('#sidebar-ledger-freshness'),
+  sidebarSettlementFreshness: document.querySelector('#sidebar-settlement-freshness'),
   sidebarSampleNote: document.querySelector('#sidebar-sample-note'),
   mobilePageTitle: document.querySelector('#mobile-page-title'),
   errorPanel: document.querySelector('#error-panel'),
@@ -908,6 +913,30 @@ function formatDateTime(value) {
   if (!value) return '暂无有效销量快照';
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? '更新时间待确认' : dateTimeFormatter.format(date);
+}
+
+function sidebarFreshnessText(source) {
+  const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(String(source?.businessDate || ''))
+    ? String(source.businessDate)
+    : '';
+  const observed = source?.observedAt ? new Date(source.observedAt) : null;
+  const observedText = observed && !Number.isNaN(observed.valueOf())
+    ? new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(observed)
+    : '';
+  return {
+    label: observedText || (businessDate ? businessDate.slice(5).replace('-', '/') : '待回读'),
+    title: [
+      businessDate ? `最新业务日 ${businessDate}` : null,
+      observedText ? `最近读取 ${formatDateTime(source.observedAt)}` : null,
+    ].filter(Boolean).join(' · ') || '该数据源尚未回读更新时间',
+  };
 }
 
 function shanghaiToday() {
@@ -6208,7 +6237,6 @@ function formatPlainAmount(value) {
 function homeMetricSourceNote(bundle, key) {
   const rows = resolvedHomeDaily(bundle);
   const storeCodes = [...bundle.storeCodes].sort();
-  const expectedDays = dateSpanDays(bundle.range);
   const signedKeys = new Set([
     'salesAmount',
     'billSalesAmount',
@@ -6229,21 +6257,12 @@ function homeMetricSourceNote(bundle, key) {
       datesByStore.get(row.storeCode).add(row.date);
     }
   }
-  const complete = [];
-  const partial = [];
-  const missing = [];
-  for (const storeCode of storeCodes) {
-    const count = datesByStore.get(storeCode)?.size || 0;
-    if (count >= expectedDays) complete.push(storeCode);
-    else if (count > 0) partial.push(storeCode);
-    else missing.push(storeCode);
-  }
-  const compactStores = (codes) => codes.join('、');
+  const available = storeCodes.filter((storeCode) => (datesByStore.get(storeCode)?.size || 0) > 0);
+  const missing = storeCodes.filter((storeCode) => !available.includes(storeCode));
   const coverage = [
-    `完整 ${complete.length}/${storeCodes.length}家`,
-    partial.length ? `部分 ${compactStores(partial)}` : null,
-    missing.length ? `缺失 ${compactStores(missing)}` : null,
-  ].filter(Boolean).join(' · ');
+    `所选本期有值 ${available.length}/${storeCodes.length} 家`,
+    missing.length ? `完全未返回：${missing.join('、')}` : '全部店铺均有返回',
+  ].join('；');
   const latestDate = (sourceRows) => sourceRows
     .map(({ date }) => date)
     .filter(Boolean)
@@ -6260,7 +6279,7 @@ function homeMetricSourceNote(bundle, key) {
   }
   if (key.startsWith('ledger')) {
     const latest = latestDate(bundle.ledgerDaily);
-    return latest ? `台账至 ${shortDate(latest)} · ${coverage}` : `台账尚未返回 · ${coverage}`;
+    return latest ? `台账至 ${shortDate(latest)}；${coverage}` : `台账尚未返回；${coverage}`;
   }
   if (['billSalesAmount', 'supplementAmount', 'deductionAmount', 'settlementAmount']
     .includes(key)) {
@@ -6307,7 +6326,7 @@ function historyMetricRows() {
       baselineDisplay: formatter(baseline, previousCurrency),
       change: metricComparison(value, baseline),
       note,
-      currentNote: homeMetricSourceNote(current, key),
+      coverageNote: homeMetricSourceNote(current, key),
     };
   };
   const ratioMetric = (label, key, currentValue, previousValue, note) => ({
@@ -6319,7 +6338,7 @@ function historyMetricRows() {
     baselineDisplay: formatRate(previousValue),
     change: ratePointChange(currentValue, previousValue),
     note,
-    currentNote: '',
+    coverageNote: '',
   });
   const resolvedCurrent = resolvedHomeDaily(current);
   const resolvedPrevious = resolvedHomeDaily(previous);
@@ -6464,20 +6483,27 @@ function homeMetricTable(title, subtitle, metrics, currentRange, previousRange) 
     台账金额: '用于复盘库存价值流转，不代表销售收入。数据来自官方财务台账；期初、期末分别取每家店范围首尾值，入库、出库为范围累计。',
     客户结构: '用于判断新客贡献，数据来自全托经营后台。新客销量占比＝新客销量÷同口径经营销量；新客订单占比＝新客支付订单数÷支付订单数。口径不兼容或未知时显示 —。',
   };
-  const comparisonNote = tableNotes[title] || subtitle;
+  const coverageNotes = metrics
+    .filter(({ coverageNote }) => coverageNote)
+    .map(({ label, coverageNote }) => `${label}：${coverageNote}`)
+    .join('\n');
+  const comparisonNote = [
+    tableNotes[title] || subtitle,
+    coverageNotes ? `\n所选本期覆盖：\n${coverageNotes}` : '',
+  ].join('');
   return `
     <article class="overview-matrix-card home-history-card">
       <div class="matrix-card-head">
-        <div class="title-with-help"><h4>${escapeHtml(title)}</h4>${homeHelpTip(comparisonNote, `${title}用途、来源与公式`)}</div>
+        <div class="title-with-help"><h4>${escapeHtml(title)}</h4>${homeHelpTip(comparisonNote, `${title}用途、来源、公式与覆盖`)}</div>
       </div>
       <div class="metric-matrix cols-3 home-history-matrix" role="table" aria-label="${escapeHtml(title)}">
         <span class="matrix-cell head" role="columnheader">指标</span>
         <span class="matrix-cell head" role="columnheader"><strong>本期</strong></span>
-        <span class="matrix-cell head" role="columnheader"><strong>前期</strong></span>
+        <span class="matrix-cell head" role="columnheader" tabindex="0" data-tip="前期为本期之前紧邻的同长度窗口"><strong>前期</strong></span>
         <span class="matrix-cell head" role="columnheader">较前期</span>
         ${metrics.map((metric) => `
-          <span class="matrix-cell label" role="rowheader" tabindex="0" data-tip="${escapeHtml(metric.note)}">${escapeHtml(metric.label)}</span>
-          <span class="matrix-cell value" role="cell">${escapeHtml(metric.display)}${metric.currentNote ? `<small class="metric-subvalue">${escapeHtml(metric.currentNote)}</small>` : ''}</span>
+          <span class="matrix-cell label" role="rowheader" tabindex="0" data-tip="${escapeHtml([metric.note, metric.coverageNote].filter(Boolean).join('\n'))}">${escapeHtml(metric.label)}</span>
+          <span class="matrix-cell value" role="cell">${escapeHtml(metric.display)}</span>
           <span class="matrix-cell value comparison-value" role="cell">${escapeHtml(metric.baselineDisplay)}</span>
           <span class="matrix-cell value change-value" role="cell">${escapeHtml(metric.change)}</span>`).join('')}
       </div>
@@ -6487,7 +6513,6 @@ function homeMetricTable(title, subtitle, metrics, currentRange, previousRange) 
 function renderHistoryKpis() {
   const summary = historyMetricRows();
   const previousRange = previousHomeDateRange(summary.range);
-  const rangeLabel = `${summary.range.start} → ${summary.range.end}`;
   const regionRows = Array.from({ length: 4 }, (_, index) => ({
     rank: index + 1,
     region: summary.topRegions[index] ?? null,
@@ -6496,14 +6521,8 @@ function renderHistoryKpis() {
     <section class="home-kpi home-history-kpis" aria-label="全托关键经营数据">
       <header class="home-block-head">
         <div><span class="eyebrow">BUSINESS OVERVIEW</span><h2>关键经营数据</h2></div>
-        <p>${escapeHtml(`${rangeLabel} · ${summary.current.productMode ? '货号搜索范围' : `${summary.current.storeCodes.size} 家店`} · 未返回字段保持 —`)}</p>
+        <p>${escapeHtml(`本期 ${compactRangeLabel(summary.range)} · 前期 ${compactRangeLabel(previousRange)} · ${summary.current.productMode ? '货号搜索范围' : `${summary.current.storeCodes.size} 家店`} · 未知不补零`)}</p>
       </header>
-      <div class="home-period-context" aria-label="本期与前期范围">
-        <span>本期 <strong>${escapeHtml(compactRangeLabel(summary.range))}</strong></span>
-        <i aria-hidden="true"></i>
-        <span>前期 <strong>${escapeHtml(compactRangeLabel(previousRange))}</strong></span>
-        <small>紧邻上一同长度窗口</small>
-      </div>
       <div class="kpi-six home-history-card-grid">
         ${homeMetricTable('销售与支付', '实时经营与台账确认自动接续', summary.salesRows, summary.range, previousRange)}
         ${homeMetricTable('商家账单', '销售款、补扣款与应结核对', summary.billRows, summary.range, previousRange)}
@@ -7183,13 +7202,6 @@ function renderHome() {
   const currentRowTotal = Object.values(returnedRows)
     .reduce((sum, value) => sum + (Number.isSafeInteger(value) ? value : 0), 0);
   const latestAvailableDate = state.home.data?.source?.latestAvailableDate || '';
-  const loadedSummary = [
-    `经营日 ${numberFormatter.format(returnedRows.storeDaily || 0)}`,
-    `账单日 ${numberFormatter.format(returnedRows.billDaily || 0)}`,
-    `台账日 ${numberFormatter.format(returnedRows.ledgerDaily || 0)}`,
-    `地区 ${numberFormatter.format(returnedRows.regionDaily || 0)}`,
-    `货号 ${numberFormatter.format(returnedRows.productFinanceDaily || 0)}`,
-  ].join(' · ');
   const comparisonSummary = [
     comparisonRows.storeDaily,
     comparisonRows.billDaily,
@@ -7204,10 +7216,6 @@ function renderHome() {
       </section>`
     : '';
   return `
-    <section class="home-cache-status" aria-label="首页数据缓存状态">
-      <span class="home-cache-ready"><i></i>首页数据已就绪</span>
-      <span>${escapeHtml(loadedSummary)} · 页面读取 ${escapeHtml(formatDateTime(state.home.lastLoadedAt))}</span>
-    </section>
     ${emptyCurrentNotice}
     ${renderHistoryKpis()}
     ${renderHistoryTrends()}
@@ -9667,10 +9675,17 @@ function updateDatasetChrome() {
     elements.datasetBadge.textContent = state.loading ? '正在读取' : '数据不可用';
     elements.datasetBadge.className = `status-badge ${state.loading ? 'neutral' : 'error'}`;
     elements.updatedAt.textContent = state.loading ? '--' : '读取失败';
-    elements.sidebarDataset.textContent = state.loading ? '正在读取' : '数据不可用';
     elements.sidebarAccountName.textContent = state.loading ? '正在读取' : '登录状态待确认';
     elements.sidebarPermission.textContent = '账号权限待确认';
-    elements.sidebarHomeFreshness.textContent = state.loading ? '读取中' : '读取失败';
+    [
+      elements.sidebarOperatingFreshness,
+      elements.sidebarFinanceFreshness,
+      elements.sidebarLedgerFreshness,
+      elements.sidebarSettlementFreshness,
+    ].forEach((element) => {
+      element.textContent = state.loading ? '读取中' : '读取失败';
+      element.title = '';
+    });
     elements.sidebarSampleNote.hidden = true;
     delete document.body.dataset.dataset;
     return;
@@ -9690,19 +9705,25 @@ function updateDatasetChrome() {
     access.readAllStores === true ? '全部店铺可查看' : '查看范围待确认',
     access.writeEnabled === true ? '写入已启用' : '写入需单独授权',
   ].filter(Boolean);
-  const latestAvailableDate = state.home.data?.source?.latestAvailableDate
-    || state.data.home?.coverage?.latestDate
-    || '';
   elements.datasetBadge.textContent = statusLabels[status] || statusLabels.neutral;
   elements.datasetBadge.className = `status-badge ${status}`;
   elements.updatedAt.textContent = formatDateTime(state.data.updatedAt);
-  elements.sidebarDataset.textContent = datasetLabel();
   elements.sidebarAccountName.textContent = accountName;
   elements.sidebarAccountName.title = access.username && access.username !== accountName
     ? `${accountName} · ${access.username}`
     : accountName;
   elements.sidebarPermission.textContent = accessParts.join(' · ') || '账号权限待确认';
-  elements.sidebarHomeFreshness.textContent = latestAvailableDate || '历史完整日待确认';
+  const freshness = state.home.data?.source?.freshness || {};
+  [
+    [elements.sidebarOperatingFreshness, freshness.operating],
+    [elements.sidebarFinanceFreshness, freshness.finance],
+    [elements.sidebarLedgerFreshness, freshness.ledger],
+    [elements.sidebarSettlementFreshness, freshness.settlement],
+  ].forEach(([element, source]) => {
+    const display = sidebarFreshnessText(source);
+    element.textContent = display.label;
+    element.title = display.title;
+  });
   elements.sidebarSampleNote.hidden = status !== 'sample';
   document.body.dataset.dataset = status;
 }
@@ -9835,8 +9856,20 @@ async function postJson(path, body = {}) {
   return response.json();
 }
 
-function homeApiPath({ force = false } = {}) {
-  const range = selectedHomeDateRange();
+const HOME_CACHE_LIMIT = 24;
+const HOME_CACHE_FRESH_MS = 5 * 60 * 1000;
+const HOME_PREFETCH_PRESETS = Object.freeze([
+  'today',
+  'yesterday',
+  'last7',
+  'last30',
+  'last3',
+  'last15',
+  'thisMonth',
+  'lastMonth',
+]);
+
+function homeApiPath({ force = false, range = selectedHomeDateRange() } = {}) {
   const params = new URLSearchParams({
     start: range.start,
     end: range.end,
@@ -9848,8 +9881,64 @@ function homeApiPath({ force = false } = {}) {
   return `/api/home?${params.toString()}`;
 }
 
+function rememberHomeResult(key, data) {
+  state.home.cache.delete(key);
+  state.home.cache.set(key, { data, cachedAt: Date.now() });
+  while (state.home.cache.size > HOME_CACHE_LIMIT) {
+    state.home.cache.delete(state.home.cache.keys().next().value);
+  }
+}
+
+function cachedHomeResult(key) {
+  const cached = state.home.cache.get(key);
+  if (!cached) return null;
+  state.home.cache.delete(key);
+  state.home.cache.set(key, cached);
+  return cached;
+}
+
+function homePrefetchScope() {
+  return [state.owner, state.store, state.query.trim()].join('|');
+}
+
+function scheduleHomePresetPrefetch() {
+  const scope = homePrefetchScope();
+  if (
+    state.route !== 'home'
+    || state.home.prefetching
+    || state.home.prefetchScope === scope
+  ) return;
+  state.home.prefetchScope = scope;
+  const paths = [...new Set(HOME_PREFETCH_PRESETS.map((preset) => homeApiPath({
+    range: homePresetDateRange(preset),
+  })))].filter((path) => !state.home.cache.has(path));
+  if (!paths.length) return;
+  state.home.prefetching = true;
+  window.setTimeout(async () => {
+    try {
+      const queue = [...paths];
+      const worker = async () => {
+        while (queue.length) {
+          if (state.route !== 'home' || homePrefetchScope() !== scope) return;
+          const path = queue.shift();
+          try {
+            rememberHomeResult(path, await fetchJson(path));
+          } catch {
+            // Prefetch is optional. An explicit range selection still performs
+            // the normal authenticated request and reports its own error.
+          }
+        }
+      };
+      await Promise.all([worker(), worker()]);
+    } finally {
+      state.home.prefetching = false;
+    }
+  }, 250);
+}
+
 async function loadHome({ force = false } = {}) {
   if (!state.data || state.route !== 'home') return;
+  const cacheKey = homeApiPath();
   const serial = state.home.requestSerial + 1;
   state.home.requestSerial = serial;
   state.home.loading = true;
@@ -9858,8 +9947,10 @@ async function loadHome({ force = false } = {}) {
   try {
     const result = await fetchJson(homeApiPath({ force }));
     if (serial !== state.home.requestSerial) return;
+    rememberHomeResult(cacheKey, result);
     state.home.data = result;
     state.home.lastLoadedAt = new Date().toISOString();
+    scheduleHomePresetPrefetch();
   } catch (error) {
     if (serial !== state.home.requestSerial) return;
     state.home.error = error instanceof Error ? error.message : '首页经营数据暂不可用';
@@ -9880,7 +9971,20 @@ function scheduleHomeLoad({ delay = 0, force = false } = {}) {
     state.home.loading = false;
     return;
   }
-  state.home.data = null;
+  const cacheKey = homeApiPath();
+  const cached = force ? null : cachedHomeResult(cacheKey);
+  if (cached) {
+    state.home.data = cached.data;
+    state.home.loading = false;
+    state.home.error = '';
+    state.home.forceRefresh = false;
+    render();
+    if ((Date.now() - cached.cachedAt) <= HOME_CACHE_FRESH_MS) {
+      scheduleHomePresetPrefetch();
+      return;
+    }
+  }
+  if (!cached) state.home.data = null;
   state.home.loading = true;
   state.home.error = '';
   state.home.forceRefresh = force;
@@ -9893,6 +9997,10 @@ function scheduleHomeLoad({ delay = 0, force = false } = {}) {
 
 async function loadDashboard(options = {}) {
   const force = options?.force === true;
+  if (force) {
+    state.home.cache.clear();
+    state.home.prefetchScope = '';
+  }
   state.loading = true;
   state.error = '';
   state.healthError = '';
@@ -9984,6 +10092,8 @@ function connectDashboardUpdates() {
     }
     state.updates.observedAt = observedAt;
     state.updates.status = 'refreshing';
+    state.home.cache.clear();
+    state.home.prefetchScope = '';
     render();
     await loadDashboard();
     if (dashboardEventSource === source) {

@@ -53,6 +53,22 @@ function spanDays(start, end) {
   ) + 1;
 }
 
+function sourceFreshness(inputRows) {
+  const sourceRows = rows(inputRows);
+  const businessDates = sourceRows
+    .map(({ date }) => date)
+    .filter((value) => DATE_PATTERN.test(String(value || '')))
+    .sort();
+  const observedTimes = sourceRows
+    .map(({ observedAt }) => observedAt)
+    .filter(Boolean)
+    .sort();
+  return Object.freeze({
+    businessDate: businessDates.at(-1) ?? null,
+    observedAt: observedTimes.at(-1) ?? null,
+  });
+}
+
 function searchable(value) {
   return String(value ?? '').normalize('NFKC').trim().toLocaleLowerCase('zh-CN');
 }
@@ -256,6 +272,12 @@ export function queryHomeDashboard(
       returnedRows: Object.freeze(returnedRows),
       returnedCurrentRows: Object.freeze(returnedCurrentRows),
       returnedComparisonRows: Object.freeze(returnedComparisonRows),
+      freshness: Object.freeze({
+        operating: sourceFreshness(history.storeDaily),
+        finance: sourceFreshness(history.financeDaily),
+        ledger: sourceFreshness(history.ledgerDaily),
+        settlement: sourceFreshness(history.billDaily),
+      }),
     }),
     home: Object.freeze({
       status: history.status || 'unavailable',
