@@ -50,6 +50,16 @@ test('Nginx applies host-scoped HSTS without descendant or preload scope', async
   assert.doesNotMatch(directives[0][1], /includeSubDomains|preload/i);
 });
 
+test('Nginx compresses large homepage JSON responses without enabling proxy caching', async () => {
+  const config = await readFile(NGINX_CONFIG, 'utf8');
+
+  assert.match(config, /\bgzip_vary on;/);
+  assert.match(config, /\bgzip_min_length 1024;/);
+  assert.match(config, /\bgzip_comp_level 5;/);
+  assert.match(config, /\bgzip_types [^;]*application\/json[^;]*;/);
+  assert.doesNotMatch(config, /\bproxy_cache(?:_path|_key|_valid|_bypass|_use_stale)?\b/);
+});
+
 test('Nginx exposes the receiver callback path instead of sending it to the BI portal', async () => {
   assert.equal(WEBHOOK_CALLBACK_PATH, '/api/shein/webhook/v1/events');
   const config = await readFile(NGINX_CONFIG, 'utf8');

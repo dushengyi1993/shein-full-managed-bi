@@ -1,7 +1,7 @@
 const STORE_PATTERN = /^[A-Z0-9_-]{1,24}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_RANGE_DAYS = 366;
-const PRODUCT_LIMIT = 40;
+const PRODUCT_LIMIT = 24;
 
 export class HomeQueryError extends Error {
   constructor(code, message) {
@@ -153,6 +153,73 @@ function topProductKeys(inputRows, limit = PRODUCT_LIMIT) {
   ]);
 }
 
+function topProductDailyKeys(inputRows, limit = PRODUCT_LIMIT) {
+  const grouped = new Map();
+  for (const row of inputRows) {
+    const key = `${row.storeCode}:${row.productGrain}:${row.productKey}`;
+    const current = grouped.get(key) || { quantity: 0, amount: 0, hasAmount: false };
+    if (Number.isSafeInteger(row.salesQuantity) && row.salesQuantity >= 0) {
+      current.quantity += row.salesQuantity;
+    }
+    if (typeof row.estimatedDealAmount === 'number' && Number.isFinite(row.estimatedDealAmount)) {
+      current.amount += row.estimatedDealAmount;
+      current.hasAmount = true;
+    }
+    grouped.set(key, current);
+  }
+  const ranked = [...grouped];
+  const byQuantity = ranked
+    .sort((left, right) => right[1].quantity - left[1].quantity)
+    .slice(0, limit)
+    .map(([key]) => key);
+  const byAmount = ranked.some(([, value]) => value.hasAmount)
+    ? [...ranked]
+      .sort((left, right) => right[1].amount - left[1].amount)
+      .slice(0, limit)
+      .map(([key]) => key)
+    : [];
+  return new Set([...byQuantity, ...byAmount]);
+}
+
+function topRegionKeys(inputRows, limit = 4) {
+  const grouped = new Map();
+  for (const row of inputRows) {
+    const key = `${row.regionKey}:${row.regionName}`;
+    const current = grouped.get(key) || 0;
+    if (Number.isSafeInteger(row.salesQuantity) && row.salesQuantity >= 0) {
+      grouped.set(key, current + row.salesQuantity);
+    } else if (!grouped.has(key)) {
+      grouped.set(key, current);
+    }
+  }
+  return new Set([...grouped]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, limit)
+    .map(([key]) => key));
+}
+
+function projectLedgerRow(row) {
+  return Object.freeze({
+    storeCode: row.storeCode,
+    date: row.date,
+    currency: row.currency ?? null,
+    beginBalanceCount: row.beginBalanceCount ?? null,
+    inboundCount: row.inboundCount ?? null,
+    outboundCount: row.outboundCount ?? null,
+    endBalanceCount: row.endBalanceCount ?? null,
+    urgentOrderEntryCount: row.urgentOrderEntryCount ?? null,
+    prepareOrderEntryCount: row.prepareOrderEntryCount ?? null,
+    customerOutboundCount: row.customerOutboundCount ?? null,
+    beginBalanceAmount: row.beginBalanceAmount ?? null,
+    inboundAmount: row.inboundAmount ?? null,
+    outboundAmount: row.outboundAmount ?? null,
+    endBalanceAmount: row.endBalanceAmount ?? null,
+    observedAt: row.observedAt ?? null,
+    qualityStatus: row.qualityStatus ?? null,
+    basis: row.basis ?? null,
+  });
+}
+
 export function queryHomeDashboard(
   dashboardValue,
   historyValue,
@@ -193,12 +260,23 @@ export function queryHomeDashboard(
   const productDailyCandidates = rows(history.productDaily)
     .filter(dateMatches)
     .filter(baseStoreMatches);
-  const productDaily = query && matchedBySearch.size === 0
+  const scopedProductDaily = query && matchedBySearch.size === 0
     ? productDailyCandidates.filter((row) => productSearchText(row).includes(query))
     : productDailyCandidates.filter(storeMatches);
-  const regionDaily = rows(history.regionDaily).filter(dateMatches).filter(storeMatches);
+  const retainedProductDailyKeys = topProductDailyKeys(scopedProductDaily);
+  const productDaily = scopedProductDaily.filter((row) => retainedProductDailyKeys.has(
+    `${row.storeCode}:${row.productGrain}:${row.productKey}`,
+  ));
+  const regionDailyCandidates = rows(history.regionDaily).filter(dateMatches).filter(storeMatches);
+  const retainedRegionKeys = topRegionKeys(regionDailyCandidates);
+  const regionDaily = regionDailyCandidates.filter((row) => retainedRegionKeys.has(
+    `${row.regionKey}:${row.regionName}`,
+  ));
   const financeDaily = rows(history.financeDaily).filter(dateMatches).filter(storeMatches);
-  const ledgerDaily = rows(history.ledgerDaily).filter(dateMatches).filter(storeMatches);
+  const ledgerDaily = rows(history.ledgerDaily)
+    .filter(dateMatches)
+    .filter(storeMatches)
+    .map(projectLedgerRow);
   const billDaily = rows(history.billDaily).filter(dateMatches).filter(storeMatches);
   let productFinanceCandidates = rows(history.productFinanceDaily)
     .filter(dateMatches)

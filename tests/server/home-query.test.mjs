@@ -105,6 +105,44 @@ test('home query searches products without leaking another store', () => {
   assert.equal(result.home.productFinanceDaily[0].storeCode, 'DL5477');
 });
 
+test('home query bounds ranking candidates and projects only homepage ledger fields', () => {
+  const boundedHistory = structuredClone(history);
+  boundedHistory.home.productDaily = Array.from({ length: 45 }, (_, index) => ({
+    storeCode: 'DL5477',
+    date: '2026-07-31',
+    productGrain: 'SKC',
+    productKey: `SKC-${index + 1}`,
+    salesQuantity: index + 1,
+  }));
+  boundedHistory.home.regionDaily = Array.from({ length: 15 }, (_, index) => ({
+    storeCode: 'DL5477',
+    date: '2026-07-31',
+    regionKey: `R-${index + 1}`,
+    regionName: `地区-${index + 1}`,
+    salesQuantity: index + 1,
+  }));
+  boundedHistory.home.ledgerDaily[0].supplierOutboundCount = 99;
+  boundedHistory.home.ledgerDaily[0].beginBalanceCount = 12;
+
+  const result = queryHomeDashboard(
+    dashboard,
+    boundedHistory,
+    new URLSearchParams({
+      start: '2026-07-31',
+      end: '2026-07-31',
+      owner: 'LIU',
+      store: 'ALL',
+    }),
+  );
+
+  assert.equal(new Set(result.home.productDaily.map(({ productKey }) => productKey)).size, 24);
+  assert.ok(result.home.productDaily.some(({ productKey }) => productKey === 'SKC-45'));
+  assert.ok(!result.home.productDaily.some(({ productKey }) => productKey === 'SKC-1'));
+  assert.equal(new Set(result.home.regionDaily.map(({ regionKey }) => regionKey)).size, 4);
+  assert.equal(result.home.ledgerDaily[0].beginBalanceCount, 12);
+  assert.ok(!('supplierOutboundCount' in result.home.ledgerDaily[0]));
+});
+
 test('home query rejects an unbounded range', () => {
   assert.throws(
     () => queryHomeDashboard(
