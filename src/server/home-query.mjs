@@ -55,17 +55,21 @@ function spanDays(start, end) {
 
 function sourceFreshness(inputRows) {
   const sourceRows = rows(inputRows);
-  const businessDates = sourceRows
-    .map(({ date }) => date)
-    .filter((value) => DATE_PATTERN.test(String(value || '')))
-    .sort();
-  const observedTimes = sourceRows
-    .map(({ observedAt }) => observedAt)
-    .filter(Boolean)
-    .sort();
+  let businessDate = null;
+  let observedAt = null;
+  for (const row of sourceRows) {
+    const rowDate = String(row?.date || '');
+    if (DATE_PATTERN.test(rowDate) && (!businessDate || rowDate > businessDate)) {
+      businessDate = rowDate;
+    }
+    const rowObservedAt = String(row?.observedAt || '');
+    if (rowObservedAt && (!observedAt || rowObservedAt > observedAt)) {
+      observedAt = rowObservedAt;
+    }
+  }
   return Object.freeze({
-    businessDate: businessDates.at(-1) ?? null,
-    observedAt: observedTimes.at(-1) ?? null,
+    businessDate,
+    observedAt,
   });
 }
 
