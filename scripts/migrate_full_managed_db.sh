@@ -70,6 +70,25 @@ migration_is_superseded() {
         "
       ' | grep -qx 1
       ;;
+    0020_full_home_webapi_audit_contract.sql)
+      # 0021 widens the same append-only endpoint constraint with UPDATE_TIME
+      # and PRODUCT_DIAGNOSE_LIST. Replaying 0020 after either endpoint has
+      # been recorded would temporarily narrow the vocabulary and fail before
+      # 0021 can restore it. Preserve both immutable migrations and skip only
+      # when the live constraint proves that 0021 already took effect.
+      docker exec "$container_name" sh -ceu '
+        exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "
+          SELECT CASE WHEN EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = '\''raw.webapi_home_fetch_audit'\''::regclass
+              AND conname = '\''ck_raw_webapi_home_fetch_endpoint'\''
+              AND pg_get_constraintdef(oid) LIKE '\''%UPDATE_TIME%'\''
+              AND pg_get_constraintdef(oid) LIKE '\''%PRODUCT_DIAGNOSE_LIST%'\''
+          ) THEN 1 ELSE 0 END
+        "
+      ' | grep -qx 1
+      ;;
     *)
       return 1
       ;;
