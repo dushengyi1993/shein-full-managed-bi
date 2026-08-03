@@ -8701,16 +8701,12 @@ function platformDecisionOverview(queryData) {
   const health = productRecord(queryData.health);
   const queue = productRecord(queryData.queue);
   const summary = productRecord(queryData.summary);
-  const subscription = productRecord(queryData.subscription);
   const queuePending = isUnit(queue.queued) && isUnit(queue.running)
     ? queue.queued + queue.running
     : null;
   const failed = isUnit(summary.failureEventCount) && isUnit(queue.deadLetter)
     ? summary.failureEventCount + queue.deadLetter
     : null;
-  const subscriptionNote = isUnit(subscription.readbackCount)
-    ? `已回读 ${numberFormatter.format(subscription.readbackCount)} 项订阅`
-    : '正在读取订阅状态';
   return `
     <section class="sales-period-overview platform-decision-overview" aria-label="平台动态经营概览">
       <header class="sales-workspace-head">
@@ -8722,18 +8718,18 @@ function platformDecisionOverview(queryData) {
         <div class="sales-range-receipt">
           <span>当前店铺范围</span>
           <strong>${escapeHtml(inventoryScopeLabel())}</strong>
-          <small>${escapeHtml(`${subscriptionNote} · 更新 ${sourceTime(queryData.source?.healthEvaluatedAt)}`)}</small>
+          <small>${escapeHtml(`事件更新 ${sourceTime(queryData.source?.healthEvaluatedAt)}`)}</small>
         </div>
       </header>
       <div class="sales-period-grid platform-decision-grid">
         ${salesPeriodMetric('近24小时重点动态', isUnit(summary.last24hAttentionCount) ? `${numberFormatter.format(summary.last24hAttentionCount)} 条` : '未知', `影响 ${nullableUnits(summary.impactedStoreCount)} 家店`, 'primary')}
         ${salesPeriodMetric('系统处理中', queuePending === null ? '未知' : `${numberFormatter.format(queuePending)} 条`, `等待 ${queueMetric(queue, 'queued')} · 处理中 ${queueMetric(queue, 'running')}`)}
         ${salesPeriodMetric('处理失败', failed === null ? '未知' : `${numberFormatter.format(failed)} 条`, `事件失败 ${nullableUnits(summary.failureEventCount)} · 死信 ${nullableUnits(queue.deadLetter)}`)}
-        ${salesPeriodMetric('近24小时需处理', isUnit(summary.highPriorityCount) ? `${numberFormatter.format(summary.highPriorityCount)} 条` : '未知', '紧急与高优先事项')}
+        ${salesPeriodMetric('高优先需处理', isUnit(summary.highPriorityCount) ? `${numberFormatter.format(summary.highPriorityCount)} 条` : '未知', '当前范围内的紧急与高优先事项')}
       </div>
       <div class="sales-data-receipt">
         <span><i></i>${health.ok === true ? '事件链路运行正常' : '事件链路需要检查'}</span>
-        <p>${escapeHtml(`最后接收 ${sourceTime(queue.lastReceivedAt)} · 最后业务事件 ${sourceTime(queryData.source?.latestEventAt)} · ${subscriptionNote}`)}</p>
+        <p>${escapeHtml(`最后接收 ${sourceTime(queue.lastReceivedAt)} · 最后业务事件 ${sourceTime(queryData.source?.latestEventAt)}`)}</p>
       </div>
     </section>`;
 }

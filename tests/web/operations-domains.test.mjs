@@ -125,8 +125,8 @@ test('platform page prioritizes operator attention and keeps technical evidence 
   assert.match(render, /platformEvidenceDisclosure\(queryData\)/);
   assert.doesNotMatch(render, /process-flow|验签与快速回执/);
   assert.match(decision, /近24小时重点动态/);
-  assert.match(decision, /近24小时需处理/);
-  assert.match(decision, /已回读/);
+  assert.match(decision, /高优先需处理/);
+  assert.doesNotMatch(decision, /订阅回读|已回读/);
   assert.match(timeline, /当前没有需要关注的平台动态/);
   assert.match(timeline, /普通成功回执仍可能只保留在技术审计中/);
   assert.match(disclosure, /Webhook 队列健康/);
