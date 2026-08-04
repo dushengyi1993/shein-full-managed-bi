@@ -36,16 +36,18 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
   const timer = await text(
     'infra/systemd/shein-fm-dashboard-materialize.timer',
   );
+  const promotion = await text(
+    'scripts/materialize_and_promote_full_managed_dashboard.sh',
+  );
   assert.equal(unitUser(service), 'sheinfm-materializer');
   assert.match(service, /SupplementaryGroups=sheinfm-dashboard/);
   assert.match(service, /secrets\/materializer\/database\.env/);
-  assert.match(service, /dashboard\/dashboard\.next\.json/);
-  assert.match(service, /chgrp sheinfm-dashboard/);
-  assert.match(service, /chmod 0640/);
-  assert.match(
-    service,
-    /mv -f .*dashboard\.next\.json .*dashboard\.json/,
-  );
+  assert.match(service, /materialize_and_promote_full_managed_dashboard\.sh/);
+  assert.doesNotMatch(service, /ExecStartPost=/);
+  assert.match(promotion, /dashboard\.next\.json/);
+  assert.match(promotion, /chgrp sheinfm-dashboard/);
+  assert.match(promotion, /chmod 0640/);
+  assert.match(promotion, /mv -f "\$\{core_staging\}" "\$\{core_current\}"/);
   assert.match(
     service,
     /ConditionPathExists=\/srv\/shein-fm\/runtime\/materializer\.enabled/,
@@ -54,7 +56,8 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
     service,
     /FULL_BI_OPENAPI_CONFIG|openapi\.json|warehouse\.env/i,
   );
-  assert.match(timer, /OnUnitInactiveSec=30m/);
+  assert.match(timer, /OnUnitInactiveSec=2h/);
+  assert.doesNotMatch(timer, /OnBootSec=/);
   assert.match(
     timer,
     /ConditionPathExists=\/srv\/shein-fm\/runtime\/materializer\.enabled/,

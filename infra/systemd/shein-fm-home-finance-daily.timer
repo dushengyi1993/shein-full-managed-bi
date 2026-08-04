@@ -5,7 +5,7 @@ ConditionPathExists=/srv/shein-fm/runtime/home-finance-backfill.enabled
 [Timer]
 OnCalendar=*-*-* 04:20:00 Asia/Shanghai
 RandomizedDelaySec=2m
-Persistent=true
+Persistent=false
 Unit=shein-fm-home-finance-daily.service
 
 [Install]

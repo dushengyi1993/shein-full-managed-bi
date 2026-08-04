@@ -99,10 +99,11 @@ test('systemd schedule keeps hourly work ahead of bounded daily batches', async 
     readFile(new URL('infra/systemd/shein-fm-home-finance-daily.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-dashboard-materialize.timer', root), 'utf8'),
   ]);
-  assert.match(realtime, /OnCalendar=\*-\*-\* \*:00:00 Asia\/Shanghai/);
-  assert.match(sales, /OnCalendar=\*-\*-\* \*:12:00 Asia\/Shanghai/);
+  assert.match(realtime, /OnCalendar=\*-\*-\* \*:32:00 Asia\/Shanghai/);
+  assert.match(sales, /OnCalendar=\*-\*-\* \*:25:00 Asia\/Shanghai/);
   assert.match(supply, /OnCalendar=\*-\*-\* 03:40:00 Asia\/Shanghai/);
   assert.match(daily, /OnCalendar=\*-\*-\* 05\.\.09:20:00 Asia\/Shanghai/);
   assert.match(finance, /OnCalendar=\*-\*-\* 04:20:00 Asia\/Shanghai/);
-  assert.match(materializer, /OnUnitInactiveSec=30m/);
+  assert.match(materializer, /OnUnitInactiveSec=2h/);
+  assert.doesNotMatch(materializer, /OnBootSec=/);
 });

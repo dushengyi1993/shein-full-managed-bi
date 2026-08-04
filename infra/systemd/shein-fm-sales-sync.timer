@@ -3,9 +3,9 @@ Description=Refresh SHEIN full-managed sales facts once per hour
 ConditionPathExists=/srv/shein-fm/runtime/sales-sync.enabled
 
 [Timer]
-OnCalendar=*-*-* *:12:00 Asia/Shanghai
+OnCalendar=*-*-* *:25:00 Asia/Shanghai
 AccuracySec=1m
-Persistent=true
+Persistent=false
 Unit=shein-fm-sales-sync.service
 
 [Install]

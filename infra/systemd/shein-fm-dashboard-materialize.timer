@@ -3,15 +3,14 @@ Description=Fallback refresh of SHEIN full-managed dashboard JSON
 ConditionPathExists=/srv/shein-fm/runtime/materializer.enabled
 
 [Timer]
-OnBootSec=2m
-OnUnitInactiveSec=30m
-RandomizedDelaySec=2m
-Persistent=true
+OnUnitInactiveSec=2h
+RandomizedDelaySec=10m
+Persistent=false
 Unit=shein-fm-dashboard-materialize.service
 
 # Domain jobs trigger materialization immediately through OnSuccess. This timer
-# is only a bounded fallback if an external read-only repair writes facts without
-# an explicit projection trigger.
+# is only a low-frequency fallback if an external read-only repair writes facts
+# without an explicit projection trigger. It deliberately has no boot trigger.
 
 [Install]
 WantedBy=timers.target

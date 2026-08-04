@@ -1,0 +1,107 @@
+# 全托共享服务器资源协调
+
+## 目标与边界
+
+全托与半托共用 2 核 8GiB 云服务器。本规则只约束 `/opt/shein-fm` 和
+`shein-fm-*` 批任务，不修改、停止或降权任何半托目录、进程、unit 或 timer。
+
+2026-08-04 20:10 重启后的实机证据显示：全托首页实时、销量同步和 Dashboard
+物化在开机数分钟内重叠，且同一时段半托启动预热、库存 OpenAPI 与浏览器任务也在
+运行。重启前云监控达到 CPU 88.6%、内存 98.3%、磁盘繁忙 97%，SSH 与 HTTPS
+同时超时。因此调度必须在进程创建前让路，而不能只依赖任务内部互斥。
+
+## 三层门禁
+
+### 1. 不追补、错峰
+
+- `shein-fm-sales-sync.timer`：每小时 `:25`。
+- `shein-fm-home-realtime.timer`：每小时 `:32`。
+- `shein-fm-dashboard-materialize.timer`：只作 2 小时兜底；没有 `OnBootSec`。
+- 所有定时全托批任务使用 `Persistent=false`，重启不形成补跑风暴。
+- 成功的数据任务仍以 `OnSuccess` 触发一次物化；共享锁确保它不会和下一项重叠。
+
+### 2. 启动前系统压力门禁
+
+`scripts/check_full_managed_resource_pressure.mjs` 只读 Linux `/proc`，在 Node、
+Chrome 和数据扫描启动前执行。缺失指标时 fail closed；不满足门槛返回 `75`，
+systemd 将该轮记录为条件跳过而不是业务失败。
+
+| 类型 | 开机稳定 | MemAvailable | 每核 load1 | memory full PSI avg10 | io full PSI avg10 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 浏览器 | 15 分钟 | 2560 MiB | `<= 0.75` | `<= 1` | `<= 5` |
+| OpenAPI | 15 分钟 | 2048 MiB | `<= 0.85` | `<= 2` | `<= 8` |
+| 物化 | 20 分钟 | 2048 MiB | `<= 0.75` | `<= 1` | `<= 5` |
+
+跳过的小时数据由后续小时的覆盖窗口吸收；历史日结由后续批次和 10:20 缺失重试
+吸收。禁止在开机后人工同时补跑多个跳过任务。
+
+### 3. 全托共享锁和资源包络
+
+- `/run/lock/shein-fm-heavy.lock` 是所有全托浏览器、OpenAPI 和物化任务的外层锁。
+- `shein-fm-heavy.slice` 对全托批任务合计设置 `CPUQuota=90%`、
+  `MemoryHigh=2G`、`MemoryMax=3G`、`MemorySwapMax=256M`、`TasksMax=256`。
+- 每个 service 另设 CPUQuota、CPUWeight、IOWeight、Nice、MemoryMax、
+  OOMScoreAdjust 和超时；即使任务异常也不能吃满共享主机。
+- Chrome 任务使用 `KillMode=control-group`。正常流程逐店关闭浏览器；停止超时后
+  systemd 会清理该 unit cgroup 内的全部 Chrome 子进程。
+
+共享锁只协调全托任务，绝不读取或改写半托锁。跨项目资源让路由系统压力门禁完成。
+
+## 安装
+
+部署 release 后，先安装资源包络和临时文件规则，再覆盖相关 service/timer：
+
+```bash
+install -o root -g root -m 0644 \
+  infra/systemd/shein-fm-heavy.slice \
+  /etc/systemd/system/shein-fm-heavy.slice
+install -o root -g root -m 0644 \
+  infra/tmpfiles.d/shein-fm-scheduler.conf \
+  /etc/tmpfiles.d/shein-fm-scheduler.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/shein-fm-scheduler.conf
+
+systemd-analyze verify \
+  /etc/systemd/system/shein-fm-heavy.slice \
+  /etc/systemd/system/shein-fm-home-realtime.service \
+  /etc/systemd/system/shein-fm-home-realtime.timer \
+  /etc/systemd/system/shein-fm-sales-sync.service \
+  /etc/systemd/system/shein-fm-sales-sync.timer \
+  /etc/systemd/system/shein-fm-dashboard-materialize.service \
+  /etc/systemd/system/shein-fm-dashboard-materialize.timer
+systemctl daemon-reload
+```
+
+部署期间先停止 full-managed timers，不杀正在运行的半托或全托任务。安装成功后只
+启动 timer；不要手工补跑错过窗口。
+
+## 验收
+
+```bash
+systemctl show shein-fm-heavy.slice \
+  -p CPUQuotaPerSecUSec -p CPUWeight -p IOWeight \
+  -p MemoryHigh -p MemoryMax -p MemorySwapMax -p TasksMax
+systemctl list-timers 'shein-fm-*'
+node /opt/shein-fm/current/scripts/check_full_managed_resource_pressure.mjs \
+  --class=browser
+```
+
+必须逐项回读：
+
+1. `:25`、`:32` 和物化 2 小时兜底均为 `Persistent=false`，物化无开机触发。
+2. 压力不足时 service 为条件跳过，journal 包含结构化 `DEFERRED` 原因，且没有新
+   Chrome、Node 数据任务或物化进程。
+3. 空闲时同一时刻最多一个 full-managed 批任务持有共享锁。
+4. 批次结束后 `/srv/shein-fm/webapi/profiles` 对应 Chrome 进程、临时调试端口及
+   store-login 活动租约均为零。
+5. Portal、数据库、Webhook 健康，公网 HTTPS 和 SSH 保持响应。
+6. 半托 unit 文件、timer 状态和仓库工作区没有被修改。
+
+## 回滚
+
+1. 停止本手册涉及的全托 timer，不停止半托服务。
+2. 从部署前备份恢复精确的 `shein-fm-*` unit；删除新增 slice/tmpfiles 规则前先确认
+   没有 full-managed batch 在运行。
+3. `systemctl daemon-reload`，验证旧 unit，再按旧状态启用 timer。
+4. 代码 release 原子切回 `previous`；保留 journal 和压力门禁 JSON 作为事故证据。
+
+回滚也禁止启动 `Persistent` 补跑或一次性并发补数据；需要补数据时另开受控维护窗。

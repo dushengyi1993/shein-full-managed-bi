@@ -2,7 +2,7 @@
 Description=Renew saved-password sessions for full-managed SHEIN Profiles
 Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
 Wants=network-online.target
-After=network-online.target shein-fm-store-login.service
+After=network-online.target shein-fm-store-login.service systemd-tmpfiles-setup.service
 Requires=shein-fm-db.service
 RequiresMountsFor=/data /srv/shein-fm/runtime /srv/shein-fm/webapi/profiles
 ConditionPathExists=/srv/shein-fm/runtime/store-login/renewal.enabled
@@ -12,6 +12,7 @@ ConditionPathExists=/srv/shein-fm/runtime/store-login/state.json
 Type=oneshot
 User=sheinfm
 Group=sheinfm
+Slice=shein-fm-heavy.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
@@ -20,8 +21,22 @@ RuntimeDirectory=shein-fm-webapi
 RuntimeDirectoryMode=0700
 # History reads and renewal both own a Chrome Profile. Skip this renewal slot
 # when a history run is active; the next daily slot will retry.
-ExecStart=/usr/bin/flock -n /run/shein-fm-webapi/home-history.lock /usr/bin/flock -n /srv/shein-fm/runtime/store-login/renewal.lock /usr/bin/node scripts/renew_full_managed_webapi_sessions.mjs
-TimeoutStartSec=60min
+ExecCondition=/usr/bin/node scripts/check_full_managed_resource_pressure.mjs --class=browser
+ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/flock -n -E 75 /run/shein-fm-webapi/home-history.lock /usr/bin/flock -n -E 75 /srv/shein-fm/runtime/store-login/renewal.lock /usr/bin/node scripts/renew_full_managed_webapi_sessions.mjs
+SuccessExitStatus=75
+TimeoutStartSec=45min
+TimeoutStopSec=30s
+KillMode=control-group
+SendSIGKILL=yes
+Nice=10
+CPUWeight=20
+CPUQuota=75%
+IOWeight=20
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+OOMPolicy=stop
+OOMScoreAdjust=500
+TasksMax=128
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -36,6 +51,7 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadOnlyPaths=/srv/shein-fm/secrets/webapi-experiment/database.env
-ReadWritePaths=/run/shein-fm-webapi /srv/shein-fm/runtime/store-login /srv/shein-fm/runtime/webapi-locks /srv/shein-fm/webapi/profiles
-MemoryHigh=768M
-MemoryMax=1536M
+ReadWritePaths=/run/lock/shein-fm-heavy.lock /run/shein-fm-webapi /srv/shein-fm/runtime/store-login /srv/shein-fm/runtime/webapi-locks /srv/shein-fm/webapi/profiles
+MemoryHigh=1100M
+MemoryMax=1600M
+MemorySwapMax=128M

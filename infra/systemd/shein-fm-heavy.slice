@@ -1,0 +1,14 @@
+[Unit]
+Description=Bounded resource envelope for SHEIN full-managed batch jobs
+
+[Slice]
+CPUAccounting=true
+CPUWeight=20
+CPUQuota=90%
+IOAccounting=true
+IOWeight=20
+MemoryAccounting=true
+MemoryHigh=2G
+MemoryMax=3G
+MemorySwapMax=256M
+TasksMax=256

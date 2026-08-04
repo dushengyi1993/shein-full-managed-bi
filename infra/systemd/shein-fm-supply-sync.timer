@@ -6,7 +6,7 @@ ConditionPathExists=/srv/shein-fm/runtime/supply-backfill.verified
 [Timer]
 OnCalendar=*-*-* 03:40:00 Asia/Shanghai
 RandomizedDelaySec=2m
-Persistent=true
+Persistent=false
 Unit=shein-fm-supply-sync.service
 
 # Deliberately disabled by default. Enable this timer only after the deployment

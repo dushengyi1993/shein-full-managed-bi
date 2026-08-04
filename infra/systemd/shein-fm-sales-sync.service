@@ -2,7 +2,7 @@
 Description=Refresh SHEIN full-managed read-only sales facts
 Wants=network-online.target
 Requires=shein-fm-db.service
-After=network-online.target shein-fm-db.service shein-fm-db-migrate.service
+After=network-online.target shein-fm-db.service shein-fm-db-migrate.service systemd-tmpfiles-setup.service
 OnSuccess=shein-fm-dashboard-materialize.service
 ConditionPathExists=/srv/shein-fm/runtime/sales-sync.enabled
 
@@ -10,6 +10,7 @@ ConditionPathExists=/srv/shein-fm/runtime/sales-sync.enabled
 Type=oneshot
 User=sheinfm-sales
 Group=sheinfm-sales
+Slice=shein-fm-heavy.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
@@ -18,9 +19,22 @@ Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/sales/openapi.json
 EnvironmentFile=/srv/shein-fm/secrets/sales/database.env
 RuntimeDirectory=shein-fm-sales
 RuntimeDirectoryMode=0700
-ExecStart=/usr/bin/flock -n -E 75 /run/shein-fm-sales/sync.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=sales-hourly --execute
+ExecCondition=/usr/bin/node scripts/check_full_managed_resource_pressure.mjs --class=openapi
+ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/flock -n -E 75 /run/shein-fm-sales/sync.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=sales-hourly --execute
 SuccessExitStatus=75
 TimeoutStartSec=45min
+TimeoutStopSec=20s
+KillMode=control-group
+SendSIGKILL=yes
+Nice=10
+CPUWeight=25
+CPUQuota=60%
+IOWeight=25
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+OOMPolicy=stop
+OOMScoreAdjust=400
+TasksMax=96
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -36,9 +50,10 @@ RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadOnlyPaths=/srv/shein-fm/secrets/sales/openapi.json
 ReadOnlyPaths=/srv/shein-fm/secrets/sales/database.env
-ReadWritePaths=/run/shein-fm-sales
-MemoryHigh=768M
-MemoryMax=1536M
+ReadWritePaths=/run/lock/shein-fm-heavy.lock /run/shein-fm-sales
+MemoryHigh=256M
+MemoryMax=512M
+MemorySwapMax=64M
 
 [Install]
 WantedBy=multi-user.target

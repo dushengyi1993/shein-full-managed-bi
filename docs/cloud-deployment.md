@@ -318,3 +318,15 @@ Webhook receiver/worker 常运行在较旧的发布上，仅按“最新 5 个�
 真实粒度仅 93,702 个）。必须按“停供应链同步 → 迁移前全量备份 → 迁移 → verify 0013
 与 9999 → 恢复服务”的顺序执行，详见运维手册第 7 节。旧的 3M 行仅存在于迁移前备份
 及其 COS 副本中，刻意不保留第二份 1.7GB 影子表。
+
+## 12. 共享服务器资源协调
+
+部署任何定时批任务前，必须先安装 `shein-fm-heavy.slice` 和
+`infra/tmpfiles.d/shein-fm-scheduler.conf`，创建 `/run/lock/shein-fm-heavy.lock`，
+再安装 service/timer。高频 timer 禁止 `Persistent=true`；Dashboard 物化禁止设置
+开机触发。完整阈值、验收和回滚见
+[全托共享服务器资源协调](runbooks/resource-coordination.md)。
+
+部署时只停止全托 timer，不中断正在运行的任务，不改动半托 unit 或仓库。切换 release
+后先执行 `systemd-analyze verify` 和压力门禁探针，再只启动 timer；不得追补重启期间
+错过的批次。

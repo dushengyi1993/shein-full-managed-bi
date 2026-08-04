@@ -6,7 +6,7 @@ ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
 [Timer]
 OnCalendar=*-*-* 10:20:00 Asia/Shanghai
 RandomizedDelaySec=2m
-Persistent=true
+Persistent=false
 Unit=shein-fm-home-daily-retry.service
 
 [Install]
