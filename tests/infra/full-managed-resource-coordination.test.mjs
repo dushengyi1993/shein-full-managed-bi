@@ -77,6 +77,8 @@ test('host-heavy jobs share the neutral lock while sales stays in the light lane
     'shein-fm-home-finance-daily.service',
     'shein-fm-supply-sync.service',
     'shein-fm-session-renewal.service',
+    'shein-fm-db-backup.service',
+    'shein-fm-backup-archive.service',
     'shein-fm-dashboard-materialize.service',
   ];
   const heavyUnits = await Promise.all(heavyUnitNames.map((name) => (

@@ -1,11 +1,13 @@
 [Unit]
-Description=Settle SHEIN full-managed homepage history in five bounded batches
+Description=Settle SHEIN full-managed homepage history after the hourly core window
 ConditionPathExists=/srv/shein-fm/runtime/webapi-history.enabled
 ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
 
 [Timer]
-# 05:20 through 09:20 map deterministically to batches 0 through 4.
-OnCalendar=*-*-* 05..09:20:00 Asia/Shanghai
+# The 08 hour belongs to the semi-managed readiness/morning chain. Every batch
+# starts after the :32 full-managed core window and maps by explicit hour.
+OnCalendar=*-*-* 05..07:45:00 Asia/Shanghai
+OnCalendar=*-*-* 09..10:45:00 Asia/Shanghai
 AccuracySec=1m
 Persistent=false
 Unit=shein-fm-home-daily.service

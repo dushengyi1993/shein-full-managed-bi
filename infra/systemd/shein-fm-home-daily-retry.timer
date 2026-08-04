@@ -4,8 +4,8 @@ ConditionPathExists=/srv/shein-fm/runtime/webapi-history.enabled
 ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
 
 [Timer]
-OnCalendar=*-*-* 10:20:00 Asia/Shanghai
-RandomizedDelaySec=2m
+OnCalendar=*-*-* 11:50:00 Asia/Shanghai
+AccuracySec=1m
 Persistent=false
 Unit=shein-fm-home-daily-retry.service
 

@@ -19,7 +19,7 @@ Environment=FULL_BI_DATA_FILE=/srv/shein-fm/runtime/dashboard/dashboard.next.jso
 EnvironmentFile=/srv/shein-fm/secrets/materializer/database.env
 ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-host-heavy.lock /usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/bash scripts/run_full_managed_resource_guarded.sh materializer /usr/bin/bash scripts/materialize_and_promote_full_managed_dashboard.sh
 SuccessExitStatus=75
-TimeoutStartSec=10min
+TimeoutStartSec=5min
 TimeoutStopSec=20s
 KillMode=control-group
 SendSIGKILL=yes

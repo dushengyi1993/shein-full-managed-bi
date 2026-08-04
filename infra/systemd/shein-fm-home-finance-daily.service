@@ -21,7 +21,7 @@ RuntimeDirectory=shein-fm-sales
 RuntimeDirectoryMode=0700
 ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-host-heavy.lock /usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/flock -n -E 75 /run/shein-fm-sales/home-finance-daily.lock /usr/bin/bash scripts/run_full_managed_resource_guarded.sh openapi /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=finance-daily --execute
 SuccessExitStatus=75
-TimeoutStartSec=60min
+TimeoutStartSec=15min
 TimeoutStopSec=20s
 KillMode=control-group
 SendSIGKILL=yes

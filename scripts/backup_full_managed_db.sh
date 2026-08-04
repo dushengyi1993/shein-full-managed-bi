@@ -60,8 +60,8 @@ fi
 
 deploy_cooldown_seconds="${FULL_BI_DEPLOY_BACKUP_COOLDOWN_SECONDS:-7200}"
 deploy_local_max="${FULL_BI_DEPLOY_BACKUP_MAX:-3}"
-retain_days="${FULL_BI_BACKUP_RETAIN_DAYS:-3}"
-retain_extra="${FULL_BI_BACKUP_RETAIN_EXTRA:-2}"
+retain_days="${FULL_BI_BACKUP_RETAIN_DAYS:-7}"
+retain_extra="${FULL_BI_BACKUP_RETAIN_EXTRA:-3}"
 now_epoch="$(date -u +%s)"
 today_utc="$(date -u +%Y%m%d)"
 

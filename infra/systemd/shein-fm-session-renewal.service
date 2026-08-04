@@ -23,7 +23,7 @@ RuntimeDirectoryMode=0700
 # when a history run is active; the next daily slot will retry.
 ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-host-heavy.lock /usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/flock -n -E 75 /run/shein-fm-webapi/home-history.lock /usr/bin/flock -n -E 75 /srv/shein-fm/runtime/store-login/renewal.lock /usr/bin/bash scripts/run_full_managed_resource_guarded.sh browser /usr/bin/node scripts/renew_full_managed_webapi_sessions.mjs
 SuccessExitStatus=75
-TimeoutStartSec=45min
+TimeoutStartSec=10min
 TimeoutStopSec=30s
 KillMode=control-group
 SendSIGKILL=yes

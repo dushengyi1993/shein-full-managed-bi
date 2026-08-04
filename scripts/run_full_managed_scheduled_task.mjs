@@ -9,6 +9,13 @@ import { FULL_MANAGED_STORE_CODES } from '../src/config/full-managed-stores.mjs'
 
 export const OPENAPI_SCHEDULE_LOCK_ID = '8842137002';
 export const HOME_DAILY_BATCH_SIZE = 5;
+export const HOME_DAILY_BATCH_BY_HOUR = Object.freeze({
+  5: 0,
+  6: 1,
+  7: 2,
+  9: 3,
+  10: 4,
+});
 
 const TASKS = new Set([
   'home-realtime',
@@ -99,7 +106,7 @@ function storeCsv(stores = FULL_MANAGED_STORE_CODES) {
 }
 
 function dailyBatch({ batch, shanghaiHour }) {
-  const resolved = batch ?? shanghaiHour - 5;
+  const resolved = batch ?? HOME_DAILY_BATCH_BY_HOUR[shanghaiHour];
   const batchIndex = parseInteger(resolved, 'SCHEDULE_BATCH', 0, 4);
   const start = batchIndex * HOME_DAILY_BATCH_SIZE;
   const stores = FULL_MANAGED_STORE_CODES.slice(start, start + HOME_DAILY_BATCH_SIZE);

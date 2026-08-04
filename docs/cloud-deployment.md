@@ -300,8 +300,8 @@ Webhook receiver/worker 常运行在较旧的发布上，仅按“最新 5 个�
 
 | 单元 | 节奏 | 说明 |
 | --- | --- | --- |
-| `shein-fm-db-backup.timer` | 每日 02:20 | 现在传 `--mode daily` |
-| `shein-fm-backup-archive.timer` | 每日 03:10 | 保留 + COS 归档 |
+| `shein-fm-db-backup.timer` | 每日 01:55 | 现在传 `--mode daily`；进入主机重锁 |
+| `shein-fm-backup-archive.timer` | 每日 12:45 | 保留 + COS 归档；进入主机重锁 |
 | `shein-fm-disk-guard.timer` | 每 15 分钟 | 只观测，`>=85%` 时 unit failed |
 | `shein-fm-profile-cache-prune.timer` | 每周日 04:40 | Profile 占用时 fail closed |
 | `shein-fm-system-health.timer` | 每 5 分钟 | root 读取固定白名单并原子发布脱敏运行态 |
