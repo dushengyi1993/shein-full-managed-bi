@@ -156,6 +156,10 @@ test('materializer lock deferral cannot publish nonexistent staging files', asyn
   );
   assert.match(unit, /flock -n -E 75 .*materialize_and_promote_full_managed_dashboard\.sh/);
   assert.doesNotMatch(unit, /ExecStartPost=/);
+  assert.match(unit, /^Environment=NODE_OPTIONS=--max-old-space-size=1152$/m);
+  assert.match(unit, /^MemoryHigh=1024M$/m);
+  assert.match(unit, /^MemoryMax=1536M$/m);
+  assert.match(unit, /^MemorySwapMax=128M$/m);
   assert.match(promotion, /materialize_full_managed_dashboard\.mjs/);
   assert.match(promotion, /dashboard\.home\.next\.json/);
   assert.match(promotion, /dashboard\.next\.json/);

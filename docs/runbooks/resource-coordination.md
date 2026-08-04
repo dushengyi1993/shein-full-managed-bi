@@ -51,6 +51,9 @@ Chrome 和数据扫描启动前执行。重任务先获得中立主机锁和全�
   但不被 30–80 分钟的 Chrome 日更任务无条件饿死。
 - 每个 service 另设 CPUQuota、CPUWeight、IOWeight、Nice、MemoryMax、
   OOMScoreAdjust 和超时；即使任务异常也不能吃满共享主机。
+- Dashboard 当前135MB级JSON的实机物化峰值约717MB；其单元使用
+  `MemoryHigh=1G`、`MemoryMax=1.5G`，避免在640MB阈值上被内核持续回收，同时仍
+  受全托3G和主机重任务4G双层上限约束。
 - Chrome 任务使用 `KillMode=control-group`。正常流程逐店关闭浏览器；停止超时后
   systemd 会清理该 unit cgroup 内的全部 Chrome 子进程。
 
