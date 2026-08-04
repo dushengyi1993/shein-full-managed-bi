@@ -14,7 +14,7 @@
 
 ### 1. 不追补、错峰
 
-- `shein-fm-sales-sync.timer`：每小时 `:25`。
+- `shein-fm-sales-sync.timer`：每小时 `:05`，避开半托库存 `:25/:55`。
 - `shein-fm-home-realtime.timer`：每小时 `:32`。
 - `shein-fm-dashboard-materialize.timer`：只作 2 小时兜底；没有 `OnBootSec`。
 - 所有定时全托批任务使用 `Persistent=false`，重启不形成补跑风暴。
@@ -89,7 +89,7 @@ node /opt/shein-fm/current/scripts/check_full_managed_resource_pressure.mjs \
 
 必须逐项回读：
 
-1. `:25`、`:32` 和物化 2 小时兜底均为 `Persistent=false`，物化无开机触发。
+1. `:05`、`:32` 和物化 2 小时兜底均为 `Persistent=false`，物化无开机触发。
 2. 压力不足时 service 为条件跳过，journal 包含结构化 `DEFERRED` 原因，且没有新
    Chrome、Node 数据任务或物化进程。
 3. 空闲时同一时刻最多一个 full-managed 批任务持有共享锁。

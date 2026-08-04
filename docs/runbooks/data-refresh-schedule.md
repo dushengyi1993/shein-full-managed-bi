@@ -7,7 +7,7 @@
 
 | 时间 | 任务 | 数据边界 |
 | --- | --- | --- |
-| 每小时 `:25` | `shein-fm-sales-sync` | OpenAPI SKU 今日/昨日/7日/30日快照 |
+| 每小时 `:05` | `shein-fm-sales-sync` | OpenAPI SKU 今日/昨日/7日/30日快照 |
 | 每小时 `:32` | `shein-fm-home-realtime` | 仅当天 WebAPI 小时曲线；不抓商品历史 |
 | `02:20` | `shein-fm-db-backup` | PostgreSQL 自定义格式压缩备份 |
 | `03:20` | `shein-fm-session-renewal` | 25店 Profile 每日登录态续期 |
