@@ -166,3 +166,29 @@ test('materializer lock deferral cannot publish nonexistent staging files', asyn
   assert.match(promotion, /mv -f "\$\{home_staging\}" "\$\{home_current\}"/);
   assert.match(promotion, /mv -f "\$\{core_staging\}" "\$\{core_current\}"/);
 });
+
+test('scheduled data jobs project partial facts and health after either terminal outcome', async () => {
+  const unitNames = [
+    'shein-fm-home-realtime.service',
+    'shein-fm-home-daily.service',
+    'shein-fm-home-daily-retry.service',
+    'shein-fm-home-finance-daily.service',
+    'shein-fm-sales-sync.service',
+    'shein-fm-supply-sync.service',
+  ];
+  const units = await Promise.all(unitNames.map((name) => (
+    readFile(new URL(`infra/systemd/${name}`, root), 'utf8')
+  )));
+  for (const [index, unit] of units.entries()) {
+    assert.match(
+      unit,
+      /^OnSuccess=shein-fm-dashboard-materialize\.service$/m,
+      unitNames[index],
+    );
+    assert.match(
+      unit,
+      /^OnFailure=shein-fm-dashboard-materialize\.service$/m,
+      unitNames[index],
+    );
+  }
+});

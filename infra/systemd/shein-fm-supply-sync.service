@@ -4,6 +4,7 @@ Wants=network-online.target
 Requires=shein-fm-db.service
 After=network-online.target shein-fm-db.service shein-fm-db-migrate.service systemd-tmpfiles-setup.service
 OnSuccess=shein-fm-dashboard-materialize.service
+OnFailure=shein-fm-dashboard-materialize.service
 ConditionPathExists=/srv/shein-fm/runtime/supply-sync.enabled
 ConditionPathExists=/srv/shein-fm/runtime/supply-backfill.verified
 

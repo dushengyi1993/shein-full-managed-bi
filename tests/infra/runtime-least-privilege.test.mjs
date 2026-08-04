@@ -111,7 +111,7 @@ test('sales, supply, ingress and worker use distinct users and private credentia
   }
 });
 
-test('domain sync units never materialize and trigger the independent projection after success', async () => {
+test('domain sync units never materialize and always trigger the independent projection', async () => {
   for (const path of [
     'infra/systemd/shein-fm-sales-sync.service',
     'infra/systemd/shein-fm-supply-sync.service',
@@ -120,6 +120,7 @@ test('domain sync units never materialize and trigger the independent projection
     assert.doesNotMatch(unit, /FULL_BI_DATA_FILE/);
     assert.doesNotMatch(unit, /materialize_full_managed_dashboard/);
     assert.match(unit, /OnSuccess=shein-fm-dashboard-materialize\.service/);
+    assert.match(unit, /OnFailure=shein-fm-dashboard-materialize\.service/);
   }
 });
 
