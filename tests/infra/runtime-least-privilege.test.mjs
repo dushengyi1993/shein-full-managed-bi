@@ -56,7 +56,8 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
     service,
     /FULL_BI_OPENAPI_CONFIG|openapi\.json|warehouse\.env/i,
   );
-  assert.match(timer, /OnUnitInactiveSec=2h/);
+  assert.match(timer, /OnCalendar=\*-\*-\* 00\.\.23\/2:55:00 Asia\/Shanghai/);
+  assert.doesNotMatch(timer, /OnUnitInactiveSec=/);
   assert.doesNotMatch(timer, /OnBootSec=/);
   assert.match(
     timer,

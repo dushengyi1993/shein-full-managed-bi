@@ -148,7 +148,8 @@ test('systemd schedule keeps hourly work ahead of bounded daily batches', async 
   assert.match(archive, /OnCalendar=\*-\*-\* 12:45:00 Asia\/Shanghai/);
   assert.doesNotMatch(backup, /Persistent=true/);
   assert.doesNotMatch(archive, /Persistent=true/);
-  assert.match(materializer, /OnUnitInactiveSec=2h/);
+  assert.match(materializer, /OnCalendar=\*-\*-\* 00\.\.23\/2:55:00 Asia\/Shanghai/);
+  assert.doesNotMatch(materializer, /OnUnitInactiveSec=/);
   assert.doesNotMatch(materializer, /OnBootSec=/);
 });
 

@@ -17,8 +17,8 @@
 | `11:50` | `shein-fm-home-daily-retry` | 只补前述分批留下的缺失范围 |
 | `12:45` | `shein-fm-backup-archive` | 低优先级 COS 保留治理；在 13:20 ET 前硬停止 |
 
-Dashboard 由成功的数据任务通过 `OnSuccess` 立即触发。独立物化 timer 只保留
-2小时兜底，不设开机触发，不再每30分钟无条件重建。
+Dashboard 由成功的数据任务通过 `OnSuccess` 立即触发。独立物化 timer 只在偶数
+小时`:55`兜底，不设开机触发，不再按“上次结束后两小时”漂移或每30分钟无条件重建。
 
 ## 平台结算门禁
 

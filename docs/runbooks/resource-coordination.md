@@ -16,7 +16,8 @@
 
 - `shein-fm-sales-sync.timer`：每小时 `:05`，避开半托库存 `:25/:55`。
 - `shein-fm-home-realtime.timer`：每小时 `:32`。
-- `shein-fm-dashboard-materialize.timer`：只作 2 小时兜底；没有 `OnBootSec`。
+- `shein-fm-dashboard-materialize.timer`：固定偶数小时`:55`兜底；没有
+  `OnBootSec`，不会随上次结束时间漂移。
 - 所有定时全托批任务使用 `Persistent=false`，重启不形成补跑风暴。
 - 成功的数据任务仍以 `OnSuccess` 触发一次物化；共享锁确保它不会和下一项重叠。
 

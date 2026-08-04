@@ -3,14 +3,15 @@ Description=Fallback refresh of SHEIN full-managed dashboard JSON
 ConditionPathExists=/srv/shein-fm/runtime/materializer.enabled
 
 [Timer]
-OnUnitInactiveSec=2h
-RandomizedDelaySec=10m
+OnCalendar=*-*-* 00..23/2:55:00 Asia/Shanghai
+AccuracySec=1m
 Persistent=false
 Unit=shein-fm-dashboard-materialize.service
 
 # Domain jobs trigger materialization immediately through OnSuccess. This timer
 # is only a low-frequency fallback if an external read-only repair writes facts
-# without an explicit projection trigger. It deliberately has no boot trigger.
+# without an explicit projection trigger. The fixed even-hour lane cannot drift
+# into the permanent :32 full-managed core window and has no boot trigger.
 
 [Install]
 WantedBy=timers.target
