@@ -444,6 +444,16 @@ GRANT SELECT ON
 TO sheinfm_materializer_ro, sheinfm_app;
 GRANT SELECT (received_at) ON raw.webhook_receipt
 TO sheinfm_materializer_ro;
+GRANT SELECT (
+    store_code,
+    report_generated_date,
+    currency,
+    expected_settlement_amount,
+    completed_pay_at,
+    estimated_pay_at,
+    observed_at
+) ON fact.full_home_finance_report_observation
+TO sheinfm_materializer_ro;
 
 -- The former monolithic runtime login remains available only for read-only
 -- compatibility. It can inspect every current warehouse relation except the

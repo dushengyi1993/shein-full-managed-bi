@@ -498,6 +498,36 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'materializer webhook receipt projection is unsafe';
     END IF;
+    FOREACH required_name IN ARRAY ARRAY[
+        'store_code',
+        'report_generated_date',
+        'currency',
+        'expected_settlement_amount',
+        'completed_pay_at',
+        'estimated_pay_at',
+        'observed_at'
+    ]
+    LOOP
+        IF NOT has_column_privilege(
+            'sheinfm_materializer_login',
+            'fact.full_home_finance_report_observation',
+            required_name,
+            'SELECT'
+        ) THEN
+            RAISE EXCEPTION
+                'materializer lacks pending-settlement source column %',
+                required_name;
+        END IF;
+    END LOOP;
+    IF has_column_privilege(
+        'sheinfm_materializer_login',
+        'fact.full_home_finance_report_observation',
+        'report_order_no_hash',
+        'SELECT'
+    ) THEN
+        RAISE EXCEPTION
+            'materializer must not read pending-settlement report identity';
+    END IF;
 
     -- Sales loader writes only sales/catalog membership and its own trust
     -- ledgers. Permission-probe readback is required for idempotency.
