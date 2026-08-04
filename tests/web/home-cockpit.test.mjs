@@ -213,6 +213,8 @@ test('today core strip keeps six current metrics separate from the historical ra
   assert.match(today, /currentSettlementPosition/);
   assert.match(today, /固定今日，只跟随店铺范围/);
   assert.match(today, /completeSum\(pendingRows, 'pendingSettlementAmount'/);
+  assert.match(today, /referenceCurrency/);
+  assert.match(today, /operatingDisplayCurrency/);
   assert.ok(home.indexOf('renderTodayCoreCards()') < home.indexOf('renderHistoryKpis()'));
   assert.match(parity, /\.today-core-strip\s*\{[^}]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)/s);
   assert.match(parity, /@media \(max-width: 720px\)[\s\S]*\.today-core-strip\s*\{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);

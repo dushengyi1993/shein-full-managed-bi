@@ -6773,6 +6773,16 @@ function renderTodayCoreCards() {
   const pendingCurrency = [...new Set(
     pendingRows.map(({ currency }) => currency).filter(Boolean),
   )];
+  const referenceCurrency = [...new Set([
+    ...pendingRows,
+    ...(Array.isArray(history.financeDaily) ? history.financeDaily : []),
+    ...(Array.isArray(history.billDaily) ? history.billDaily : []),
+  ].map(({ currency }) => currency).filter(Boolean))];
+  const operatingDisplayCurrency = operatingCurrency.length === 1
+    ? operatingCurrency
+    : operatingCurrency.length === 0 && referenceCurrency.length === 1
+      ? referenceCurrency
+      : [];
   const completeSum = (rows, key, { signed = false } = {}) => {
     if (!expectedStores || rows.length !== expectedStores) return null;
     return signed
@@ -6848,7 +6858,7 @@ function renderTodayCoreCards() {
   ];
   const formatCardValue = (card) => {
     if (card.money) {
-      const currency = card.pending ? pendingCurrency : operatingCurrency;
+      const currency = card.pending ? pendingCurrency : operatingDisplayCurrency;
       return currency.length === 1
         ? formatMoney(card.value, currency[0])
         : formatPlainAmount(card.value);
