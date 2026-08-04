@@ -23,10 +23,10 @@
 ### 2. 启动前系统压力门禁
 
 `scripts/check_full_managed_resource_pressure.mjs` 只读 Linux `/proc`，在 Node、
-Chrome 和数据扫描启动前执行。缺失指标时 fail closed；命令行探针不满足门槛返回
-`75`，systemd 的 `ExecCondition` 模式专门转换为 `1`，将该轮记录为条件跳过而
-不是业务失败。不能直接让 `ExecCondition` 返回 `75`，因为 service 的
-`SuccessExitStatus=75` 会把锁竞争的退出码视为成功并继续运行 `ExecStart`。
+Chrome 和数据扫描启动前执行。重任务先获得中立主机锁和全托内部锁，再由
+`scripts/run_full_managed_resource_guarded.sh` 检查压力；不满足门槛返回 `75`，
+但不会进入真正的 `ExecStart` 业务命令。轻量 sales 使用 systemd
+`ExecCondition` 模式并返回 `1` 受控跳过，不进入主机重任务队列。
 
 | 类型 | 开机稳定 | MemAvailable | 每核 load1 | memory full PSI avg10 | io full PSI avg10 |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -37,17 +37,38 @@ Chrome 和数据扫描启动前执行。缺失指标时 fail closed；命令行�
 跳过的小时数据由后续小时的覆盖窗口吸收；历史日结由后续批次和 10:20 缺失重试
 吸收。禁止在开机后人工同时补跑多个跳过任务。
 
-### 3. 全托共享锁和资源包络
+### 3. 主机共享锁和资源包络
 
-- `/run/lock/shein-fm-heavy.lock` 是所有全托浏览器、OpenAPI 和物化任务的外层锁。
-- `shein-fm-heavy.slice` 对全托批任务合计设置 `CPUQuota=90%`、
+- `/run/lock/shein-host-heavy.lock` 是半托、全托 Chrome、大查询、物化和大批量
+  OpenAPI 的中立外层锁；双方自己的领域锁继续作为内层锁。
+- `shein-host-heavy.slice` 对全机重任务合计设置 `CPUQuota=90%`、
+  `MemoryHigh=3G`、`MemoryMax=4G`、`MemorySwapMax=256M`。
+- `shein-host-heavy-fm.slice` 是全托子 slice，继续限制全托合计
+  `CPUQuota=90%`、
   `MemoryHigh=2G`、`MemoryMax=3G`、`MemorySwapMax=256M`、`TasksMax=256`。
+- sales OpenAPI 是今日核心轻量车道：保留独立 API 锁、CPU/内存上限和压力门禁，
+  但不被 30–80 分钟的 Chrome 日更任务无条件饿死。
 - 每个 service 另设 CPUQuota、CPUWeight、IOWeight、Nice、MemoryMax、
   OOMScoreAdjust 和超时；即使任务异常也不能吃满共享主机。
 - Chrome 任务使用 `KillMode=control-group`。正常流程逐店关闭浏览器；停止超时后
   systemd 会清理该 unit cgroup 内的全部 Chrome 子进程。
 
-共享锁只协调全托任务，绝不读取或改写半托锁。跨项目资源让路由系统压力门禁完成。
+主机锁只协调重任务，不读取两个项目的业务数据。半托消费同一中立锁时仍保留自己的
+Profile/任务锁；营销 Chrome 抢不到锁时转本地执行。
+
+### 跨项目消费合同
+
+- 全托仓库维护 `/run/lock/shein-host-heavy.lock` 和
+  `shein-host-heavy.slice` 的主机级定义；半托只增加
+  `shein-host-heavy-bi.slice` 子 slice，不覆盖主机定义。
+- 固定锁顺序为“主机锁 → 项目锁 → Profile/领域锁 → 压力检查 → 业务命令”；
+  任一项目不得反向拿锁。
+- 今日销售 Webhook、单订单 upsert、页面实时销售缓存以及轻量 sales 对账不进入
+  长重锁；它们使用独立小锁和资源熔断。
+- Chrome、ET、全库/大 section、备份、批量物化进入主机重锁。长链路必须拆成
+  可续跑 chunk，并在每小时 `:27` 前释放，给全托 `:32` 首页核心数据预留窗口。
+- 营销 repair 抢不到主机锁或预计 Chrome 超过 10 分钟时标记
+  `deferred_to_local`，由本地 Profile 执行，云端只接收结果与审计。
 
 ## 安装
 
@@ -55,14 +76,18 @@ Chrome 和数据扫描启动前执行。缺失指标时 fail closed；命令行�
 
 ```bash
 install -o root -g root -m 0644 \
+  infra/systemd/shein-host-heavy.slice \
+  infra/systemd/shein-host-heavy-fm.slice \
   infra/systemd/shein-fm-heavy.slice \
-  /etc/systemd/system/shein-fm-heavy.slice
+  /etc/systemd/system/
 install -o root -g root -m 0644 \
   infra/tmpfiles.d/shein-fm-scheduler.conf \
   /etc/tmpfiles.d/shein-fm-scheduler.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/shein-fm-scheduler.conf
 
 systemd-analyze verify \
+  /etc/systemd/system/shein-host-heavy.slice \
+  /etc/systemd/system/shein-host-heavy-fm.slice \
   /etc/systemd/system/shein-fm-heavy.slice \
   /etc/systemd/system/shein-fm-home-realtime.service \
   /etc/systemd/system/shein-fm-home-realtime.timer \
@@ -79,7 +104,7 @@ systemctl daemon-reload
 ## 验收
 
 ```bash
-systemctl show shein-fm-heavy.slice \
+systemctl show shein-host-heavy.slice shein-host-heavy-fm.slice \
   -p CPUQuotaPerSecUSec -p CPUWeight -p IOWeight \
   -p MemoryHigh -p MemoryMax -p MemorySwapMax -p TasksMax
 systemctl list-timers 'shein-fm-*'
@@ -92,7 +117,7 @@ node /opt/shein-fm/current/scripts/check_full_managed_resource_pressure.mjs \
 1. `:05`、`:32` 和物化 2 小时兜底均为 `Persistent=false`，物化无开机触发。
 2. 压力不足时 service 为条件跳过，journal 包含结构化 `DEFERRED` 原因，且没有新
    Chrome、Node 数据任务或物化进程。
-3. 空闲时同一时刻最多一个 full-managed 批任务持有共享锁。
+3. 空闲时同一时刻最多一个半托或全托重任务持有主机锁；轻量实时车道不受长锁饿死。
 4. 批次结束后 `/srv/shein-fm/webapi/profiles` 对应 Chrome 进程、临时调试端口及
    store-login 活动租约均为零。
 5. Portal、数据库、Webhook 健康，公网 HTTPS 和 SSH 保持响应。

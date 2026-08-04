@@ -1,0 +1,14 @@
+[Unit]
+Description=Shared resource envelope for SHEIN host-heavy batch jobs
+
+[Slice]
+CPUAccounting=true
+CPUWeight=20
+CPUQuota=90%
+IOAccounting=true
+IOWeight=20
+MemoryAccounting=true
+MemoryHigh=3G
+MemoryMax=4G
+MemorySwapMax=256M
+TasksMax=512

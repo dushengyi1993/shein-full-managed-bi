@@ -10,7 +10,7 @@ ConditionPathExists=/srv/shein-fm/runtime/home-finance-backfill.enabled
 Type=oneshot
 User=sheinfm-sales
 Group=sheinfm-sales
-Slice=shein-fm-heavy.slice
+Slice=shein-host-heavy-fm.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
@@ -19,8 +19,7 @@ Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/sales/openapi.json
 EnvironmentFile=/srv/shein-fm/secrets/sales/database.env
 RuntimeDirectory=shein-fm-sales
 RuntimeDirectoryMode=0700
-ExecCondition=/usr/bin/node scripts/check_full_managed_resource_pressure.mjs --class=openapi --systemd-condition
-ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/flock -n -E 75 /run/shein-fm-sales/home-finance-daily.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=finance-daily --execute
+ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-host-heavy.lock /usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/flock -n -E 75 /run/shein-fm-sales/home-finance-daily.lock /usr/bin/bash scripts/run_full_managed_resource_guarded.sh openapi /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=finance-daily --execute
 SuccessExitStatus=75
 TimeoutStartSec=60min
 TimeoutStopSec=20s
@@ -50,7 +49,7 @@ RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadOnlyPaths=/srv/shein-fm/secrets/sales/openapi.json
 ReadOnlyPaths=/srv/shein-fm/secrets/sales/database.env
-ReadWritePaths=/run/lock/shein-fm-heavy.lock /run/shein-fm-sales
+ReadWritePaths=/run/lock/shein-host-heavy.lock /run/lock/shein-fm-heavy.lock /run/shein-fm-sales
 MemoryHigh=512M
 MemoryMax=1024M
 MemorySwapMax=64M

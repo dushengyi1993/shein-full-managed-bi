@@ -69,35 +69,66 @@ test('resource pressure gate accepts an idle settled host', () => {
   assert.equal(result.evidence.normalizedLoad, 0.4);
 });
 
-test('high-frequency full-managed jobs share one bounded systemd envelope', async () => {
-  const unitNames = [
+test('host-heavy jobs share the neutral lock while sales stays in the light lane', async () => {
+  const heavyUnitNames = [
     'shein-fm-home-realtime.service',
-    'shein-fm-sales-sync.service',
+    'shein-fm-home-daily.service',
+    'shein-fm-home-daily-retry.service',
+    'shein-fm-home-finance-daily.service',
+    'shein-fm-supply-sync.service',
+    'shein-fm-session-renewal.service',
     'shein-fm-dashboard-materialize.service',
   ];
-  const units = await Promise.all(unitNames.map((name) => (
+  const heavyUnits = await Promise.all(heavyUnitNames.map((name) => (
     readFile(new URL(`infra/systemd/${name}`, root), 'utf8')
   )));
-  for (const [index, unit] of units.entries()) {
-    assert.match(unit, /^Slice=shein-fm-heavy\.slice$/m, unitNames[index]);
+  for (const [index, unit] of heavyUnits.entries()) {
     assert.match(
       unit,
-      /check_full_managed_resource_pressure\.mjs --class=\w+ --systemd-condition/,
+      /^Slice=shein-host-heavy-fm\.slice$/m,
+      heavyUnitNames[index],
     );
-    assert.match(unit, /\/run\/lock\/shein-fm-heavy\.lock/);
+    assert.match(
+      unit,
+      /\/run\/lock\/shein-host-heavy\.lock.*\/run\/lock\/shein-fm-heavy\.lock/,
+    );
+    assert.match(unit, /run_full_managed_resource_guarded\.sh \w+/);
+    assert.doesNotMatch(unit, /^ExecCondition=/m);
     assert.match(unit, /^CPUWeight=\d+$/m);
     assert.match(unit, /^Nice=\d+$/m);
   }
 
-  const [slice, tmpfiles] = await Promise.all([
+  const sales = await readFile(
+    new URL('infra/systemd/shein-fm-sales-sync.service', root),
+    'utf8',
+  );
+  assert.match(sales, /^Slice=shein-fm-heavy\.slice$/m);
+  assert.match(
+    sales,
+    /check_full_managed_resource_pressure\.mjs --class=openapi --systemd-condition/,
+  );
+  assert.doesNotMatch(sales, /shein-host-heavy/);
+  assert.doesNotMatch(sales, /\/run\/lock\/shein-fm-heavy\.lock/);
+  assert.match(sales, /\/run\/shein-fm-sales\/sync\.lock/);
+
+  const [hostSlice, childSlice, fullManagedSlice, tmpfiles, wrapper] = await Promise.all([
+    readFile(new URL('infra/systemd/shein-host-heavy.slice', root), 'utf8'),
+    readFile(new URL('infra/systemd/shein-host-heavy-fm.slice', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-heavy.slice', root), 'utf8'),
     readFile(new URL('infra/tmpfiles.d/shein-fm-scheduler.conf', root), 'utf8'),
+    readFile(new URL('scripts/run_full_managed_resource_guarded.sh', root), 'utf8'),
   ]);
-  assert.match(slice, /CPUQuota=90%/);
-  assert.match(slice, /MemoryHigh=2G/);
-  assert.match(slice, /MemoryMax=3G/);
-  assert.match(slice, /MemorySwapMax=256M/);
+  assert.match(hostSlice, /CPUQuota=90%/);
+  assert.match(hostSlice, /MemoryHigh=3G/);
+  assert.match(hostSlice, /MemoryMax=4G/);
+  assert.match(childSlice, /CPUQuota=90%/);
+  assert.match(childSlice, /MemoryHigh=2G/);
+  assert.match(childSlice, /MemoryMax=3G/);
+  assert.match(fullManagedSlice, /MemoryMax=3G/);
+  assert.match(tmpfiles, /f \/run\/lock\/shein-host-heavy\.lock 0666 root root/);
   assert.match(tmpfiles, /f \/run\/lock\/shein-fm-heavy\.lock 0666 root root/);
+  assert.match(wrapper, /check_full_managed_resource_pressure\.mjs/);
+  assert.match(wrapper, /exec "\$@"/);
 });
 
 test('boot-sensitive timers never replay missed high-frequency work', async () => {

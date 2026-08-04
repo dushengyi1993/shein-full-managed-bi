@@ -1,0 +1,14 @@
+[Unit]
+Description=Full-managed child envelope under the shared SHEIN host-heavy slice
+
+[Slice]
+CPUAccounting=true
+CPUWeight=20
+CPUQuota=90%
+IOAccounting=true
+IOWeight=20
+MemoryAccounting=true
+MemoryHigh=2G
+MemoryMax=3G
+MemorySwapMax=256M
+TasksMax=256

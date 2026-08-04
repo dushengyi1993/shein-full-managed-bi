@@ -11,7 +11,7 @@ ConditionPathExists=/srv/shein-fm/runtime/supply-backfill.verified
 Type=oneshot
 User=sheinfm-supply
 Group=sheinfm-supply
-Slice=shein-fm-heavy.slice
+Slice=shein-host-heavy-fm.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
@@ -20,8 +20,7 @@ Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/supply/openapi.jso
 EnvironmentFile=/srv/shein-fm/secrets/supply/database.env
 RuntimeDirectory=shein-fm-supply
 RuntimeDirectoryMode=0700
-ExecCondition=/usr/bin/node scripts/check_full_managed_resource_pressure.mjs --class=openapi --systemd-condition
-ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/flock -n -E 75 /run/shein-fm-supply/sync.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=supply-daily --execute
+ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-host-heavy.lock /usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/flock -n -E 75 /run/shein-fm-supply/sync.lock /usr/bin/bash scripts/run_full_managed_resource_guarded.sh openapi /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=supply-daily --execute
 SuccessExitStatus=75
 TimeoutStartSec=60min
 TimeoutStopSec=20s
@@ -51,7 +50,7 @@ RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadOnlyPaths=/srv/shein-fm/secrets/supply/openapi.json
 ReadOnlyPaths=/srv/shein-fm/secrets/supply/database.env
-ReadWritePaths=/run/lock/shein-fm-heavy.lock /run/shein-fm-supply
+ReadWritePaths=/run/lock/shein-host-heavy.lock /run/lock/shein-fm-heavy.lock /run/shein-fm-supply
 MemoryHigh=512M
 MemoryMax=1024M
 MemorySwapMax=64M

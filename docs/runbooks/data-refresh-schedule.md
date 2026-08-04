@@ -31,10 +31,11 @@ D-2 以吸收迟到明细和补扣款。
 ## 互斥与性能
 
 - 高频 timer 均为 `Persistent=false`，服务器重启后不追补错过的整点任务。
-- 所有全托批任务共用 `/run/lock/shein-fm-heavy.lock`，销量、首页、物化和日任务
-  串行执行；组件自己的锁仍作为第二层领域互斥。
-- 所有批任务进入 `shein-fm-heavy.slice`；全托批任务合计最多使用一个 CPU 的
-  `90%`、3GiB 内存和 256MiB Swap，并使用低 CPU/IO 权重与较高 Nice 值。
+- 全托 Chrome、物化和日更重任务先获得 `/run/lock/shein-host-heavy.lock`，
+  再获得 `/run/lock/shein-fm-heavy.lock`；半托接入同一主机锁后，双方重任务不会
+  并发。组件自己的锁仍作为第三层领域互斥。
+- 主机重任务进入 `shein-host-heavy.slice`，全托进入其
+  `shein-host-heavy-fm.slice` 子 slice；sales OpenAPI 保留独立轻量车道。
 - 启动前按任务类型检查开机稳定时间、可用内存、每核负载和 memory/io PSI。
   不满足门槛时以受控跳过码 `75` 退出，不启动 Node、Chrome 或数据库扫描。
 - 所有 WebAPI 首页任务共用 `home-history.lock`，同一时刻只允许一个 Chrome。
