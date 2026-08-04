@@ -130,9 +130,10 @@ test('materializes ledger shipment and merchant bill as separate homepage facts'
           has_product_daily: true,
           has_region_daily: true,
           has_finance_daily: false,
-          has_product_finance_daily: false,
-          has_ledger_daily: true,
-          has_bill_daily: true,
+           has_product_finance_daily: false,
+           has_ledger_daily: true,
+           has_bill_daily: true,
+           has_finance_report_observation: true,
         }] };
       }
       if (sql.includes('FROM fact.full_home_store_daily')) return { rows: [] };
@@ -157,7 +158,7 @@ test('materializes ledger shipment and merchant bill as separate homepage facts'
           quality_status: 'COMPLETE',
         }] };
       }
-      if (sql.includes('FROM fact.full_home_bill_daily')) {
+       if (sql.includes('FROM fact.full_home_bill_daily')) {
         return { rows: [{
           store_code: 'MZ2406',
           business_date: '2026-08-01',
@@ -172,8 +173,21 @@ test('materializes ledger shipment and merchant bill as separate homepage facts'
           pending_report_count: '0',
           reconciliation_status: 'MATCHED',
           observed_at: '2026-08-02T02:10:00.000Z',
-        }] };
-      }
+         }] };
+       }
+       if (sql.includes('FROM fact.full_home_finance_report_observation AS report')) {
+         return { rows: [{
+           store_code: 'MZ2406',
+           business_date: '2026-08-01',
+           currency: 'CNY',
+           pending_settlement_amount: '18950.20',
+           pending_report_count: '4',
+           overdue_report_count: '1',
+           earliest_estimated_pay_date: '2026-08-02',
+           latest_estimated_pay_date: '2026-08-10',
+           observed_at: '2026-08-02T02:12:00.000Z',
+         }] };
+       }
       throw new Error(`unexpected query: ${sql}`);
     },
     release() {},
@@ -185,4 +199,11 @@ test('materializes ledger shipment and merchant bill as separate homepage facts'
   assert.equal(result.billDaily[0].deductionAmount, 207.09);
   assert.equal(result.billDaily[0].reconciliationStatus, 'MATCHED');
   assert.equal(result.billDaily[0].basis, 'ACTUAL_SETTLEMENT_DATE');
+  assert.equal(result.settlementPositionDaily[0].pendingSettlementAmount, 18950.2);
+  assert.equal(result.settlementPositionDaily[0].pendingReportCount, 4);
+  assert.equal(result.settlementPositionDaily[0].overdueReportCount, 1);
+  assert.equal(
+    result.settlementPositionDaily[0].basis,
+    'END_OF_PERIOD_PENDING_POSITION',
+  );
 });

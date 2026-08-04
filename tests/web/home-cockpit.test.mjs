@@ -143,13 +143,11 @@ test('historical KPI cards stay row-balanced and expose only evidence-backed tra
   assert.match(metrics, /boundedShare\(/);
   assert.match(metrics, /分子大于分母时视为口径不兼容/);
   assert.match(metrics, /ratePointChange\(currentValue, previousValue\)/);
-  assert.match(kpis, /homeMetricTable\('销售与支付'[^]*summary\.salesRows, summary\.range, previousRange\)/);
-  assert.match(kpis, /homeMetricTable\('商家账单'[^]*summary\.billRows, summary\.range, previousRange\)/);
-  assert.match(kpis, /homeMetricTable\('流量表现'[^]*summary\.trafficRows, summary\.range, previousRange\)/);
+  assert.match(kpis, /homeMetricTable\('经营成交与支付'[^]*summary\.operatingRows, summary\.range, previousRange\)/);
+  assert.match(kpis, /homeMetricTable\('流量与客户'[^]*summary\.trafficRows, summary\.range, previousRange\)/);
+  assert.match(kpis, /homeMetricTable\('财务与结算'[^]*summary\.financeRows, summary\.range, previousRange\)/);
+  assert.match(kpis, /homeMetricTable\('库存台账'[^]*summary\.ledgerRows, summary\.range, previousRange\)/);
   assert.match(kpis, /homeMetricTable\('采购履约'[^]*summary\.supplyRows, summary\.range, previousRange\)/);
-  assert.match(kpis, /homeMetricTable\('台账数量'[^]*summary\.ledgerCountRows, summary\.range, previousRange\)/);
-  assert.match(kpis, /homeMetricTable\('台账金额'[^]*summary\.ledgerAmountRows, summary\.range, previousRange\)/);
-  assert.match(kpis, /homeMetricTable\('客户结构'[^]*summary\.customerRows, summary\.range, previousRange\)/);
   assert.match(kpis, /Array\.from\(\{ length: 4 \}/);
   assert.match(kpis, /只展示 Top 4/);
   assert.match(kpis, /previousHomeDateRange\(summary\.range\)/);
@@ -157,10 +155,13 @@ test('historical KPI cards stay row-balanced and expose only evidence-backed tra
   assert.match(table, /<strong>本期<\/strong>/);
   assert.match(table, /<strong>前期<\/strong>/);
   assert.match(table, />较前期</);
+  assert.match(table, />日期口径</);
+  assert.match(table, /metric\.coverage/);
+  assert.match(table, /metric\.baselineCoverage/);
   assert.doesNotMatch(table, /当前区间|上个等长区间/);
 });
 
-test('approved homepage uses eight paired cards and source-aware full-store rankings', async () => {
+test('approved homepage uses six paired cards and keeps operating, finance and ledger facts independent', async () => {
   const [app, parity] = await Promise.all([
     read('src/web/app.js'),
     read('src/web/home-parity.css'),
@@ -169,22 +170,52 @@ test('approved homepage uses eight paired cards and source-aware full-store rank
   const operatingBasis = functionBody(app, 'homeOperatingBasis');
   const kpis = functionBody(app, 'renderHistoryKpis');
   const rankings = functionBody(app, 'renderHistoryRankings');
-  assert.equal((kpis.match(/homeMetricTable\('/g) || []).length, 7);
+  assert.equal((kpis.match(/homeMetricTable\('/g) || []).length, 5);
   assert.match(kpis, /home-region-card/);
   assert.match(parity, /\.kpi-six\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/s);
   assert.match(kpis, /metric-matrix cols-region/);
   assert.match(kpis, />排名</);
   assert.match(kpis, />地区</);
   assert.match(kpis, />销量</);
-  assert.match(resolved, /confirmedLedger\?\.customerOutboundCount/);
-  assert.match(resolved, /confirmedBill\?\.salesAmount/);
+  assert.match(resolved, /dealAmount: live\?\.dealAmount/);
+  assert.match(resolved, /netDealAmount: live\?\.netDealAmount/);
+  assert.match(resolved, /financeNetAmount: confirmedFinance\?\.netAmount/);
+  assert.match(resolved, /ledgerCustomerOutboundCount: confirmedLedger\?\.customerOutboundCount/);
+  assert.match(resolved, /pendingSettlementAmount: pendingPosition\?\.pendingSettlementAmount/);
   assert.match(resolved, /homeOperatingBasis\(live\)/);
   assert.match(operatingBasis, /WEBAPI_REALTIME/);
   assert.match(operatingBasis, /WEBAPI_INDEX/);
-  assert.match(rankings, /'salesAmount',\s*null/);
+  assert.match(rankings, /'netDealAmount',\s*null/);
   assert.match(rankings, /'salesQuantity',\s*null/);
   assert.match(rankings, /'estimatedDealAmount',\s*20/);
   assert.match(rankings, /'goodsCount',\s*20/);
+});
+
+test('today core strip keeps six current metrics separate from the historical range', async () => {
+  const [app, parity] = await Promise.all([
+    read('src/web/app.js'),
+    read('src/web/home-parity.css'),
+  ]);
+  const today = functionBody(app, 'renderTodayCoreCards');
+  const home = functionBody(app, 'renderHome');
+
+  for (const label of [
+    '净成交金额',
+    '成交金额',
+    '销量',
+    '支付人数',
+    '商详访客',
+    '预计待结算金额',
+  ]) {
+    assert.match(today, new RegExp(label));
+  }
+  assert.match(today, /todayStoreDaily/);
+  assert.match(today, /currentSettlementPosition/);
+  assert.match(today, /固定今日，只跟随店铺范围/);
+  assert.match(today, /completeSum\(pendingRows, 'pendingSettlementAmount'/);
+  assert.ok(home.indexOf('renderTodayCoreCards()') < home.indexOf('renderHistoryKpis()'));
+  assert.match(parity, /\.today-core-strip\s*\{[^}]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)/s);
+  assert.match(parity, /@media \(max-width: 720px\)[\s\S]*\.today-core-strip\s*\{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
 });
 
 test('KPI matrix is one dense real table with legal comparisons only', async () => {
@@ -246,21 +277,26 @@ test('metric definitions live in contextual title help instead of a page-bottom 
   assert.match(helper, /class="help"/);
   assert.match(helper, /data-tip=/);
   assert.match(table, /homeHelpTip\(comparisonNote/);
-  assert.match(table, /metric\.coverageNote/);
+  assert.match(table, /metric\.coverage/);
+  assert.match(table, /metric\.baselineCoverage/);
   assert.match(table, /用途、来源、公式与覆盖/);
-  assert.match(table, /用于判断所选范围的销售规模与转化结果/);
+  assert.match(table, /经营指标/);
   assert.match(table, /实际完成结算日/);
   assert.doesNotMatch(table, /本期 \$\{currentRange\.start\}/);
   assert.doesNotMatch(home, /home-footnote/);
 });
 
-test('homepage keeps coverage details in contextual help instead of value-cell small print', async () => {
+test('homepage shows current and previous coverage under their own values', async () => {
   const app = await read('src/web/app.js');
-  const sourceNote = functionBody(app, 'homeMetricSourceNote');
+  const coverage = functionBody(app, 'homeMetricCoverage');
   const table = functionBody(app, 'homeMetricTable');
-  assert.match(sourceNote, /完全未返回：\$\{missing\.join\('、'\)\}/);
-  assert.match(sourceNote, /所选本期有值/);
-  assert.doesNotMatch(table, /metric-subvalue|currentNote/);
+  assert.match(coverage, /完全未返回：\$\{missing\.join\('、'\)\}/);
+  assert.match(coverage, /日期有缺口/);
+  assert.match(coverage, /\$\{available\.length\}\/\$\{total\}家有值/);
+  assert.match(table, /metric-coverage/);
+  assert.match(table, /metric\.coverage/);
+  assert.match(table, /metric\.baselineCoverage/);
+  assert.match(table, /metric-subvalue/);
 });
 
 test('daily trend uses real day-grain points and names the real window length', async () => {
@@ -474,7 +510,7 @@ test('ranking tables show four windows, tiered magnitude and scope-preserving dr
   assert.match(rankMeta, /已截断，未命中不代表没有销量/);
   assert.match(home, /renderHistoryRankings\(\)/);
   const historical = functionBody(app, 'renderHistoryRankings');
-  assert.match(historical, /店铺销售金额排行/);
+  assert.match(historical, /店铺净成交金额排行/);
   assert.match(historical, /店铺销量排行/);
   assert.match(historical, /货号销售金额 Top 20（估算）/);
   assert.match(historical, /货号销量 Top 20（待归并）/);
@@ -674,7 +710,7 @@ test('active responsive shell mirrors the semi-managed top rail and keeps health
     read('src/web/home-parity.css'),
   ]);
 
-  assert.match(html, /class="mark"[^>]*>[\s\S]*?<img src="\/favicon\.svg\?v=20260803\.\d+"/);
+  assert.match(html, /class="mark"[^>]*>[\s\S]*?<img src="\/favicon\.svg\?v=\d{8}\.\d+"/);
   const navIndex = html.indexOf('class="nav primary-nav"');
   const accountIndex = html.indexOf('class="account-box sidebar-context sidebar-account"');
   const healthIndex = html.indexOf('class="side-note sidebar-health"');

@@ -1330,6 +1330,7 @@ const UNAVAILABLE_FULL_HOME_HISTORY = Object.freeze({
   productFinanceDaily: Object.freeze([]),
   ledgerDaily: Object.freeze([]),
   billDaily: Object.freeze([]),
+  settlementPositionDaily: Object.freeze([]),
   coverage: Object.freeze({
     earliestDate: null,
     latestDate: null,
@@ -1341,6 +1342,7 @@ const UNAVAILABLE_FULL_HOME_HISTORY = Object.freeze({
     productFinanceDailyRows: 0,
     ledgerDailyRows: 0,
     billDailyRows: 0,
+    settlementPositionDailyRows: 0,
     latestObservedAt: null,
   }),
 });
@@ -1364,7 +1366,9 @@ export async function readFullHomeHistory(pool) {
         to_regclass('fact.full_home_product_finance_daily') IS NOT NULL
           AS has_product_finance_daily,
         to_regclass('fact.full_home_ledger_daily') IS NOT NULL AS has_ledger_daily,
-        to_regclass('fact.full_home_bill_daily') IS NOT NULL AS has_bill_daily`);
+        to_regclass('fact.full_home_bill_daily') IS NOT NULL AS has_bill_daily,
+        to_regclass('fact.full_home_finance_report_observation') IS NOT NULL
+          AS has_finance_report_observation`);
     const schema = schemaResult.rows[0] ?? {};
     if (
       schema.has_store_daily !== true
@@ -1465,6 +1469,65 @@ export async function readFullHomeHistory(pool) {
             report_count, settled_report_count, pending_report_count,
             reconciliation_status, observed_at
           FROM fact.full_home_bill_daily
+          ORDER BY business_date, store_code, currency`)
+      : { rows: [] };
+    const settlementPositionResult = schema.has_finance_report_observation === true
+      ? await client.query(`
+          WITH report_intervals AS (
+            SELECT
+              report.store_code,
+              report.currency,
+              report.report_generated_date AS position_start_date,
+              CASE
+                WHEN report.completed_pay_at IS NULL
+                  THEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date
+                ELSE (report.completed_pay_at AT TIME ZONE 'Asia/Shanghai')::date - 1
+              END AS position_end_date,
+              report.expected_settlement_amount,
+              (report.estimated_pay_at AT TIME ZONE 'Asia/Shanghai')::date
+                AS estimated_pay_date,
+              report.observed_at
+            FROM fact.full_home_finance_report_observation AS report
+            WHERE report.report_generated_date <= CASE
+              WHEN report.completed_pay_at IS NULL
+                THEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date
+              ELSE (report.completed_pay_at AT TIME ZONE 'Asia/Shanghai')::date - 1
+            END
+          ),
+          positions AS (
+            SELECT
+              report.store_code,
+              report.currency,
+              position.position_date::date AS business_date,
+              report.expected_settlement_amount,
+              report.estimated_pay_date,
+              report.observed_at
+            FROM report_intervals AS report
+            CROSS JOIN LATERAL generate_series(
+              report.position_start_date,
+              report.position_end_date,
+              interval '1 day'
+            ) AS position(position_date)
+          )
+          SELECT
+            store_code,
+            to_char(business_date, 'YYYY-MM-DD') AS business_date,
+            currency,
+            CASE
+              WHEN COUNT(expected_settlement_amount) = COUNT(*)
+                THEN SUM(expected_settlement_amount)
+              ELSE NULL
+            END AS pending_settlement_amount,
+            COUNT(*) AS pending_report_count,
+            COUNT(*) FILTER (
+              WHERE estimated_pay_date IS NOT NULL
+                AND estimated_pay_date < business_date
+            ) AS overdue_report_count,
+            MIN(estimated_pay_date) AS earliest_estimated_pay_date,
+            MAX(estimated_pay_date) AS latest_estimated_pay_date,
+            MAX(observed_at) AS observed_at
+          FROM positions
+          GROUP BY store_code, business_date, currency
           ORDER BY business_date, store_code, currency`)
       : { rows: [] };
 
@@ -1694,6 +1757,27 @@ export async function readFullHomeHistory(pool) {
       observedAt: pgInstant(row.observed_at),
       basis: 'ACTUAL_SETTLEMENT_DATE',
     }));
+    const settlementPositionDaily = settlementPositionResult.rows.map((row, index) => ({
+      storeCode: row.store_code,
+      date: pgDate(row.business_date),
+      currency: row.currency,
+      pendingSettlementAmount: pgSignedDecimal(
+        row.pending_settlement_amount,
+        `home.settlementPositionDaily[${index}].pendingSettlementAmount`,
+      ),
+      pendingReportCount: pgCount(
+        row.pending_report_count,
+        `home.settlementPositionDaily[${index}].pendingReportCount`,
+      ),
+      overdueReportCount: pgCount(
+        row.overdue_report_count,
+        `home.settlementPositionDaily[${index}].overdueReportCount`,
+      ),
+      earliestEstimatedPayDate: pgDate(row.earliest_estimated_pay_date),
+      latestEstimatedPayDate: pgDate(row.latest_estimated_pay_date),
+      observedAt: pgInstant(row.observed_at),
+      basis: 'END_OF_PERIOD_PENDING_POSITION',
+    }));
     const productFinanceDaily = productFinanceResult.rows.map((row, index) => ({
       storeCode: row.store_code,
       date: pgDate(row.business_date),
@@ -1726,7 +1810,13 @@ export async function readFullHomeHistory(pool) {
       observedAt: pgInstant(row.observed_at),
       basis: 'FINANCE_DETAIL_BUSINESS_DATE',
     }));
-    const allDates = [...storeDaily, ...financeDaily, ...ledgerDaily, ...billDaily]
+    const allDates = [
+      ...storeDaily,
+      ...financeDaily,
+      ...ledgerDaily,
+      ...billDaily,
+      ...settlementPositionDaily,
+    ]
       .map(({ date }) => date)
       .filter(Boolean)
       .sort();
@@ -1738,6 +1828,7 @@ export async function readFullHomeHistory(pool) {
       ...productFinanceDaily,
       ...ledgerDaily,
       ...billDaily,
+      ...settlementPositionDaily,
     ]
       .map(({ observedAt }) => observedAt)
       .filter(Boolean)
@@ -1747,6 +1838,7 @@ export async function readFullHomeHistory(pool) {
         || financeDaily.length > 0
         || ledgerDaily.length > 0
         || billDaily.length > 0
+        || settlementPositionDaily.length > 0
         ? 'available'
         : 'empty',
       storeDaily,
@@ -1756,11 +1848,18 @@ export async function readFullHomeHistory(pool) {
       productFinanceDaily,
       ledgerDaily,
       billDaily,
+      settlementPositionDaily,
       coverage: {
         earliestDate: allDates[0] ?? null,
         latestDate: allDates.at(-1) ?? null,
         storeCount: new Set(
-          [...storeDaily, ...financeDaily, ...ledgerDaily, ...billDaily]
+          [
+            ...storeDaily,
+            ...financeDaily,
+            ...ledgerDaily,
+            ...billDaily,
+            ...settlementPositionDaily,
+          ]
             .map(({ storeCode }) => storeCode),
         ).size,
         storeDailyRows: storeDaily.length,
@@ -1770,6 +1869,7 @@ export async function readFullHomeHistory(pool) {
         productFinanceDailyRows: productFinanceDaily.length,
         ledgerDailyRows: ledgerDaily.length,
         billDailyRows: billDaily.length,
+        settlementPositionDailyRows: settlementPositionDaily.length,
         latestObservedAt: observed.at(-1) ?? null,
       },
     };

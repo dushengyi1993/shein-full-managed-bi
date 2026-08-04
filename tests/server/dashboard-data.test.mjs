@@ -191,6 +191,19 @@ test('whitelists full-managed homepage history while preserving unavailable metr
         basis: 'ACTUAL_SETTLEMENT_DATE',
         reportOrderNoHash: 'must-not-leak',
       }],
+      settlementPositionDaily: [{
+        storeCode: 'dl5477',
+        date: '2026-07-29',
+        currency: 'sar',
+        pendingSettlementAmount: '2400.50',
+        pendingReportCount: 3,
+        overdueReportCount: 1,
+        earliestEstimatedPayDate: '2026-07-30',
+        latestEstimatedPayDate: '2026-08-10',
+        observedAt: '2026-07-29T08:28:00.000Z',
+        basis: 'END_OF_PERIOD_PENDING_POSITION',
+        reportOrderNoHash: 'must-not-leak',
+      }],
     },
   });
 
@@ -210,9 +223,19 @@ test('whitelists full-managed homepage history while preserving unavailable metr
   );
   assert.equal(dashboard.home.billDaily[0].salesAmount, 16631.27);
   assert.equal(dashboard.home.billDaily[0].reconciliationStatus, 'MATCHED');
+  assert.equal(
+    dashboard.home.settlementPositionDaily[0].pendingSettlementAmount,
+    2400.5,
+  );
+  assert.equal(dashboard.home.settlementPositionDaily[0].overdueReportCount, 1);
+  assert.equal(
+    dashboard.home.settlementPositionDaily[0].basis,
+    'END_OF_PERIOD_PENDING_POSITION',
+  );
   assert.equal(dashboard.home.coverage.storeDailyRows, 1);
   assert.equal(dashboard.home.coverage.ledgerDailyRows, 1);
   assert.equal(dashboard.home.coverage.billDailyRows, 1);
+  assert.equal(dashboard.home.coverage.settlementPositionDailyRows, 1);
   assert.doesNotMatch(
     JSON.stringify(dashboard.home),
     /secret|drop-me|reportOrderNo|rawResponse/,

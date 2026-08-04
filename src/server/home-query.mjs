@@ -256,7 +256,8 @@ export function queryHomeDashboard(
   const storeMatches = ({ storeCode }) => effectiveCodes.has(String(storeCode));
   const baseStoreMatches = ({ storeCode }) => codes.has(String(storeCode));
 
-  const storeDaily = rows(history.storeDaily).filter(dateMatches).filter(storeMatches);
+  const scopedStoreDaily = rows(history.storeDaily).filter(storeMatches);
+  const storeDaily = scopedStoreDaily.filter(dateMatches);
   const productDailyCandidates = rows(history.productDaily)
     .filter(dateMatches)
     .filter(baseStoreMatches);
@@ -278,6 +279,24 @@ export function queryHomeDashboard(
     .filter(storeMatches)
     .map(projectLedgerRow);
   const billDaily = rows(history.billDaily).filter(dateMatches).filter(storeMatches);
+  const settlementPositionDates = new Set([end, previousEnd]);
+  const scopedSettlementPositionDaily = rows(history.settlementPositionDaily)
+    .filter(storeMatches);
+  const settlementPositionDaily = scopedSettlementPositionDaily.filter(
+    ({ date }) => settlementPositionDates.has(date),
+  );
+  const latestOperatingDate = sourceFreshness(scopedStoreDaily).businessDate;
+  const latestSettlementPositionDate = sourceFreshness(
+    scopedSettlementPositionDaily,
+  ).businessDate;
+  const todayStoreDaily = latestOperatingDate
+    ? scopedStoreDaily.filter(({ date }) => date === latestOperatingDate)
+    : [];
+  const currentSettlementPosition = latestSettlementPositionDate
+    ? scopedSettlementPositionDaily.filter(
+        ({ date }) => date === latestSettlementPositionDate,
+      )
+    : [];
   let productFinanceCandidates = rows(history.productFinanceDaily)
     .filter(dateMatches)
     .filter(baseStoreMatches);
@@ -305,6 +324,7 @@ export function queryHomeDashboard(
     financeDaily: financeDaily.length,
     ledgerDaily: ledgerDaily.length,
     billDaily: billDaily.length,
+    settlementPositionDaily: settlementPositionDaily.length,
     productFinanceDaily: productFinanceDaily.length,
   };
   const returnedCurrentRows = {
@@ -314,6 +334,8 @@ export function queryHomeDashboard(
     financeDaily: countWindowRows(financeDaily, start, end),
     ledgerDaily: countWindowRows(ledgerDaily, start, end),
     billDaily: countWindowRows(billDaily, start, end),
+    settlementPositionDaily: settlementPositionDaily
+      .filter(({ date }) => date === end).length,
     productFinanceDaily: countWindowRows(productFinanceDaily, start, end),
   };
   const returnedComparisonRows = {
@@ -323,6 +345,8 @@ export function queryHomeDashboard(
     financeDaily: countWindowRows(financeDaily, previousStart, previousEnd),
     ledgerDaily: countWindowRows(ledgerDaily, previousStart, previousEnd),
     billDaily: countWindowRows(billDaily, previousStart, previousEnd),
+    settlementPositionDaily: settlementPositionDaily
+      .filter(({ date }) => date === previousEnd).length,
     productFinanceDaily: countWindowRows(productFinanceDaily, previousStart, previousEnd),
   };
 
@@ -349,6 +373,7 @@ export function queryHomeDashboard(
         financeDaily: rows(history.financeDaily).length,
         ledgerDaily: rows(history.ledgerDaily).length,
         billDaily: rows(history.billDaily).length,
+        settlementPositionDaily: rows(history.settlementPositionDaily).length,
         productFinanceDaily: rows(history.productFinanceDaily).length,
       }),
       returnedRows: Object.freeze(returnedRows),
@@ -359,6 +384,7 @@ export function queryHomeDashboard(
         finance: sourceFreshness(history.financeDaily),
         ledger: sourceFreshness(history.ledgerDaily),
         settlement: sourceFreshness(history.billDaily),
+        settlementPosition: sourceFreshness(history.settlementPositionDaily),
       }),
     }),
     home: Object.freeze({
@@ -369,6 +395,9 @@ export function queryHomeDashboard(
       financeDaily: Object.freeze(financeDaily),
       ledgerDaily: Object.freeze(ledgerDaily),
       billDaily: Object.freeze(billDaily),
+      settlementPositionDaily: Object.freeze(settlementPositionDaily),
+      todayStoreDaily: Object.freeze(todayStoreDaily),
+      currentSettlementPosition: Object.freeze(currentSettlementPosition),
       productFinanceDaily: Object.freeze(productFinanceDaily),
       coverage: Object.freeze(record(history.coverage)),
     }),

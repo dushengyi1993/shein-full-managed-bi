@@ -1354,6 +1354,28 @@ function normalizeHomeBillDaily(item) {
   };
 }
 
+function normalizeHomeSettlementPositionDaily(item) {
+  const source = record(item);
+  const storeCode = text(source.storeCode, '', 24).toUpperCase();
+  const date = isoDate(source.date);
+  const currency = text(source.currency, '', 3).toUpperCase();
+  if (!storeCode || !date || !/^[A-Z]{3}$/.test(currency)) return null;
+  return {
+    storeCode,
+    date,
+    currency,
+    pendingSettlementAmount: optionalDecimal(source.pendingSettlementAmount),
+    pendingReportCount: optionalNonNegativeInteger(source.pendingReportCount),
+    overdueReportCount: optionalNonNegativeInteger(source.overdueReportCount),
+    earliestEstimatedPayDate: isoDate(source.earliestEstimatedPayDate),
+    latestEstimatedPayDate: isoDate(source.latestEstimatedPayDate),
+    observedAt: isoInstant(source.observedAt),
+    basis: source.basis === 'END_OF_PERIOD_PENDING_POSITION'
+      ? 'END_OF_PERIOD_PENDING_POSITION'
+      : null,
+  };
+}
+
 function normalizeHomeProductFinanceDaily(item) {
   const source = record(item);
   const storeCode = text(source.storeCode, '', 24).toUpperCase();
@@ -1402,6 +1424,11 @@ export function normalizeHome(value) {
   const billDaily = Array.isArray(source.billDaily)
     ? source.billDaily.map(normalizeHomeBillDaily).filter(Boolean)
     : [];
+  const settlementPositionDaily = Array.isArray(source.settlementPositionDaily)
+    ? source.settlementPositionDaily
+      .map(normalizeHomeSettlementPositionDaily)
+      .filter(Boolean)
+    : [];
   const productFinanceDaily = Array.isArray(source.productFinanceDaily)
     ? source.productFinanceDaily.map(normalizeHomeProductFinanceDaily).filter(Boolean)
     : [];
@@ -1416,6 +1443,7 @@ export function normalizeHome(value) {
     financeDaily,
     ledgerDaily,
     billDaily,
+    settlementPositionDaily,
     productFinanceDaily,
     coverage: {
       earliestDate: isoDate(coverage.earliestDate),
@@ -1427,6 +1455,7 @@ export function normalizeHome(value) {
       financeDailyRows: financeDaily.length,
       ledgerDailyRows: ledgerDaily.length,
       billDailyRows: billDaily.length,
+      settlementPositionDailyRows: settlementPositionDaily.length,
       productFinanceDailyRows: productFinanceDaily.length,
       latestObservedAt: isoInstant(coverage.latestObservedAt),
     },

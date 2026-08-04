@@ -44,15 +44,22 @@ const HOME_RANGE_PRESETS = Object.freeze({
 });
 
 const HOME_TREND_METRICS = Object.freeze({
-  salesAmount: { label: '销售金额', money: true, group: '经营', aggregate: 'sum' },
+  netDealAmount: { label: '净成交金额', money: true, group: '经营', aggregate: 'sum' },
+  dealAmount: { label: '成交金额', money: true, group: '经营', aggregate: 'sum' },
   salesQuantity: { label: '销量', suffix: '件', group: '经营', aggregate: 'sum' },
   buyerCount: { label: '支付人数', group: '经营', aggregate: 'sum' },
   paymentOrderCount: { label: '支付订单', group: '经营', aggregate: 'sum' },
   exposureUsers: { label: '曝光量', group: '流量', aggregate: 'sum' },
   goodsDetailVisitors: { label: '商详访客', group: '流量', aggregate: 'sum' },
+  financeNetAmount: {
+    label: '财务明细净额',
+    money: true,
+    group: '财务',
+    aggregate: 'sum',
+  },
   billSalesAmount: { label: '结算销售款', money: true, group: '结算', aggregate: 'sum' },
-  supplementAmount: { label: '补款', money: true, group: '账单', aggregate: 'sum' },
-  deductionAmount: { label: '扣款', money: true, group: '账单', aggregate: 'sum' },
+  supplementAmount: { label: '补款', money: true, group: '结算', aggregate: 'sum' },
+  deductionAmount: { label: '扣款', money: true, group: '结算', aggregate: 'sum' },
   settlementAmount: { label: '实际结算金额', money: true, group: '结算', aggregate: 'sum' },
   ledgerBeginCount: { label: '期初数量', suffix: '件', group: '台账数量', aggregate: 'first' },
   ledgerInboundCount: { label: '入库数量', suffix: '件', group: '台账数量', aggregate: 'sum' },
@@ -720,7 +727,7 @@ const state = {
   homeRangeOpen: false,
   homeCalendarAnchor: null,
   homeCalendarPickingEnd: false,
-  homeTrendMetric: 'salesAmount',
+  homeTrendMetric: 'netDealAmount',
   query: initialHashState.query,
   owner: initialHashState.owner,
   store: initialHashState.store,
@@ -5821,6 +5828,9 @@ function homeHistory() {
         productFinanceDaily: [],
         ledgerDaily: [],
         billDaily: [],
+        settlementPositionDaily: [],
+        todayStoreDaily: [],
+        currentSettlementPosition: [],
         coverage: {},
       };
 }
@@ -5898,6 +5908,13 @@ function homeScopedRows(range = selectedHomeDateRange()) {
   const billDaily = (Array.isArray(history.billDaily) ? history.billDaily : [])
     .filter((row) => effectiveCodes.has(String(row.storeCode)))
     .filter((row) => homeDateInRange(row.date, range));
+  const settlementPositionDaily = (
+    Array.isArray(history.settlementPositionDaily)
+      ? history.settlementPositionDaily
+      : []
+  )
+    .filter((row) => effectiveCodes.has(String(row.storeCode)))
+    .filter((row) => homeDateInRange(row.date, range));
   const productFinanceCandidates = (
     Array.isArray(history.productFinanceDaily) ? history.productFinanceDaily : []
   )
@@ -5919,6 +5936,7 @@ function homeScopedRows(range = selectedHomeDateRange()) {
     financeDaily,
     ledgerDaily,
     billDaily,
+    settlementPositionDaily,
     productFinanceDaily,
     storeCodes: effectiveCodes,
     productMode,
@@ -6008,24 +6026,19 @@ function resolvedHomeDaily(bundle) {
       const billedAmount = availableSignedMetricSum(billedRows, 'netAmount');
       const estimatedAmount = availableMetricSum(directRows, 'estimatedDealAmount');
       const directQuantity = availableMetricSum(directRows, 'salesQuantity');
-      const billedQuantity = availableMetricSum(billedRows, 'goodsCount');
       return {
         storeCode: seed?.storeCode,
         date: seed?.date,
-        salesAmount: billedAmount ?? estimatedAmount,
-        salesQuantity: directQuantity ?? billedQuantity,
+        dealAmount: estimatedAmount,
+        netDealAmount: null,
+        financeNetAmount: billedAmount,
+        salesQuantity: directQuantity,
         webapiSalesQuantity: directQuantity,
         currency: billedRows[0]?.currency || directRows[0]?.estimationCurrency || null,
-        salesAmountBasis: billedAmount !== null
-          ? 'FINANCE_CONFIRMED'
-          : estimatedAmount !== null
-            ? 'ESTIMATED'
-            : 'UNAVAILABLE',
+        operatingAmountBasis: estimatedAmount !== null ? 'ESTIMATED' : 'UNAVAILABLE',
         salesQuantityBasis: directQuantity !== null
           ? 'WEBAPI'
-          : billedQuantity !== null
-              ? 'FINANCE_CONFIRMED'
-            : 'UNAVAILABLE',
+          : 'UNAVAILABLE',
       };
     });
   }
@@ -6034,46 +6047,61 @@ function resolvedHomeDaily(bundle) {
   const finance = firstRowByStoreDate(bundle.financeDaily);
   const ledger = firstRowByStoreDate(bundle.ledgerDaily);
   const bill = firstRowByStoreDate(bundle.billDaily);
+  const settlementPosition = firstRowByStoreDate(bundle.settlementPositionDaily);
   const keys = new Set([
     ...operating.keys(),
     ...finance.keys(),
     ...ledger.keys(),
     ...bill.keys(),
+    ...settlementPosition.keys(),
   ]);
   return [...keys].map((key) => {
     const live = operating.get(key);
     const confirmedFinance = finance.get(key);
     const confirmedLedger = ledger.get(key);
     const confirmedBill = bill.get(key);
-    const seed = live || confirmedFinance || confirmedLedger || confirmedBill;
+    const pendingPosition = settlementPosition.get(key);
+    const seed = live
+      || confirmedFinance
+      || confirmedLedger
+      || confirmedBill
+      || pendingPosition;
     const operatingBasis = homeOperatingBasis(live);
+    const otherOutboundCount = (
+      isUnit(confirmedLedger?.outboundCount)
+      && isUnit(confirmedLedger?.customerOutboundCount)
+      && confirmedLedger.outboundCount >= confirmedLedger.customerOutboundCount
+    )
+      ? confirmedLedger.outboundCount - confirmedLedger.customerOutboundCount
+      : null;
+    const otherOutboundAmount = (
+      finiteMetric(confirmedLedger?.outboundAmount)
+      && finiteMetric(confirmedLedger?.customerOutboundAmount)
+      && confirmedLedger.outboundAmount >= confirmedLedger.customerOutboundAmount
+    )
+      ? confirmedLedger.outboundAmount - confirmedLedger.customerOutboundAmount
+      : null;
     return {
       storeCode: seed?.storeCode,
       date: seed?.date,
-      currency: confirmedFinance?.currency
+      currency: live?.currency
+        || confirmedFinance?.currency
         || confirmedBill?.currency
-        || live?.currency
         || confirmedLedger?.currency
+        || pendingPosition?.currency
         || null,
-      salesAmount: typeof confirmedFinance?.netAmount === 'number'
-          && Number.isFinite(confirmedFinance.netAmount)
-        ? confirmedFinance.netAmount
-        : live?.dealAmount ?? null,
-      salesQuantity: isUnit(confirmedLedger?.customerOutboundCount)
-        ? confirmedLedger.customerOutboundCount
-        : live?.salesQuantity ?? null,
+      dealAmount: live?.dealAmount ?? null,
+      netDealAmount: live?.netDealAmount ?? null,
+      financeNetAmount: confirmedFinance?.netAmount ?? null,
+      salesQuantity: live?.salesQuantity ?? null,
       webapiSalesQuantity: live?.salesQuantity ?? null,
-      salesAmountBasis: typeof confirmedFinance?.netAmount === 'number'
-          && Number.isFinite(confirmedFinance.netAmount)
-        ? 'FINANCE_CONFIRMED'
-        : finiteMetric(live?.dealAmount)
-          ? operatingBasis
-          : 'UNAVAILABLE',
-      salesQuantityBasis: isUnit(confirmedLedger?.customerOutboundCount)
-        ? 'LEDGER_CONFIRMED'
-        : isUnit(live?.salesQuantity)
-          ? operatingBasis
-          : 'UNAVAILABLE',
+      operatingAmountBasis: finiteMetric(live?.netDealAmount)
+        || finiteMetric(live?.dealAmount)
+        ? operatingBasis
+        : 'UNAVAILABLE',
+      salesQuantityBasis: isUnit(live?.salesQuantity)
+        ? operatingBasis
+        : 'UNAVAILABLE',
       buyerCount: live?.buyerCount ?? null,
       paymentOrderCount: live?.paymentOrderCount ?? null,
       exposureUsers: live?.exposureUsers ?? null,
@@ -6088,6 +6116,11 @@ function resolvedHomeDaily(bundle) {
       settlementAmount: confirmedBill?.reportedSettlementAmount
         ?? confirmedBill?.calculatedSettlementAmount
         ?? null,
+      pendingSettlementAmount: pendingPosition?.pendingSettlementAmount ?? null,
+      pendingReportCount: pendingPosition?.pendingReportCount ?? null,
+      overdueReportCount: pendingPosition?.overdueReportCount ?? null,
+      earliestEstimatedPayDate: pendingPosition?.earliestEstimatedPayDate ?? null,
+      latestEstimatedPayDate: pendingPosition?.latestEstimatedPayDate ?? null,
       billReconciliationStatus: confirmedBill?.reconciliationStatus ?? null,
       ledgerBeginCount: confirmedLedger?.beginBalanceCount ?? null,
       ledgerInboundCount: confirmedLedger?.inboundCount ?? null,
@@ -6097,11 +6130,16 @@ function resolvedHomeDaily(bundle) {
       ledgerInboundAmount: confirmedLedger?.inboundAmount ?? null,
       ledgerOutboundAmount: confirmedLedger?.outboundAmount ?? null,
       ledgerEndAmount: confirmedLedger?.endBalanceAmount ?? null,
+      ledgerCustomerOutboundCount: confirmedLedger?.customerOutboundCount ?? null,
+      ledgerCustomerOutboundAmount: confirmedLedger?.customerOutboundAmount ?? null,
+      ledgerOtherOutboundCount: otherOutboundCount,
+      ledgerOtherOutboundAmount: otherOutboundAmount,
       ledgerPrepareEntryCount: confirmedLedger?.prepareOrderEntryCount ?? null,
       ledgerUrgentEntryCount: confirmedLedger?.urgentOrderEntryCount ?? null,
       ledgerObservedAt: confirmedLedger?.observedAt ?? null,
       financeObservedAt: confirmedFinance?.observedAt ?? null,
       billObservedAt: confirmedBill?.observedAt ?? null,
+      pendingObservedAt: pendingPosition?.observedAt ?? null,
     };
   }).sort((left, right) => (
     left.date.localeCompare(right.date) || left.storeCode.localeCompare(right.storeCode)
@@ -6124,16 +6162,17 @@ function endpointMetricRows(rows, key, edge) {
   return [...byStore.values()];
 }
 
-function periodMetric(bundle, key) {
+function periodMetric(bundle, key, {
+  aggregate = HOME_TREND_METRICS[key]?.aggregate,
+  signed = HOME_TREND_METRICS[key]?.money === true,
+} = {}) {
   const rows = resolvedHomeDaily(bundle);
-  const metric = HOME_TREND_METRICS[key];
-  const selectedRows = metric?.aggregate === 'first'
+  const selectedRows = aggregate === 'first'
     ? endpointMetricRows(rows, key, 'first')
-    : metric?.aggregate === 'last'
+    : aggregate === 'last'
       ? endpointMetricRows(rows, key, 'last')
       : rows;
-  return key === 'settlementAmount' || key === 'salesAmount'
-    || key === 'billSalesAmount'
+  return signed
     ? availableSignedMetricSum(selectedRows, key)
     : availableMetricSum(selectedRows, key);
 }
@@ -6163,7 +6202,11 @@ function formatMoney(value, currency = 'SAR') {
 function financeCurrency(bundle) {
   const source = bundle.productMode
     ? bundle.productFinanceDaily
-    : [...bundle.billDaily, ...bundle.financeDaily];
+    : [
+        ...bundle.billDaily,
+        ...bundle.financeDaily,
+        ...(bundle.settlementPositionDaily || []),
+      ];
   const values = [...new Set(source.map(({ currency }) => currency))];
   return values.length === 1 ? values[0] : null;
 }
@@ -6234,71 +6277,110 @@ function formatPlainAmount(value) {
     : '—';
 }
 
-function homeMetricSourceNote(bundle, key) {
-  const rows = resolvedHomeDaily(bundle);
+function homeRangeDates(range) {
+  const result = [];
+  let cursor = range.start;
+  while (cursor <= range.end) {
+    result.push(cursor);
+    cursor = shiftIsoDate(cursor, 1);
+  }
+  return result;
+}
+
+function homeMetricCoverage(bundle, keys, {
+  aggregate = 'sum',
+  signed = false,
+  resolvedRows = resolvedHomeDaily(bundle),
+} = {}) {
+  const metricKeys = Array.isArray(keys) ? keys : [keys];
   const storeCodes = [...bundle.storeCodes].sort();
-  const signedKeys = new Set([
-    'salesAmount',
-    'billSalesAmount',
-    'settlementAmount',
-    'ledgerBeginAmount',
-    'ledgerInboundAmount',
-    'ledgerOutboundAmount',
-    'ledgerEndAmount',
-  ]);
-  const hasValue = (value) => (
+  const expectedDates = aggregate === 'first'
+    ? [bundle.range.start]
+    : aggregate === 'last'
+      ? [bundle.range.end]
+      : homeRangeDates(bundle.range);
+  const valueIsKnown = (value) => (
     typeof value === 'number'
     && Number.isFinite(value)
-    && (signedKeys.has(key) || value >= 0)
+    && (signed || value >= 0)
   );
-  const datesByStore = new Map(storeCodes.map((storeCode) => [storeCode, new Set()]));
-  for (const row of rows) {
-    if (datesByStore.has(row.storeCode) && hasValue(row[key])) {
-      datesByStore.get(row.storeCode).add(row.date);
+  const knownDatesByStore = new Map(storeCodes.map((storeCode) => [storeCode, new Set()]));
+  for (const row of resolvedRows) {
+    if (
+      knownDatesByStore.has(row.storeCode)
+      && metricKeys.every((key) => valueIsKnown(row[key]))
+    ) {
+      knownDatesByStore.get(row.storeCode).add(row.date);
     }
   }
-  const available = storeCodes.filter((storeCode) => (datesByStore.get(storeCode)?.size || 0) > 0);
-  const missing = storeCodes.filter((storeCode) => !available.includes(storeCode));
-  const coverage = [
-    `所选本期有值 ${available.length}/${storeCodes.length} 家`,
-    missing.length ? `完全未返回：${missing.join('、')}` : '全部店铺均有返回',
-  ].join('；');
-  const latestDate = (sourceRows) => sourceRows
-    .map(({ date }) => date)
+  const available = [];
+  const complete = [];
+  const missing = [];
+  const partial = [];
+  for (const storeCode of storeCodes) {
+    const knownDates = knownDatesByStore.get(storeCode) || new Set();
+    if (knownDates.size === 0) {
+      missing.push(storeCode);
+      continue;
+    }
+    available.push(storeCode);
+    const missingDates = expectedDates.filter((date) => !knownDates.has(date));
+    if (missingDates.length === 0) complete.push(storeCode);
+    else partial.push({ storeCode, missingDates });
+  }
+  const total = storeCodes.length;
+  const label = total === 0
+    ? '当前无店铺'
+    : complete.length === total
+      ? `${total}/${total}家完整`
+      : available.length === 0
+        ? `0/${total}家有值`
+        : `${available.length}/${total}家有值${complete.length ? ` · ${complete.length}家完整` : ''}`;
+  const partialDetail = partial.slice(0, 8).map(({ storeCode, missingDates }) => (
+    `${storeCode} 缺 ${missingDates.slice(0, 4).map((date) => date.slice(5).replace('-', '/')).join('、')}${missingDates.length > 4 ? '等' : ''}`
+  ));
+  const detail = [
+    missing.length ? `完全未返回：${missing.join('、')}` : '',
+    partialDetail.length ? `日期有缺口：${partialDetail.join('；')}` : '',
+    partial.length > partialDetail.length
+      ? `另有 ${partial.length - partialDetail.length} 家存在日期缺口`
+      : '',
+  ].filter(Boolean).join('\n') || '当前范围全部店铺和日期均有值';
+  return { label, detail, available: available.length, complete: complete.length, total };
+}
+
+function pendingPositionSummary(rows) {
+  const selected = endpointMetricRows(rows, 'pendingSettlementAmount', 'last');
+  const pendingReportCount = availableMetricSum(selected, 'pendingReportCount');
+  const overdueReportCount = availableMetricSum(selected, 'overdueReportCount');
+  const earliest = selected
+    .map(({ earliestEstimatedPayDate }) => earliestEstimatedPayDate)
     .filter(Boolean)
     .sort()
-    .at(-1);
-  const shortDate = (value) => String(value || '').replace(/^\d{4}-/, '').replace('-', '/');
-  if (key === 'salesQuantity' || key === 'salesAmount') {
-    const sourceRows = key === 'salesQuantity' ? bundle.ledgerDaily : bundle.financeDaily;
-    const latest = latestDate(sourceRows);
-    return [
-      latest ? `${key === 'salesQuantity' ? '台账' : '财务明细'}至 ${shortDate(latest)}` : null,
-      coverage,
-    ].filter(Boolean).join(' · ') || '当前范围暂无可用来源';
-  }
-  if (key.startsWith('ledger')) {
-    const latest = latestDate(bundle.ledgerDaily);
-    return latest ? `台账至 ${shortDate(latest)}；${coverage}` : `台账尚未返回；${coverage}`;
-  }
-  if (['billSalesAmount', 'supplementAmount', 'deductionAmount', 'settlementAmount']
-    .includes(key)) {
-    const mismatches = bundle.billDaily.filter(
-      ({ reconciliationStatus }) => reconciliationStatus === 'MISMATCH',
-    ).length;
-    const latest = latestDate(bundle.billDaily);
-    const reconciliation = mismatches
-      ? `${mismatches}个账单日金额不一致`
-      : bundle.billDaily.length
-        ? '应结金额一致'
-        : '所选日期尚未出账';
-    return [
-      latest ? `实际结算至 ${shortDate(latest)}` : null,
-      reconciliation,
-      coverage,
-    ].filter(Boolean).join(' · ');
-  }
-  return coverage;
+    .at(0) || null;
+  const latest = selected
+    .map(({ latestEstimatedPayDate }) => latestEstimatedPayDate)
+    .filter(Boolean)
+    .sort()
+    .at(-1) || null;
+  return {
+    pendingReportCount,
+    overdueReportCount,
+    earliest,
+    latest,
+  };
+}
+
+function pendingPositionSubvalue(summary) {
+  if (!summary || summary.pendingReportCount === null) return '';
+  const expectedRange = summary.earliest
+    ? `预计 ${summary.earliest.slice(5).replace('-', '/')}${summary.latest && summary.latest !== summary.earliest ? `–${summary.latest.slice(5).replace('-', '/')}` : ''}`
+    : '预计日期未知';
+  return [
+    `${formatUnits(summary.pendingReportCount)}笔`,
+    expectedRange,
+    summary.overdueReportCount ? `逾期 ${formatUnits(summary.overdueReportCount)}笔` : null,
+  ].filter(Boolean).join(' · ');
 }
 
 function historyMetricRows() {
@@ -6307,16 +6389,45 @@ function historyMetricRows() {
   const previous = homeScopedRows(previousHomeDateRange(range));
   const currentCurrency = homeCurrency(current);
   const previousCurrency = homeCurrency(previous);
-  const metric = (label, key, type, note) => {
-    const value = periodMetric(current, key);
-    const baseline = periodMetric(previous, key);
-    const formatter = type === 'money'
+  const resolvedCurrent = resolvedHomeDaily(current);
+  const resolvedPrevious = resolvedHomeDaily(previous);
+  const formatterFor = (type) => (
+    type === 'money'
       ? (input, currency) => (
           currency ? formatMoney(input, currency) : formatPlainAmount(input)
         )
       : type === 'plain-money'
         ? (input) => formatPlainAmount(input)
-        : (input) => formatUnits(input);
+        : (input) => formatUnits(input)
+  );
+  const metric = (label, key, type, note, {
+    basis = '业务发生日',
+    aggregate = HOME_TREND_METRICS[key]?.aggregate || 'sum',
+    signed = type === 'money' || type === 'plain-money',
+    secondaryKey = null,
+    secondaryLabel = '',
+    secondaryType = type,
+    currentSubvalue = '',
+    previousSubvalue = '',
+    groupStart = false,
+    groupLabel = '',
+  } = {}) => {
+    const value = periodMetric(current, key, { aggregate, signed });
+    const baseline = periodMetric(previous, key, { aggregate, signed });
+    const formatter = formatterFor(type);
+    const secondaryFormatter = formatterFor(secondaryType);
+    const secondaryValue = secondaryKey
+      ? periodMetric(current, secondaryKey, {
+          aggregate,
+          signed: secondaryType === 'money' || secondaryType === 'plain-money',
+        })
+      : null;
+    const secondaryBaseline = secondaryKey
+      ? periodMetric(previous, secondaryKey, {
+          aggregate,
+          signed: secondaryType === 'money' || secondaryType === 'plain-money',
+        })
+      : null;
     return {
       label,
       key,
@@ -6324,41 +6435,59 @@ function historyMetricRows() {
       baseline,
       display: formatter(value, currentCurrency),
       baselineDisplay: formatter(baseline, previousCurrency),
+      secondaryDisplay: secondaryKey && secondaryValue !== null
+        ? `${secondaryLabel}${secondaryFormatter(secondaryValue, currentCurrency)}`
+        : currentSubvalue,
+      baselineSecondaryDisplay: secondaryKey && secondaryBaseline !== null
+        ? `${secondaryLabel}${secondaryFormatter(secondaryBaseline, previousCurrency)}`
+        : previousSubvalue,
       change: metricComparison(value, baseline),
       note,
-      coverageNote: homeMetricSourceNote(current, key),
+      basis,
+      groupStart,
+      groupLabel,
+      coverage: homeMetricCoverage(current, key, {
+        aggregate,
+        signed,
+        resolvedRows: resolvedCurrent,
+      }),
+      baselineCoverage: homeMetricCoverage(previous, key, {
+        aggregate,
+        signed,
+        resolvedRows: resolvedPrevious,
+      }),
     };
   };
-  const ratioMetric = (label, key, currentValue, previousValue, note) => ({
+  const ratioMetric = (
+    label,
+    key,
+    currentValue,
+    previousValue,
+    note,
+    coverageKeys,
+  ) => ({
     label,
     key,
     value: currentValue,
     baseline: previousValue,
     display: formatRate(currentValue),
     baselineDisplay: formatRate(previousValue),
+    secondaryDisplay: '',
+    baselineSecondaryDisplay: '',
     change: ratePointChange(currentValue, previousValue),
     note,
-    coverageNote: '',
+    basis: '业务发生日',
+    coverage: homeMetricCoverage(current, coverageKeys, {
+      resolvedRows: resolvedCurrent,
+    }),
+    baselineCoverage: homeMetricCoverage(previous, coverageKeys, {
+      resolvedRows: resolvedPrevious,
+    }),
   });
-  const resolvedCurrent = resolvedHomeDaily(current);
-  const resolvedPrevious = resolvedHomeDaily(previous);
   const ratioFrom = (rows, numerator, denominator) => metricRate(
     availableMetricSum(rows, numerator),
     availableMetricSum(rows, denominator),
   );
-
-  const salesRows = [
-    metric('销售金额', 'salesAmount', 'money', '财务明细收入减支出，按明细业务发生日归属；尚未形成财务明细的日期使用经营后台成交金额暂估'),
-    metric('销量', 'salesQuantity', 'count', '优先台账客单出库数量；未出台账日期使用实时销量'),
-    metric('支付人数', 'buyerCount', 'count', '支付买家去重人数'),
-    metric('支付订单数', 'paymentOrderCount', 'count', '支付成功订单数'),
-  ];
-  const billRows = [
-    metric('结算销售款', 'billSalesAmount', 'money', '已完成结算账单中的销售明细收入减销售明细支出，按平台实际完成结算日归属'),
-    metric('补款', 'supplementAmount', 'money', '已进入商家账单的补款'),
-    metric('扣款', 'deductionAmount', 'money', '已进入商家账单的扣款'),
-    metric('实际结算金额', 'settlementAmount', 'money', '已完成结算账单的销售款 + 补款 - 扣款，并与平台账单金额核对'),
-  ];
   const exposureVisitRate = ratioFrom(
     resolvedCurrent,
     'goodsDetailVisitors',
@@ -6379,42 +6508,6 @@ function historyMetricRows() {
     'paymentOrderCount',
     'goodsDetailVisitors',
   );
-  const trafficRows = [
-    metric('曝光量', 'exposureUsers', 'count', '品牌行求和时不冒充店铺去重人数'),
-    metric('商详访客', 'goodsDetailVisitors', 'count', '商品详情页访客'),
-    ratioMetric(
-      '曝光到访率',
-      'exposureVisitRate',
-      exposureVisitRate,
-      previousExposureVisitRate,
-      '商详访客 ÷ 曝光量',
-    ),
-    ratioMetric(
-      '商详支付率',
-      'detailPaymentRate',
-      detailPaymentRate,
-      previousDetailPaymentRate,
-      '支付订单数 ÷ 商详访客',
-    ),
-  ];
-  const supplyRows = [
-    metric('备货订单数', 'stockingOrderCount', 'count', '经营后台备货订单数'),
-    metric('备货入库件数', 'ledgerPrepareEntryCount', 'count', '台账备货订单入库件数'),
-    metric('集采订单数', 'urgentPurchaseOrderCount', 'count', '经营后台集采订单数'),
-    metric('集采入库件数', 'ledgerUrgentEntryCount', 'count', '台账集采订单入库件数'),
-  ];
-  const ledgerCountRows = [
-    metric('期初库存数量', 'ledgerBeginCount', 'count', '范围内每店第一条台账期初库存'),
-    metric('入库数量', 'ledgerInboundCount', 'count', '范围内台账入库累计'),
-    metric('出库数量', 'ledgerOutboundCount', 'count', '全部库存出库，不等同销量'),
-    metric('期末库存数量', 'ledgerEndCount', 'count', '范围内每店最后一条台账期末库存'),
-  ];
-  const ledgerAmountRows = [
-    metric('期初库存金额', 'ledgerBeginAmount', 'plain-money', '库存台账价值，不是销售收入'),
-    metric('入库金额', 'ledgerInboundAmount', 'plain-money', '范围内库存入库价值累计'),
-    metric('出库金额', 'ledgerOutboundAmount', 'plain-money', '范围内库存出库价值累计'),
-    metric('期末库存金额', 'ledgerEndAmount', 'plain-money', '库存台账价值，不是销售收入'),
-  ];
   const validNewCustomerSalesRate = boundedShare(
     availableMetricSum(resolvedCurrent, 'newCustomerSalesQuantity'),
     availableMetricSum(resolvedCurrent, 'webapiSalesQuantity'),
@@ -6431,35 +6524,176 @@ function historyMetricRows() {
     availableMetricSum(resolvedPrevious, 'newCustomerPaymentOrderCount'),
     availableMetricSum(resolvedPrevious, 'paymentOrderCount'),
   );
-  const customerRows = [
-    metric('新客销量', 'newCustomerSalesQuantity', 'count', '经营后台新客成交件数'),
-    metric('新客支付订单数', 'newCustomerPaymentOrderCount', 'count', '经营后台新客支付订单'),
-    ratioMetric(
-      '新客销量占比',
-      'newCustomerSalesRate',
-      validNewCustomerSalesRate,
-      validPreviousNewCustomerSalesRate,
-      '新客销量 ÷ 同口径实时销量；分子大于分母时视为口径不兼容',
+  const pendingCurrent = pendingPositionSummary(resolvedCurrent);
+  const pendingPrevious = pendingPositionSummary(resolvedPrevious);
+
+  const operatingRows = [
+    metric(
+      '净成交金额',
+      'netDealAmount',
+      'money',
+      '经营后台净成交金额；只读取经营概览，不使用财务明细或商家账单覆盖',
+      { secondaryKey: 'dealAmount', secondaryLabel: '成交金额 ' },
+    ),
+    metric('销量', 'salesQuantity', 'count', '经营后台销量；不使用台账客单出库量替换'),
+    metric('支付人数', 'buyerCount', 'count', '经营后台支付买家去重人数'),
+    metric('支付订单数', 'paymentOrderCount', 'count', '经营后台支付成功订单数'),
+    metric(
+      '新客支付订单数',
+      'newCustomerPaymentOrderCount',
+      'count',
+      '经营后台新客支付订单数',
     ),
     ratioMetric(
       '新客订单占比',
       'newCustomerOrderRate',
       validNewCustomerOrderRate,
       validPreviousNewCustomerOrderRate,
-      '新客支付订单 ÷ 支付订单；分子大于分母时视为口径不兼容',
+      '新客支付订单数 ÷ 支付订单数；分子大于分母时视为口径不兼容',
+      ['newCustomerPaymentOrderCount', 'paymentOrderCount'],
     ),
+  ];
+  const trafficRows = [
+    metric('曝光量', 'exposureUsers', 'count', '经营分析品牌行求和；不冒充跨店去重人数'),
+    metric('商详访客', 'goodsDetailVisitors', 'count', '经营后台商品详情页去重访客'),
+    ratioMetric(
+      '曝光到访率',
+      'exposureVisitRate',
+      exposureVisitRate,
+      previousExposureVisitRate,
+      '商详访客 ÷ 曝光量',
+      ['goodsDetailVisitors', 'exposureUsers'],
+    ),
+    ratioMetric(
+      '商详支付率',
+      'detailPaymentRate',
+      detailPaymentRate,
+      previousDetailPaymentRate,
+      '支付订单数 ÷ 商详访客',
+      ['paymentOrderCount', 'goodsDetailVisitors'],
+    ),
+    metric('新客销量', 'newCustomerSalesQuantity', 'count', '经营后台新客成交件数'),
+    ratioMetric(
+      '新客销量占比',
+      'newCustomerSalesRate',
+      validNewCustomerSalesRate,
+      validPreviousNewCustomerSalesRate,
+      '新客销量 ÷ 同口径经营销量；分子大于分母时视为口径不兼容',
+      ['newCustomerSalesQuantity', 'webapiSalesQuantity'],
+    ),
+  ];
+  const financeRows = [
+    metric(
+      '财务明细净额',
+      'financeNetAmount',
+      'money',
+      'OpenAPI 财务明细收入－支出，按明细 addTime 对应的业务发生日归属',
+      { signed: true, groupLabel: '业务发生' },
+    ),
+    metric(
+      '期末预计待结算',
+      'pendingSettlementAmount',
+      'money',
+      '截至所选结束日，已经生成但尚未完成结算的账单预计金额；余额只取期末，不按天累加',
+      {
+        basis: '期末状态',
+        aggregate: 'last',
+        signed: true,
+        currentSubvalue: pendingPositionSubvalue(pendingCurrent),
+        previousSubvalue: pendingPositionSubvalue(pendingPrevious),
+        groupStart: true,
+        groupLabel: '资金结算',
+      },
+    ),
+    metric(
+      '已结算销售款',
+      'billSalesAmount',
+      'money',
+      '已完成结算账单中的销售明细收入－支出，按 completedPayTime 实际完成结算日归属',
+      { basis: '实际结算日', signed: true },
+    ),
+    metric(
+      '补款',
+      'supplementAmount',
+      'money',
+      '已完成结算账单中的补款，随所属账单按实际结算日归属',
+      { basis: '实际结算日' },
+    ),
+    metric(
+      '扣款',
+      'deductionAmount',
+      'money',
+      '已完成结算账单中的扣款，随所属账单按实际结算日归属',
+      { basis: '实际结算日' },
+    ),
+    metric(
+      '实际结算金额',
+      'settlementAmount',
+      'money',
+      '已结算销售款＋补款－扣款，并与平台账单金额核对；按实际完成结算日归属',
+      { basis: '实际结算日', signed: true },
+    ),
+  ];
+  const ledgerRows = [
+    metric('期初库存', 'ledgerBeginCount', 'count', '所选范围每家店第一天的库存台账期初值', {
+      basis: '台账业务日',
+      aggregate: 'first',
+      secondaryKey: 'ledgerBeginAmount',
+      secondaryLabel: '金额 ',
+      secondaryType: 'plain-money',
+    }),
+    metric('入库', 'ledgerInboundCount', 'count', '所选范围库存台账入库累计', {
+      basis: '台账业务日',
+      secondaryKey: 'ledgerInboundAmount',
+      secondaryLabel: '金额 ',
+      secondaryType: 'plain-money',
+    }),
+    metric('客单出库', 'ledgerCustomerOutboundCount', 'count', '库存台账客户订单出库；用于核对，不替换经营销量', {
+      basis: '台账业务日',
+      secondaryKey: 'ledgerCustomerOutboundAmount',
+      secondaryLabel: '金额 ',
+      secondaryType: 'plain-money',
+    }),
+    metric('其他出库', 'ledgerOtherOutboundCount', 'count', '库存台账全部出库－客单出库', {
+      basis: '台账业务日',
+      secondaryKey: 'ledgerOtherOutboundAmount',
+      secondaryLabel: '金额 ',
+      secondaryType: 'plain-money',
+    }),
+    metric('全部出库', 'ledgerOutboundCount', 'count', '库存台账全部出库，不等同经营销量', {
+      basis: '台账业务日',
+      secondaryKey: 'ledgerOutboundAmount',
+      secondaryLabel: '金额 ',
+      secondaryType: 'plain-money',
+    }),
+    metric('期末库存', 'ledgerEndCount', 'count', '所选范围每家店最后一天的库存台账期末值', {
+      basis: '台账业务日',
+      aggregate: 'last',
+      secondaryKey: 'ledgerEndAmount',
+      secondaryLabel: '金额 ',
+      secondaryType: 'plain-money',
+    }),
+  ];
+  const supplyRows = [
+    metric('备货订单数', 'stockingOrderCount', 'count', '经营后台备货订单数'),
+    metric('备货入库件数', 'ledgerPrepareEntryCount', 'count', '库存台账备货订单入库件数', {
+      basis: '台账业务日',
+    }),
+    metric('集采订单数', 'urgentPurchaseOrderCount', 'count', '经营后台集采订单数'),
+    metric('集采入库件数', 'ledgerUrgentEntryCount', 'count', '库存台账集采订单入库件数', {
+      basis: '台账业务日',
+    }),
   ];
   return {
     range,
     current,
     previous,
-    salesRows,
-    billRows,
+    rows: operatingRows,
+    operatingRows,
     trafficRows,
+    financeRows,
+    ledgerRows,
     supplyRows,
-    ledgerCountRows,
-    ledgerAmountRows,
-    customerRows,
     topRegions: homeTopRegions(current),
   };
 }
@@ -6475,39 +6709,176 @@ function homeHelpTip(text, label = '查看口径说明') {
 
 function homeMetricTable(title, subtitle, metrics, currentRange, previousRange) {
   const tableNotes = {
-    销售与支付: '用于判断所选范围的销售规模与转化结果。销售金额优先取财务明细净额（收入－支出，按业务发生日），销量优先取官方台账客单出库；尚未确认的日期用经营后台实时数据暂估。各指标按店铺、日期汇总，未知显示 —，不会补零。',
-    商家账单: '用于核对平台已经实际完成的结算，不代表销售发生日。数据来自 OpenAPI 商家账单、销售明细和补扣款；主时间轴使用平台 completedPayTime（实际完成结算日），报表生成时间只表示数据新鲜度。结算销售款＝销售明细收入－支出；实际结算金额＝销售款＋补款－扣款，并与平台账单金额比较，差额不超过 0.01 视为一致。尚未完成结算的预计日期不混入本表。',
-    流量表现: '用于判断曝光到商详、商详到支付的转化效率。数据来自全托经营后台；曝光到访率＝商详访客÷曝光量，商详支付率＝支付订单数÷商详访客。跨店汇总为各店数据求和，不冒充平台去重人数。',
-    采购履约: '用于观察备货与集采规模及实际入库承接。订单数来自全托经营后台，入库件数来自官方库存台账；所选范围内按店铺、日期求和。',
-    台账数量: '用于复盘库存数量流转，数据来自官方财务台账。期初取每家店所选范围第一天，期末取最后一天；入库、出库为范围累计。总出库包含多种出库类型，不等于销量。',
-    台账金额: '用于复盘库存价值流转，不代表销售收入。数据来自官方财务台账；期初、期末分别取每家店范围首尾值，入库、出库为范围累计。',
-    客户结构: '用于判断新客贡献，数据来自全托经营后台。新客销量占比＝新客销量÷同口径经营销量；新客订单占比＝新客支付订单数÷支付订单数。口径不兼容或未知时显示 —。',
+    经营成交与支付: '用于判断所选范围的经营成交与支付规模。成交金额、净成交金额、销量、支付人数和支付订单全部来自全托经营后台 WebAPI；财务明细和库存台账只用于独立核对，绝不覆盖经营指标。未知显示 —，不会补零。',
+    流量与客户: '用于判断曝光到商详、商详到支付及新客贡献。数据来自全托经营后台；曝光到访率＝商详访客÷曝光量，商详支付率＝支付订单数÷商详访客。跨店汇总为各店数据求和，不冒充平台跨店去重人数。',
+    财务与结算: '业务发生组来自 OpenAPI 财务明细，净额＝收入－支出并按明细 addTime 归属。资金结算组来自商家账单：期末预计待结算只取范围结束日余额；已结算销售款、补款、扣款和实际结算金额均按 completedPayTime 实际完成结算日归属。实际结算金额＝销售款＋补款－扣款。',
+    库存台账: '用于复盘库存数量与价值流转。期初取范围第一天、期末取最后一天，入库和出库在范围内累计；客单出库只用于与经营销量核对，不会替换经营销量。每行主值为数量，小字为同口径台账金额。',
+    采购履约: '用于观察备货与集采规模及实际入库承接。订单数来自全托经营后台，入库件数来自官方库存台账；所选范围内按各自业务日汇总。',
   };
-  const coverageNotes = metrics
-    .filter(({ coverageNote }) => coverageNote)
-    .map(({ label, coverageNote }) => `${label}：${coverageNote}`)
-    .join('\n');
-  const comparisonNote = [
-    tableNotes[title] || subtitle,
-    coverageNotes ? `\n所选本期覆盖：\n${coverageNotes}` : '',
-  ].join('');
+  const comparisonNote = tableNotes[title] || subtitle;
+  const valueCell = (metric, period) => {
+    const current = period === 'current';
+    const display = current ? metric.display : metric.baselineDisplay;
+    const secondary = current
+      ? metric.secondaryDisplay
+      : metric.baselineSecondaryDisplay;
+    const coverage = current ? metric.coverage : metric.baselineCoverage;
+    return `<span class="matrix-cell value ${current ? '' : 'comparison-value'}${metric.groupStart ? ' group-start' : ''}" role="cell">
+      <strong>${escapeHtml(display)}</strong>
+      ${secondary ? `<span class="metric-subvalue">${escapeHtml(secondary)}</span>` : ''}
+      <small class="metric-coverage${coverage.complete === coverage.total && coverage.total > 0 ? ' complete' : ' partial'}" tabindex="0" data-tip="${escapeHtml(coverage.detail)}">${escapeHtml(coverage.label)}</small>
+    </span>`;
+  };
   return `
     <article class="overview-matrix-card home-history-card">
       <div class="matrix-card-head">
         <div class="title-with-help"><h4>${escapeHtml(title)}</h4>${homeHelpTip(comparisonNote, `${title}用途、来源、公式与覆盖`)}</div>
       </div>
-      <div class="metric-matrix cols-3 home-history-matrix" role="table" aria-label="${escapeHtml(title)}">
+      <div class="metric-matrix-viewport">
+      <div class="metric-matrix cols-4 home-history-matrix" role="table" aria-label="${escapeHtml(title)}">
         <span class="matrix-cell head" role="columnheader">指标</span>
+        <span class="matrix-cell head" role="columnheader">日期口径</span>
         <span class="matrix-cell head" role="columnheader"><strong>本期</strong></span>
         <span class="matrix-cell head" role="columnheader" tabindex="0" data-tip="前期为本期之前紧邻的同长度窗口"><strong>前期</strong></span>
         <span class="matrix-cell head" role="columnheader">较前期</span>
         ${metrics.map((metric) => `
-          <span class="matrix-cell label" role="rowheader" tabindex="0" data-tip="${escapeHtml([metric.note, metric.coverageNote].filter(Boolean).join('\n'))}">${escapeHtml(metric.label)}</span>
-          <span class="matrix-cell value" role="cell">${escapeHtml(metric.display)}</span>
-          <span class="matrix-cell value comparison-value" role="cell">${escapeHtml(metric.baselineDisplay)}</span>
-          <span class="matrix-cell value change-value" role="cell">${escapeHtml(metric.change)}</span>`).join('')}
-      </div>
+          <span class="matrix-cell label${metric.groupStart ? ' group-start' : ''}" role="rowheader" tabindex="0" data-tip="${escapeHtml(metric.note)}">${metric.groupLabel ? `<small>${escapeHtml(metric.groupLabel)}</small>` : ''}${escapeHtml(metric.label)}</span>
+          <span class="matrix-cell metric-basis${metric.groupStart ? ' group-start' : ''}" role="cell">${escapeHtml(metric.basis)}</span>
+          ${valueCell(metric, 'current')}
+          ${valueCell(metric, 'previous')}
+          <span class="matrix-cell value change-value${metric.groupStart ? ' group-start' : ''}" role="cell">${escapeHtml(metric.change)}</span>`).join('')}
+      </div></div>
     </article>`;
+}
+
+function renderTodayCoreCards() {
+  const history = homeHistory();
+  const operatingRows = Array.isArray(history.todayStoreDaily)
+    ? history.todayStoreDaily
+    : [];
+  const pendingRows = Array.isArray(history.currentSettlementPosition)
+    ? history.currentSettlementPosition
+    : [];
+  const baseCodes = homeBaseStoreCodes();
+  const storeMatches = homeStoreSearchMatches();
+  const expectedCodes = normalizedQuery() && storeMatches.size > 0
+    ? new Set([...baseCodes].filter((code) => storeMatches.has(code)))
+    : baseCodes;
+  const expectedStores = Math.max(0, expectedCodes.size);
+  const operatingDate = operatingRows.map(({ date }) => date).filter(Boolean).sort().at(-1) || null;
+  const pendingDate = pendingRows.map(({ date }) => date).filter(Boolean).sort().at(-1) || null;
+  const operatingCurrency = [...new Set(
+    operatingRows.map(({ currency }) => currency).filter(Boolean),
+  )];
+  const pendingCurrency = [...new Set(
+    pendingRows.map(({ currency }) => currency).filter(Boolean),
+  )];
+  const completeSum = (rows, key, { signed = false } = {}) => {
+    if (!expectedStores || rows.length !== expectedStores) return null;
+    return signed
+      ? completeSignedMetricSum(rows, key)
+      : completeMetricSum(rows, key);
+  };
+  const knownStores = (rows, key, { signed = false } = {}) => new Set(rows
+    .filter((row) => (
+      typeof row[key] === 'number'
+      && Number.isFinite(row[key])
+      && (signed || row[key] >= 0)
+    ))
+    .map(({ storeCode }) => storeCode)).size;
+  const pendingSummary = {
+    pendingReportCount: availableMetricSum(pendingRows, 'pendingReportCount'),
+    overdueReportCount: availableMetricSum(pendingRows, 'overdueReportCount'),
+    earliest: pendingRows
+      .map(({ earliestEstimatedPayDate }) => earliestEstimatedPayDate)
+      .filter(Boolean)
+      .sort()
+      .at(0) || null,
+    latest: pendingRows
+      .map(({ latestEstimatedPayDate }) => latestEstimatedPayDate)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null,
+  };
+  const cards = [
+    {
+      key: 'netDealAmount',
+      label: '净成交金额',
+      value: completeSum(operatingRows, 'netDealAmount'),
+      money: true,
+      primary: true,
+      note: '经营后台当日累计净成交金额；不使用财务明细或商家账单覆盖。',
+    },
+    {
+      key: 'dealAmount',
+      label: '成交金额',
+      value: completeSum(operatingRows, 'dealAmount'),
+      money: true,
+      note: '经营后台当日累计成交金额。',
+    },
+    {
+      key: 'salesQuantity',
+      label: '销量',
+      value: completeSum(operatingRows, 'salesQuantity'),
+      suffix: '件',
+      note: '经营后台当日累计销量；不使用库存台账客单出库替换。',
+    },
+    {
+      key: 'buyerCount',
+      label: '支付人数',
+      value: completeSum(operatingRows, 'buyerCount'),
+      suffix: '人',
+      note: '经营后台当日去重支付人数；小时去重人数不能直接相加。',
+    },
+    {
+      key: 'goodsDetailVisitors',
+      label: '商详访客',
+      value: completeSum(operatingRows, 'goodsDetailVisitors'),
+      suffix: '人',
+      note: '经营后台当日去重商品详情页访客；小时去重访客不能直接相加。',
+    },
+    {
+      key: 'pendingSettlementAmount',
+      label: '预计待结算金额',
+      value: completeSum(pendingRows, 'pendingSettlementAmount', { signed: true }),
+      money: true,
+      pending: true,
+      note: '截至最新账单同步时仍未完成结算的预计金额；按当前状态汇总，不按天累加。',
+    },
+  ];
+  const formatCardValue = (card) => {
+    if (card.money) {
+      const currency = card.pending ? pendingCurrency : operatingCurrency;
+      return currency.length === 1
+        ? formatMoney(card.value, currency[0])
+        : formatPlainAmount(card.value);
+    }
+    return card.value === null ? '—' : formatUnits(card.value);
+  };
+  const cardMeta = (card) => {
+    const rows = card.pending ? pendingRows : operatingRows;
+    const known = knownStores(rows, card.key, { signed: card.pending });
+    if (card.pending) {
+      return pendingPositionSubvalue(pendingSummary)
+        || `${known}/${expectedStores}家有返回`;
+    }
+    return `${known}/${expectedStores}家有值${operatingDate ? ` · 数据 ${operatingDate.slice(5).replace('-', '/')}` : ''}`;
+  };
+  return `
+    <section class="home-today-core" aria-label="今日核心经营指标">
+      <header class="home-block-head">
+        <div><span class="eyebrow">TODAY</span><h2>今日核心</h2></div>
+        <p>${escapeHtml(`经营 ${operatingDate || '待更新'} · 待结算 ${pendingDate || '待更新'} · 固定今日，只跟随店铺范围`)}</p>
+      </header>
+      <div class="today-core-strip">
+        ${cards.map((card) => `
+          <article class="today-core-card${card.primary ? ' primary' : ''}${card.pending ? ' settlement' : ''}">
+            <div class="today-core-label"><span>${escapeHtml(card.label)}</span>${homeHelpTip(card.note, `${card.label}口径说明`)}</div>
+            <strong>${escapeHtml(formatCardValue(card))}</strong>
+            <small>${escapeHtml(cardMeta(card))}</small>
+          </article>`).join('')}
+      </div>
+    </section>`;
 }
 
 function renderHistoryKpis() {
@@ -6524,13 +6895,11 @@ function renderHistoryKpis() {
         <p>${escapeHtml(`本期 ${compactRangeLabel(summary.range)} · 前期 ${compactRangeLabel(previousRange)} · ${summary.current.productMode ? '货号搜索范围' : `${summary.current.storeCodes.size} 家店`} · 未知不补零`)}</p>
       </header>
       <div class="kpi-six home-history-card-grid">
-        ${homeMetricTable('销售与支付', '实时经营与台账确认自动接续', summary.salesRows, summary.range, previousRange)}
-        ${homeMetricTable('商家账单', '销售款、补扣款与应结核对', summary.billRows, summary.range, previousRange)}
-        ${homeMetricTable('流量表现', '曝光、商详与支付转化', summary.trafficRows, summary.range, previousRange)}
+        ${homeMetricTable('经营成交与支付', '经营后台成交与支付', summary.operatingRows, summary.range, previousRange)}
+        ${homeMetricTable('流量与客户', '曝光、商详、支付与新客', summary.trafficRows, summary.range, previousRange)}
+        ${homeMetricTable('财务与结算', '业务发生与资金结算分组', summary.financeRows, summary.range, previousRange)}
+        ${homeMetricTable('库存台账', '数量为主、金额为辅', summary.ledgerRows, summary.range, previousRange)}
         ${homeMetricTable('采购履约', '订单数量与台账入库件数', summary.supplyRows, summary.range, previousRange)}
-        ${homeMetricTable('台账数量', '库存流转数量；总出库不等于销量', summary.ledgerCountRows, summary.range, previousRange)}
-        ${homeMetricTable('台账金额', '库存价值；不等于销售收入', summary.ledgerAmountRows, summary.range, previousRange)}
-        ${homeMetricTable('客户结构', '新客规模与占比', summary.customerRows, summary.range, previousRange)}
         <article class="overview-matrix-card home-history-card home-region-card">
           <div class="matrix-card-head">
             <div class="title-with-help"><h4>主销地区</h4>${homeHelpTip('用于判断销量主要流向。数据来自经营后台地区销量，按当前日期和店铺范围汇总后降序排列，只展示 Top 4；未知不补零。', '主销地区用途与来源')}</div>
@@ -6562,27 +6931,32 @@ function groupHistoryByDate(bundle) {
     .map(({ date, rows }) => {
       const metrics = Object.fromEntries(Object.keys(HOME_TREND_METRICS).map((key) => [
         key,
-        ['salesAmount', 'billSalesAmount', 'settlementAmount'].includes(key)
+        HOME_TREND_METRICS[key]?.money
           ? availableSignedMetricSum(rows, key)
           : availableMetricSum(rows, key),
       ]));
+      const operatingAmountBasis = rows.some(
+        ({ operatingAmountBasis: basis }) => basis === 'WEBAPI_REALTIME',
+      )
+        ? 'PROVISIONAL'
+        : rows.some(
+            ({ operatingAmountBasis: basis }) => (
+              basis === 'WEBAPI_INDEX' || basis === 'WEBAPI'
+            ),
+          )
+          ? 'CONFIRMED'
+          : 'UNAVAILABLE';
       const basisByMetric = {
-        salesAmount: rows.some(({ salesAmountBasis }) => salesAmountBasis === 'WEBAPI_REALTIME')
-          ? 'PROVISIONAL'
-          : rows.some(({ salesAmountBasis }) => (
-              salesAmountBasis === 'FINANCE_CONFIRMED'
-              || salesAmountBasis === 'WEBAPI_INDEX'
-            ))
-            ? 'CONFIRMED'
-            : 'UNAVAILABLE',
+        netDealAmount: operatingAmountBasis,
+        dealAmount: operatingAmountBasis,
         salesQuantity: rows.some(
           ({ salesQuantityBasis }) => salesQuantityBasis === 'WEBAPI_REALTIME',
         )
           ? 'PROVISIONAL'
           : rows.some(
               ({ salesQuantityBasis }) => (
-                salesQuantityBasis === 'LEDGER_CONFIRMED'
-                || salesQuantityBasis === 'WEBAPI_INDEX'
+                salesQuantityBasis === 'WEBAPI_INDEX'
+                || salesQuantityBasis === 'WEBAPI'
               ),
             )
             ? 'CONFIRMED'
@@ -6626,7 +7000,7 @@ function groupHistoryByMonth(rows) {
             if (definition.aggregate === 'first') value = visible[0][key];
             else if (definition.aggregate === 'last') value = visible.at(-1)[key];
             else {
-              value = ['salesAmount', 'billSalesAmount', 'settlementAmount'].includes(key)
+              value = definition.money
                 ? availableSignedMetricSum(visible, key)
                 : availableMetricSum(visible, key);
             }
@@ -6830,7 +7204,7 @@ function renderHistoryTrends() {
   const metricKey = Object.prototype.hasOwnProperty.call(
     HOME_TREND_METRICS,
     state.homeTrendMetric,
-  ) ? state.homeTrendMetric : 'salesAmount';
+  ) ? state.homeTrendMetric : 'netDealAmount';
   const metric = HOME_TREND_METRICS[metricKey];
   const hasProvisional = daily.some(
     (row) => row.basisByMetric?.[metricKey] === 'PROVISIONAL',
@@ -6844,8 +7218,8 @@ function renderHistoryTrends() {
       ${historyTrendChart(rows, metricKey, metric, kind)}
     </article>`;
   const provisionalNote = hasProvisional
-    ? '实心点为已物化历史事实；颜色较浅的点或柱表示日内实时暂估，台账或账单更新后自动切换为确认数据。'
-    : '当前指标来自所选范围内的确认或已物化数据。';
+    ? '实心点为同来源历史事实；颜色较浅的点或柱表示经营后台日内累计。经营、财务和台账来源始终分开，不会自动互相覆盖。'
+    : '当前指标来自标题所示的独立业务来源；经营、财务和台账不会互相覆盖。';
   return `
     <section class="home-history-trends" aria-label="经营趋势">
       <header class="head home-trend-section-head">
@@ -6866,7 +7240,7 @@ function renderHistoryTrends() {
           '月趋势',
           monthly,
           `${selectedHomeDateRange().start.slice(0, 7)} → ${selectedHomeDateRange().end.slice(0, 7)}`,
-          `${['billSalesAmount', 'supplementAmount', 'deductionAmount', 'settlementAmount'].includes(metricKey) ? '报账单生成日' : '业务日'}归入自然月；库存期初、期末取月首、月末，其余指标累计。${provisionalNote}`,
+          `${['billSalesAmount', 'supplementAmount', 'deductionAmount', 'settlementAmount'].includes(metricKey) ? '实际完成结算日' : metricKey === 'financeNetAmount' ? '财务明细业务发生日' : '经营或台账业务日'}归入自然月；库存期初、期末取月首、月末，其余指标累计。${provisionalNote}`,
           'bar',
         )}
       </div>
@@ -6931,8 +7305,8 @@ function renderRankMeta(parts) {
 }
 
 function storeHistoryRankMeta(row, primary) {
-  const quantity = rankingKnownSum(row.rows, ['salesQuantity', 'goodsCount']);
-  const amount = rankingKnownSum(row.rows, ['salesAmount', 'dealAmount', 'incomeAmount']);
+  const quantity = rankingKnownSum(row.rows, ['salesQuantity']);
+  const amount = rankingKnownSum(row.rows, ['netDealAmount', 'dealAmount']);
   const orders = rankingKnownSum(row.rows, ['paymentOrderCount']);
   const days = rankingObservedDays(row.rows);
   const parts = primary === 'amount'
@@ -7023,24 +7397,23 @@ function renderHistoryRankings() {
   };
   const resolvedStoreRows = resolvedHomeDaily({ ...bundle, productMode: false });
   const rankedFinanceCurrency = financeCurrency(bundle);
-  const rankingBasisNote = (basisKey, confirmedBasis, confirmedLabel) => {
+  const rankingBasisNote = (basisKey, confirmedLabel) => {
     const bases = new Set(resolvedStoreRows.map((row) => row[basisKey]));
     return [
-      bases.has(confirmedBasis) ? confirmedLabel : null,
+      bases.has('WEBAPI') || bases.has('WEBAPI_INDEX') ? confirmedLabel : null,
       bases.has('WEBAPI_INDEX') ? '历史日经营口径' : null,
       bases.has('WEBAPI_REALTIME') ? '含日内实时暂估' : null,
     ].filter(Boolean).join(' + ') || '当前可用口径';
   };
   const storeAmountBasisNote = rankingBasisNote(
-    'salesAmountBasis',
-    'FINANCE_CONFIRMED',
-    '财务明细确认',
+    'operatingAmountBasis',
+    '经营后台净成交金额',
   );
   const storeAmountCurrency = homeCurrency(bundle) || rankedFinanceCurrency;
   const storeAmount = aggregateHistoryRanking(
     resolvedStoreRows,
     storeIdentity,
-    'salesAmount',
+    'netDealAmount',
     null,
   ).filter(({ value }) => value > 0).map((row) => {
     const store = baseStores().find(({ code }) => code === row.key);
@@ -7054,8 +7427,7 @@ function renderHistoryRankings() {
   });
   const storeQuantityBasisNote = rankingBasisNote(
     'salesQuantityBasis',
-    'LEDGER_CONFIRMED',
-    '台账确认',
+    '经营后台销量',
   );
   const storeQuantity = aggregateHistoryRanking(
     resolvedStoreRows,
@@ -7142,7 +7514,7 @@ function renderHistoryRankings() {
       <header class="head"><div class="title-with-help"><h3>排行榜</h3>${homeHelpTip('店铺展示所选范围内全部有销售记录；未归并货号暂按店内身份分别统计，金额、销量各展示 Top 20。', '排行榜说明')}</div><span class="sub">${escapeHtml(note)}</span></header>
       <div class="rank-grid home-rank-grid">
         ${historyRankTable(
-          '店铺销售金额排行',
+          '店铺净成交金额排行',
           `${note} · ${storeAmountBasisNote}`,
           storeAmount,
           { money: true, defaultTone: 'store-amount' },
@@ -7156,7 +7528,7 @@ function renderHistoryRankings() {
         ${historyRankTable(
           productAmountBasis === 'FINANCE' ? '货号报账销售款 Top 20（待归并）' : '货号销售金额 Top 20（估算）',
           productAmountBasis === 'FINANCE'
-            ? '按报账销售款明细生成日汇总，不冒充消费者下单日成交额'
+            ? '按财务明细业务发生日汇总，不冒充经营后台净成交金额'
             : '销量 × 最新财务单价证据；无匹配单价则不入榜',
           productAmount,
           { money: true, estimated: productAmountBasis === 'ESTIMATED', defaultTone: 'product-amount' },
@@ -7164,7 +7536,7 @@ function renderHistoryRankings() {
         ${historyRankTable(
           productQuantityBasis === 'FINANCE' ? '货号财务件数 Top 20（待归并）' : '货号销量 Top 20（待归并）',
           productQuantityBasis === 'FINANCE'
-            ? '来自报账销售款明细 goodsCount，按报账明细生成日汇总'
+            ? '来自财务明细 goodsCount，按明细业务发生日汇总'
             : note,
           productQuantity,
           { defaultTone: 'product-quantity' },
@@ -7217,6 +7589,7 @@ function renderHome() {
     : '';
   return `
     ${emptyCurrentNotice}
+    ${renderTodayCoreCards()}
     ${renderHistoryKpis()}
     ${renderHistoryTrends()}
     ${renderHistoryRankings()}`;
