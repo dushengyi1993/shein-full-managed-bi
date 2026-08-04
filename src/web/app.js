@@ -4,6 +4,16 @@ const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   timeStyle: 'short',
   hour12: false,
 });
+const sourceUpdateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
 
 const ROUTES = Object.freeze({
   home: { title: '总控驾驶舱', code: 'CONTROL' },
@@ -920,6 +930,12 @@ function formatDateTime(value) {
   if (!value) return '暂无有效销量快照';
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? '更新时间待确认' : dateTimeFormatter.format(date);
+}
+
+function formatSourceUpdateTime(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? null : sourceUpdateTimeFormatter.format(date);
 }
 
 function sidebarFreshnessText(source) {
@@ -6767,6 +6783,15 @@ function renderTodayCoreCards() {
   const expectedStores = Math.max(0, expectedCodes.size);
   const operatingDate = operatingRows.map(({ date }) => date).filter(Boolean).sort().at(-1) || null;
   const pendingDate = pendingRows.map(({ date }) => date).filter(Boolean).sort().at(-1) || null;
+  const sourceUpdateTimes = [...new Set(operatingRows
+    .map(({ sourceUpdatedAt }) => sourceUpdatedAt)
+    .filter((value) => formatSourceUpdateTime(value)))]
+    .sort();
+  const sourceUpdateText = sourceUpdateTimes.length === 0
+    ? '更新时间：待更新'
+    : sourceUpdateTimes.length === 1
+      ? `更新时间：${formatSourceUpdateTime(sourceUpdateTimes[0])}`
+      : `更新时间：${formatSourceUpdateTime(sourceUpdateTimes[0])}–${formatSourceUpdateTime(sourceUpdateTimes.at(-1))}`;
   const operatingCurrency = [...new Set(
     operatingRows.map(({ currency }) => currency).filter(Boolean),
   )];
@@ -6878,7 +6903,7 @@ function renderTodayCoreCards() {
     <section class="home-today-core" aria-label="今日核心经营指标">
       <header class="home-block-head">
         <div><span class="eyebrow">TODAY</span><h2>今日核心</h2></div>
-        <p>${escapeHtml(`经营 ${operatingDate || '待更新'} · 待结算 ${pendingDate || '待更新'} · 固定今日，只跟随店铺范围`)}</p>
+        <p>${escapeHtml(`经营 ${operatingDate || '待更新'} · 待结算 ${pendingDate || '待更新'} · ${sourceUpdateText} · 固定今日，只跟随店铺范围`)}</p>
       </header>
       <div class="today-core-strip">
         ${cards.map((card) => `

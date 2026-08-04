@@ -3,6 +3,7 @@ import {
   buildIndexUpdateTimeRequest,
   buildProductDiagnoseListRequest,
   buildRealtimeRequest,
+  buildRealtimeUpdateTimeRequest,
   buildRegionRankRequest,
   buildShopDailyRequest,
   buildStoreDailyHistoryRequest,
@@ -10,6 +11,8 @@ import {
   historyWindows,
   parseIndexUpdateTime,
   parseProductDiagnosePage,
+  parseRealtimeStoreSummary,
+  parseRealtimeUpdateTime,
   parseRegionRows,
   parseShopAnalysisRows,
   parseStoreDailyHistory,
@@ -179,7 +182,12 @@ function completeMetricSum(rows, field) {
   return rows.reduce((sum, row) => sum + row[field], 0);
 }
 
-export function mergeRealtimeStoreRows(rows, { storeCode, businessDate, observedAt } = {}) {
+export function mergeRealtimeStoreRows(rows, {
+  storeCode,
+  businessDate,
+  sourceUpdatedAt = null,
+  observedAt,
+} = {}) {
   if (!Array.isArray(rows) || rows.length === 0) return null;
   const currencies = [...new Set(rows.map(({ currency }) => currency).filter(Boolean))];
   return Object.freeze({
@@ -195,7 +203,7 @@ export function mergeRealtimeStoreRows(rows, { storeCode, businessDate, observed
     goodsDetailVisitors: null,
     stockingOrderCount: completeMetricSum(rows, 'stockingOrderCount'),
     urgentPurchaseOrderCount: completeMetricSum(rows, 'urgentPurchaseOrderCount'),
-    sourceUpdatedAt: null,
+    sourceUpdatedAt,
     observedAt,
     sourceCode: 'WEBAPI_REALTIME',
   });
@@ -279,12 +287,51 @@ async function syncRealtimeDay({
   repository,
   clock,
 }) {
-  const request = buildRealtimeRequest({
-    startHour: realtime.startHour,
-    endHour: realtime.endHour,
-    observedDate: realtime.businessDate,
+  const anchorResult = await requestAndAudit({
+    transport,
+    repository,
+    storeCode,
+    endpointCode: 'UPDATE_TIME',
+    request: buildRealtimeUpdateTimeRequest(),
+    startDate: realtime.businessDate,
+    endDate: realtime.businessDate,
+    clock,
+    handle: async (body) => ({
+      accepted: 1,
+      payload: parseRealtimeUpdateTime(body),
+    }),
   });
-  return requestAndAudit({
+  if (!anchorResult.ok || !anchorResult.payload?.endHour) {
+    return {
+      ok: false,
+      accepted: 0,
+      rejected: 0,
+      total: 0,
+      errorCode: anchorResult.errorCode ?? 'HOME_REALTIME_UPDATE_TIME_UNAVAILABLE',
+      payload: null,
+    };
+  }
+  const anchor = anchorResult.payload;
+  if (anchor.businessDate !== realtime.businessDate) {
+    return {
+      ok: true,
+      accepted: 0,
+      rejected: 0,
+      total: 0,
+      payload: {
+        sourceUpdatedAt: anchor.sourceUpdatedAt,
+        requestedBusinessDate: realtime.businessDate,
+        availableBusinessDate: anchor.businessDate,
+        stale: true,
+      },
+    };
+  }
+  const request = buildRealtimeRequest({
+    startHour: anchor.startHour,
+    endHour: anchor.endHour,
+    observedDate: anchor.businessDate,
+  });
+  const curveResult = await requestAndAudit({
     transport,
     repository,
     storeCode,
@@ -301,7 +348,8 @@ async function syncRealtimeDay({
       });
       const merged = mergeRealtimeStoreRows(hourlyRows, {
         storeCode,
-        businessDate: realtime.businessDate,
+        businessDate: anchor.businessDate,
+        sourceUpdatedAt: anchor.sourceUpdatedAt,
         observedAt,
       });
       if (merged) await repository.upsertStoreDaily([merged]);
@@ -310,11 +358,60 @@ async function syncRealtimeDay({
         payload: {
           hourlyRows: hourlyRows.length,
           factRows: merged ? 1 : 0,
-          uniqueVisitorMetrics: 'UNAVAILABLE',
+          sourceUpdatedAt: anchor.sourceUpdatedAt,
         },
       };
     },
   });
+  const summaryResult = await requestAndAudit({
+    transport,
+    repository,
+    storeCode,
+    endpointCode: 'STORE_REALTIME_SUMMARY',
+    request,
+    startDate: anchor.businessDate,
+    endDate: anchor.businessDate,
+    clock,
+    handle: async (body, observedAt) => {
+      const row = parseRealtimeStoreSummary(body, {
+        storeCode,
+        businessDate: anchor.businessDate,
+        sourceUpdatedAt: anchor.sourceUpdatedAt,
+        observedAt,
+      });
+      const accepted = operationalRows([row]).length;
+      if (accepted) await repository.upsertStoreDaily([row]);
+      return {
+        accepted,
+        payload: {
+          factRows: accepted,
+          knownMetricCount: [
+            'dealAmount',
+            'netDealAmount',
+            'salesQuantity',
+            'buyerCount',
+            'goodsDetailVisitors',
+            'stockingOrderCount',
+            'urgentPurchaseOrderCount',
+          ].filter((field) => row[field] !== null).length,
+          sourceUpdatedAt: anchor.sourceUpdatedAt,
+        },
+      };
+    },
+  });
+  return {
+    ok: curveResult.ok && summaryResult.ok,
+    accepted: curveResult.accepted + summaryResult.accepted,
+    rejected: curveResult.rejected + summaryResult.rejected,
+    total: curveResult.total + summaryResult.total,
+    errorCode: curveResult.errorCode ?? summaryResult.errorCode,
+    payload: {
+      sourceUpdatedAt: anchor.sourceUpdatedAt,
+      providerRefreshedAt: anchor.providerRefreshedAt,
+      curve: curveResult.payload,
+      summary: summaryResult.payload,
+    },
+  };
 }
 
 async function resolveDataAnchor({

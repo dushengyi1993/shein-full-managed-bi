@@ -7,6 +7,8 @@ import {
   buildLedgerDailyRequest,
   buildProductDailyRequest,
   buildProductDiagnoseListRequest,
+  buildRealtimeRequest,
+  buildRealtimeUpdateTimeRequest,
   buildRegionRankRequest,
   buildStoreDailyHistoryRequest,
   buildTradeOverviewRequest,
@@ -14,6 +16,8 @@ import {
   parseIndexUpdateTime,
   parseProductDiagnosePage,
   parseProductDailyRows,
+  parseRealtimeStoreSummary,
+  parseRealtimeUpdateTime,
   parseLedgerDailyRows,
   parseShopAnalysisRows,
   parseStoreDailyHistory,
@@ -122,6 +126,72 @@ test('index update time pins the official data-version anchor', () => {
     () => parseIndexUpdateTime({ info: { areaCd: 'cn', dt: '' } }),
     { code: 'HOME_UPDATE_TIME_INVALID' },
   );
+});
+
+test('realtime summary uses the official data-through hour and preserves daily UVs', () => {
+  assert.deepEqual(buildRealtimeUpdateTimeRequest(), {
+    pageCode: 'IndexRealTime',
+    areaCd: 'cn',
+  });
+  const anchor = parseRealtimeUpdateTime({
+    code: '0',
+    info: {
+      pageNm: '首页概览实时模块',
+      areaCd: 'cn',
+      dt: '2026080416',
+      updateTime: '2026-08-04 17:27:54',
+    },
+  });
+  assert.deepEqual(anchor, {
+    businessDate: '2026-08-04',
+    startHour: '2026080400',
+    endHour: '2026080416',
+    sourceUpdatedAt: '2026-08-04T16:00:00+08:00',
+    providerRefreshedAt: '2026-08-04 17:27:54',
+  });
+  assert.deepEqual(buildRealtimeRequest({
+    startHour: anchor.startHour,
+    endHour: anchor.endHour,
+    observedDate: anchor.businessDate,
+  }), {
+    areaCd: 'cn',
+    dt: '20260804',
+    countrySite: ['shein-all'],
+    scene: '1',
+    startDt: '2026080400',
+    endDt: '2026080416',
+  });
+  assert.deepEqual(parseRealtimeStoreSummary({
+    code: '0',
+    info: {
+      dealAmtH: 16093.52,
+      netDealAmtH: 15885.77,
+      saleCntH: 451,
+      shopGoodsUvH: 31676,
+      buyerCntH: 339,
+      bhOrdCntH: 9,
+      jcOrdCntH: 0,
+    },
+  }, {
+    storeCode: 'MZ2406',
+    businessDate: anchor.businessDate,
+    sourceUpdatedAt: anchor.sourceUpdatedAt,
+    observedAt: '2026-08-04T09:30:00.000Z',
+  }), {
+    storeCode: 'MZ2406',
+    businessDate: '2026-08-04',
+    currency: null,
+    dealAmount: 16093.52,
+    netDealAmount: 15885.77,
+    salesQuantity: 451,
+    buyerCount: 339,
+    goodsDetailVisitors: 31676,
+    stockingOrderCount: 9,
+    urgentPurchaseOrderCount: 0,
+    sourceUpdatedAt: '2026-08-04T16:00:00+08:00',
+    observedAt: '2026-08-04T09:30:00.000Z',
+    sourceCode: 'WEBAPI_REALTIME',
+  });
 });
 
 test('trade and region requests match the live management-analysis contracts', () => {

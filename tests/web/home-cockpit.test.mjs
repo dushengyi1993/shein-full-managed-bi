@@ -212,6 +212,10 @@ test('today core strip keeps six current metrics separate from the historical ra
   assert.match(today, /todayStoreDaily/);
   assert.match(today, /currentSettlementPosition/);
   assert.match(today, /固定今日，只跟随店铺范围/);
+  assert.match(today, /sourceUpdatedAt/);
+  assert.match(today, /更新时间：/);
+  assert.match(app, /function formatSourceUpdateTime\(/);
+  assert.match(app, /second: '2-digit'/);
   assert.match(today, /completeSum\(pendingRows, 'pendingSettlementAmount'/);
   assert.match(today, /referenceCurrency/);
   assert.match(today, /operatingDisplayCurrency/);

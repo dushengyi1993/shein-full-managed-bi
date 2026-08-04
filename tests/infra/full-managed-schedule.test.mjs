@@ -6,6 +6,7 @@ import {
   buildScheduledPlan,
   HOME_DAILY_BATCH_SIZE,
   OPENAPI_SCHEDULE_LOCK_ID,
+  runPlan,
   scheduledDates,
 } from '../../scripts/run_full_managed_scheduled_task.mjs';
 import { FULL_MANAGED_STORE_CODES } from '../../src/config/full-managed-stores.mjs';
@@ -54,6 +55,21 @@ test('daily homepage schedule maps five hourly slots to disjoint five-store batc
     selected.push(...plan.stores);
   }
   assert.deepEqual(selected, FULL_MANAGED_STORE_CODES);
+});
+
+test('a partial history command does not prevent the independent ledger refresh', async () => {
+  const seen = [];
+  const exitCode = await runPlan({
+    commands: [
+      { executable: 'node', args: ['history'] },
+      { executable: 'node', args: ['ledger'] },
+    ],
+  }, async (entry) => {
+    seen.push(entry.args[0]);
+    return entry.args[0] === 'history' ? 2 : 0;
+  });
+  assert.deepEqual(seen, ['history', 'ledger']);
+  assert.equal(exitCode, 2);
 });
 
 test('OpenAPI schedules share one advisory lease and keep finance on settled D-2', () => {

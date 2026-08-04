@@ -4,7 +4,7 @@ import { normalizeFullManagedStoreCode } from '../config/full-managed-stores.mjs
 export const HOME_WEBAPI_ORIGIN = 'https://sso.geiwohuo.com';
 export const HOME_HISTORY_EARLIEST_DATE = '2023-06-07';
 export const HOME_HISTORY_MAX_WINDOW_DAYS = 90;
-export const HOME_HISTORY_CONTRACT_VERSION = 3;
+export const HOME_HISTORY_CONTRACT_VERSION = 4;
 
 export const HOME_ENDPOINTS = Object.freeze({
   UPDATE_TIME: Object.freeze({
@@ -18,6 +18,10 @@ export const HOME_ENDPOINTS = Object.freeze({
   STORE_REALTIME: Object.freeze({
     method: 'POST',
     path: '/sbn/index/getRealTimeIndicatorCurveChart',
+  }),
+  STORE_REALTIME_SUMMARY: Object.freeze({
+    method: 'POST',
+    path: '/sbn/index/getRealTimeIndicator',
   }),
   TRADE_OVERVIEW: Object.freeze({
     method: 'POST',
@@ -219,6 +223,13 @@ export function buildStoreDailyHistoryRequest(input = {}) {
 export function buildIndexUpdateTimeRequest() {
   return Object.freeze({
     pageCode: 'Index',
+    areaCd: 'cn',
+  });
+}
+
+export function buildRealtimeUpdateTimeRequest() {
+  return Object.freeze({
+    pageCode: 'IndexRealTime',
     areaCd: 'cn',
   });
 }
@@ -453,6 +464,65 @@ export function parseIndexUpdateTime(body) {
   return Object.freeze({
     dataAnchorDate,
     sourceUpdatedAt: String(info.updateTime ?? '').trim() || null,
+  });
+}
+
+export function parseRealtimeUpdateTime(body) {
+  const envelope = record(body);
+  const info = record(envelope.info ?? envelope.data ?? envelope);
+  const compactHour = String(info.dt ?? '').trim();
+  if (!/^\d{10}$/.test(compactHour)) {
+    fail('HOME_REALTIME_UPDATE_TIME_INVALID', 'realtime update hour is invalid');
+  }
+  const businessDate = isoDate(
+    `${compactHour.slice(0, 4)}-${compactHour.slice(4, 6)}-${compactHour.slice(6, 8)}`,
+    'realtime update date',
+  );
+  const hour = Number(compactHour.slice(8, 10));
+  if (!Number.isSafeInteger(hour) || hour < 0 || hour > 23) {
+    fail('HOME_REALTIME_UPDATE_TIME_INVALID', 'realtime update hour is invalid');
+  }
+  if (String(info.areaCd ?? '').toLowerCase() !== 'cn') {
+    fail('HOME_REALTIME_UPDATE_TIME_INVALID', 'realtime update timezone is invalid');
+  }
+  const hourText = String(hour).padStart(2, '0');
+  return Object.freeze({
+    businessDate,
+    startHour: `${compactHour.slice(0, 8)}00`,
+    endHour: compactHour,
+    // The official page labels the data-through hour (`dt`) as 更新时间.
+    // Keep it distinct from the endpoint refresh timestamp (`updateTime`).
+    sourceUpdatedAt: `${businessDate}T${hourText}:00:00+08:00`,
+    providerRefreshedAt: String(info.updateTime ?? '').trim() || null,
+  });
+}
+
+export function parseRealtimeStoreSummary(body, {
+  storeCode,
+  businessDate,
+  sourceUpdatedAt = null,
+  observedAt = new Date().toISOString(),
+} = {}) {
+  const store = canonicalStore(storeCode);
+  const date = isoDate(businessDate, 'businessDate');
+  const envelope = record(body);
+  const row = record(envelope.info ?? envelope.data ?? envelope);
+  return Object.freeze({
+    storeCode: store,
+    businessDate: date,
+    currency: typeof row.currency === 'string' && /^[A-Za-z]{3}$/.test(row.currency)
+      ? row.currency.toUpperCase()
+      : null,
+    dealAmount: optionalDecimal(row.dealAmtH),
+    netDealAmount: optionalDecimal(row.netDealAmtH),
+    salesQuantity: optionalCount(row.saleCntH),
+    buyerCount: optionalCount(row.buyerCntH),
+    goodsDetailVisitors: optionalCount(row.shopGoodsUvH),
+    stockingOrderCount: optionalCount(row.bhOrdCntH),
+    urgentPurchaseOrderCount: optionalCount(row.jcOrdCntH),
+    sourceUpdatedAt,
+    observedAt,
+    sourceCode: 'WEBAPI_REALTIME',
   });
 }
 

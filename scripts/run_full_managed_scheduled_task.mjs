@@ -235,12 +235,13 @@ async function runCommand(entry) {
   });
 }
 
-async function runPlan(plan) {
+export async function runPlan(plan, runner = runCommand) {
+  let firstFailure = 0;
   for (const entry of plan.commands) {
-    const exitCode = await runCommand(entry);
-    if (exitCode !== 0) return exitCode;
+    const exitCode = await runner(entry);
+    if (exitCode !== 0 && firstFailure === 0) firstFailure = exitCode;
   }
-  return 0;
+  return firstFailure;
 }
 
 async function withOpenApiLease(work) {
