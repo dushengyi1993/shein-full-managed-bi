@@ -19,7 +19,7 @@ Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/sales/openapi.json
 EnvironmentFile=/srv/shein-fm/secrets/sales/database.env
 RuntimeDirectory=shein-fm-sales
 RuntimeDirectoryMode=0700
-ExecCondition=/usr/bin/node scripts/check_full_managed_resource_pressure.mjs --class=openapi
+ExecCondition=/usr/bin/node scripts/check_full_managed_resource_pressure.mjs --class=openapi --systemd-condition
 ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/flock -n -E 75 /run/shein-fm-sales/sync.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=sales-hourly --execute
 SuccessExitStatus=75
 TimeoutStartSec=45min

@@ -23,8 +23,10 @@
 ### 2. 启动前系统压力门禁
 
 `scripts/check_full_managed_resource_pressure.mjs` 只读 Linux `/proc`，在 Node、
-Chrome 和数据扫描启动前执行。缺失指标时 fail closed；不满足门槛返回 `75`，
-systemd 将该轮记录为条件跳过而不是业务失败。
+Chrome 和数据扫描启动前执行。缺失指标时 fail closed；命令行探针不满足门槛返回
+`75`，systemd 的 `ExecCondition` 模式专门转换为 `1`，将该轮记录为条件跳过而
+不是业务失败。不能直接让 `ExecCondition` 返回 `75`，因为 service 的
+`SuccessExitStatus=75` 会把锁竞争的退出码视为成功并继续运行 `ExecStart`。
 
 | 类型 | 开机稳定 | MemAvailable | 每核 load1 | memory full PSI avg10 | io full PSI avg10 |
 | --- | ---: | ---: | ---: | ---: | ---: |

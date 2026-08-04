@@ -28,6 +28,7 @@ export const RESOURCE_PRESSURE_PROFILES = Object.freeze({
 });
 
 export const RESOURCE_PRESSURE_DEFER_EXIT_CODE = 75;
+export const SYSTEMD_CONDITION_DEFER_EXIT_CODE = 1;
 
 function finiteNonNegative(value) {
   const number = Number(value);
@@ -36,7 +37,12 @@ function finiteNonNegative(value) {
 
 export function parseArgs(argv = []) {
   let resourceClass = null;
+  let systemdCondition = false;
   for (const token of argv) {
+    if (token === '--systemd-condition' && !systemdCondition) {
+      systemdCondition = true;
+      continue;
+    }
     const match = /^--class=(browser|openapi|materializer)$/.exec(token);
     if (!match || resourceClass !== null) {
       throw new TypeError('RESOURCE_PRESSURE_ARGUMENT_INVALID');
@@ -44,7 +50,7 @@ export function parseArgs(argv = []) {
     resourceClass = match[1];
   }
   if (!resourceClass) throw new TypeError('RESOURCE_PRESSURE_CLASS_REQUIRED');
-  return Object.freeze({ resourceClass });
+  return Object.freeze({ resourceClass, systemdCondition });
 }
 
 export function parseMemAvailableMiB(text) {
@@ -149,7 +155,7 @@ export async function readResourcePressureSnapshot({
 }
 
 export async function main(argv = process.argv.slice(2), dependencies = {}) {
-  const { resourceClass } = parseArgs(argv);
+  const { resourceClass, systemdCondition } = parseArgs(argv);
   const snapshot = await readResourcePressureSnapshot(dependencies);
   const result = evaluateResourcePressure(
     snapshot,
@@ -162,7 +168,11 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     reasonCodes: result.reasons,
     ...result.evidence,
   }));
-  return result.ready ? 0 : RESOURCE_PRESSURE_DEFER_EXIT_CODE;
+  return result.ready
+    ? 0
+    : systemdCondition
+      ? SYSTEMD_CONDITION_DEFER_EXIT_CODE
+      : RESOURCE_PRESSURE_DEFER_EXIT_CODE;
 }
 
 if (
@@ -180,6 +190,8 @@ if (
         .replace(/[^A-Z0-9_]/g, '_')
         .slice(0, 80),
     }));
-    process.exitCode = RESOURCE_PRESSURE_DEFER_EXIT_CODE;
+    process.exitCode = process.argv.includes('--systemd-condition')
+      ? SYSTEMD_CONDITION_DEFER_EXIT_CODE
+      : RESOURCE_PRESSURE_DEFER_EXIT_CODE;
   });
 }

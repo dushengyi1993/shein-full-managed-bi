@@ -11,6 +11,7 @@ import {
   parseUptimeSeconds,
   RESOURCE_PRESSURE_DEFER_EXIT_CODE,
   RESOURCE_PRESSURE_PROFILES,
+  SYSTEMD_CONDITION_DEFER_EXIT_CODE,
 } from '../../scripts/check_full_managed_resource_pressure.mjs';
 
 const root = new URL('../../', import.meta.url);
@@ -21,9 +22,17 @@ test('resource pressure parsers accept only bounded Linux pressure facts', () =>
   assert.equal(parseMemAvailableMiB('MemTotal: 8000000 kB\nMemAvailable: 3145728 kB\n'), 3072);
   assert.equal(parsePressureFullAvg10('some avg10=20.00\nfull avg10=3.50 avg60=1.00\n'), 3.5);
   assert.equal(parsePressureFullAvg10('some avg10=20.00\n'), null);
-  assert.deepEqual(parseArgs(['--class=browser']), { resourceClass: 'browser' });
+  assert.deepEqual(parseArgs(['--class=browser']), {
+    resourceClass: 'browser',
+    systemdCondition: false,
+  });
+  assert.deepEqual(parseArgs(['--class=browser', '--systemd-condition']), {
+    resourceClass: 'browser',
+    systemdCondition: true,
+  });
   assert.throws(() => parseArgs([]), /RESOURCE_PRESSURE_CLASS_REQUIRED/);
   assert.equal(RESOURCE_PRESSURE_DEFER_EXIT_CODE, 75);
+  assert.equal(SYSTEMD_CONDITION_DEFER_EXIT_CODE, 1);
 });
 
 test('resource pressure gate defers boot, memory, CPU and IO storms', () => {
@@ -71,7 +80,10 @@ test('high-frequency full-managed jobs share one bounded systemd envelope', asyn
   )));
   for (const [index, unit] of units.entries()) {
     assert.match(unit, /^Slice=shein-fm-heavy\.slice$/m, unitNames[index]);
-    assert.match(unit, /check_full_managed_resource_pressure\.mjs --class=/);
+    assert.match(
+      unit,
+      /check_full_managed_resource_pressure\.mjs --class=\w+ --systemd-condition/,
+    );
     assert.match(unit, /\/run\/lock\/shein-fm-heavy\.lock/);
     assert.match(unit, /^CPUWeight=\d+$/m);
     assert.match(unit, /^Nice=\d+$/m);
