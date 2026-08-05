@@ -168,7 +168,8 @@ git diff --check
 
 ## 7. 生产发布顺序
 
-1. 对生产 PostgreSQL 做可恢复备份并校验文件非空；
+1. 仅当本次包含数据库迁移、高风险数据变更或用户明确要求时，创建一份 deploy 备份并
+   校验；普通代码、前端和 systemd 发布复用最近日备份，不再重复生成大 dump；
 2. 将目标 Git 提交安装到新的 `/opt/shein-fm/releases/<commit>`，执行 `npm ci --omit=dev --ignore-scripts`；
 3. 不切换 `current`，先在 release 内跑静态检查；
 4. 安装 root-private 迁移 EnvironmentFile；
@@ -229,6 +230,7 @@ systemctl status \
   shein-fm-portal.service \
   shein-fm-dashboard-materialize.timer \
   shein-fm-dashboard-materialize-retry.timer \
+  shein-fm-db-restore-test.timer \
   shein-fm-system-health.timer \
   shein-fm-webhook-receiver.service \
   shein-fm-webhook-worker.service
@@ -277,12 +279,12 @@ docker exec shein-fm-db pg_isready -U sheinfm -d shein_fm
 
 `scripts/backup_full_managed_db.sh` 必须带 `--mode`：
 
-- `--mode daily` 由 `shein-fm-db-backup.timer` 调用，每个 UTC 自然日最多一次成功备份；
-- `--mode deploy` 在部署时人工调用，2 小时冷却并按 SHA-256 去重。
+- `--mode daily` 由 `shein-fm-db-backup.timer` 调用，每个上海自然日最多一次成功备份；
+- `--mode deploy` 仅用于数据库迁移、高风险数据变更或人工明确要求，并按 SHA-256 去重。
 
-两者共用主机锁，部署备份与定时器不会互相打断。保留规则为“最近 7 个 UTC 自然日各留
-最新一份 + 另留 3 份最新”，过期 dump 归档到 `/lhcos-data/shein-fm-archive` 并经
-字节数与 SHA-256 双重校验后才删除本地源文件。COS 不可用时不删除任何本地备份。
+两者共用 IO 重车道，部署备份与定时器不会互相打断。保留集合为“最近 2 份日备份 +
+最近 4 周每周最新一份 + 最近 1 份 deploy”；全部位于挂载云硬盘。日常不再自动归档
+COS，每月用临时数据库做一次完整恢复演练。
 
 ### 11.2 部署成功后清理发布目录
 
@@ -301,10 +303,10 @@ Webhook receiver/worker 常运行在较旧的发布上，仅按“最新 5 个�
 
 | 单元 | 节奏 | 说明 |
 | --- | --- | --- |
-| `shein-fm-db-backup.timer` | 每日 01:55 | 现在传 `--mode daily`；进入主机重锁 |
-| `shein-fm-backup-archive.timer` | 每日 12:45 | 保留 + COS 归档；进入主机重锁 |
+| `shein-fm-db-backup.timer` | 每日 00:15 | 传 `--mode daily`；进入 IO 重车道 |
+| `shein-fm-db-restore-test.timer` | 每月首个周日 11:15 | 完整恢复到临时库并核对关键表 |
 | `shein-fm-disk-guard.timer` | 每 15 分钟 | 只观测，`>=85%` 时 unit failed |
-| `shein-fm-profile-cache-prune.timer` | 每周日 04:40 | Profile 占用时 fail closed |
+| `shein-fm-profile-cache-prune.timer` | 每周日 12:20 | Profile 占用时 fail closed |
 | `shein-fm-system-health.timer` | 每 5 分钟 | root 读取固定白名单并原子发布脱敏运行态 |
 
 系统管理页的数据边界、Profile 双证据语义和生产验收见
@@ -317,17 +319,17 @@ Webhook receiver/worker 常运行在较旧的发布上，仅按“最新 5 个�
 
 迁移 0013 会重建并交换 `ops.reconciliation_result`（原 3,007,452 行 / ~1.78GB，
 真实粒度仅 93,702 个）。必须按“停供应链同步 → 迁移前全量备份 → 迁移 → verify 0013
-与 9999 → 恢复服务”的顺序执行，详见运维手册第 7 节。旧的 3M 行仅存在于迁移前备份
-及其 COS 副本中，刻意不保留第二份 1.7GB 影子表。
+与 9999 → 恢复服务”的顺序执行，详见运维手册第 7 节。旧的 3M 行只保留于有界迁移
+备份中，刻意不保留第二份 1.7GB 在线影子表。
 
 ## 12. 共享服务器资源协调
 
 部署任何定时批任务前，必须先安装主机级 `shein-host-heavy.slice`、全托子级
 `shein-host-heavy-fm.slice`、轻量全托 `shein-fm-heavy.slice` 和
-`infra/tmpfiles.d/shein-fm-scheduler.conf`，创建 `/run/lock/shein-fm-heavy.lock`，
-`/run/lock/shein-host-heavy.lock` 以及 WebAPI、销量、供应链三个共享运行目录，再
-安装 service/timer。复用共享运行目录的 oneshot 必须保留该目录，不能在结束时删除。
-锁顺序必须是主机锁在外、项目锁在内，压力检查在持锁后执行。高频 timer 禁止
+`infra/tmpfiles.d/shein-fm-scheduler.conf`，创建主机排他锁、两个浏览器读槽、两个
+OpenAPI 轻量槽以及各组件共享运行目录，再安装 service/timer。复用共享运行目录的
+oneshot 必须保留该目录，不能在结束时删除。锁顺序必须是主机车道在外、项目锁在内，
+压力检查在持锁后执行。高频 timer 禁止
 `Persistent=true`；Dashboard 物化禁止设置开机触发。完整阈值、验收和回滚见
 [全托共享服务器资源协调](runbooks/resource-coordination.md)。
 

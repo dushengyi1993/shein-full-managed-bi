@@ -2,7 +2,7 @@
 Description=Daily full-managed SHEIN Profile session renewal
 
 [Timer]
-OnCalendar=*-*-* 02:10:00 Asia/Shanghai
+OnCalendar=*-*-* 00:30:00 Asia/Shanghai
 AccuracySec=1m
 Persistent=false
 Unit=shein-fm-session-renewal.service

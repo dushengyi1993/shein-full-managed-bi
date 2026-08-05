@@ -100,6 +100,46 @@ function archiveArgs({ backups, archive, runtime }, extra = []) {
   ];
 }
 
+function retentionArgs({ backups, runtime }, extra = []) {
+  return [
+    `--backup-dir=${posix(backups)}`,
+    `--runtime-dir=${posix(runtime)}`,
+    '--retain-daily=1',
+    '--retain-weekly=0',
+    '--retain-deploy=0',
+    ...extra,
+  ];
+}
+
+test('local backup retention is plan-only by default and applies only exact candidates', async () => {
+  const fixture = await makeBackupFixture('local-retention');
+  const newest = 'shein-fm-daily-20260805T001500Z.dump';
+  const expired = 'shein-fm-daily-20260804T001500Z.dump';
+  await writeDump(fixture.backups, newest, 'newest', 0);
+  await writeDump(fixture.backups, expired, 'expired', 1);
+  await writeFile(path.join(fixture.backups, 'operator-note.txt'), 'never managed');
+
+  const planned = await runScript(
+    'prune_full_managed_backups.mjs',
+    retentionArgs(fixture),
+  );
+  assert.equal(planned.exitCode, 0, JSON.stringify(planned.result));
+  assert.equal(planned.result.mode, 'plan');
+  assert.deepEqual(planned.result.candidates.map(({ name }) => name), [expired]);
+  assert.ok((await readdir(fixture.backups)).includes(expired));
+
+  const applied = await runScript(
+    'prune_full_managed_backups.mjs',
+    retentionArgs(fixture, ['--apply']),
+  );
+  assert.equal(applied.exitCode, 0, JSON.stringify(applied.result));
+  assert.deepEqual(applied.result.removed.map(({ name }) => name), [expired]);
+  assert.deepEqual((await readdir(fixture.backups)).sort(), ['operator-note.txt', newest]);
+  const audits = await readdir(path.join(fixture.runtime, 'backup-retention'));
+  assert.equal(audits.filter((name) => name.startsWith('retention-')).length, 1);
+  assert.ok(!audits.includes('retention.lock'));
+});
+
 test('root overrides are refused without the explicit test guard', async () => {
   const fixture = await makeBackupFixture('guard-refused');
   await writeDump(fixture.backups, 'shein-fm-daily-20260729T021500Z.dump', 'today', 0);

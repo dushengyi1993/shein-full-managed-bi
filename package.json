@@ -43,6 +43,7 @@
     "test:webapi-experiment": "node --test tests/webapi-experiment/*.test.mjs",
     "sync:owner-roster": "node scripts/sync_full_managed_owner_roster.mjs",
     "maintenance:backup-archive": "node scripts/archive_full_managed_backups.mjs",
+    "maintenance:prune-backups": "node scripts/prune_full_managed_backups.mjs",
     "maintenance:prune-releases": "node scripts/prune_full_managed_releases.mjs",
     "maintenance:prune-profile-caches": "node scripts/prune_full_managed_profile_caches.mjs",
     "maintenance:disk-guard": "node scripts/guard_full_managed_disk.mjs",

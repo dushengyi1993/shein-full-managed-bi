@@ -707,7 +707,7 @@ test('homepage range, trend labels and renewal cadence match the operating prefe
   assert.match(chart, /rawMin - linePadding/);
   assert.match(chart, /tickIndices/);
   assert.match(timer, /Description=Daily full-managed SHEIN Profile session renewal/);
-  assert.match(timer, /OnCalendar=\*-\*-\* 02:10:00 Asia\/Shanghai/);
+  assert.match(timer, /OnCalendar=\*-\*-\* 00:30:00 Asia\/Shanghai/);
   assert.doesNotMatch(timer, /00,04,08,12,16,20/);
 });
 

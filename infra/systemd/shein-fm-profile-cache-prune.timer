@@ -2,10 +2,10 @@
 Description=Weekly SHEIN full-managed WebAPI Profile cache prune
 
 [Timer]
-# Weekly and well away from the nightly sync/backup window. The tool fails closed
-# when a Profile is in use, so a skipped week is safe.
-OnCalendar=Sun *-*-* 04:40:00 Asia/Shanghai
-RandomizedDelaySec=10m
+# Weekly after daily refresh. The tool fails closed when a Profile is in use,
+# so a skipped week is safe and can never disturb the 04:45 browser batch.
+OnCalendar=Sun *-*-* 12:20:00 Asia/Shanghai
+RandomizedDelaySec=5m
 Persistent=false
 Unit=shein-fm-profile-cache-prune.service
 

@@ -4,10 +4,14 @@ ConditionPathExists=/srv/shein-fm/runtime/webapi-history.enabled
 ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
 
 [Timer]
-# The 08 hour belongs to the semi-managed readiness/morning chain. Every batch
-# starts after the :32 full-managed core window and maps by explicit hour.
-OnCalendar=*-*-* 05..07:45:00 Asia/Shanghai
-OnCalendar=*-*-* 09..10:45:00 Asia/Shanghai
+# Five short, explicit store batches run after the D-1 readiness window. Each
+# slot sits between the hourly :02/:32 realtime batches; the schedule runner
+# maps the exact HH:MM slot to batch 0..4 instead of inferring from the hour.
+OnCalendar=*-*-* 03:45:00 Asia/Shanghai
+OnCalendar=*-*-* 04:15:00 Asia/Shanghai
+OnCalendar=*-*-* 04:45:00 Asia/Shanghai
+OnCalendar=*-*-* 05:15:00 Asia/Shanghai
+OnCalendar=*-*-* 05:45:00 Asia/Shanghai
 AccuracySec=1m
 Persistent=false
 Unit=shein-fm-home-daily.service

@@ -17,6 +17,9 @@ import {
   partialName,
   resolveMaintenanceRoot,
   selectBackupsForArchive,
+  selectBackupsForLocalRetention,
+  shanghaiDayKey,
+  shanghaiIsoWeekKey,
   utcDayKey,
 } from '../../scripts/lib/full_managed_maintenance.mjs';
 import {
@@ -57,6 +60,49 @@ function dump(name, offsetDays, { hours = 0, bytes = 1024 } = {}) {
     modifiedAt: BASE - offsetDays * DAY + hours * 3_600_000,
   };
 }
+
+test('Shanghai backup keys follow the local business day and ISO week', () => {
+  assert.equal(shanghaiDayKey('2026-08-04T15:59:59.000Z'), '2026-08-04');
+  assert.equal(shanghaiDayKey('2026-08-04T16:00:00.000Z'), '2026-08-05');
+  assert.equal(shanghaiIsoWeekKey('2026-08-03T00:00:00.000Z'), '2026-W32');
+});
+
+test('local backup retention keeps two dailies, four weekly points and one deploy', () => {
+  const entries = [
+    dump('shein-fm-daily-20260729T021500Z.dump', 0),
+    dump('shein-fm-daily-20260728T021500Z.dump', 1),
+    dump('shein-fm-daily-20260722T021500Z.dump', 7),
+    dump('shein-fm-daily-20260715T021500Z.dump', 14),
+    dump('shein-fm-daily-20260708T021500Z.dump', 21),
+    dump('shein-fm-daily-20260701T021500Z.dump', 28),
+    dump('shein-fm-deploy-20260729T101500Z.dump', 0, { hours: 1 }),
+    dump('shein-fm-deploy-20260720T101500Z.dump', 9),
+    dump('README.txt', 0),
+  ];
+  const selection = selectBackupsForLocalRetention(entries, {
+    retainDaily: 2,
+    retainWeekly: 4,
+    retainDeploy: 1,
+    now: BASE,
+  });
+  const kept = new Set(selection.keep.map(({ name }) => name));
+  assert.deepEqual(kept, new Set([
+    'shein-fm-daily-20260729T021500Z.dump',
+    'shein-fm-daily-20260728T021500Z.dump',
+    'shein-fm-daily-20260722T021500Z.dump',
+    'shein-fm-daily-20260715T021500Z.dump',
+    'shein-fm-daily-20260708T021500Z.dump',
+    'shein-fm-deploy-20260729T101500Z.dump',
+  ]));
+  assert.deepEqual(
+    selection.candidates.map(({ name }) => name).sort(),
+    [
+      'shein-fm-daily-20260701T021500Z.dump',
+      'shein-fm-deploy-20260720T101500Z.dump',
+    ],
+  );
+  assert.equal(selection.skipped[0].name, 'README.txt');
+});
 
 test('fixed roots stay full-managed and never reach a semi-managed path', () => {
   assert.equal(FULL_MANAGED_ROOTS.archive, '/lhcos-data/shein-fm-archive');

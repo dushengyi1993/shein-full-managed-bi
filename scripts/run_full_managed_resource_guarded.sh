@@ -10,7 +10,7 @@ readonly resource_class="$1"
 shift
 
 case "${resource_class}" in
-  browser|openapi|materializer) ;;
+  browser|browser-secondary|openapi|db-heavy|io-heavy|materializer) ;;
   *)
     printf '{"ok":false,"errorCode":"RESOURCE_GUARDED_CLASS_INVALID"}\n' >&2
     exit 64

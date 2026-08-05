@@ -1,0 +1,42 @@
+[Unit]
+Description=Monthly full restore test of the newest SHEIN full-managed backup
+Requires=shein-fm-db.service
+After=shein-fm-db.service systemd-tmpfiles-setup.service
+RequiresMountsFor=/srv/shein-fm/backups
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Slice=shein-host-heavy-fm.slice
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+Environment=FULL_BI_BACKUP_DIR=/srv/shein-fm/backups/db
+ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh io-heavy fm io-heavy /usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/bash scripts/verify_full_managed_backup_restore.sh
+SuccessExitStatus=75
+TimeoutStartSec=45min
+TimeoutStopSec=30s
+KillMode=control-group
+Nice=15
+CPUWeight=5
+CPUQuota=35%
+IOWeight=5
+IOSchedulingClass=idle
+MemoryHigh=512M
+MemoryMax=1024M
+MemorySwapMax=64M
+TasksMax=96
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/srv/shein-fm/backups
+ReadWritePaths=/run/lock/shein-host-heavy.lock /run/lock/shein-fm-heavy.lock /srv/shein-fm/runtime/backup-restore-test

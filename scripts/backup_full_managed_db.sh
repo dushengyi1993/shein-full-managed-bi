@@ -3,13 +3,12 @@ set -euo pipefail
 
 # Full-managed PostgreSQL backup.
 #
-#   --mode daily   at most one successful backup per UTC day (systemd timer)
-#   --mode deploy  deployment backup, 2h cooldown and a bounded local count
+#   --mode daily   at most one successful backup per Shanghai business day
+#   --mode deploy  explicit high-risk data/schema change backup only
 #
-# A host lock serializes every mode, so a deployment cannot race the timer. After
-# a successful non-duplicate dump the retention/archive tool runs in apply mode;
-# if the COS archive is unavailable it fails closed and no local dump is removed.
-# Retention days are UTC natural days, matching the archive tool.
+# A host lock serializes every mode, so a high-risk migration cannot race the
+# timer. After a successful dump the local cloud-disk retention tool keeps a
+# bounded daily/weekly/deploy union. No normal backup is copied to COS.
 
 mode=""
 while (( $# > 0 )); do
@@ -59,11 +58,12 @@ if ! flock -n 9; then
 fi
 
 deploy_cooldown_seconds="${FULL_BI_DEPLOY_BACKUP_COOLDOWN_SECONDS:-7200}"
-deploy_local_max="${FULL_BI_DEPLOY_BACKUP_MAX:-3}"
-retain_days="${FULL_BI_BACKUP_RETAIN_DAYS:-7}"
-retain_extra="${FULL_BI_BACKUP_RETAIN_EXTRA:-3}"
+deploy_local_max="${FULL_BI_DEPLOY_BACKUP_MAX:-1}"
+retain_daily="${FULL_BI_BACKUP_RETAIN_DAILY:-2}"
+retain_weekly="${FULL_BI_BACKUP_RETAIN_WEEKLY:-4}"
+retain_deploy="${FULL_BI_BACKUP_RETAIN_DEPLOY:-1}"
 now_epoch="$(date -u +%s)"
-today_utc="$(date -u +%Y%m%d)"
+today_shanghai="$(TZ=Asia/Shanghai date +%Y%m%d)"
 
 newest_epoch_for() {
   # Newest mtime among dumps matching a glob, or 0 when none exist.
@@ -79,10 +79,15 @@ newest_epoch_for() {
 }
 
 if [[ "$mode" == daily ]]; then
-  if compgen -G "$backup_dir/shein-fm-daily-${today_utc}T*.dump" >/dev/null; then
-    printf '{"ok":true,"skipped":"daily backup already exists for %s"}\n' "$today_utc"
-    exit 0
-  fi
+  while IFS= read -r -d '' existing_daily; do
+    existing_epoch="$(stat -c %Y -- "$existing_daily")"
+    existing_day="$(TZ=Asia/Shanghai date -d "@${existing_epoch}" +%Y%m%d)"
+    if [[ "$existing_day" == "$today_shanghai" ]]; then
+      printf '{"ok":true,"skipped":"daily backup already exists for Shanghai day %s"}\n' \
+        "$today_shanghai"
+      exit 0
+    fi
+  done < <(find "$backup_dir" -maxdepth 1 -type f -name 'shein-fm-daily-*.dump' -print0)
 else
   last_deploy="$(newest_epoch_for 'shein-fm-deploy-*.dump')"
   if (( last_deploy > 0 )) \
@@ -109,11 +114,17 @@ docker exec shein-fm-db sh -ceu \
   >"$tmp_file"
 test -s "$tmp_file"
 chmod 0600 "$tmp_file"
+# A non-empty file is not enough: prove PostgreSQL can parse the complete custom
+# archive before it is promoted into the retention set.
+docker exec -i shein-fm-db pg_restore --list <"$tmp_file" >/dev/null
 
 # Deduplicate by content: an identical dump is discarded instead of stored twice.
 new_sha="$(sha256sum -- "$tmp_file" | cut -d' ' -f1)"
 duplicate_of=""
 while IFS= read -r -d '' existing; do
+  if [[ "$(stat -c %s -- "$existing")" != "$(stat -c %s -- "$tmp_file")" ]]; then
+    continue
+  fi
   if [[ "$(sha256sum -- "$existing" | cut -d' ' -f1)" == "$new_sha" ]]; then
     duplicate_of="$existing"
     break
@@ -131,27 +142,28 @@ fi
 mv -- "$tmp_file" "$final_file"
 tmp_file=""
 
-# Report when local deployment dumps exceed the bound; the archive tool below
-# performs the actual verified reclaim.
+# Report when local deployment dumps exceed the bound; local retention below
+# performs the actual reclaim.
 if [[ "$mode" == deploy ]]; then
   deploy_count="$(find "$backup_dir" -maxdepth 1 -type f \
     -name 'shein-fm-deploy-*.dump' -printf 'x' | wc -c)"
   if (( deploy_count > deploy_local_max )); then
-    printf 'deploy backup count %s exceeds %s; archive tool will reclaim\n' \
+    printf 'deploy backup count %s exceeds %s; local retention will reclaim\n' \
       "$deploy_count" "$deploy_local_max" >&2
   fi
 fi
 
-# Archive expired dumps to COS and delete locally only after verification. A COS
-# failure exits non-zero here, leaving every local dump in place.
-archive_status="skipped"
-if [[ "${FULL_BI_SKIP_BACKUP_ARCHIVE:-0}" != "1" ]]; then
-  node "$project_root/scripts/archive_full_managed_backups.mjs" \
+# Apply bounded local retention on the mounted cloud data disk. The tool keeps
+# the final recoverable backup even if its configured counts were ever invalid.
+retention_status="skipped"
+if [[ "${FULL_BI_SKIP_BACKUP_RETENTION:-0}" != "1" ]]; then
+  /usr/bin/node "$project_root/scripts/prune_full_managed_backups.mjs" \
     --apply \
-    --retain-days="$retain_days" \
-    --retain-extra="$retain_extra" >&2
-  archive_status="applied"
+    --retain-daily="$retain_daily" \
+    --retain-weekly="$retain_weekly" \
+    --retain-deploy="$retain_deploy" >&2
+  retention_status="applied"
 fi
 
-printf '{"ok":true,"mode":"%s","backup":"%s","bytes":%s,"sha256":"%s","archive":"%s"}\n' \
-  "$mode" "$final_file" "$(stat -c %s -- "$final_file")" "$new_sha" "$archive_status"
+printf '{"ok":true,"mode":"%s","backup":"%s","bytes":%s,"sha256":"%s","retention":"%s"}\n' \
+  "$mode" "$final_file" "$(stat -c %s -- "$final_file")" "$new_sha" "$retention_status"

@@ -48,6 +48,9 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
   const retryTimer = await text(
     'infra/systemd/shein-fm-dashboard-materialize-retry.timer',
   );
+  const enqueueService = await text(
+    'infra/systemd/shein-fm-dashboard-materialize-enqueue.service',
+  );
   assert.equal(unitUser(service), 'sheinfm-materializer');
   assert.match(service, /SupplementaryGroups=sheinfm-dashboard/);
   assert.match(service, /secrets\/materializer\/database\.env/);
@@ -66,7 +69,7 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
     service,
     /FULL_BI_OPENAPI_CONFIG|openapi\.json|warehouse\.env/i,
   );
-  assert.match(timer, /OnCalendar=\*-\*-\* 00\.\.23\/2:55:00 Asia\/Shanghai/);
+  assert.match(timer, /OnCalendar=\*-\*-\* 00,06,12,18:55:00 Asia\/Shanghai/);
   assert.doesNotMatch(timer, /OnUnitInactiveSec=/);
   assert.doesNotMatch(timer, /OnBootSec=/);
   assert.match(
@@ -75,9 +78,14 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
   );
   assert.equal(unitUser(retryService), 'sheinfm-materializer');
   assert.match(retryService, /run_full_managed_dashboard_materializer\.sh --only-pending/);
-  assert.match(retryTimer, /OnCalendar=\*-\*-\* \*:00\.\.24\/3:00 Asia\/Shanghai/);
-  assert.match(retryTimer, /OnCalendar=\*-\*-\* \*:47\.\.59\/3:00 Asia\/Shanghai/);
+  assert.match(retryTimer, /OnCalendar=\*-\*-\* \*:00\/2:00 Asia\/Shanghai/);
   assert.doesNotMatch(retryTimer, /Persistent=true|OnBootSec=/);
+  assert.equal(unitUser(enqueueService), 'sheinfm-materializer');
+  assert.match(enqueueService, /enqueue_full_managed_dashboard_materialization\.sh/);
+  assert.doesNotMatch(
+    enqueueService,
+    /DATABASE_URL|database\.env|OPENAPI|openapi\.json/i,
+  );
 });
 
 test('sales, supply, ingress and worker use distinct users and private credentials', async () => {
@@ -134,8 +142,11 @@ test('domain sync units never materialize and always trigger the independent pro
     const unit = await text(path);
     assert.doesNotMatch(unit, /FULL_BI_DATA_FILE/);
     assert.doesNotMatch(unit, /materialize_full_managed_dashboard/);
-    assert.match(unit, /OnSuccess=shein-fm-dashboard-materialize\.service/);
-    assert.match(unit, /OnFailure=shein-fm-dashboard-materialize\.service/);
+    assert.match(
+      unit,
+      /OnSuccess=shein-fm-dashboard-materialize-enqueue\.service/,
+    );
+    assert.doesNotMatch(unit, /^OnFailure=/m);
   }
 });
 

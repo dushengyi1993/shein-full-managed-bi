@@ -256,6 +256,26 @@ export function utcDayKey(instant) {
   return date.toISOString().slice(0, 10);
 }
 
+export function shanghaiDayKey(instant) {
+  const date = instant instanceof Date ? instant : new Date(instant);
+  if (Number.isNaN(date.valueOf())) fail('INSTANT_INVALID', 'invalid instant');
+  const shifted = new Date(date.valueOf() + 8 * 60 * 60 * 1000);
+  return shifted.toISOString().slice(0, 10);
+}
+
+export function shanghaiIsoWeekKey(instant) {
+  const date = instant instanceof Date ? instant : new Date(instant);
+  if (Number.isNaN(date.valueOf())) fail('INSTANT_INVALID', 'invalid instant');
+  const local = new Date(date.valueOf() + 8 * 60 * 60 * 1000);
+  local.setUTCHours(0, 0, 0, 0);
+  const weekday = local.getUTCDay() || 7;
+  local.setUTCDate(local.getUTCDate() + 4 - weekday);
+  const isoYear = local.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(isoYear, 0, 1));
+  const week = Math.ceil((((local - yearStart) / 86_400_000) + 1) / 7);
+  return `${isoYear}-W${String(week).padStart(2, '0')}`;
+}
+
 /**
  * Classify a backup file name.
  *
@@ -338,6 +358,85 @@ export function selectBackupsForArchive(entries, {
     candidates,
     skipped,
     retainedDays,
+  };
+}
+
+/**
+ * Bounded local retention for the cloud data disk.
+ *
+ * - newest N daily/scheduled dumps;
+ * - newest daily dump in each of the current N Shanghai ISO weeks;
+ * - newest N deploy/pre-deploy dumps.
+ *
+ * The keep sets are a union, so a current-week daily normally satisfies both
+ * the short daily tail and one weekly slot. Unknown files are never deleted.
+ */
+export function selectBackupsForLocalRetention(entries, {
+  retainDaily = 2,
+  retainWeekly = 4,
+  retainDeploy = 1,
+  now = Date.now(),
+} = {}) {
+  for (const [name, value] of Object.entries({ retainDaily, retainWeekly, retainDeploy })) {
+    if (!Number.isSafeInteger(value) || value < 0 || value > 52) {
+      fail('RETENTION_INVALID', `${name} must be an integer from 0 to 52`);
+    }
+  }
+  const managed = [];
+  const skipped = [];
+  for (const entry of entries) {
+    const classification = classifyBackupName(entry.name);
+    if (classification.kind !== 'database') {
+      skipped.push({ ...entry, reason: 'not-a-database-backup' });
+      continue;
+    }
+    managed.push({ ...entry, variant: classification.variant });
+  }
+  const ordered = [...managed].sort((left, right) => (
+    right.modifiedAt - left.modifiedAt || left.name.localeCompare(right.name)
+  ));
+  const daily = ordered.filter(({ variant }) => ['daily', 'scheduled'].includes(variant));
+  const deploy = ordered.filter(({ variant }) => ['deploy', 'pre-deploy'].includes(variant));
+  const keep = new Map();
+
+  for (const entry of daily.slice(0, retainDaily)) {
+    keep.set(entry.name, { ...entry, reason: 'recent-daily' });
+  }
+
+  const recentWeeks = new Set();
+  for (let offset = 0; offset < retainWeekly; offset += 1) {
+    recentWeeks.add(shanghaiIsoWeekKey(now - offset * 7 * 86_400_000));
+  }
+  const weekly = new Set();
+  for (const entry of daily) {
+    const week = shanghaiIsoWeekKey(entry.modifiedAt);
+    if (!recentWeeks.has(week) || weekly.has(week)) continue;
+    weekly.add(week);
+    if (!keep.has(entry.name)) {
+      keep.set(entry.name, { ...entry, reason: `weekly-${week}` });
+    }
+  }
+
+  for (const entry of deploy.slice(0, retainDeploy)) {
+    if (!keep.has(entry.name)) {
+      keep.set(entry.name, { ...entry, reason: 'recent-deploy' });
+    }
+  }
+
+  // A valid policy may set every individual count to zero in tests, but
+  // production cleanup must never remove the final usable database dump.
+  if (keep.size === 0 && ordered.length > 0) {
+    const newest = ordered[0];
+    keep.set(newest.name, { ...newest, reason: 'last-recoverable-backup' });
+  }
+
+  return {
+    keep: [...keep.values()],
+    candidates: ordered
+      .filter((entry) => !keep.has(entry.name))
+      .map((entry) => ({ ...entry, reason: 'expired-local-retention' })),
+    skipped,
+    recentWeeks: [...recentWeeks],
   };
 }
 

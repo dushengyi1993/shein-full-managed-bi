@@ -1,0 +1,17 @@
+[Unit]
+Description=Coalesce a SHEIN full-managed dashboard materialization request
+ConditionPathExists=/srv/shein-fm/runtime/materializer.enabled
+
+[Service]
+Type=oneshot
+User=sheinfm-materializer
+Group=sheinfm-materializer
+SupplementaryGroups=sheinfm-dashboard
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+ExecStart=/usr/bin/bash scripts/enqueue_full_managed_dashboard_materialization.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/shein-fm/runtime/dashboard

@@ -4,7 +4,7 @@ ConditionPathExists=/srv/shein-fm/runtime/supply-sync.enabled
 ConditionPathExists=/srv/shein-fm/runtime/supply-backfill.verified
 
 [Timer]
-OnCalendar=*-*-* 03:45:00 Asia/Shanghai
+OnCalendar=*-*-* 02:20:00 Asia/Shanghai
 AccuracySec=1m
 Persistent=false
 Unit=shein-fm-supply-sync.service

@@ -69,68 +69,77 @@ test('resource pressure gate accepts an idle settled host', () => {
   assert.equal(result.evidence.normalizedLoad, 0.4);
 });
 
-test('host-heavy jobs share the neutral lock while sales stays in the light lane', async () => {
-  const heavyUnitNames = [
+test('a second browser requires four GiB and stricter host pressure', () => {
+  assert.equal(
+    RESOURCE_PRESSURE_PROFILES['browser-secondary'].minimumAvailableMemoryMiB,
+    4096,
+  );
+  assert.deepEqual(parseArgs(['--class=browser-secondary']), {
+    resourceClass: 'browser-secondary',
+    systemdCondition: false,
+  });
+});
+
+test('host lanes allow two read browsers while writes and heavy IO stay exclusive', async () => {
+  const browserUnitNames = [
     'shein-fm-home-realtime.service',
     'shein-fm-home-daily.service',
     'shein-fm-home-daily-retry.service',
-    'shein-fm-home-finance-daily.service',
-    'shein-fm-supply-sync.service',
     'shein-fm-session-renewal.service',
+  ];
+  const browserUnits = await Promise.all(browserUnitNames.map((name) => (
+    readFile(new URL(`infra/systemd/${name}`, root), 'utf8')
+  )));
+  for (const [index, unit] of browserUnits.entries()) {
+    assert.match(unit, /^Slice=shein-host-heavy-fm\.slice$/m, browserUnitNames[index]);
+    assert.match(unit, /run_shein_host_lane\.sh browser-read fm browser/);
+    assert.match(unit, /shein-browser-read-0\.lock/);
+    assert.match(unit, /shein-browser-read-1\.lock/);
+  }
+
+  const exclusiveUnitNames = [
     'shein-fm-db-backup.service',
-    'shein-fm-backup-archive.service',
+    'shein-fm-db-restore-test.service',
     'shein-fm-dashboard-materialize.service',
     'shein-fm-dashboard-materialize-retry.service',
   ];
-  const heavyUnits = await Promise.all(heavyUnitNames.map((name) => (
+  const exclusiveUnits = await Promise.all(exclusiveUnitNames.map((name) => (
     readFile(new URL(`infra/systemd/${name}`, root), 'utf8')
   )));
-  for (const [index, unit] of heavyUnits.entries()) {
-    assert.match(
-      unit,
-      /^Slice=shein-host-heavy-fm\.slice$/m,
-      heavyUnitNames[index],
-    );
-    if (heavyUnitNames[index].startsWith('shein-fm-dashboard-materialize')) {
+  for (const [index, unit] of exclusiveUnits.entries()) {
+    assert.match(unit, /^Slice=shein-host-heavy-fm\.slice$/m, exclusiveUnitNames[index]);
+    if (exclusiveUnitNames[index].startsWith('shein-fm-dashboard-materialize')) {
       assert.match(unit, /run_full_managed_dashboard_materializer\.sh/);
     } else {
-      assert.match(
-        unit,
-        /\/run\/lock\/shein-host-heavy\.lock.*\/run\/lock\/shein-fm-heavy\.lock/,
-      );
-      assert.match(unit, /run_full_managed_resource_guarded\.sh \w+/);
+      assert.match(unit, /run_shein_host_lane\.sh io-heavy fm io-heavy/);
     }
-    assert.doesNotMatch(unit, /^ExecCondition=/m);
-    assert.match(unit, /^CPUWeight=\d+$/m);
-    assert.match(unit, /^Nice=\d+$/m);
   }
 
-  const sales = await readFile(
-    new URL('infra/systemd/shein-fm-sales-sync.service', root),
-    'utf8',
-  );
-  assert.match(sales, /^Slice=shein-fm-heavy\.slice$/m);
-  assert.match(
-    sales,
-    /check_full_managed_resource_pressure\.mjs --class=openapi --systemd-condition/,
-  );
-  assert.doesNotMatch(sales, /shein-host-heavy/);
-  assert.doesNotMatch(sales, /\/run\/lock\/shein-fm-heavy\.lock/);
-  assert.match(sales, /\/run\/shein-fm-sales\/sync\.lock/);
+  for (const name of [
+    'shein-fm-sales-sync.service',
+    'shein-fm-supply-sync.service',
+    'shein-fm-home-finance-daily.service',
+  ]) {
+    const unit = await readFile(new URL(`infra/systemd/${name}`, root), 'utf8');
+    assert.match(unit, /^Slice=shein-fm-heavy\.slice$/m, name);
+    assert.match(unit, /run_shein_host_lane\.sh api-light fm openapi/, name);
+    assert.match(unit, /shein-api-light-0\.lock/, name);
+    assert.match(unit, /shein-api-light-1\.lock/, name);
+  }
 
   const [
     hostSlice,
     childSlice,
     fullManagedSlice,
     tmpfiles,
-    wrapper,
+    laneWrapper,
     materializerWrapper,
   ] = await Promise.all([
     readFile(new URL('infra/systemd/shein-host-heavy.slice', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-host-heavy-fm.slice', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-heavy.slice', root), 'utf8'),
     readFile(new URL('infra/tmpfiles.d/shein-fm-scheduler.conf', root), 'utf8'),
-    readFile(new URL('scripts/run_full_managed_resource_guarded.sh', root), 'utf8'),
+    readFile(new URL('scripts/run_shein_host_lane.sh', root), 'utf8'),
     readFile(new URL('scripts/run_full_managed_dashboard_materializer.sh', root), 'utf8'),
   ]);
   assert.match(hostSlice, /CPUQuota=90%/);
@@ -142,13 +151,13 @@ test('host-heavy jobs share the neutral lock while sales stays in the light lane
   assert.match(fullManagedSlice, /MemoryMax=3G/);
   assert.match(tmpfiles, /f \/run\/lock\/shein-host-heavy\.lock 0666 root root/);
   assert.match(tmpfiles, /f \/run\/lock\/shein-fm-heavy\.lock 0666 root root/);
-  assert.match(wrapper, /check_full_managed_resource_pressure\.mjs/);
-  assert.match(wrapper, /exec "\$@"/);
-  assert.match(
-    materializerWrapper,
-    /\/run\/lock\/shein-host-heavy\.lock[\s\S]*\/run\/lock\/shein-fm-heavy\.lock/,
-  );
-  assert.match(materializerWrapper, /run_full_managed_resource_guarded\.sh/);
+  assert.match(tmpfiles, /f \/run\/lock\/shein-browser-read-0\.lock 0666 root root/);
+  assert.match(tmpfiles, /f \/run\/lock\/shein-browser-read-1\.lock 0666 root root/);
+  assert.match(laneWrapper, /flock -s -n 9/);
+  assert.match(laneWrapper, /browser-secondary/);
+  assert.match(laneWrapper, /browser-write\|db-heavy\|io-heavy/);
+  assert.match(laneWrapper, /exec "\$@"/);
+  assert.match(materializerWrapper, /run_shein_host_lane\.sh[\s\S]*db-heavy fm db-heavy/);
 });
 
 test('boot-sensitive timers never replay missed high-frequency work', async () => {
@@ -242,11 +251,11 @@ test('materializer lock deferral cannot publish nonexistent staging files', asyn
   assert.match(promotion, /mv -f "\$\{home_staging\}" "\$\{home_current\}"/);
   assert.match(promotion, /mv -f "\$\{core_staging\}" "\$\{core_current\}"/);
   assert.match(wrapper, /\.materialize-pending/);
-  assert.match(wrapper, /materialize_status != 75/);
+  assert.match(wrapper, /materialize_status == 0/);
   assert.match(wrapper, /materialize_and_promote_full_managed_dashboard\.sh/);
 });
 
-test('scheduled data jobs project partial facts and health after either terminal outcome', async () => {
+test('scheduled data jobs coalesce successful and partial facts without rebuilding on failure', async () => {
   const unitNames = [
     'shein-fm-home-realtime.service',
     'shein-fm-home-daily.service',
@@ -261,13 +270,14 @@ test('scheduled data jobs project partial facts and health after either terminal
   for (const [index, unit] of units.entries()) {
     assert.match(
       unit,
-      /^OnSuccess=shein-fm-dashboard-materialize\.service$/m,
+      /^OnSuccess=shein-fm-dashboard-materialize-enqueue\.service$/m,
       unitNames[index],
     );
-    assert.match(
-      unit,
-      /^OnFailure=shein-fm-dashboard-materialize\.service$/m,
-      unitNames[index],
-    );
+    assert.doesNotMatch(unit, /^OnFailure=/m, unitNames[index]);
   }
+  const enqueue = await readFile(
+    new URL('infra/systemd/shein-fm-dashboard-materialize-enqueue.service', root),
+    'utf8',
+  );
+  assert.match(enqueue, /enqueue_full_managed_dashboard_materialization\.sh/);
 });

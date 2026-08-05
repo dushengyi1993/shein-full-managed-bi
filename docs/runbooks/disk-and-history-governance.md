@@ -10,65 +10,50 @@
 
 ## 1. 数据库备份模式与保留策略
 
-`scripts/backup_full_managed_db.sh` 必须带 `--mode`：
+数据库已约 5.8 GiB，单份压缩 dump 约 0.7–0.8 GiB，因此保留备份但不允许每次发布
+都生成一份。`scripts/backup_full_managed_db.sh` 只用于：
 
 | 模式 | 触发方式 | 频率约束 |
 | --- | --- | --- |
-| `--mode daily` | `shein-fm-db-backup.timer`（每日 01:55 Asia/Shanghai） | 每个 **UTC 自然日**最多一次成功备份，重复触发直接跳过 |
-| `--mode deploy` | 部署时人工调用 | 2 小时冷却窗口；超过本地上限只告警，实际回收交给归档工具 |
+| `--mode daily` | `shein-fm-db-backup.timer`（每日 00:15） | 每个上海自然日最多一份 |
+| `--mode deploy` | 数据库迁移、高风险数据变更或人工明确要求 | 本地最多保留最新一份 |
 
-两种模式共用主机锁 `/srv/shein-fm/runtime/db-backup.lock`，部署备份不会和定时器
-互相打断。落盘后按 SHA-256 去重：内容完全相同的 dump 会被丢弃而不是存两份。
-定时 daily 单元只生成和校验 dump；12:45 的独立归档单元负责 COS 复制与保留治理，
-避免大文件复制占住 02:20 半托会话窗口。
+普通代码、前端和 systemd 发布不创建 deploy dump。所有备份落在已挂载云硬盘
+`/srv/shein-fm/backups/db`，不占根盘。两种模式共用数据库备份锁；生成后先做
+`pg_restore --list` 格式校验，再按 SHA-256 去重。
 
-**保留规则**（`selectBackupsForArchive`）：
+本地保留集合是以下三项的**并集**：
 
-- 生产默认在数据盘保留最近 **7 个 UTC 自然日**每天最新一份 dump；
-- 再额外保留 **3 份最新**的其他 dump（应对同日部署和迁移的短尾）；
-- 过期本地 dump 只有在 COS 副本完成大小与 SHA-256 校验后才删除，因此
-  GitHub 版本历史不能、也不会被当作数据库备份的替代品；
-- 其余数据库 dump 成为归档候选；
-- `edge-*`、`*.tar.gz`、配置类备份等**非数据库备份永不参与清理**。
+- 最近 2 份 daily/scheduled dump；
+- 最近 4 个上海 ISO 周中，每周最新一份 daily/scheduled dump；
+- 最近 1 份 deploy/pre-deploy dump。
 
-> 注意：窗口是**自然日**而不是“有备份的那 7 天”。否则备份稀疏时，一份 19 天前的
-> dump 会长期占住“最近一天”的名额、永不过期。
-
-## 2. COS 归档与两阶段校验
-
-归档命名空间固定为 `/lhcos-data/shein-fm-archive`。
+`scripts/prune_full_managed_backups.mjs` 默认只输出计划；`--apply` 才删除二次核对过
+大小、mtime 和路径的精确候选。未知文件、配置备份、edge 备份和软链永不删除，且
+永远至少保留一份可用数据库 dump。
 
 ```bash
-npm run maintenance:backup-archive              # 只计划
-npm run maintenance:backup-archive -- --apply   # 归档并删除本地过期 dump
+npm run maintenance:prune-backups
+npm run maintenance:prune-backups -- --apply
 ```
 
-`--apply` 严格按顺序执行，任一步失败即中止且**不删除本地源文件**：
+日常不再自动归档 COS。代码版本由 GitHub 管理，数据库恢复能力由本地有界备份和真实
+恢复演练保证；历史 COS 工具保留为人工应急工具，但没有 systemd timer，也不在日常
+备份链路中。
 
-1. 复制到 `<name>.partial`，再原子改名为目标名（不留半个对象）；
-2. 独立 `stat` 校验目标字节数与源一致；
-3. 独立重算目标 SHA-256 并与源比对；
-4. 写 `<name>.manifest.json` 清单；
-5. 才删除精确的本地源文件。
+## 2. 恢复演练
 
-清单格式：
+`shein-fm-db-restore-test.timer` 在每月第一个周日 11:15 运行：选取最新 daily/deploy
+dump，先验证自定义归档清单，再恢复到严格命名的临时数据库，核对关键 schema、表和
+行数，最后无论成功失败都删除临时库。恢复演练进入 `io-heavy` 排他车道，Portal 和
+Webhook 保持在线，OpenAPI 销售快车道不受影响。
 
-```json
-{
-  "schemaVersion": 1,
-  "sourceName": "shein-fm-daily-20260705T021500Z.dump",
-  "bytes": 5510234112,
-  "sha256": "<64 hex>",
-  "archiveTarget": "/lhcos-data/shein-fm-archive/shein-fm-daily-20260705T021500Z.dump",
-  "archivedAt": "2026-07-29T03:10:00.000Z",
-  "replayed": false
-}
+手工验证：
+
+```bash
+systemctl start shein-fm-db-restore-test.service
+journalctl -u shein-fm-db-restore-test.service -n 100 --no-pager
 ```
-
-幂等重放：目标已存在且字节数与哈希都一致时视为已归档（`replayed: true`）并继续
-删源；**同名但内容不同**会以 `ARCHIVE_CONFLICT` 失败，绝不覆盖。
-
-COS 未挂载时归档命令非零退出，本地 dump 全部保留——磁盘紧张优于数据丢失。
 
 ## 3. 发布目录清理（部署成功后）
 
@@ -100,14 +85,15 @@ scripts/post_deploy_prune_releases.sh --apply    # 确认后执行
 
 ## 4. WebAPI Profile 缓存清理
 
-规范 Profile 只有两个：`persistent-dl5477-profile`、`persistent-mz2406-profile`。
+规范 Profile 按当前 25 家店铺白名单维护；工具只会处理配置中明确登记的 Profile，
+不会扫描或猜测未知目录。
 
 ```bash
 npm run maintenance:prune-profile-caches              # 只计划
 npm run maintenance:prune-profile-caches -- --apply   # 空闲时执行
 ```
 
-定时器 `shein-fm-profile-cache-prune.timer` 每周日 04:40 执行，避开夜间同步与备份。
+定时器 `shein-fm-profile-cache-prune.timer` 每周日 12:20 执行，避开上班前日更。
 
 **允许删除的目录（精确白名单，不是模式匹配）**：`cache`、`component_crx_cache`、
 `Profile 1/Cache`、`Profile 1/Code Cache`、`Profile 1/GPUCache`、
@@ -268,10 +254,9 @@ npm run maintenance:history -- --execute --plan-hash=<sha256> --reclaim
 
 ## 8. 恢复与回滚
 
-- **迁移回滚**：从第 2 步的迁移前 dump 恢复。旧的 3M 行只存在于该 dump 与其 COS
-  归档副本中——刻意不保留第二份 1.7GB 影子表。
-- **备份恢复**：从 `/srv/shein-fm/backups/db` 或 COS 归档取 dump，先按清单核对
-  字节数与 SHA-256，再 `pg_restore`。
+- **迁移回滚**：从第 2 步的迁移前 dump 恢复；刻意不保留第二份在线影子表。
+- **备份恢复**：从 `/srv/shein-fm/backups/db` 取 dump，先通过归档清单校验，再
+  `pg_restore` 到临时库验证。
 - **发布回滚**：`previous` 始终受保护，未被清理。
 - **Profile 恢复**：登录态从未被删除；只有可再生缓存被清掉，Chrome 会自行重建。
 

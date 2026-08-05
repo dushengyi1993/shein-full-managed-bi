@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Pool } from 'pg';
@@ -17,13 +19,42 @@ export const HOME_REALTIME_BATCHES = Object.freeze([
   Object.freeze(FULL_MANAGED_STORE_CODES.slice(0, 12)),
   Object.freeze(FULL_MANAGED_STORE_CODES.slice(12)),
 ]);
-export const HOME_DAILY_BATCH_BY_HOUR = Object.freeze({
-  5: 0,
-  6: 1,
-  7: 2,
-  9: 3,
-  10: 4,
+export const HOME_DAILY_BATCH_BY_SLOT = Object.freeze({
+  '03:45': 0,
+  '04:15': 1,
+  '04:45': 2,
+  '05:15': 3,
+  '05:45': 4,
 });
+
+function storesForDailyBatch(batchIndex) {
+  const start = batchIndex * HOME_DAILY_BATCH_SIZE;
+  const stores = FULL_MANAGED_STORE_CODES.slice(start, start + HOME_DAILY_BATCH_SIZE);
+  if (stores.length !== HOME_DAILY_BATCH_SIZE) throw new Error('SCHEDULE_BATCH_INCOMPLETE');
+  return stores;
+}
+
+export function selectRetryStoresFromMarkerPayloads(payloads, businessDate) {
+  if (!Array.isArray(payloads)) throw new TypeError('SCHEDULE_MARKERS_INVALID');
+  const completed = new Set();
+  for (const payload of payloads) {
+    if (
+      payload?.task === 'home-daily-batch'
+      && payload.businessDate === businessDate
+      && Number.isSafeInteger(payload.batch)
+      && payload.batch >= 0
+      && payload.batch <= 4
+      && payload.status === 'SUCCEEDED'
+    ) {
+      completed.add(payload.batch);
+    }
+  }
+  return Object.freeze(
+    [...Array(5).keys()]
+      .filter((batchIndex) => !completed.has(batchIndex))
+      .flatMap(storesForDailyBatch),
+  );
+}
 
 const TASKS = new Set([
   'home-realtime',
@@ -73,6 +104,7 @@ export function scheduledDates(now = new Date()) {
     yesterday: shiftDate(current.date, -1),
     twoDaysAgo: shiftDate(current.date, -2),
     fourDaysAgo: shiftDate(current.date, -4),
+    eightDaysAgo: shiftDate(current.date, -8),
     shanghaiHour: current.hour,
     shanghaiMinute: current.minute,
   });
@@ -116,12 +148,11 @@ function storeCsv(stores = FULL_MANAGED_STORE_CODES) {
   return stores.join(',');
 }
 
-function dailyBatch({ batch, shanghaiHour }) {
-  const resolved = batch ?? HOME_DAILY_BATCH_BY_HOUR[shanghaiHour];
+function dailyBatch({ batch, shanghaiHour, shanghaiMinute }) {
+  const slot = `${String(shanghaiHour).padStart(2, '0')}:${String(shanghaiMinute).padStart(2, '0')}`;
+  const resolved = batch ?? HOME_DAILY_BATCH_BY_SLOT[slot];
   const batchIndex = parseInteger(resolved, 'SCHEDULE_BATCH', 0, 4);
-  const start = batchIndex * HOME_DAILY_BATCH_SIZE;
-  const stores = FULL_MANAGED_STORE_CODES.slice(start, start + HOME_DAILY_BATCH_SIZE);
-  if (stores.length !== HOME_DAILY_BATCH_SIZE) throw new Error('SCHEDULE_BATCH_INCOMPLETE');
+  const stores = storesForDailyBatch(batchIndex);
   return { batchIndex, stores };
 }
 
@@ -138,14 +169,20 @@ function realtimeBatch({ batch, shanghaiMinute }) {
   return { batchIndex, stores };
 }
 
-function command(script, args) {
+function command(script, args, { partialExitCodes = [2] } = {}) {
   return Object.freeze({
     executable: process.execPath,
     args: Object.freeze([script, ...args]),
+    partialExitCodes: Object.freeze([...partialExitCodes]),
   });
 }
 
-export function buildScheduledPlan({ task, batch = null, now = new Date() } = {}) {
+export function buildScheduledPlan({
+  task,
+  batch = null,
+  retryStores = null,
+  now = new Date(),
+} = {}) {
   if (!TASKS.has(task)) throw new TypeError('SCHEDULE_TASK_REQUIRED');
   const dates = scheduledDates(now);
   const allStores = storeCsv();
@@ -172,7 +209,11 @@ export function buildScheduledPlan({ task, batch = null, now = new Date() } = {}
     });
   }
   if (task === 'home-daily-batch') {
-    const selected = dailyBatch({ batch, shanghaiHour: dates.shanghaiHour });
+    const selected = dailyBatch({
+      batch,
+      shanghaiHour: dates.shanghaiHour,
+      shanghaiMinute: dates.shanghaiMinute,
+    });
     const stores = storeCsv(selected.stores);
     return Object.freeze({
       task,
@@ -201,14 +242,21 @@ export function buildScheduledPlan({ task, batch = null, now = new Date() } = {}
     });
   }
   if (task === 'home-daily-retry') {
+    const selectedStores = retryStores === null
+      ? FULL_MANAGED_STORE_CODES
+      : [...new Set(retryStores.map((store) => String(store).trim().toUpperCase()))];
+    if (selectedStores.some((store) => !FULL_MANAGED_STORE_CODES.includes(store))) {
+      throw new TypeError('SCHEDULE_RETRY_STORE_INVALID');
+    }
+    const stores = storeCsv(selectedStores);
     return Object.freeze({
       task,
       dates,
-      stores: FULL_MANAGED_STORE_CODES,
+      stores: Object.freeze(selectedStores),
       openApiLease: false,
-      commands: Object.freeze([
+      commands: Object.freeze(selectedStores.length === 0 ? [] : [
         command('scripts/sync_full_managed_home_history.mjs', [
-          `--stores=${allStores}`,
+          `--stores=${stores}`,
           `--from=${dates.twoDaysAgo}`,
           `--to=${dates.yesterday}`,
           `--require-settled-through=${dates.yesterday}`,
@@ -216,7 +264,7 @@ export function buildScheduledPlan({ task, batch = null, now = new Date() } = {}
           '--execute',
         ]),
         command('scripts/sync_full_managed_home_ledger.mjs', [
-          `--stores=${allStores}`,
+          `--stores=${stores}`,
           `--from=${dates.twoDaysAgo}`,
           `--to=${dates.yesterday}`,
           '--retry-cdp=1',
@@ -233,7 +281,7 @@ export function buildScheduledPlan({ task, batch = null, now = new Date() } = {}
       openApiLease: true,
       commands: Object.freeze([command('scripts/sync_full_managed_home_finance.mjs', [
         `--stores=${allStores}`,
-        `--from=${dates.fourDaysAgo}`,
+        `--from=${dates.eightDaysAgo}`,
         `--to=${dates.twoDaysAgo}`,
         '--concurrency=1',
         '--no-resume',
@@ -277,13 +325,71 @@ async function runCommand(entry) {
   });
 }
 
-export async function runPlan(plan, runner = runCommand) {
+export async function runPlanWithResult(plan, runner = runCommand) {
   let firstFailure = 0;
+  let partial = false;
+  const commands = [];
   for (const entry of plan.commands) {
     const exitCode = await runner(entry);
-    if (exitCode !== 0 && firstFailure === 0) firstFailure = exitCode;
+    const isPartial = entry.partialExitCodes?.includes(exitCode) === true;
+    const status = exitCode === 0 ? 'SUCCEEDED' : isPartial ? 'PARTIAL' : 'FAILED';
+    commands.push(Object.freeze({
+      script: entry.args[0],
+      exitCode,
+      status,
+    }));
+    if (isPartial) partial = true;
+    else if (exitCode !== 0 && firstFailure === 0) firstFailure = exitCode;
   }
-  return firstFailure;
+  return Object.freeze({
+    exitCode: firstFailure,
+    status: firstFailure !== 0 ? 'FAILED' : partial ? 'PARTIAL' : 'SUCCEEDED',
+    commands: Object.freeze(commands),
+  });
+}
+
+export async function runPlan(plan, runner = runCommand) {
+  return (await runPlanWithResult(plan, runner)).exitCode;
+}
+
+async function writeScheduleMarker(plan, result) {
+  const markerDir = process.env.FULL_BI_SCHEDULE_MARKER_DIR;
+  if (!markerDir) return;
+  const suffix = Number.isSafeInteger(plan.batch) ? `batch-${plan.batch}` : 'all';
+  const name = `${plan.task}-${plan.dates.today}-${suffix}.json`;
+  await mkdir(markerDir, { recursive: true, mode: 0o700 });
+  const target = path.join(markerDir, name);
+  const temporary = `${target}.${process.pid}.tmp`;
+  const payload = {
+    schemaVersion: 1,
+    task: plan.task,
+    businessDate: plan.dates.today,
+    batch: plan.batch ?? null,
+    status: result.status,
+    completedAt: new Date().toISOString(),
+    stores: Array.isArray(plan.stores) ? plan.stores : [],
+    commands: result.commands ?? [],
+  };
+  await writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+  await rename(temporary, target);
+}
+
+async function loadRetryStores(markerDir, businessDate) {
+  if (!markerDir) return FULL_MANAGED_STORE_CODES;
+  const payloads = [];
+  for (let batchIndex = 0; batchIndex < 5; batchIndex += 1) {
+    const marker = path.join(
+      markerDir,
+      `home-daily-batch-${businessDate}-batch-${batchIndex}.json`,
+    );
+    try {
+      payloads.push(JSON.parse(await readFile(marker, 'utf8')));
+    } catch {
+      // Missing, truncated or invalid evidence must be retried, never guessed
+      // successful from the wall clock alone.
+    }
+  }
+  return selectRetryStoresFromMarkerPayloads(payloads, businessDate);
 }
 
 async function withOpenApiLease(work) {
@@ -325,10 +431,19 @@ async function withOpenApiLease(work) {
 
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
+  const scheduleNow = args.now ?? new Date();
+  const dates = scheduledDates(scheduleNow);
+  const retryStores = args.task === 'home-daily-retry'
+    ? await loadRetryStores(
+        process.env.FULL_BI_SCHEDULE_MARKER_DIR,
+        dates.today,
+      )
+    : null;
   const plan = buildScheduledPlan({
     task: args.task,
     batch: args.batch,
-    now: args.now ?? new Date(),
+    retryStores,
+    now: scheduleNow,
   });
   if (!args.execute) {
     console.log(JSON.stringify({
@@ -342,9 +457,20 @@ export async function main(argv = process.argv.slice(2)) {
     }, null, 2));
     return 0;
   }
-  const exitCode = plan.openApiLease
-    ? await withOpenApiLease(() => runPlan(plan))
-    : await runPlan(plan);
+  const leasedResult = plan.openApiLease
+    ? await withOpenApiLease(() => runPlanWithResult(plan))
+    : await runPlanWithResult(plan);
+  if (leasedResult === 75) return 75;
+  await writeScheduleMarker(plan, leasedResult);
+  console.log(JSON.stringify({
+    ok: leasedResult.exitCode === 0,
+    schedulerStatus: leasedResult.status,
+    task: plan.task,
+    businessDate: plan.dates.today,
+    batch: plan.batch ?? null,
+    commands: leasedResult.commands,
+  }));
+  const exitCode = leasedResult.exitCode;
   if (exitCode !== 0) process.exitCode = exitCode;
   return exitCode;
 }

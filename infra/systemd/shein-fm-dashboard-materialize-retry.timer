@@ -3,15 +3,14 @@ Description=Near-term retry for deferred SHEIN full-managed dashboard materializ
 ConditionPathExists=/srv/shein-fm/runtime/materializer.enabled
 
 [Timer]
-OnCalendar=*-*-* *:00..24/3:00 Asia/Shanghai
-OnCalendar=*-*-* *:47..59/3:00 Asia/Shanghai
+OnCalendar=*-*-* *:00/2:00 Asia/Shanghai
 AccuracySec=15s
 Persistent=false
 Unit=shein-fm-dashboard-materialize-retry.service
 
-# This timer performs only a cheap marker check when no materialization was
-# deferred. A pending projection still has to acquire the shared host lock and
-# pass the live resource gate, so the permanent :32 core lane remains exclusive.
+# The service performs only a cheap marker check when no fact domain changed.
+# Multiple successful jobs within two minutes collapse into one projection. A
+# failed/blocked build keeps the marker for a later retry; old JSON stays live.
 
 [Install]
 WantedBy=timers.target

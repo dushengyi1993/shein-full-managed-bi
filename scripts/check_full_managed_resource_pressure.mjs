@@ -5,18 +5,39 @@ import { readFile } from 'node:fs/promises';
 
 export const RESOURCE_PRESSURE_PROFILES = Object.freeze({
   browser: Object.freeze({
-    minimumUptimeSeconds: 900,
+    minimumUptimeSeconds: 600,
     minimumAvailableMemoryMiB: 2560,
     maximumLoadPerCpu: 0.75,
     maximumMemoryFullAvg10: 1,
     maximumIoFullAvg10: 5,
   }),
-  openapi: Object.freeze({
+  'browser-secondary': Object.freeze({
     minimumUptimeSeconds: 900,
+    minimumAvailableMemoryMiB: 4096,
+    maximumLoadPerCpu: 0.65,
+    maximumMemoryFullAvg10: 0.5,
+    maximumIoFullAvg10: 3,
+  }),
+  openapi: Object.freeze({
+    minimumUptimeSeconds: 180,
     minimumAvailableMemoryMiB: 2048,
     maximumLoadPerCpu: 0.85,
     maximumMemoryFullAvg10: 2,
     maximumIoFullAvg10: 8,
+  }),
+  'db-heavy': Object.freeze({
+    minimumUptimeSeconds: 1200,
+    minimumAvailableMemoryMiB: 3072,
+    maximumLoadPerCpu: 0.75,
+    maximumMemoryFullAvg10: 1,
+    maximumIoFullAvg10: 5,
+  }),
+  'io-heavy': Object.freeze({
+    minimumUptimeSeconds: 1200,
+    minimumAvailableMemoryMiB: 3072,
+    maximumLoadPerCpu: 0.65,
+    maximumMemoryFullAvg10: 1,
+    maximumIoFullAvg10: 3,
   }),
   materializer: Object.freeze({
     minimumUptimeSeconds: 1200,
@@ -43,7 +64,7 @@ export function parseArgs(argv = []) {
       systemdCondition = true;
       continue;
     }
-    const match = /^--class=(browser|openapi|materializer)$/.exec(token);
+    const match = /^--class=(browser|browser-secondary|openapi|db-heavy|io-heavy|materializer)$/.exec(token);
     if (!match || resourceClass !== null) {
       throw new TypeError('RESOURCE_PRESSURE_ARGUMENT_INVALID');
     }
