@@ -6,6 +6,8 @@ import {
   buildScheduledPlan,
   HOME_DAILY_BATCH_BY_HOUR,
   HOME_DAILY_BATCH_SIZE,
+  HOME_REALTIME_BATCH_BY_MINUTE,
+  HOME_REALTIME_BATCHES,
   OPENAPI_SCHEDULE_LOCK_ID,
   runPlan,
   scheduledDates,
@@ -21,24 +23,41 @@ test('scheduled dates use the Shanghai business calendar', () => {
     twoDaysAgo: '2026-08-01',
     fourDaysAgo: '2026-07-30',
     shanghaiHour: 17,
+    shanghaiMinute: 30,
   });
 });
 
-test('hourly homepage plan fetches only the current realtime contract', () => {
-  const plan = buildScheduledPlan({
-    task: 'home-realtime',
-    now: new Date('2026-08-03T00:00:00+08:00'),
-  });
-  assert.equal(plan.openApiLease, false);
-  assert.equal(plan.stores.length, 25);
-  assert.deepEqual(plan.commands[0].args.slice(1), [
-    `--stores=${FULL_MANAGED_STORE_CODES.join(',')}`,
-    '--from=2026-08-03',
-    '--to=2026-08-03',
-    '--no-products',
-    '--retry-cdp=1',
-    '--execute',
-  ]);
+test('hourly homepage plan splits the realtime contract into two bounded batches', () => {
+  assert.deepEqual(HOME_REALTIME_BATCH_BY_MINUTE, { 2: 0, 32: 1 });
+  assert.deepEqual(
+    HOME_REALTIME_BATCHES.flat(),
+    FULL_MANAGED_STORE_CODES,
+  );
+  assert.deepEqual(HOME_REALTIME_BATCHES.map((stores) => stores.length), [12, 13]);
+  for (const [minute, batch] of [[2, 0], [32, 1]]) {
+    const plan = buildScheduledPlan({
+      task: 'home-realtime',
+      now: new Date(`2026-08-03T00:${String(minute).padStart(2, '0')}:00+08:00`),
+    });
+    assert.equal(plan.openApiLease, false);
+    assert.equal(plan.batch, batch);
+    assert.deepEqual(plan.stores, HOME_REALTIME_BATCHES[batch]);
+    assert.deepEqual(plan.commands[0].args.slice(1), [
+      `--stores=${HOME_REALTIME_BATCHES[batch].join(',')}`,
+      '--from=2026-08-03',
+      '--to=2026-08-03',
+      '--no-products',
+      '--retry-cdp=1',
+      '--execute',
+    ]);
+  }
+  assert.throws(
+    () => buildScheduledPlan({
+      task: 'home-realtime',
+      now: new Date('2026-08-03T00:17:00+08:00'),
+    }),
+    /SCHEDULE_REALTIME_BATCH_INVALID/,
+  );
 });
 
 test('daily homepage schedule maps five post-core slots to disjoint five-store batches', () => {
@@ -141,6 +160,7 @@ test('systemd schedule keeps hourly work ahead of bounded daily batches', async 
     readFile(new URL('infra/systemd/shein-fm-dashboard-materialize.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-dashboard-materialize-retry.timer', root), 'utf8'),
   ]);
+  assert.match(realtime, /OnCalendar=\*-\*-\* \*:02:00 Asia\/Shanghai/);
   assert.match(realtime, /OnCalendar=\*-\*-\* \*:32:00 Asia\/Shanghai/);
   assert.match(sales, /OnCalendar=\*-\*-\* \*:05:00 Asia\/Shanghai/);
   assert.match(supply, /OnCalendar=\*-\*-\* 03:45:00 Asia\/Shanghai/);

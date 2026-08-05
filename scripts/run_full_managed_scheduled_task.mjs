@@ -9,6 +9,14 @@ import { FULL_MANAGED_STORE_CODES } from '../src/config/full-managed-stores.mjs'
 
 export const OPENAPI_SCHEDULE_LOCK_ID = '8842137002';
 export const HOME_DAILY_BATCH_SIZE = 5;
+export const HOME_REALTIME_BATCH_BY_MINUTE = Object.freeze({
+  2: 0,
+  32: 1,
+});
+export const HOME_REALTIME_BATCHES = Object.freeze([
+  Object.freeze(FULL_MANAGED_STORE_CODES.slice(0, 12)),
+  Object.freeze(FULL_MANAGED_STORE_CODES.slice(12)),
+]);
 export const HOME_DAILY_BATCH_BY_HOUR = Object.freeze({
   5: 0,
   6: 1,
@@ -40,6 +48,7 @@ function shanghaiParts(value) {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
+    minute: '2-digit',
     hourCycle: 'h23',
   }).formatToParts(date)
     .filter(({ type }) => type !== 'literal')
@@ -47,6 +56,7 @@ function shanghaiParts(value) {
   return {
     date: `${parts.year}-${parts.month}-${parts.day}`,
     hour: Number(parts.hour),
+    minute: Number(parts.minute),
   };
 }
 
@@ -64,6 +74,7 @@ export function scheduledDates(now = new Date()) {
     twoDaysAgo: shiftDate(current.date, -2),
     fourDaysAgo: shiftDate(current.date, -4),
     shanghaiHour: current.hour,
+    shanghaiMinute: current.minute,
   });
 }
 
@@ -114,6 +125,19 @@ function dailyBatch({ batch, shanghaiHour }) {
   return { batchIndex, stores };
 }
 
+function realtimeBatch({ batch, shanghaiMinute }) {
+  const resolved = batch ?? HOME_REALTIME_BATCH_BY_MINUTE[shanghaiMinute];
+  const batchIndex = parseInteger(
+    resolved,
+    'SCHEDULE_REALTIME_BATCH',
+    0,
+    HOME_REALTIME_BATCHES.length - 1,
+  );
+  const stores = HOME_REALTIME_BATCHES[batchIndex];
+  if (!stores || stores.length === 0) throw new Error('SCHEDULE_REALTIME_BATCH_INCOMPLETE');
+  return { batchIndex, stores };
+}
+
 function command(script, args) {
   return Object.freeze({
     executable: process.execPath,
@@ -126,13 +150,18 @@ export function buildScheduledPlan({ task, batch = null, now = new Date() } = {}
   const dates = scheduledDates(now);
   const allStores = storeCsv();
   if (task === 'home-realtime') {
+    const selected = realtimeBatch({
+      batch,
+      shanghaiMinute: dates.shanghaiMinute,
+    });
     return Object.freeze({
       task,
       dates,
-      stores: FULL_MANAGED_STORE_CODES,
+      batch: selected.batchIndex,
+      stores: selected.stores,
       openApiLease: false,
       commands: Object.freeze([command('scripts/sync_full_managed_home_history.mjs', [
-        `--stores=${allStores}`,
+        `--stores=${storeCsv(selected.stores)}`,
         `--from=${dates.today}`,
         `--to=${dates.today}`,
         '--no-products',

@@ -14,8 +14,9 @@
 
 ### 1. 不追补、错峰
 
-- `shein-fm-sales-sync.timer`：每小时 `:05`，避开半托库存 `:25/:55`。
-- `shein-fm-home-realtime.timer`：每小时 `:32`。
+- `shein-fm-sales-sync.timer`：每小时 `:05`，走轻量 API 车道；半托库存位于
+  `:12/:45`，两者不抢重任务锁。
+- `shein-fm-home-realtime.timer`：每小时 `:02`、`:32`，25 店按 12+13 两批刷新。
 - `shein-fm-dashboard-materialize.timer`：固定偶数小时`:55`兜底；没有
   `OnBootSec`，不会随上次结束时间漂移。
 - `shein-fm-dashboard-materialize-retry.timer`：在每小时`:00–:24`与

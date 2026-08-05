@@ -8,7 +8,7 @@
 | 时间 | 任务 | 数据边界 |
 | --- | --- | --- |
 | 每小时 `:05` | `shein-fm-sales-sync` | OpenAPI SKU 今日/昨日/7日/30日快照 |
-| 每小时 `:32` | `shein-fm-home-realtime` | 仅当天 WebAPI 小时曲线；固定占用 `:32–:43` 核心车道 |
+| 每小时 `:02`、`:32` | `shein-fm-home-realtime` | 仅当天 WebAPI 小时曲线；25 店拆为 12+13 两批，`:32–:43` 保留为第二批核心车道 |
 | `01:55` | `shein-fm-db-backup` | PostgreSQL 自定义格式压缩备份；避开半托 02:20 会话链路 |
 | `02:10` | `shein-fm-session-renewal` | 25店 Profile 每日登录态续期；02:20 硬停止 |
 | `03:45` | `shein-fm-supply-sync` | 商品、PI/JI、缺货、采购、交付日更 |

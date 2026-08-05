@@ -4,6 +4,7 @@ ConditionPathExists=/srv/shein-fm/runtime/webapi-history.enabled
 ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
 
 [Timer]
+OnCalendar=*-*-* *:02:00 Asia/Shanghai
 OnCalendar=*-*-* *:32:00 Asia/Shanghai
 AccuracySec=1s
 Persistent=false
