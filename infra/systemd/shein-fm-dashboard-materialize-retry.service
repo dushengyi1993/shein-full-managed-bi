@@ -1,5 +1,5 @@
 [Unit]
-Description=Materialize SHEIN full-managed dashboard JSON from the warehouse
+Description=Retry a deferred SHEIN full-managed dashboard materialization
 Wants=network-online.target
 Requires=shein-fm-db.service
 After=network-online.target shein-fm-db.service shein-fm-db-migrate.service systemd-tmpfiles-setup.service
@@ -17,7 +17,7 @@ Environment=NODE_ENV=production
 Environment=NODE_OPTIONS=--max-old-space-size=1152
 Environment=FULL_BI_DATA_FILE=/srv/shein-fm/runtime/dashboard/dashboard.next.json
 EnvironmentFile=/srv/shein-fm/secrets/materializer/database.env
-ExecStart=/usr/bin/bash scripts/run_full_managed_dashboard_materializer.sh
+ExecStart=/usr/bin/bash scripts/run_full_managed_dashboard_materializer.sh --only-pending
 SuccessExitStatus=75
 TimeoutStartSec=5min
 TimeoutStopSec=20s
@@ -53,10 +53,3 @@ MemoryHigh=1024M
 MemoryMax=1536M
 MemorySwapMax=128M
 LimitCORE=0
-
-# The materializer writes a private staging file. Only after a successful
-# projection is it made group-readable and atomically promoted for the portal.
-# Platform credentials are intentionally unavailable to this unit.
-
-[Install]
-WantedBy=multi-user.target

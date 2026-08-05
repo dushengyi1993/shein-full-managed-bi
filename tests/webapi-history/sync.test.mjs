@@ -113,6 +113,8 @@ test('homepage history sync uses the current paginated product contract and pres
   });
   assert.equal(result.ok, true);
   assert.equal(result.complete, false);
+  assert.equal(result.requiresRetry, true);
+  assert.equal(result.retryablePartialWindows, 1);
   assert.equal(activeSessions, 0);
   assert.deepEqual(sessionOptions, [
     { storeCode: 'DL5477', allowSavedCredentialLogin: true },
@@ -137,6 +139,102 @@ test('homepage history sync uses the current paginated product contract and pres
   assert.equal(events.filter((item) => item.endsWith(':TRADE_OVERVIEW')).length, 2);
   assert.equal(events.filter((item) => item.endsWith(':REGION_RANK')).length, 2);
   assert.ok(audits.every((entry) => !JSON.stringify(entry).includes('private platform detail')));
+});
+
+test('analysis permission gaps remain visible without turning a permanent capability gap into a retry loop', async () => {
+  const audits = [];
+  const result = await runFullHomeHistorySync({
+    storeCodes: ['DL5477'],
+    startDate: '2026-08-03',
+    endDate: '2026-08-03',
+    includeProducts: false,
+    openSession: async () => ({ async close() {} }),
+    transportFactory: () => async (endpointCode) => {
+      if (endpointCode === 'UPDATE_TIME') {
+        return response({ code: '0', info: { areaCd: 'cn', dt: '20260803' } });
+      }
+      if (endpointCode === 'STORE_DAILY_HISTORY') {
+        return response({ code: '0', info: [{ dataDate: '20260803', saleCnt1d: '3' }] });
+      }
+      if (endpointCode === 'ANALYSE_MODEL') {
+        throw Object.assign(new Error('private permission response'), {
+          code: 'HOME_ANALYSE_PERMISSION_DENIED',
+        });
+      }
+      if (endpointCode === 'TRADE_OVERVIEW') return response({ code: '0', info: {} });
+      return response({ code: '0', info: { countryTrade: [] } });
+    },
+    repository: {
+      async recordFetchAudit(row) {
+        audits.push(row);
+      },
+      async upsertStoreDaily() {},
+      async upsertProducts() {},
+      async upsertRegions() {},
+      async successfulDailyDates() {
+        return new Set();
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.complete, false);
+  assert.equal(result.requiresRetry, false);
+  assert.equal(result.partialWindows, 1);
+  assert.equal(result.retryablePartialWindows, 0);
+  assert.equal(result.results[0].shopDaily.terminal, true);
+  assert.equal(result.results[0].shopDaily.capabilityStatus, 'PERMISSION_DENIED');
+  assert.ok(audits.some(({ sanitizedErrorCode }) => (
+    sanitizedErrorCode === 'HOME_ANALYSE_PERMISSION_DENIED'
+  )));
+});
+
+test('history sync closes and reopens only the failed store after a retryable CDP error', async () => {
+  let openCount = 0;
+  let closeCount = 0;
+  const result = await runFullHomeHistorySync({
+    storeCodes: ['DL5477'],
+    startDate: '2026-08-03',
+    endDate: '2026-08-03',
+    includeProducts: false,
+    retryCdpCount: 1,
+    openSession: async () => {
+      openCount += 1;
+      if (openCount === 1) {
+        throw Object.assign(new Error('private timeout detail'), {
+          code: 'CDP_COMMAND_TIMEOUT',
+        });
+      }
+      return {
+        async close() {
+          closeCount += 1;
+        },
+      };
+    },
+    transportFactory: () => async (endpointCode) => {
+      if (endpointCode === 'UPDATE_TIME') {
+        return response({ code: '0', info: { areaCd: 'cn', dt: '20260803' } });
+      }
+      if (endpointCode === 'STORE_DAILY_HISTORY') {
+        return response({ code: '0', info: [{ dataDate: '20260803' }] });
+      }
+      if (endpointCode === 'TRADE_OVERVIEW') return response({ code: '0', info: {} });
+      return response({ code: '0', info: { countryTrade: [] } });
+    },
+    repository: {
+      async recordFetchAudit() {},
+      async upsertStoreDaily() {},
+      async upsertProducts() {},
+      async upsertRegions() {},
+      async successfulDailyDates() {
+        return new Set();
+      },
+    },
+  });
+  assert.equal(openCount, 2);
+  assert.equal(closeCount, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.requiresRetry, false);
+  assert.equal(result.results[0].cdpRetryCount, 1);
 });
 
 test('homepage history sync resumes successful daily trade and region requests', async () => {

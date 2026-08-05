@@ -39,10 +39,20 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
   const promotion = await text(
     'scripts/materialize_and_promote_full_managed_dashboard.sh',
   );
+  const wrapper = await text(
+    'scripts/run_full_managed_dashboard_materializer.sh',
+  );
+  const retryService = await text(
+    'infra/systemd/shein-fm-dashboard-materialize-retry.service',
+  );
+  const retryTimer = await text(
+    'infra/systemd/shein-fm-dashboard-materialize-retry.timer',
+  );
   assert.equal(unitUser(service), 'sheinfm-materializer');
   assert.match(service, /SupplementaryGroups=sheinfm-dashboard/);
   assert.match(service, /secrets\/materializer\/database\.env/);
-  assert.match(service, /materialize_and_promote_full_managed_dashboard\.sh/);
+  assert.match(service, /run_full_managed_dashboard_materializer\.sh/);
+  assert.match(wrapper, /materialize_and_promote_full_managed_dashboard\.sh/);
   assert.doesNotMatch(service, /ExecStartPost=/);
   assert.match(promotion, /dashboard\.next\.json/);
   assert.match(promotion, /chgrp sheinfm-dashboard/);
@@ -63,6 +73,11 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
     timer,
     /ConditionPathExists=\/srv\/shein-fm\/runtime\/materializer\.enabled/,
   );
+  assert.equal(unitUser(retryService), 'sheinfm-materializer');
+  assert.match(retryService, /run_full_managed_dashboard_materializer\.sh --only-pending/);
+  assert.match(retryTimer, /OnCalendar=\*-\*-\* \*:00\.\.24\/3:00 Asia\/Shanghai/);
+  assert.match(retryTimer, /OnCalendar=\*-\*-\* \*:47\.\.59\/3:00 Asia\/Shanghai/);
+  assert.doesNotMatch(retryTimer, /Persistent=true|OnBootSec=/);
 });
 
 test('sales, supply, ingress and worker use distinct users and private credentials', async () => {
@@ -144,6 +159,8 @@ test('all mutable application runtimes and timers are fail-closed behind explici
     ['infra/systemd/shein-fm-portal.service', 'portal.enabled'],
     ['infra/systemd/shein-fm-dashboard-materialize.service', 'materializer.enabled'],
     ['infra/systemd/shein-fm-dashboard-materialize.timer', 'materializer.enabled'],
+    ['infra/systemd/shein-fm-dashboard-materialize-retry.service', 'materializer.enabled'],
+    ['infra/systemd/shein-fm-dashboard-materialize-retry.timer', 'materializer.enabled'],
     ['infra/systemd/shein-fm-home-realtime.service', 'webapi-history.enabled'],
     ['infra/systemd/shein-fm-home-realtime.timer', 'webapi-history.enabled'],
     ['infra/systemd/shein-fm-home-daily.service', 'webapi-history.enabled'],

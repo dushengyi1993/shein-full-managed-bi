@@ -1331,6 +1331,7 @@ const UNAVAILABLE_FULL_HOME_HISTORY = Object.freeze({
   ledgerDaily: Object.freeze([]),
   billDaily: Object.freeze([]),
   settlementPositionDaily: Object.freeze([]),
+  analysisCapabilities: Object.freeze([]),
   coverage: Object.freeze({
     earliestDate: null,
     latestDate: null,
@@ -1368,7 +1369,9 @@ export async function readFullHomeHistory(pool) {
         to_regclass('fact.full_home_ledger_daily') IS NOT NULL AS has_ledger_daily,
         to_regclass('fact.full_home_bill_daily') IS NOT NULL AS has_bill_daily,
         to_regclass('fact.full_home_finance_report_observation') IS NOT NULL
-          AS has_finance_report_observation`);
+          AS has_finance_report_observation,
+        to_regclass('raw.webapi_home_fetch_audit') IS NOT NULL
+          AS has_home_fetch_audit`);
     const schema = schemaResult.rows[0] ?? {};
     if (
       schema.has_store_daily !== true
@@ -1378,7 +1381,13 @@ export async function readFullHomeHistory(pool) {
       return UNAVAILABLE_FULL_HOME_HISTORY;
     }
 
-    const [storeResult, productResult, regionResult, ledgerResult] = await Promise.all([
+    const [
+      storeResult,
+      productResult,
+      regionResult,
+      ledgerResult,
+      analysisCapabilityResult,
+    ] = await Promise.all([
       client.query(`
         SELECT store_code, to_char(business_date, 'YYYY-MM-DD') AS business_date,
                currency, deal_amount, net_deal_amount, sales_quantity,
@@ -1436,6 +1445,17 @@ export async function readFullHomeHistory(pool) {
               observed_at, quality_status
             FROM fact.full_home_ledger_daily
             ORDER BY business_date, store_code`)
+        : Promise.resolve({ rows: [] }),
+      schema.has_home_fetch_audit === true
+        ? client.query(`
+            SELECT DISTINCT ON (store_code)
+              store_code,
+              result_status,
+              sanitized_error_code,
+              observed_at
+            FROM raw.webapi_home_fetch_audit
+            WHERE endpoint_code = 'ANALYSE_MODEL'
+            ORDER BY store_code, observed_at DESC, webapi_home_fetch_audit_id DESC`)
         : Promise.resolve({ rows: [] }),
     ]);
     const hasFinance = (
@@ -1810,6 +1830,16 @@ export async function readFullHomeHistory(pool) {
       observedAt: pgInstant(row.observed_at),
       basis: 'FINANCE_DETAIL_BUSINESS_DATE',
     }));
+    const analysisCapabilities = analysisCapabilityResult.rows.map((row) => ({
+      storeCode: row.store_code,
+      status: row.result_status === 'SUCCEEDED'
+        ? 'available'
+        : row.sanitized_error_code === 'HOME_ANALYSE_PERMISSION_DENIED'
+          ? 'permission_denied'
+          : 'attention',
+      errorCode: row.sanitized_error_code ?? null,
+      observedAt: pgInstant(row.observed_at),
+    }));
     const allDates = [
       ...storeDaily,
       ...financeDaily,
@@ -1849,6 +1879,7 @@ export async function readFullHomeHistory(pool) {
       ledgerDaily,
       billDaily,
       settlementPositionDaily,
+      analysisCapabilities,
       coverage: {
         earliestDate: allDates[0] ?? null,
         latestDate: allDates.at(-1) ?? null,

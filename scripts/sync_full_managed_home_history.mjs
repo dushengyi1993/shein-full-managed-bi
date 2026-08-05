@@ -19,6 +19,7 @@ function parseArgs(argv) {
     includeProducts: true,
     refreshRecentSettledDays: 0,
     requireSettledThrough: null,
+    retryCdpCount: 0,
   };
   for (const token of argv) {
     const match = /^--([a-z-]+)(?:=(.*))?$/.exec(token);
@@ -40,6 +41,8 @@ function parseArgs(argv) {
       && /^\d{4}-\d{2}-\d{2}$/.test(value ?? '')
     ) {
       result.requireSettledThrough = value;
+    } else if (name === 'retry-cdp' && /^[0-2]$/.test(value ?? '')) {
+      result.retryCdpCount = Number(value);
     } else throw new Error('HOME_CLI_ARGUMENT_INVALID');
   }
   if (result.stores.length === 0 || !result.from || !result.to) {
@@ -61,6 +64,7 @@ function dryRunReport(args) {
     includeProducts: args.includeProducts,
     refreshRecentSettledDays: args.refreshRecentSettledDays,
     requireSettledThrough: args.requireSettledThrough,
+    retryCdpCount: args.retryCdpCount,
     includeTradeOverview: true,
     includeRegionRank: true,
     dailyDimensionResume: true,
@@ -96,12 +100,13 @@ async function main() {
       includeProducts: args.includeProducts,
       refreshRecentSettledDays: args.refreshRecentSettledDays,
       requireSettledThrough: args.requireSettledThrough,
+      retryCdpCount: args.retryCdpCount,
       openSession: runtime.deps.openSession,
       transportFactory: ({ session }) => createFullHomePageTransport({ session }),
       repository,
     });
     console.log(JSON.stringify(result, null, 2));
-    if (!result.complete) process.exitCode = 2;
+    if (result.requiresRetry) process.exitCode = 2;
   } finally {
     await runtime.close().catch(() => {});
     await pool.end().catch(() => {});

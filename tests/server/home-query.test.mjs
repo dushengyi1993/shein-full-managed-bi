@@ -56,6 +56,20 @@ const history = {
         pendingReportCount: 4,
       },
     ],
+    analysisCapabilities: [
+      {
+        storeCode: 'DL5477',
+        status: 'available',
+        errorCode: null,
+        observedAt: '2026-07-31T01:00:00.000Z',
+      },
+      {
+        storeCode: 'MZ2406',
+        status: 'permission_denied',
+        errorCode: 'HOME_ANALYSE_PERMISSION_DENIED',
+        observedAt: '2026-07-31T01:00:00.000Z',
+      },
+    ],
     productFinanceDaily: [
       {
         storeCode: 'DL5477',
@@ -110,6 +124,9 @@ test('home query returns only the selected current and comparison window', () =>
   assert.equal(result.home.currentSettlementPosition[0].pendingSettlementAmount, 40);
   assert.equal(result.home.todayStoreDaily.length, 1);
   assert.equal(result.home.todayStoreDaily[0].date, '2026-07-31');
+  assert.deepEqual(result.home.analysisCapabilities.map(({ storeCode }) => storeCode), [
+    'DL5477',
+  ]);
   assert.equal(result.source.latestAvailableDate, '2026-07-31');
   assert.equal(result.source.returnedCurrentRows.storeDaily, 1);
   assert.equal(result.source.returnedComparisonRows.storeDaily, 1);

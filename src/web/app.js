@@ -5847,6 +5847,7 @@ function homeHistory() {
         settlementPositionDaily: [],
         todayStoreDaily: [],
         currentSettlementPosition: [],
+        analysisCapabilities: [],
         coverage: {},
       };
 }
@@ -6310,6 +6311,19 @@ function homeMetricCoverage(bundle, keys, {
 } = {}) {
   const metricKeys = Array.isArray(keys) ? keys : [keys];
   const storeCodes = [...bundle.storeCodes].sort();
+  const permissionMissing = metricKeys.some((key) => (
+    ['exposureUsers', 'paymentOrderCount'].includes(key)
+  ))
+    ? (Array.isArray(homeHistory().analysisCapabilities)
+        ? homeHistory().analysisCapabilities
+        : [])
+      .filter(({ storeCode, status }) => (
+        bundle.storeCodes.has(String(storeCode))
+        && status === 'permission_denied'
+      ))
+      .map(({ storeCode }) => String(storeCode))
+      .sort()
+    : [];
   const expectedDates = aggregate === 'first'
     ? [bundle.range.start]
     : aggregate === 'last'
@@ -6356,6 +6370,9 @@ function homeMetricCoverage(bundle, keys, {
     `${storeCode} 缺 ${missingDates.slice(0, 4).map((date) => date.slice(5).replace('-', '/')).join('、')}${missingDates.length > 4 ? '等' : ''}`
   ));
   const detail = [
+    permissionMissing.length
+      ? `经营分析权限缺失：${permissionMissing.join('、')}`
+      : '',
     missing.length ? `完全未返回：${missing.join('、')}` : '',
     partialDetail.length ? `日期有缺口：${partialDetail.join('；')}` : '',
     partial.length > partialDetail.length

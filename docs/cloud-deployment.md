@@ -228,6 +228,7 @@ systemctl status \
   shein-fm-db.service \
   shein-fm-portal.service \
   shein-fm-dashboard-materialize.timer \
+  shein-fm-dashboard-materialize-retry.timer \
   shein-fm-system-health.timer \
   shein-fm-webhook-receiver.service \
   shein-fm-webhook-worker.service

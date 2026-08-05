@@ -4,6 +4,7 @@ import {
   parseLedgerDailyRows,
   sha256Json,
 } from './home-contracts.mjs';
+import { retryableCdpCode } from './retry-policy.mjs';
 
 function safeCode(error, fallback = 'HOME_LEDGER_SYNC_FAILED') {
   const direct = String(error?.code ?? '').toUpperCase();
@@ -113,6 +114,7 @@ export async function runFullHomeLedgerSync({
   storeCodes,
   startDate,
   endDate,
+  retryCdpCount = 0,
   allowSavedCredentialLogin = true,
   openSession,
   transportFactory,
@@ -121,6 +123,13 @@ export async function runFullHomeLedgerSync({
 } = {}) {
   if (!Array.isArray(storeCodes) || storeCodes.length === 0) {
     throw new TypeError('storeCodes are required');
+  }
+  if (
+    !Number.isSafeInteger(retryCdpCount)
+    || retryCdpCount < 0
+    || retryCdpCount > 2
+  ) {
+    throw new TypeError('retryCdpCount must be between 0 and 2');
   }
   for (const dependency of [openSession, transportFactory]) {
     if (typeof dependency !== 'function') throw new TypeError('ledger sync dependency missing');
@@ -136,29 +145,41 @@ export async function runFullHomeLedgerSync({
   const results = [];
   for (const rawStoreCode of storeCodes) {
     const storeCode = String(rawStoreCode).trim().toUpperCase();
-    let session = null;
-    try {
-      session = await openSession({ storeCode, allowSavedCredentialLogin });
-      const transport = transportFactory({ session });
-      for (const window of windows) {
-        results.push(await syncWindow({
+    for (let retryCount = 0; retryCount <= retryCdpCount; retryCount += 1) {
+      let session = null;
+      const attemptResults = [];
+      try {
+        session = await openSession({ storeCode, allowSavedCredentialLogin });
+        const transport = transportFactory({ session });
+        for (const window of windows) {
+          attemptResults.push(await syncWindow({
+            storeCode,
+            window,
+            transport,
+            repository,
+            clock,
+          }));
+        }
+      } catch (error) {
+        attemptResults.push({
           storeCode,
-          window,
-          transport,
-          repository,
-          clock,
-        }));
+          startDate,
+          endDate,
+          ok: false,
+          errorCode: safeCode(error, 'HOME_LEDGER_SESSION_FAILED'),
+        });
+      } finally {
+        await session?.close?.().catch(() => {});
       }
-    } catch (error) {
-      results.push({
-        storeCode,
-        startDate,
-        endDate,
-        ok: false,
-        errorCode: safeCode(error, 'HOME_LEDGER_SESSION_FAILED'),
-      });
-    } finally {
-      await session?.close?.().catch(() => {});
+      const retryCode = attemptResults
+        .map(({ errorCode }) => errorCode)
+        .find(retryableCdpCode);
+      if (retryCode && retryCount < retryCdpCount) continue;
+      results.push(...attemptResults.map((row) => ({
+        ...row,
+        cdpRetryCount: retryCount,
+      })));
+      break;
     }
   }
   const failedWindows = results.filter(({ ok }) => !ok).length;

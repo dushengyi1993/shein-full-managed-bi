@@ -285,6 +285,7 @@ export function queryHomeDashboard(
   const settlementPositionDaily = scopedSettlementPositionDaily.filter(
     ({ date }) => settlementPositionDates.has(date),
   );
+  const analysisCapabilities = rows(history.analysisCapabilities).filter(storeMatches);
   const latestOperatingDate = sourceFreshness(scopedStoreDaily).businessDate;
   const latestSettlementPositionDate = sourceFreshness(
     scopedSettlementPositionDaily,
@@ -399,6 +400,7 @@ export function queryHomeDashboard(
       todayStoreDaily: Object.freeze(todayStoreDaily),
       currentSettlementPosition: Object.freeze(currentSettlementPosition),
       productFinanceDaily: Object.freeze(productFinanceDaily),
+      analysisCapabilities: Object.freeze(analysisCapabilities),
       coverage: Object.freeze(record(history.coverage)),
     }),
   });

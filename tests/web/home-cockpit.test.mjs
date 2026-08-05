@@ -299,6 +299,8 @@ test('homepage shows current and previous coverage under their own values', asyn
   assert.match(coverage, /完全未返回：\$\{missing\.join\('、'\)\}/);
   assert.match(coverage, /日期有缺口/);
   assert.match(coverage, /\$\{available\.length\}\/\$\{total\}家有值/);
+  assert.match(coverage, /经营分析权限缺失/);
+  assert.match(coverage, /analysisCapabilities/);
   assert.match(table, /metric-coverage/);
   assert.match(table, /metric\.coverage/);
   assert.match(table, /metric\.baselineCoverage/);

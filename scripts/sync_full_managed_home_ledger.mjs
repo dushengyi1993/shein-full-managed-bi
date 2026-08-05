@@ -15,6 +15,7 @@ export function parseArgs(argv) {
     stores: [],
     from: null,
     to: null,
+    retryCdpCount: 0,
     execute: false,
   };
   for (const token of argv) {
@@ -26,6 +27,9 @@ export function parseArgs(argv) {
       result.stores = [...new Set(value.split(',').map((item) => item.trim().toUpperCase()))];
     } else if (name === 'from' && value) result.from = value;
     else if (name === 'to' && value) result.to = value;
+    else if (name === 'retry-cdp' && /^[0-2]$/.test(value ?? '')) {
+      result.retryCdpCount = Number(value);
+    }
     else throw new Error('LEDGER_CLI_ARGUMENT_INVALID');
   }
   if (
@@ -49,6 +53,7 @@ async function main() {
       from: args.from,
       to: args.to,
       maximumWindowDays: 31,
+      retryCdpCount: args.retryCdpCount,
       browserSessionsOpened: 0,
       databaseConnections: 0,
     }, null, 2));
@@ -71,6 +76,7 @@ async function main() {
       storeCodes: args.stores,
       startDate: args.from,
       endDate: args.to,
+      retryCdpCount: args.retryCdpCount,
       openSession: runtime.deps.openSession,
       transportFactory: ({ session }) => createFullHomePageTransport({ session }),
       repository,

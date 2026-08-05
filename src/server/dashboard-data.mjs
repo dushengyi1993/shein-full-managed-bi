@@ -1404,6 +1404,22 @@ function normalizeHomeProductFinanceDaily(item) {
   };
 }
 
+function normalizeHomeAnalysisCapability(item) {
+  const source = record(item);
+  const storeCode = text(source.storeCode, '', 24).toUpperCase();
+  if (!storeCode) return null;
+  return {
+    storeCode,
+    status: ['available', 'permission_denied', 'attention'].includes(source.status)
+      ? source.status
+      : 'attention',
+    errorCode: /^[A-Z][A-Z0-9_]{2,80}$/.test(text(source.errorCode, '', 80))
+      ? text(source.errorCode, '', 80)
+      : null,
+    observedAt: isoInstant(source.observedAt),
+  };
+}
+
 export function normalizeHome(value) {
   const source = record(value);
   const storeDaily = Array.isArray(source.storeDaily)
@@ -1432,6 +1448,9 @@ export function normalizeHome(value) {
   const productFinanceDaily = Array.isArray(source.productFinanceDaily)
     ? source.productFinanceDaily.map(normalizeHomeProductFinanceDaily).filter(Boolean)
     : [];
+  const analysisCapabilities = Array.isArray(source.analysisCapabilities)
+    ? source.analysisCapabilities.map(normalizeHomeAnalysisCapability).filter(Boolean)
+    : [];
   const coverage = record(source.coverage);
   return {
     status: ['available', 'empty', 'unavailable'].includes(source.status)
@@ -1445,6 +1464,7 @@ export function normalizeHome(value) {
     billDaily,
     settlementPositionDaily,
     productFinanceDaily,
+    analysisCapabilities,
     coverage: {
       earliestDate: isoDate(coverage.earliestDate),
       latestDate: isoDate(coverage.latestDate),

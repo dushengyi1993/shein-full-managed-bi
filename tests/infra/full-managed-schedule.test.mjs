@@ -67,6 +67,8 @@ test('daily homepage schedule maps five post-core slots to disjoint five-store b
     assert.equal(plan.commands.length, 2);
     assert.ok(plan.commands[0].args.includes('--require-settled-through=2026-08-02'));
     assert.ok(plan.commands[0].args.includes('--refresh-recent-days=2'));
+    assert.ok(plan.commands[0].args.includes('--retry-cdp=1'));
+    assert.ok(plan.commands[1].args.includes('--retry-cdp=1'));
     selected.push(...plan.stores);
   }
   assert.deepEqual(selected, FULL_MANAGED_STORE_CODES);
@@ -124,6 +126,7 @@ test('systemd schedule keeps hourly work ahead of bounded daily batches', async 
     backup,
     archive,
     materializer,
+    materializerRetry,
   ] = await Promise.all([
     readFile(new URL('infra/systemd/shein-fm-home-realtime.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-sales-sync.timer', root), 'utf8'),
@@ -135,6 +138,7 @@ test('systemd schedule keeps hourly work ahead of bounded daily batches', async 
     readFile(new URL('infra/systemd/shein-fm-db-backup.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-backup-archive.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-dashboard-materialize.timer', root), 'utf8'),
+    readFile(new URL('infra/systemd/shein-fm-dashboard-materialize-retry.timer', root), 'utf8'),
   ]);
   assert.match(realtime, /OnCalendar=\*-\*-\* \*:32:00 Asia\/Shanghai/);
   assert.match(sales, /OnCalendar=\*-\*-\* \*:05:00 Asia\/Shanghai/);
@@ -151,6 +155,9 @@ test('systemd schedule keeps hourly work ahead of bounded daily batches', async 
   assert.match(materializer, /OnCalendar=\*-\*-\* 00\.\.23\/2:55:00 Asia\/Shanghai/);
   assert.doesNotMatch(materializer, /OnUnitInactiveSec=/);
   assert.doesNotMatch(materializer, /OnBootSec=/);
+  assert.match(materializerRetry, /OnCalendar=\*-\*-\* \*:00\.\.24\/3:00 Asia\/Shanghai/);
+  assert.match(materializerRetry, /OnCalendar=\*-\*-\* \*:47\.\.59\/3:00 Asia\/Shanghai/);
+  assert.doesNotMatch(materializerRetry, /Persistent=true|OnBootSec=/);
 });
 
 test('every heavy window has a hard stop before the next core lane', async () => {

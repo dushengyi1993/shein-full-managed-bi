@@ -77,6 +77,47 @@ test('older databases expose an unavailable contract before migration 0014', asy
   assert.equal(result.coverage.latestDate, null);
 });
 
+test('materializes the latest per-store analysis capability without exposing platform bodies', async () => {
+  const client = {
+    async query(sql) {
+      if (sql.includes('to_regclass')) {
+        return {
+          rows: [{
+            has_store_daily: true,
+            has_product_daily: true,
+            has_region_daily: true,
+            has_home_fetch_audit: true,
+          }],
+        };
+      }
+      if (sql.includes('FROM fact.full_home_store_daily')) return { rows: [] };
+      if (sql.includes('FROM fact.full_home_product_daily')) return { rows: [] };
+      if (sql.includes('FROM fact.full_home_region_daily')) return { rows: [] };
+      if (sql.includes('FROM raw.webapi_home_fetch_audit')) {
+        return {
+          rows: [{
+            store_code: 'WY9025',
+            result_status: 'FAILED',
+            sanitized_error_code: 'HOME_ANALYSE_PERMISSION_DENIED',
+            observed_at: '2026-08-05T01:45:43.000Z',
+            response_body: 'must-not-project',
+          }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {},
+  };
+  const result = await readFullHomeHistory({ async connect() { return client; } });
+  assert.deepEqual(result.analysisCapabilities, [{
+    storeCode: 'WY9025',
+    status: 'permission_denied',
+    errorCode: 'HOME_ANALYSE_PERMISSION_DENIED',
+    observedAt: '2026-08-05T01:45:43.000Z',
+  }]);
+  assert.doesNotMatch(JSON.stringify(result), /must-not-project/);
+});
+
 test('materializes signed finance facts without relabeling ledger dates as order dates', async () => {
   const client = {
     async query(sql) {

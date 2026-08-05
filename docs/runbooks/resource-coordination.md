@@ -18,6 +18,10 @@
 - `shein-fm-home-realtime.timer`：每小时 `:32`。
 - `shein-fm-dashboard-materialize.timer`：固定偶数小时`:55`兜底；没有
   `OnBootSec`，不会随上次结束时间漂移。
+- `shein-fm-dashboard-materialize-retry.timer`：在每小时`:00–:24`与
+  `:47–:59`每3分钟只检查一次
+  `.materialize-pending`。没有待物化标记时不拿锁、不查库；上次因锁或资源压力返回
+  `75` 时才在近端重试。
 - 所有定时全托批任务使用 `Persistent=false`，重启不形成补跑风暴。
 - 成功的数据任务仍以 `OnSuccess` 触发一次物化；共享锁确保它不会和下一项重叠。
 
@@ -97,6 +101,8 @@ Profile/任务锁；营销 Chrome 抢不到锁时转本地执行。
 | `04:12` | 半托 | ET重任务；锁忙则跳过，不挤04:32核心车道 |
 | `04:45` | 全托 | finance；平台/凭据ready后运行 |
 | `12:45` | 全托 | COS归档；非业务数据，不占上班前关键链路 |
+| `13:45–14:17` | 半托 | 库存守卫；依赖 morning-links-ready 与13:12库存 marker |
+| `14:20` | 半托 | ET仓储费；库存守卫必须先释放共享锁 |
 
 每个小时的`:32–:43`均优先保留给全托首页当前日核心事实；任何尚未完成的可延期
 重任务不得跨入该窗口。
@@ -125,7 +131,9 @@ systemd-analyze verify \
   /etc/systemd/system/shein-fm-sales-sync.service \
   /etc/systemd/system/shein-fm-sales-sync.timer \
   /etc/systemd/system/shein-fm-dashboard-materialize.service \
-  /etc/systemd/system/shein-fm-dashboard-materialize.timer
+  /etc/systemd/system/shein-fm-dashboard-materialize.timer \
+  /etc/systemd/system/shein-fm-dashboard-materialize-retry.service \
+  /etc/systemd/system/shein-fm-dashboard-materialize-retry.timer
 systemctl daemon-reload
 ```
 
@@ -145,7 +153,8 @@ node /opt/shein-fm/current/scripts/check_full_managed_resource_pressure.mjs \
 
 必须逐项回读：
 
-1. `:05`、`:32` 和物化 2 小时兜底均为 `Persistent=false`，物化无开机触发。
+1. `:05`、`:32`、物化2小时兜底和3分钟待处理检查均为
+   `Persistent=false`，物化无开机触发。
 2. 压力不足时 service 为条件跳过，journal 包含结构化 `DEFERRED` 原因，且没有新
    Chrome、Node 数据任务或物化进程。
 3. 空闲时同一时刻最多一个半托或全托重任务持有主机锁；轻量实时车道不受长锁饿死。
@@ -153,6 +162,8 @@ node /opt/shein-fm/current/scripts/check_full_managed_resource_pressure.mjs \
    store-login 活动租约均为零。
 5. Portal、数据库、Webhook 健康，公网 HTTPS 和 SSH 保持响应。
 6. 半托 unit 文件、timer 状态和仓库工作区没有被修改。
+7. 物化因锁或压力返回 `75` 时保留 `.materialize-pending`；下一个3分钟检查成功
+   后必须删除标记并原子更新正式 Dashboard 文件。
 
 ## 回滚
 

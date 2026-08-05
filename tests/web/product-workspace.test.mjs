@@ -278,5 +278,5 @@ test('static assets use the current dated cache-key family', async () => {
   for (const asset of ['app.js', 'styles.css', 'home-parity.css', 'favicon.svg']) {
     assert.match(html, new RegExp(`/${asset.replace('.', '\\.')}\\?v=\\d{8}\\.\\d+`), asset);
   }
-  assert.doesNotMatch(html, /\?v=20260801\.5/);
+  assert.doesNotMatch(html, /\?v=2026080[14]\./);
 });

@@ -80,6 +80,7 @@ test('host-heavy jobs share the neutral lock while sales stays in the light lane
     'shein-fm-db-backup.service',
     'shein-fm-backup-archive.service',
     'shein-fm-dashboard-materialize.service',
+    'shein-fm-dashboard-materialize-retry.service',
   ];
   const heavyUnits = await Promise.all(heavyUnitNames.map((name) => (
     readFile(new URL(`infra/systemd/${name}`, root), 'utf8')
@@ -90,11 +91,15 @@ test('host-heavy jobs share the neutral lock while sales stays in the light lane
       /^Slice=shein-host-heavy-fm\.slice$/m,
       heavyUnitNames[index],
     );
-    assert.match(
-      unit,
-      /\/run\/lock\/shein-host-heavy\.lock.*\/run\/lock\/shein-fm-heavy\.lock/,
-    );
-    assert.match(unit, /run_full_managed_resource_guarded\.sh \w+/);
+    if (heavyUnitNames[index].startsWith('shein-fm-dashboard-materialize')) {
+      assert.match(unit, /run_full_managed_dashboard_materializer\.sh/);
+    } else {
+      assert.match(
+        unit,
+        /\/run\/lock\/shein-host-heavy\.lock.*\/run\/lock\/shein-fm-heavy\.lock/,
+      );
+      assert.match(unit, /run_full_managed_resource_guarded\.sh \w+/);
+    }
     assert.doesNotMatch(unit, /^ExecCondition=/m);
     assert.match(unit, /^CPUWeight=\d+$/m);
     assert.match(unit, /^Nice=\d+$/m);
@@ -113,12 +118,20 @@ test('host-heavy jobs share the neutral lock while sales stays in the light lane
   assert.doesNotMatch(sales, /\/run\/lock\/shein-fm-heavy\.lock/);
   assert.match(sales, /\/run\/shein-fm-sales\/sync\.lock/);
 
-  const [hostSlice, childSlice, fullManagedSlice, tmpfiles, wrapper] = await Promise.all([
+  const [
+    hostSlice,
+    childSlice,
+    fullManagedSlice,
+    tmpfiles,
+    wrapper,
+    materializerWrapper,
+  ] = await Promise.all([
     readFile(new URL('infra/systemd/shein-host-heavy.slice', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-host-heavy-fm.slice', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-heavy.slice', root), 'utf8'),
     readFile(new URL('infra/tmpfiles.d/shein-fm-scheduler.conf', root), 'utf8'),
     readFile(new URL('scripts/run_full_managed_resource_guarded.sh', root), 'utf8'),
+    readFile(new URL('scripts/run_full_managed_dashboard_materializer.sh', root), 'utf8'),
   ]);
   assert.match(hostSlice, /CPUQuota=90%/);
   assert.match(hostSlice, /MemoryHigh=3G/);
@@ -131,6 +144,11 @@ test('host-heavy jobs share the neutral lock while sales stays in the light lane
   assert.match(tmpfiles, /f \/run\/lock\/shein-fm-heavy\.lock 0666 root root/);
   assert.match(wrapper, /check_full_managed_resource_pressure\.mjs/);
   assert.match(wrapper, /exec "\$@"/);
+  assert.match(
+    materializerWrapper,
+    /\/run\/lock\/shein-host-heavy\.lock[\s\S]*\/run\/lock\/shein-fm-heavy\.lock/,
+  );
+  assert.match(materializerWrapper, /run_full_managed_resource_guarded\.sh/);
 });
 
 test('boot-sensitive timers never replay missed high-frequency work', async () => {
@@ -138,11 +156,13 @@ test('boot-sensitive timers never replay missed high-frequency work', async () =
     'shein-fm-home-realtime.timer',
     'shein-fm-sales-sync.timer',
     'shein-fm-dashboard-materialize.timer',
+    'shein-fm-dashboard-materialize-retry.timer',
   ].map((name) => readFile(new URL(`infra/systemd/${name}`, root), 'utf8')));
   for (const timer of timers) {
     assert.doesNotMatch(timer, /Persistent=true/);
   }
   assert.doesNotMatch(timers[2], /OnBootSec=/);
+  assert.doesNotMatch(timers[3], /OnBootSec=/);
 });
 
 test('materializer lock deferral cannot publish nonexistent staging files', async () => {
@@ -154,7 +174,11 @@ test('materializer lock deferral cannot publish nonexistent staging files', asyn
     new URL('scripts/materialize_and_promote_full_managed_dashboard.sh', root),
     'utf8',
   );
-  assert.match(unit, /flock -n -E 75 .*materialize_and_promote_full_managed_dashboard\.sh/);
+  const wrapper = await readFile(
+    new URL('scripts/run_full_managed_dashboard_materializer.sh', root),
+    'utf8',
+  );
+  assert.match(unit, /run_full_managed_dashboard_materializer\.sh/);
   assert.doesNotMatch(unit, /ExecStartPost=/);
   assert.match(unit, /^Environment=NODE_OPTIONS=--max-old-space-size=1152$/m);
   assert.match(unit, /^MemoryHigh=1024M$/m);
@@ -165,6 +189,9 @@ test('materializer lock deferral cannot publish nonexistent staging files', asyn
   assert.match(promotion, /dashboard\.next\.json/);
   assert.match(promotion, /mv -f "\$\{home_staging\}" "\$\{home_current\}"/);
   assert.match(promotion, /mv -f "\$\{core_staging\}" "\$\{core_current\}"/);
+  assert.match(wrapper, /\.materialize-pending/);
+  assert.match(wrapper, /materialize_status != 75/);
+  assert.match(wrapper, /materialize_and_promote_full_managed_dashboard\.sh/);
 });
 
 test('scheduled data jobs project partial facts and health after either terminal outcome', async () => {

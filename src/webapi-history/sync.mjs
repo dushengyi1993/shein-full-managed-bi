@@ -19,6 +19,10 @@ import {
   parseTradeOverview,
   sha256Json,
 } from './home-contracts.mjs';
+import {
+  retryableCdpCode,
+  retryableHistoryResultCode,
+} from './retry-policy.mjs';
 
 export class FullHomeSyncError extends Error {
   constructor(code) {
@@ -75,6 +79,11 @@ function schemaDescription(value, prefix = '$', output = []) {
 function sanitizedErrorCode(error, fallback = 'HOME_SYNC_FAILED') {
   const candidate = String(error?.code ?? fallback).toUpperCase();
   return /^[A-Z][A-Z0-9_]{2,80}$/.test(candidate) ? candidate : fallback;
+}
+
+function terminalShopCapabilityGap(result) {
+  return result?.ok === false
+    && result?.errorCode === 'HOME_ANALYSE_PERMISSION_DENIED';
 }
 
 function resultStatus(rows, rejected = 0) {
@@ -643,7 +652,13 @@ async function syncStoreWindow({
         };
       }
     } else {
-      result.shopDaily = shopModel;
+      result.shopDaily = terminalShopCapabilityGap(shopModel)
+        ? {
+            ...shopModel,
+            terminal: true,
+            capabilityStatus: 'PERMISSION_DENIED',
+          }
+        : shopModel;
     }
   } else {
     result.shopDaily = {
@@ -818,6 +833,7 @@ export async function runFullHomeHistorySync({
   includeProducts = true,
   refreshRecentSettledDays = 0,
   requireSettledThrough = null,
+  retryCdpCount = 0,
   allowSavedCredentialLogin = true,
   openSession,
   transportFactory,
@@ -839,6 +855,13 @@ export async function runFullHomeHistorySync({
     && !/^\d{4}-\d{2}-\d{2}$/.test(String(requireSettledThrough))
   ) {
     throw new TypeError('requireSettledThrough must be an ISO business date');
+  }
+  if (
+    !Number.isSafeInteger(retryCdpCount)
+    || retryCdpCount < 0
+    || retryCdpCount > 2
+  ) {
+    throw new TypeError('retryCdpCount must be between 0 and 2');
   }
   for (const dependency of [openSession, transportFactory]) {
     if (typeof dependency !== 'function') throw new TypeError('sync dependency missing');
@@ -873,13 +896,15 @@ export async function runFullHomeHistorySync({
     ? historyWindows({ startDate, endDate: settledEndDate })
     : [];
   const results = [];
+  storeLoop:
   for (const rawStoreCode of storeCodes) {
     const storeCode = String(rawStoreCode).trim().toUpperCase();
-    let session = null;
-    try {
-      session = await openSession({ storeCode, allowSavedCredentialLogin });
-      const transport = transportFactory({ session });
-      const storeResults = [];
+    for (let retryCount = 0; retryCount <= retryCdpCount; retryCount += 1) {
+      let session = null;
+      try {
+        session = await openSession({ storeCode, allowSavedCredentialLogin });
+        const transport = transportFactory({ session });
+        const storeResults = [];
       const historicalStartDate = windows[0]?.startDate ?? null;
       const historicalEndDate = windows.at(-1)?.endDate ?? null;
       const dataAnchor = windows.length > 0
@@ -907,7 +932,7 @@ export async function runFullHomeHistorySync({
             sourceUpdatedAt: dataAnchor.sourceUpdatedAt ?? null,
           },
         });
-        continue;
+        continue storeLoop;
       }
       const [
         completedTradeDates,
@@ -1025,16 +1050,29 @@ export async function runFullHomeHistorySync({
           clock,
         });
       }
-      results.push(...storeResults);
-    } catch (error) {
-      results.push({
-        storeCode,
-        startDate,
-        endDate,
-        sessionErrorCode: sanitizedErrorCode(error, 'HOME_SESSION_FAILED'),
-      });
-    } finally {
-      await session?.close?.().catch(() => {});
+        const retryCode = storeResults
+          .map(retryableHistoryResultCode)
+          .find(Boolean);
+        if (retryCode && retryCount < retryCdpCount) continue;
+        results.push(...storeResults.map((row) => ({
+          ...row,
+          cdpRetryCount: retryCount,
+        })));
+        break;
+      } catch (error) {
+        const errorCode = sanitizedErrorCode(error, 'HOME_SESSION_FAILED');
+        if (retryableCdpCode(errorCode) && retryCount < retryCdpCount) continue;
+        results.push({
+          storeCode,
+          startDate,
+          endDate,
+          sessionErrorCode: errorCode,
+          cdpRetryCount: retryCount,
+        });
+        break;
+      } finally {
+        await session?.close?.().catch(() => {});
+      }
     }
   }
   const failedWindows = results.filter((row) => (
@@ -1049,14 +1087,26 @@ export async function runFullHomeHistorySync({
     || row.tradeDaily?.ok === false
     || row.regionDaily?.ok === false
   )).length;
+  const retryablePartialWindows = results.filter((row) => (
+    retryableHistoryResultCode(row)
+    || (
+      row.shopDaily?.ok === false
+      && !terminalShopCapabilityGap(row.shopDaily)
+    )
+    || row.productDaily?.ok === false
+    || row.tradeDaily?.ok === false
+    || row.regionDaily?.ok === false
+  )).length;
   return Object.freeze({
     ok: failedWindows === 0,
     complete: failedWindows === 0 && partialWindows === 0,
+    requiresRetry: failedWindows > 0 || retryablePartialWindows > 0,
     storeCount: storeCodes.length,
     windowCount: windows.length,
     resultCount: results.length,
     failedWindows,
     partialWindows,
+    retryablePartialWindows,
     results: Object.freeze(results),
   });
 }

@@ -344,8 +344,11 @@ estimated, never invented from the product response.
 The retired two-step analysis contract remains isolated to the shop-level
 exposure supplement while that source is still authorized. Its failure is a
 partial capability result: it cannot invalidate a successful store curve.
-Profiles without that permission retain `NULL` exposure with the failed
-capability audit instead of being classified as total homepage failures.
+Profiles returning the reviewed `SSO100010` code are stored as
+`HOME_ANALYSE_PERMISSION_DENIED`. They retain `NULL` exposure, appear in the
+homepage coverage explanation, and remain a truthful incomplete capability;
+the permanent permission gap no longer turns the daily systemd unit into a
+transient retry failure. Other business failures remain retryable partials.
 
 New-customer order/sales metrics and top-region evidence are not 90-day curve
 responses. The backfill therefore calls `/sbn/trade/overview` and
@@ -376,7 +379,8 @@ npm run sync:home-history -- \
   --stores=DL5477,MZ2406,NM7418 \
   --from=2023-06-07 \
   --to=2026-08-02 \
-  --refresh-recent-days=7
+  --refresh-recent-days=7 \
+  --retry-cdp=1
 
 touch /srv/shein-fm/runtime/webapi-history.enabled
 npm run sync:home-history -- \

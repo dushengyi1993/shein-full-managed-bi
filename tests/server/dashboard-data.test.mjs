@@ -204,6 +204,13 @@ test('whitelists full-managed homepage history while preserving unavailable metr
         basis: 'END_OF_PERIOD_PENDING_POSITION',
         reportOrderNoHash: 'must-not-leak',
       }],
+      analysisCapabilities: [{
+        storeCode: 'wy9025',
+        status: 'permission_denied',
+        errorCode: 'HOME_ANALYSE_PERMISSION_DENIED',
+        observedAt: '2026-07-29T08:28:00.000Z',
+        rawResponse: 'must-not-leak',
+      }],
     },
   });
 
@@ -232,6 +239,12 @@ test('whitelists full-managed homepage history while preserving unavailable metr
     dashboard.home.settlementPositionDaily[0].basis,
     'END_OF_PERIOD_PENDING_POSITION',
   );
+  assert.deepEqual(dashboard.home.analysisCapabilities, [{
+    storeCode: 'WY9025',
+    status: 'permission_denied',
+    errorCode: 'HOME_ANALYSE_PERMISSION_DENIED',
+    observedAt: '2026-07-29T08:28:00.000Z',
+  }]);
   assert.equal(dashboard.home.coverage.storeDailyRows, 1);
   assert.equal(dashboard.home.coverage.ledgerDailyRows, 1);
   assert.equal(dashboard.home.coverage.billDailyRows, 1);

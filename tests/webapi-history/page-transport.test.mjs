@@ -8,7 +8,7 @@ import {
 function sessionReturning(value) {
   return {
     async evaluate(expression) {
-      assert.match(expression, /https:\/\/sso\.geiwohuo\.com\/sbn\/index/);
+      assert.match(expression, /https:\/\/sso\.geiwohuo\.com\/sbn\//);
       assert.match(expression, /credentials: 'include'/);
       assert.doesNotMatch(expression, /Cookie|Authorization/);
       return value;
@@ -63,5 +63,34 @@ test('homepage transport rejects arbitrary endpoints, auth expiry and oversized 
   await assert.rejects(
     oversized('STORE_DAILY_HISTORY', {}),
     { code: 'HOME_RESPONSE_TOO_LARGE' },
+  );
+});
+
+test('homepage transport classifies analysis permission gaps and preserves retryable CDP codes', async () => {
+  const permissionDenied = createFullHomePageTransport({
+    session: sessionReturning({
+      sameOrigin: true,
+      status: 200,
+      byteLength: 64,
+      bodyText: '{"code":"SSO100010","message":"private platform message"}',
+    }),
+  });
+  await assert.rejects(
+    permissionDenied('ANALYSE_MODEL', {}),
+    { code: 'HOME_ANALYSE_PERMISSION_DENIED' },
+  );
+
+  const cdpTimeout = createFullHomePageTransport({
+    session: {
+      async evaluate() {
+        throw Object.assign(new Error('private protocol detail'), {
+          code: 'CDP_COMMAND_TIMEOUT',
+        });
+      },
+    },
+  });
+  await assert.rejects(
+    cdpTimeout('STORE_DAILY_HISTORY', {}),
+    { code: 'CDP_COMMAND_TIMEOUT' },
   );
 });

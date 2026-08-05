@@ -3,6 +3,7 @@ import {
   HOME_WEBAPI_ORIGIN,
   endpointUrl,
 } from './home-contracts.mjs';
+import { retryableCdpCode } from './retry-policy.mjs';
 
 export const HOME_TRANSPORT_LIMITS = Object.freeze({
   requestTimeoutMs: 60_000,
@@ -73,6 +74,11 @@ function businessSuccess(body) {
   return code === undefined || code === null || code === 0 || code === '0';
 }
 
+function businessCode(body) {
+  const code = body?.code ?? body?.error?.code;
+  return String(code ?? '').trim().toUpperCase();
+}
+
 function authExpired(body) {
   const message = `${body?.msg ?? ''} ${body?.message ?? ''}`;
   return /未登录|登录失效|login|unauthori[sz]ed|expired/i.test(message);
@@ -106,7 +112,10 @@ export function createFullHomePageTransport({
         }),
         { timeoutMs: resolved.evaluateTimeoutMs },
       );
-    } catch {
+    } catch (error) {
+      if (retryableCdpCode(error?.code)) {
+        throw new FullHomeTransportError(error.code);
+      }
       throw new FullHomeTransportError('HOME_EVALUATE_FAILED');
     }
     if (result?.sameOrigin !== true) {
@@ -139,6 +148,12 @@ export function createFullHomePageTransport({
       throw new FullHomeTransportError('HOME_AUTH_EXPIRED');
     }
     if (!businessSuccess(parsed)) {
+      if (
+        endpointCode === 'ANALYSE_MODEL'
+        && businessCode(parsed) === 'SSO100010'
+      ) {
+        throw new FullHomeTransportError('HOME_ANALYSE_PERMISSION_DENIED');
+      }
       throw new FullHomeTransportError('HOME_BUSINESS_STATUS_FAILED');
     }
     return Object.freeze({
