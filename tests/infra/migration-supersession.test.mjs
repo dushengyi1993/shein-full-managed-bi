@@ -17,9 +17,11 @@ test('migration runner skips only proven superseded constraint transitions', asy
   assert.match(runner, /0020_full_home_webapi_audit_contract\.sql\)/);
   assert.match(runner, /pg_get_constraintdef\(oid\) LIKE '\\''%UPDATE_TIME%/);
   assert.match(runner, /pg_get_constraintdef\(oid\) LIKE '\\''%PRODUCT_DIAGNOSE_LIST%/);
+  assert.match(runner, /0021_full_home_current_webapi_contract\.sql\)/);
+  assert.match(runner, /pg_get_constraintdef\(oid\) LIKE '\\''%STORE_REALTIME_SUMMARY%/);
   assert.match(runner, /skipped superseded/);
   assert.doesNotMatch(
     runner,
-    /0018_full_home_25_store_scope\.sql\)|0019_full_home_ledger_and_bill\.sql\)|0021_full_home_current_webapi_contract\.sql\)/,
+    /0018_full_home_25_store_scope\.sql\)|0019_full_home_ledger_and_bill\.sql\)|0024_full_home_realtime_summary_contract\.sql\)/,
   );
 });

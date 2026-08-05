@@ -89,6 +89,22 @@ migration_is_superseded() {
         "
       ' | grep -qx 1
       ;;
+    0021_full_home_current_webapi_contract.sql)
+      # 0024 widens the same constraint again with STORE_REALTIME_SUMMARY.
+      # Replaying 0021 against live summary audit rows would temporarily remove
+      # that endpoint and fail before 0024 can restore it.
+      docker exec "$container_name" sh -ceu '
+        exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "
+          SELECT CASE WHEN EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = '\''raw.webapi_home_fetch_audit'\''::regclass
+              AND conname = '\''ck_raw_webapi_home_fetch_endpoint'\''
+              AND pg_get_constraintdef(oid) LIKE '\''%STORE_REALTIME_SUMMARY%'\''
+          ) THEN 1 ELSE 0 END
+        "
+      ' | grep -qx 1
+      ;;
     *)
       return 1
       ;;
