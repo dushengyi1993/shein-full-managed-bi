@@ -24,6 +24,10 @@
   `75` 时才在近端重试。
 - 所有定时全托批任务使用 `Persistent=false`，重启不形成补跑风暴。
 - 成功的数据任务仍以 `OnSuccess` 触发一次物化；共享锁确保它不会和下一项重叠。
+- `/run/shein-fm-webapi`、`/run/shein-fm-sales` 与
+  `/run/shein-fm-supply` 由 tmpfiles 按最小权限在开机时创建；复用这些目录的
+  oneshot 必须设置 `RuntimeDirectoryPreserve=yes`，避免前一任务收口后让下一任务
+  在 namespace 阶段以 `226` 失败。
 
 ### 2. 启动前系统压力门禁
 
@@ -164,6 +168,8 @@ node /opt/shein-fm/current/scripts/check_full_managed_resource_pressure.mjs \
 6. 半托 unit 文件、timer 状态和仓库工作区没有被修改。
 7. 物化因锁或压力返回 `75` 时保留 `.materialize-pending`；下一个3分钟检查成功
    后必须删除标记并原子更新正式 Dashboard 文件。
+8. 三个 `/run/shein-fm-*` 业务运行目录始终存在、所有者分别与 WebAPI、销量和
+   供应链服务身份一致；任一 oneshot 结束后再次回读仍不能消失。
 
 ## 回滚
 

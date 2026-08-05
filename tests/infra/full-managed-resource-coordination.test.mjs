@@ -165,6 +165,58 @@ test('boot-sensitive timers never replay missed high-frequency work', async () =
   assert.doesNotMatch(timers[3], /OnBootSec=/);
 });
 
+test('shared runtime directories survive sequential oneshot jobs', async () => {
+  const tmpfiles = await readFile(
+    new URL('infra/tmpfiles.d/shein-fm-scheduler.conf', root),
+    'utf8',
+  );
+  const groups = [
+    {
+      directory: 'shein-fm-webapi',
+      owner: 'sheinfm',
+      units: [
+        'shein-fm-home-realtime.service',
+        'shein-fm-home-daily.service',
+        'shein-fm-home-daily-retry.service',
+        'shein-fm-home-webapi-backfill.service',
+        'shein-fm-session-renewal.service',
+      ],
+    },
+    {
+      directory: 'shein-fm-sales',
+      owner: 'sheinfm-sales',
+      units: [
+        'shein-fm-sales-sync.service',
+        'shein-fm-home-finance-daily.service',
+        'shein-fm-home-finance-backfill.service',
+      ],
+    },
+    {
+      directory: 'shein-fm-supply',
+      owner: 'sheinfm-supply',
+      units: [
+        'shein-fm-supply-sync.service',
+        'shein-fm-purchase-order-history-backfill.service',
+      ],
+    },
+  ];
+  for (const group of groups) {
+    assert.match(
+      tmpfiles,
+      new RegExp(`d /run/${group.directory} 0700 ${group.owner} ${group.owner} -`),
+    );
+    for (const name of group.units) {
+      const unit = await readFile(
+        new URL(`infra/systemd/${name}`, root),
+        'utf8',
+      );
+      assert.match(unit, new RegExp(`^RuntimeDirectory=${group.directory}$`, 'm'), name);
+      assert.match(unit, /^RuntimeDirectoryPreserve=yes$/m, name);
+      assert.match(unit, new RegExp(`^ReadWritePaths=.*?/run/${group.directory}`, 'm'), name);
+    }
+  }
+});
+
 test('materializer lock deferral cannot publish nonexistent staging files', async () => {
   const unit = await readFile(
     new URL('infra/systemd/shein-fm-dashboard-materialize.service', root),

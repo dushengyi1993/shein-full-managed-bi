@@ -19,6 +19,7 @@ Environment=NODE_ENV=production
 EnvironmentFile=/srv/shein-fm/secrets/webapi-experiment/database.env
 RuntimeDirectory=shein-fm-webapi
 RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
 ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-host-heavy.lock /usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/flock -n -E 75 /run/shein-fm-webapi/home-history.lock /usr/bin/bash scripts/run_full_managed_resource_guarded.sh browser /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=home-daily-retry --execute
 SuccessExitStatus=75
 TimeoutStartSec=25min

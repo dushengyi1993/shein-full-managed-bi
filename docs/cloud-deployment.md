@@ -325,9 +325,10 @@ Webhook receiver/worker 常运行在较旧的发布上，仅按“最新 5 个�
 部署任何定时批任务前，必须先安装主机级 `shein-host-heavy.slice`、全托子级
 `shein-host-heavy-fm.slice`、轻量全托 `shein-fm-heavy.slice` 和
 `infra/tmpfiles.d/shein-fm-scheduler.conf`，创建 `/run/lock/shein-fm-heavy.lock`，
-`/run/lock/shein-host-heavy.lock`，再安装 service/timer。锁顺序必须是主机锁在外、
-项目锁在内，压力检查在持锁后执行。高频 timer 禁止 `Persistent=true`；Dashboard
-物化禁止设置开机触发。完整阈值、验收和回滚见
+`/run/lock/shein-host-heavy.lock` 以及 WebAPI、销量、供应链三个共享运行目录，再
+安装 service/timer。复用共享运行目录的 oneshot 必须保留该目录，不能在结束时删除。
+锁顺序必须是主机锁在外、项目锁在内，压力检查在持锁后执行。高频 timer 禁止
+`Persistent=true`；Dashboard 物化禁止设置开机触发。完整阈值、验收和回滚见
 [全托共享服务器资源协调](runbooks/resource-coordination.md)。
 
 部署时只停止全托 timer，不中断正在运行的任务，不改动半托 unit 或仓库。切换 release

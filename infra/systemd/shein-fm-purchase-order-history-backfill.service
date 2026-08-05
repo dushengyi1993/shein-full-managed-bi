@@ -20,6 +20,7 @@ Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/supply/openapi.jso
 EnvironmentFile=/srv/shein-fm/secrets/supply/database.env
 RuntimeDirectory=shein-fm-supply
 RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
 # Reuse the normal supply lock. A history run waits for the current incremental
 # sync to finish, then future timer runs fail their own non-blocking lock instead
 # of overlapping the same OpenAPI and warehouse writers.

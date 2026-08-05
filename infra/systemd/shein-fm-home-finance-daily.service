@@ -20,6 +20,7 @@ Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/sales/openapi.json
 EnvironmentFile=/srv/shein-fm/secrets/sales/database.env
 RuntimeDirectory=shein-fm-sales
 RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
 ExecStart=/usr/bin/flock -n -E 75 /run/lock/shein-host-heavy.lock /usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/flock -n -E 75 /run/shein-fm-sales/home-finance-daily.lock /usr/bin/bash scripts/run_full_managed_resource_guarded.sh openapi /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=finance-daily --execute
 SuccessExitStatus=75
 TimeoutStartSec=15min
