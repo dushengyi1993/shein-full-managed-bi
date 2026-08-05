@@ -5,7 +5,10 @@ import { Pool } from 'pg';
 import { createLinuxExperimentRuntime } from '../src/webapi-experiment/linux-runtime.mjs';
 import { createFullHomePageTransport } from '../src/webapi-history/page-transport.mjs';
 import { createFullHomeHistoryRepository } from '../src/webapi-history/repository.mjs';
-import { runFullHomeHistorySync } from '../src/webapi-history/sync.mjs';
+import {
+  fullHomeHistoryRequiresRetry,
+  runFullHomeHistorySync,
+} from '../src/webapi-history/sync.mjs';
 import { normalizeFullManagedStoreCode } from '../src/config/full-managed-stores.mjs';
 
 export const HOME_HISTORY_GATE_PATH = '/srv/shein-fm/runtime/webapi-history.enabled';
@@ -20,6 +23,7 @@ function parseArgs(argv) {
     refreshRecentSettledDays: 0,
     requireSettledThrough: null,
     retryCdpCount: 0,
+    allowPartial: false,
   };
   for (const token of argv) {
     const match = /^--([a-z-]+)(?:=(.*))?$/.exec(token);
@@ -27,6 +31,7 @@ function parseArgs(argv) {
     const [, name, value] = match;
     if (name === 'execute' && value === undefined) result.execute = true;
     else if (name === 'no-products' && value === undefined) result.includeProducts = false;
+    else if (name === 'allow-partial' && value === undefined) result.allowPartial = true;
     else if (name === 'stores' && value) {
       result.stores = [...new Set(value.split(',').map((item) => item.trim().toUpperCase()))];
     } else if (name === 'from' && value) result.from = value;
@@ -65,6 +70,7 @@ function dryRunReport(args) {
     refreshRecentSettledDays: args.refreshRecentSettledDays,
     requireSettledThrough: args.requireSettledThrough,
     retryCdpCount: args.retryCdpCount,
+    allowPartial: args.allowPartial,
     includeTradeOverview: true,
     includeRegionRank: true,
     dailyDimensionResume: true,
@@ -106,7 +112,11 @@ async function main() {
       repository,
     });
     console.log(JSON.stringify(result, null, 2));
-    if (result.requiresRetry) process.exitCode = 2;
+    if (fullHomeHistoryRequiresRetry(result, {
+      allowPartial: args.allowPartial,
+    })) {
+      process.exitCode = 2;
+    }
   } finally {
     await runtime.close().catch(() => {});
     await pool.end().catch(() => {});

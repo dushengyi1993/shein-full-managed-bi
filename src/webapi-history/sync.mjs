@@ -1110,3 +1110,15 @@ export async function runFullHomeHistorySync({
     results: Object.freeze(results),
   });
 }
+
+export function fullHomeHistoryRequiresRetry(
+  result,
+  { allowPartial = false } = {},
+) {
+  if (result?.requiresRetry !== true) return false;
+  if (allowPartial !== true) return true;
+  return !(
+    Array.isArray(result?.results)
+    && result.results.some((row) => row?.realtime?.ok === true)
+  );
+}

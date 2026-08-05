@@ -166,6 +166,7 @@ export function buildScheduledPlan({ task, batch = null, now = new Date() } = {}
         `--to=${dates.today}`,
         '--no-products',
         '--retry-cdp=1',
+        '--allow-partial',
         '--execute',
       ])]),
     });

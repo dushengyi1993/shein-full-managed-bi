@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  fullHomeHistoryRequiresRetry,
   mergeRealtimeStoreRows,
   runFullHomeHistorySync,
 } from '../../src/webapi-history/sync.mjs';
@@ -9,6 +10,25 @@ import {
 function response(body) {
   return { httpStatus: 200, byteLength: JSON.stringify(body).length, body };
 }
+
+test('hourly partial batches succeed only after at least one realtime store write', () => {
+  assert.equal(fullHomeHistoryRequiresRetry({
+    requiresRetry: false,
+    results: [],
+  }, { allowPartial: true }), false);
+  assert.equal(fullHomeHistoryRequiresRetry({
+    requiresRetry: true,
+    results: [{ realtime: { ok: true } }, { sessionErrorCode: 'CDP_COMMAND_TIMEOUT' }],
+  }), true);
+  assert.equal(fullHomeHistoryRequiresRetry({
+    requiresRetry: true,
+    results: [{ realtime: { ok: true } }, { sessionErrorCode: 'CDP_COMMAND_TIMEOUT' }],
+  }, { allowPartial: true }), false);
+  assert.equal(fullHomeHistoryRequiresRetry({
+    requiresRetry: true,
+    results: [{ sessionErrorCode: 'CDP_COMMAND_TIMEOUT' }],
+  }, { allowPartial: true }), true);
+});
 
 test('homepage history sync uses the current paginated product contract and preserves partial failure', async () => {
   const events = [];
