@@ -36,6 +36,7 @@ test('hourly homepage plan fetches only the current realtime contract', () => {
     '--from=2026-08-03',
     '--to=2026-08-03',
     '--no-products',
+    '--retry-cdp=1',
     '--execute',
   ]);
 });
