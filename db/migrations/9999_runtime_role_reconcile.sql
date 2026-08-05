@@ -454,6 +454,15 @@ GRANT SELECT (
     observed_at
 ) ON fact.full_home_finance_report_observation
 TO sheinfm_materializer_ro;
+GRANT SELECT (
+    webapi_home_fetch_audit_id,
+    store_code,
+    endpoint_code,
+    result_status,
+    sanitized_error_code,
+    observed_at
+) ON raw.webapi_home_fetch_audit
+TO sheinfm_materializer_ro;
 
 -- The former monolithic runtime login remains available only for read-only
 -- compatibility. It can inspect every current warehouse relation except the

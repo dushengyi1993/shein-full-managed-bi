@@ -528,6 +528,52 @@ BEGIN
         RAISE EXCEPTION
             'materializer must not read pending-settlement report identity';
     END IF;
+    FOREACH required_name IN ARRAY ARRAY[
+        'webapi_home_fetch_audit_id',
+        'store_code',
+        'endpoint_code',
+        'result_status',
+        'sanitized_error_code',
+        'observed_at'
+    ]
+    LOOP
+        IF NOT has_column_privilege(
+            'sheinfm_materializer_login',
+            'raw.webapi_home_fetch_audit',
+            required_name,
+            'SELECT'
+        ) THEN
+            RAISE EXCEPTION
+                'materializer lacks analysis-capability column %',
+                required_name;
+        END IF;
+    END LOOP;
+    FOREACH required_name IN ARRAY ARRAY[
+        'fetch_key',
+        'request_sha256',
+        'response_schema_sha256',
+        'response_body_sha256'
+    ]
+    LOOP
+        IF has_column_privilege(
+            'sheinfm_materializer_login',
+            'raw.webapi_home_fetch_audit',
+            required_name,
+            'SELECT'
+        ) THEN
+            RAISE EXCEPTION
+                'materializer can read private analysis-audit column %',
+                required_name;
+        END IF;
+    END LOOP;
+    IF has_table_privilege(
+        'sheinfm_materializer_login',
+        'raw.webapi_home_fetch_audit',
+        'SELECT'
+    ) THEN
+        RAISE EXCEPTION
+            'materializer analysis-audit privilege is too broad';
+    END IF;
 
     -- Sales loader writes only sales/catalog membership and its own trust
     -- ledgers. Permission-probe readback is required for idempotency.
