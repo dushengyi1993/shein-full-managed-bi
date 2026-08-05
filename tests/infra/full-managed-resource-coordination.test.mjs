@@ -153,6 +153,7 @@ test('host lanes allow two read browsers while writes and heavy IO stay exclusiv
   assert.match(tmpfiles, /f \/run\/lock\/shein-fm-heavy\.lock 0666 root root/);
   assert.match(tmpfiles, /f \/run\/lock\/shein-browser-read-0\.lock 0666 root root/);
   assert.match(tmpfiles, /f \/run\/lock\/shein-browser-read-1\.lock 0666 root root/);
+  assert.match(tmpfiles, /d \/srv\/shein-fm\/runtime\/scheduler 0755 root root/);
   assert.match(laneWrapper, /flock -s -n 9/);
   assert.match(laneWrapper, /browser-secondary/);
   assert.match(laneWrapper, /browser-write\|db-heavy\|io-heavy/);
