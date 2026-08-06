@@ -80,8 +80,8 @@ test('home shell keeps the historical filter, KPI tables, vertical trends and fo
   assert.match(app, /月趋势/);
   assert.match(app, /店铺净成交金额排行/);
   assert.match(app, /店铺销量排行/);
-  assert.match(app, /货号销售金额 Top 20（估算）/);
-  assert.match(app, /货号销量 Top 20（待归并）/);
+  assert.match(app, /标准货号销售金额 Top 20（估算）/);
+  assert.match(app, /标准货号销量 Top 20/);
   assert.doesNotMatch(app, /function renderHistoryHomeHeader\(\)/);
   assert.match(app, /function renderHistoryKpis\(\)/);
   assert.match(app, /function renderHistoryTrends\(\)/);

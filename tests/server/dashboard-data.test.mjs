@@ -125,6 +125,9 @@ test('whitelists full-managed homepage history while preserving unavailable metr
         earliestDate: '2026-07-01',
         latestDate: '2026-07-29',
         latestObservedAt: '2026-07-29T08:29:00.000Z',
+        reportingGoodsCount: 1330,
+        reportingGoodsAssignedSkuCount: 10316,
+        reportingGoodsPlanCount: 1,
       },
       storeDaily: [{
         storeCode: 'dl5477',
@@ -144,6 +147,11 @@ test('whitelists full-managed homepage history while preserving unavailable metr
         date: '2026-07-29',
         productGrain: 'SPU',
         productKey: 'SPU-1',
+        standardGoodsCode: 'SK-270空气炸锅',
+        standardGoodsName: 'SK-270空气炸锅',
+        reportingGoodsConfidence: 'HIGH',
+        reportingGoodsPlanHash: 'a'.repeat(64),
+        reportingMappingStatus: 'OWNER_CONFIRMED',
         salesQuantity: 3,
         estimatedDealAmount: null,
         estimationBasis: 'UNAVAILABLE',
@@ -159,6 +167,21 @@ test('whitelists full-managed homepage history while preserving unavailable metr
         reportCount: 1,
         basis: 'FINANCE_DETAIL_BUSINESS_DATE',
         reportOrderNo: 'must-not-leak',
+      }],
+      productFinanceDaily: [{
+        storeCode: 'DL5477',
+        date: '2026-07-29',
+        currency: 'SAR',
+        productKey: 'SKU-1',
+        platformSkuId: 'SKU-1',
+        standardGoodsCode: '保温杯',
+        standardGoodsName: '保温杯',
+        reportingGoodsConfidence: 'LOW',
+        reportingGoodsPlanHash: 'a'.repeat(64),
+        reportingMappingStatus: 'OWNER_CONFIRMED',
+        netAmount: '9.50',
+        goodsCount: 2,
+        basis: 'FINANCE_DETAIL_BUSINESS_DATE',
       }],
       ledgerDaily: [{
         storeCode: 'dl5477',
@@ -219,6 +242,9 @@ test('whitelists full-managed homepage history while preserving unavailable metr
   assert.equal(dashboard.home.storeDaily[0].netDealAmount, null);
   assert.equal(dashboard.home.storeDaily[0].exposureBasis, 'BRAND_SUMMED');
   assert.equal(dashboard.home.productDaily[0].estimatedDealAmount, null);
+  assert.equal(dashboard.home.productDaily[0].standardGoodsCode, 'SK-270空气炸锅');
+  assert.equal(dashboard.home.productDaily[0].reportingMappingStatus, 'OWNER_CONFIRMED');
+  assert.equal(dashboard.home.productFinanceDaily[0].standardGoodsCode, '保温杯');
   assert.equal(dashboard.home.financeDaily[0].currency, 'SAR');
   assert.equal(dashboard.home.financeDaily[0].netAmount, -11.75);
   assert.equal(dashboard.home.financeDaily[0].basis, 'FINANCE_DETAIL_BUSINESS_DATE');
@@ -249,6 +275,9 @@ test('whitelists full-managed homepage history while preserving unavailable metr
   assert.equal(dashboard.home.coverage.ledgerDailyRows, 1);
   assert.equal(dashboard.home.coverage.billDailyRows, 1);
   assert.equal(dashboard.home.coverage.settlementPositionDailyRows, 1);
+  assert.equal(dashboard.home.coverage.reportingGoodsCount, 1330);
+  assert.equal(dashboard.home.coverage.reportingGoodsAssignedSkuCount, 10316);
+  assert.equal(dashboard.home.coverage.reportingGoodsPlanCount, 1);
   assert.doesNotMatch(
     JSON.stringify(dashboard.home),
     /secret|drop-me|reportOrderNo|rawResponse/,

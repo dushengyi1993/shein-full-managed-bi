@@ -6,8 +6,10 @@ import test from 'node:test';
 
 import {
   atomicWriteJson,
+  buildReportingGoodsLookup,
   buildDashboardFromProjectionInput,
   readDashboardProjectionInput,
+  resolveReportingGoodsAssignment,
   splitDashboardArtifacts,
 } from '../../src/warehouse/dashboard-materializer.mjs';
 import {
@@ -41,6 +43,55 @@ function projectionInput() {
     owners: [{ key: 'owner-dl', name: '负责人A', storeCodes: ['DL'] }],
   };
 }
+
+test('reporting-goods lookup resolves stable store-scoped identifiers and rejects ambiguity', () => {
+  const lookup = buildReportingGoodsLookup([
+    {
+      store_code: 'DL5477',
+      platform_sku_id: 'SKU-1',
+      platform_skc_id: 'SKC-SHARED',
+      platform_spu_id: 'SPU-1',
+      supplier_code: 'SK-270',
+      supplier_sku: 'DL-RAW',
+      standard_goods_code: 'SK-270空气炸锅',
+      display_name: 'SK-270空气炸锅',
+      model_normalized: 'SK-270',
+      naming_rule: 'MODEL_PLUS_SHEIN_LEAF',
+      confidence_band: 'HIGH',
+      source_plan_hash: 'a'.repeat(64),
+    },
+    {
+      store_code: 'DL5477',
+      platform_sku_id: 'SKU-2',
+      platform_skc_id: 'SKC-SHARED',
+      platform_spu_id: 'SPU-2',
+      supplier_code: 'OTHER',
+      supplier_sku: 'DL-OTHER',
+      standard_goods_code: '保温杯',
+      display_name: '保温杯',
+      model_normalized: null,
+      naming_rule: 'PURE_CHINESE',
+      confidence_band: 'LOW',
+      source_plan_hash: 'a'.repeat(64),
+    },
+  ]);
+
+  assert.equal(
+    resolveReportingGoodsAssignment(lookup, {
+      storeCode: 'DL5477',
+      platformSkuId: 'SKU-1',
+    }).standardGoodsCode,
+    'SK-270空气炸锅',
+  );
+  assert.equal(resolveReportingGoodsAssignment(lookup, {
+    storeCode: 'DL5477',
+    platformSkcId: 'SKC-SHARED',
+  }), null);
+  assert.equal(resolveReportingGoodsAssignment(lookup, {
+    storeCode: 'MZ2406',
+    platformSkuId: 'SKU-1',
+  }), null);
+});
 
 test('builds a live dashboard with real readiness and preserves pending stores as null', () => {
   const dashboard = buildDashboardFromProjectionInput(projectionInput(), {

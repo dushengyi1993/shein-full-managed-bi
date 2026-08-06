@@ -1208,6 +1208,17 @@ function normalizeHomeProductDaily(item) {
     supplierCode: text(source.supplierCode, '', 160) || null,
     supplierSku: text(source.supplierSku, '', 160) || null,
     displayName: text(source.displayName, '', 240) || null,
+    standardGoodsCode: text(source.standardGoodsCode, '', 160) || null,
+    standardGoodsName: text(source.standardGoodsName, '', 200) || null,
+    reportingGoodsConfidence: ['HIGH', 'MEDIUM', 'LOW'].includes(
+      source.reportingGoodsConfidence,
+    ) ? source.reportingGoodsConfidence : null,
+    reportingGoodsPlanHash: /^[0-9a-f]{64}$/.test(text(source.reportingGoodsPlanHash, '', 64))
+      ? text(source.reportingGoodsPlanHash, '', 64)
+      : null,
+    reportingMappingStatus: source.reportingMappingStatus === 'OWNER_CONFIRMED'
+      ? 'OWNER_CONFIRMED'
+      : 'UNMAPPED',
     salesQuantity: optionalNonNegativeInteger(source.salesQuantity),
     estimatedDealAmount: optionalNonNegativeDecimal(source.estimatedDealAmount),
     estimationCurrency: /^[A-Z]{3}$/.test(text(source.estimationCurrency, '', 3))
@@ -1391,6 +1402,17 @@ function normalizeHomeProductFinanceDaily(item) {
     platformSkuId: text(source.platformSkuId, '', 160) || null,
     platformSkcId: text(source.platformSkcId, '', 160) || null,
     supplierSku: text(source.supplierSku, '', 160) || null,
+    standardGoodsCode: text(source.standardGoodsCode, '', 160) || null,
+    standardGoodsName: text(source.standardGoodsName, '', 200) || null,
+    reportingGoodsConfidence: ['HIGH', 'MEDIUM', 'LOW'].includes(
+      source.reportingGoodsConfidence,
+    ) ? source.reportingGoodsConfidence : null,
+    reportingGoodsPlanHash: /^[0-9a-f]{64}$/.test(text(source.reportingGoodsPlanHash, '', 64))
+      ? text(source.reportingGoodsPlanHash, '', 64)
+      : null,
+    reportingMappingStatus: source.reportingMappingStatus === 'OWNER_CONFIRMED'
+      ? 'OWNER_CONFIRMED'
+      : 'UNMAPPED',
     incomeAmount: optionalNonNegativeDecimal(source.incomeAmount),
     expenseAmount: optionalNonNegativeDecimal(source.expenseAmount),
     netAmount: optionalDecimal(source.netAmount),
@@ -1477,6 +1499,11 @@ export function normalizeHome(value) {
       billDailyRows: billDaily.length,
       settlementPositionDailyRows: settlementPositionDaily.length,
       productFinanceDailyRows: productFinanceDaily.length,
+      reportingGoodsCount: optionalNonNegativeInteger(coverage.reportingGoodsCount),
+      reportingGoodsAssignedSkuCount: optionalNonNegativeInteger(
+        coverage.reportingGoodsAssignedSkuCount,
+      ),
+      reportingGoodsPlanCount: optionalNonNegativeInteger(coverage.reportingGoodsPlanCount),
       latestObservedAt: isoInstant(coverage.latestObservedAt),
     },
   };

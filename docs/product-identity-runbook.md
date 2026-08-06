@@ -12,6 +12,48 @@
 - 电压、插头、容量、末级分类和关键尺寸冲突时禁止自动合并。
 - 所有员工可查看全部店铺；将来的人工作业只允许写本人 `PRIMARY / SUPPORT` 店铺。当前 SHEIN 写操作全局关闭。
 
+## 首页经营报表货号层
+
+首页“标准货号排行”使用一层独立、可人工修订的经营报表映射，不等同于本手册后文的
+严格跨店商品身份。它只解决日常经营中同一个货号被不同店铺、不同历史写法拆散的问题：
+
+- 有可靠型号时，标准货号为“规范型号 + SHEIN 商品发布页末级中文名”；
+- 商品本来没有型号时，使用纯中文品名；
+- 连中文品名都无法可靠识别时保持未归并，继续按店内身份统计；
+- 映射只进入 `dim.reporting_goods` 与
+  `dim.full_sku_reporting_goods_assignment`，不改 SHEIN 商品、不改
+  `dim.canonical_product`，也不会升级为严格 `GLOBAL` 商品身份；
+- 每次人工确认生成不可变 manifest、内容 hash 和逐 SKU assignment key。执行前必须
+  dry-run，apply 时复用同一 execution hash；修订以新 manifest 覆盖，旧 assignment
+  留作时间历史，回滚可恢复被该版本替换的上一版映射。
+
+首个 owner-confirmed manifest 位于
+`config/full_managed_reporting_goods_owner_confirmed_v1.json`，批准口径为“先按建议归并；
+无型号商品使用纯汉字标准货号，后续发现问题再改”。其范围为 1,330 个标准货号、
+10,316 个活跃 SKU；另有 60 个身份不足的 SKU 暂不归并。
+
+执行流程：
+
+```bash
+# 默认只读预演，输出 execution planHash
+node scripts/import_full_managed_reporting_goods.mjs \
+  --manifest config/full_managed_reporting_goods_owner_confirmed_v1.json
+
+# 仅在人工核对预演数量后执行
+node scripts/import_full_managed_reporting_goods.mjs \
+  --manifest config/full_managed_reporting_goods_owner_confirmed_v1.json \
+  --apply --approved-hash <dry-run execution planHash>
+
+# 仅用于受控回滚该版本；使用 manifest 自身 planHash
+node scripts/import_full_managed_reporting_goods.mjs \
+  --manifest config/full_managed_reporting_goods_owner_confirmed_v1.json \
+  --rollback --approved-hash <manifest planHash>
+```
+
+数据库连接只能从 `FULL_BI_DATABASE_URL` 注入。导入后需重跑 Dashboard 物化；首页服务端
+会先按标准货号求金额/销量 Top 集合，再返回该集合的全部跨店成员行，前端再次按标准货号
+汇总。这样既不会因分页只返回一部分成员，也不会把未归并的裸货号跨店误加。
+
 ## 2026-07-26 生产只读探针
 
 探针在云端以现有 24 店授权执行，没有写入 SHEIN 或商品映射：
@@ -91,7 +133,10 @@ node scripts/sync_full_managed_product_identity_evidence.mjs \
 
 ## 门户口径
 
-- 首页“标准商品排行”只汇总 `GLOBAL + CONFIRMED` 映射，并同时显示覆盖 SKU、待归并 SKU 和数据质量。
+- 首页“标准货号排行”使用上面的 owner-confirmed 经营报表映射；它明确是货号经营口径，
+  不冒充严格跨店商品身份。
+- 商品中心“标准商品排行”仍只汇总 `GLOBAL + CONFIRMED` 严格映射，并同时显示覆盖 SKU、
+  待归并 SKU 和数据质量。
 - `LOCAL_SINGLETON` 可以形成安全的店内商品主档，但只进入“店内标准商品（待跨店归并）”排行。
 - 未映射 SKU 始终保留店铺、平台 SKU/SKC/SPU 和原始货号，不能跨店按裸值求和。
 - 标准商品映射不足时，应显示原因和下一步，不能用空排行冒充零销量。

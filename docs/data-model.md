@@ -119,6 +119,8 @@
 - `dim.full_warehouse`：全托仓库身份；
 - `fact.inventory_snapshot / fact.warehouse_inventory_snapshot`：PI / JI 全托生产库存总量与仓库明细；模型兼容保留 VI，但不把无商家虚拟库存的全托店判为缺数；
 - `fact.stock_advice_snapshot / fact.shortage_event`：缺货建议与缺货观察；
+- `dim.reporting_goods / dim.full_sku_reporting_goods_assignment`：人工确认的首页经营报表货号与逐 SKU 时间映射；独立于严格 canonical identity，不写回 SHEIN；
+- `ops.reporting_goods_import_run`：报表货号 manifest、批准口径、数量和应用/回滚状态审计；
 - `fact.purchase_order / fact.purchase_order_line / fact.purchase_order_jit_relation`：采购单、行和 JIT 关系；
 - `fact.delivery / fact.delivery_line`：交付单、行和里程碑；
 - `ops.reconciliation_result`：数量与关系对账。

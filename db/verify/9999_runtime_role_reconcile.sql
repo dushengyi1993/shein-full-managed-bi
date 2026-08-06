@@ -33,6 +33,9 @@ BEGIN
         'ops.product_match_candidate_evidence',
         'ops.product_identity_decision',
         'dim.full_sku_canonical_assignment',
+        'dim.reporting_goods',
+        'dim.full_sku_reporting_goods_assignment',
+        'ops.reporting_goods_import_run',
         'ops.employee_principal',
         'ops.employee_store_assignment',
         'raw.webhook_receipt',
@@ -425,6 +428,8 @@ BEGIN
         'dim.canonical_product',
         'dim.canonical_variant',
         'dim.full_sku_canonical_assignment',
+        'dim.reporting_goods',
+        'dim.full_sku_reporting_goods_assignment',
         'fact.full_sku_sales_snapshot',
         'fact.full_home_finance_daily',
         'fact.full_home_product_finance_daily',
@@ -468,6 +473,82 @@ BEGIN
             RAISE EXCEPTION 'materializer lacks SELECT on %', required_name;
         END IF;
     END LOOP;
+
+    -- Owner-confirmed BI labels are writable only by the supply loader. They
+    -- remain separate from strict canonical identity, and only temporal state
+    -- columns may be closed or rolled back.
+    FOREACH required_name IN ARRAY ARRAY[
+        'dim.reporting_goods',
+        'dim.full_sku_reporting_goods_assignment',
+        'ops.reporting_goods_import_run'
+    ]
+    LOOP
+        IF NOT has_table_privilege(
+            'sheinfm_supply_login', required_name, 'SELECT'
+        ) OR NOT has_table_privilege(
+            'sheinfm_supply_login', required_name, 'INSERT'
+        ) OR has_table_privilege(
+            'sheinfm_supply_login', required_name, 'DELETE'
+        ) OR has_table_privilege(
+            'sheinfm_supply_login', required_name, 'TRUNCATE'
+        ) THEN
+            RAISE EXCEPTION
+                'supply reporting-goods boundary is invalid for %',
+                required_name;
+        END IF;
+    END LOOP;
+    FOREACH required_name IN ARRAY ARRAY[
+        'assignment_status', 'superseded_by_plan_hash', 'valid_to', 'updated_at'
+    ]
+    LOOP
+        IF NOT has_column_privilege(
+            'sheinfm_supply_login',
+            'dim.full_sku_reporting_goods_assignment',
+            required_name,
+            'UPDATE'
+        ) THEN
+            RAISE EXCEPTION
+                'supply reporting assignment lacks bounded UPDATE on %',
+                required_name;
+        END IF;
+    END LOOP;
+    FOREACH required_name IN ARRAY ARRAY[
+        'store_id', 'full_sku_id', 'reporting_goods_id', 'assignment_key',
+        'source_plan_hash', 'source_group_fingerprint'
+    ]
+    LOOP
+        IF has_column_privilege(
+            'sheinfm_supply_login',
+            'dim.full_sku_reporting_goods_assignment',
+            required_name,
+            'UPDATE'
+        ) THEN
+            RAISE EXCEPTION
+                'supply reporting assignment identity is mutable at %',
+                required_name;
+        END IF;
+    END LOOP;
+    FOREACH required_name IN ARRAY ARRAY['result_status', 'rolled_back_at']
+    LOOP
+        IF NOT has_column_privilege(
+            'sheinfm_supply_login',
+            'ops.reporting_goods_import_run',
+            required_name,
+            'UPDATE'
+        ) THEN
+            RAISE EXCEPTION
+                'supply reporting import lacks bounded UPDATE on %',
+                required_name;
+        END IF;
+    END LOOP;
+    IF has_column_privilege(
+        'sheinfm_supply_login',
+        'ops.reporting_goods_import_run',
+        'plan_hash',
+        'UPDATE'
+    ) THEN
+        RAISE EXCEPTION 'supply reporting import plan hash is mutable';
+    END IF;
     -- The dashboard aggregates counts only. Raw identifier values and per
     -- relation candidate evidence are never projected, so the materializer must
     -- not be able to read those rows at all.
@@ -1034,6 +1115,8 @@ BEGIN
             ('sheinfm_supply_login', 'ops.product_match_candidate_evidence', 'product_match_candidate_evidence_id'),
             ('sheinfm_supply_login', 'ops.product_identity_decision', 'product_identity_decision_id'),
             ('sheinfm_supply_login', 'dim.full_sku_canonical_assignment', 'full_sku_canonical_assignment_id'),
+            ('sheinfm_supply_login', 'dim.reporting_goods', 'reporting_goods_id'),
+            ('sheinfm_supply_login', 'dim.full_sku_reporting_goods_assignment', 'full_sku_reporting_goods_assignment_id'),
             ('sheinfm_supply_login', 'ops.supply_sync_attempt', 'supply_sync_attempt_event_id'),
             ('sheinfm_supply_login', 'fact.supply_projection_batch', 'supply_projection_batch_id'),
             ('sheinfm_supply_login', 'fact.supply_projection_member', 'supply_projection_member_id'),

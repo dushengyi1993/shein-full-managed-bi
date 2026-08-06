@@ -190,6 +190,73 @@ test('home query bounds ranking candidates and projects only homepage ledger fie
   assert.ok(!('supplierOutboundCount' in result.home.ledgerDaily[0]));
 });
 
+test('home query ranks an owner-confirmed standard goods group across stores and keeps every member row', () => {
+  const groupedHistory = structuredClone(history);
+  groupedHistory.home.productDaily = [
+    ...Array.from({ length: 25 }, (_, index) => ({
+      storeCode: 'DL5477',
+      date: '2026-07-31',
+      productGrain: 'SKC',
+      productKey: `LOCAL-${index + 1}`,
+      standardGoodsCode: `标准货号${index + 1}`,
+      standardGoodsName: `标准货号${index + 1}`,
+      reportingMappingStatus: 'OWNER_CONFIRMED',
+      salesQuantity: index + 1,
+    })),
+    {
+      storeCode: 'DL5477',
+      date: '2026-07-31',
+      productGrain: 'SKC',
+      productKey: 'DL-RAW',
+      standardGoodsCode: 'SK-270空气炸锅',
+      standardGoodsName: 'SK-270空气炸锅',
+      reportingMappingStatus: 'OWNER_CONFIRMED',
+      salesQuantity: 20,
+    },
+    {
+      storeCode: 'MZ2406',
+      date: '2026-07-31',
+      productGrain: 'SKC',
+      productKey: 'MZ-RAW',
+      standardGoodsCode: 'SK-270空气炸锅',
+      standardGoodsName: 'SK-270空气炸锅',
+      reportingMappingStatus: 'OWNER_CONFIRMED',
+      salesQuantity: 20,
+    },
+  ];
+
+  const result = queryHomeDashboard(
+    dashboard,
+    groupedHistory,
+    new URLSearchParams({
+      start: '2026-07-31',
+      end: '2026-07-31',
+      owner: 'ALL',
+      store: 'ALL',
+    }),
+  );
+
+  const sharedRows = result.home.productDaily.filter(
+    ({ standardGoodsCode }) => standardGoodsCode === 'SK-270空气炸锅',
+  );
+  assert.equal(sharedRows.length, 2);
+  assert.deepEqual(sharedRows.map(({ storeCode }) => storeCode).sort(), ['DL5477', 'MZ2406']);
+  assert.ok(result.home.productDaily.length > 24);
+
+  const searched = queryHomeDashboard(
+    dashboard,
+    groupedHistory,
+    new URLSearchParams({
+      start: '2026-07-31',
+      end: '2026-07-31',
+      owner: 'ALL',
+      store: 'ALL',
+      q: '空气炸锅',
+    }),
+  );
+  assert.equal(searched.home.productDaily.length, 2);
+});
+
 test('home query rejects an unbounded range', () => {
   assert.throws(
     () => queryHomeDashboard(

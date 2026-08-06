@@ -522,8 +522,10 @@ test('ranking tables show four windows, tiered magnitude and scope-preserving dr
   const historical = functionBody(app, 'renderHistoryRankings');
   assert.match(historical, /店铺净成交金额排行/);
   assert.match(historical, /店铺销量排行/);
-  assert.match(historical, /货号销售金额 Top 20（估算）/);
-  assert.match(historical, /货号销量 Top 20（待归并）/);
+  assert.match(historical, /标准货号销售金额 Top 20（估算）/);
+  assert.match(historical, /标准货号销量 Top 20/);
+  assert.match(historical, /STANDARD:/);
+  assert.match(historical, /未归并/);
   assert.match(historical, /无匹配单价则不入榜/);
 });
 
@@ -681,7 +683,7 @@ test('semi-managed parity keeps proportional ranking bars and reduced-motion sup
   assert.match(app, /ownerDisplayTone\(ownerKey\)/);
   assert.match(app, /shortOwnerName\(row\.ownerName\)/);
   assert.match(app, /storeHistoryRankMeta\(next, 'amount'\)/);
-  assert.match(app, /货号报账销售款 Top 20（待归并）/);
+  assert.match(app, /标准货号报账销售款 Top 20/);
   assert.match(parity, /\.rank-item\.rank-fill-10::before \{ width: 100%; \}/);
   assert.match(parity, /\.rank-tone-owner-1,[\s\S]*--owner-color: #0f766e/);
   assert.match(parity, /\.rank-item::after[\s\S]*background: var\(--bar-color\)/);

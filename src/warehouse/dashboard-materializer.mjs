@@ -76,6 +76,89 @@ function storeSkuKey(storeCode, skuCode) {
   return `${storeCode}\u001f${skuCode}`;
 }
 
+function storeIdentifierKey(storeCode, value) {
+  const normalizedStore = String(storeCode ?? '').normalize('NFKC').trim();
+  const normalizedValue = String(value ?? '').normalize('NFKC').trim();
+  return normalizedStore && normalizedValue
+    ? `${normalizedStore}\u001f${normalizedValue}`
+    : null;
+}
+
+function registerUniqueReportingAssignment(index, key, assignment) {
+  if (!key) return;
+  if (!index.has(key)) {
+    index.set(key, assignment);
+    return;
+  }
+  const current = index.get(key);
+  if (current?.standardGoodsCode !== assignment.standardGoodsCode) index.set(key, null);
+}
+
+export function buildReportingGoodsLookup(rows = []) {
+  const lookup = {
+    sku: new Map(),
+    skc: new Map(),
+    spu: new Map(),
+    supplierCode: new Map(),
+    supplierSku: new Map(),
+  };
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const assignment = {
+      standardGoodsCode: row.standard_goods_code,
+      standardGoodsName: row.display_name,
+      modelNormalized: row.model_normalized ?? null,
+      namingRule: row.naming_rule,
+      confidenceBand: row.confidence_band,
+      sourcePlanHash: row.source_plan_hash,
+    };
+    const storeCode = row.store_code;
+    registerUniqueReportingAssignment(
+      lookup.sku,
+      storeIdentifierKey(storeCode, row.platform_sku_id),
+      assignment,
+    );
+    registerUniqueReportingAssignment(
+      lookup.skc,
+      storeIdentifierKey(storeCode, row.platform_skc_id),
+      assignment,
+    );
+    registerUniqueReportingAssignment(
+      lookup.spu,
+      storeIdentifierKey(storeCode, row.platform_spu_id),
+      assignment,
+    );
+    registerUniqueReportingAssignment(
+      lookup.supplierCode,
+      storeIdentifierKey(storeCode, row.supplier_code),
+      assignment,
+    );
+    registerUniqueReportingAssignment(
+      lookup.supplierSku,
+      storeIdentifierKey(storeCode, row.supplier_sku),
+      assignment,
+    );
+  }
+  return lookup;
+}
+
+export function resolveReportingGoodsAssignment(lookup, row = {}) {
+  const storeCode = row.storeCode ?? row.store_code;
+  const candidates = [
+    [lookup?.sku, row.platformSkuId ?? row.platform_sku_id],
+    [lookup?.skc, row.platformSkcId ?? row.platform_skc_id],
+    [lookup?.spu, row.platformSpuId ?? row.platform_spu_id],
+    [lookup?.supplierCode, row.supplierCode ?? row.supplier_code],
+    [lookup?.supplierSku, row.supplierSku ?? row.supplier_sku],
+  ];
+  for (const [index, value] of candidates) {
+    const key = storeIdentifierKey(storeCode, value);
+    if (!key || !index?.has(key)) continue;
+    const assignment = index.get(key);
+    if (assignment) return assignment;
+  }
+  return null;
+}
+
 function platformSpuId(value) {
   if (value === null || value === undefined) return null;
   return normalizeIdentifierValue('PLATFORM_SPU', value) === null
@@ -1371,7 +1454,11 @@ export async function readFullHomeHistory(pool) {
         to_regclass('fact.full_home_finance_report_observation') IS NOT NULL
           AS has_finance_report_observation,
         to_regclass('raw.webapi_home_fetch_audit') IS NOT NULL
-          AS has_home_fetch_audit`);
+          AS has_home_fetch_audit,
+        to_regclass('dim.reporting_goods') IS NOT NULL
+          AS has_reporting_goods,
+        to_regclass('dim.full_sku_reporting_goods_assignment') IS NOT NULL
+          AS has_reporting_goods_assignment`);
     const schema = schemaResult.rows[0] ?? {};
     if (
       schema.has_store_daily !== true
@@ -1380,6 +1467,32 @@ export async function readFullHomeHistory(pool) {
     ) {
       return UNAVAILABLE_FULL_HOME_HISTORY;
     }
+    const reportingGoodsResult = (
+      schema.has_reporting_goods === true
+      && schema.has_reporting_goods_assignment === true
+    )
+      ? await client.query(`
+          SELECT store.store_code,
+                 sku.platform_sku_id, sku.platform_skc_id, sku.platform_spu_id,
+                 sku.supplier_code, sku.supplier_sku,
+                 goods.standard_goods_code, goods.display_name,
+                 goods.model_normalized, goods.naming_rule,
+                 assignment.confidence_band, assignment.source_plan_hash
+          FROM dim.full_sku_reporting_goods_assignment AS assignment
+          JOIN dim.full_sku AS sku
+            ON sku.store_id = assignment.store_id
+           AND sku.full_sku_id = assignment.full_sku_id
+          JOIN dim.store AS store ON store.store_id = assignment.store_id
+          JOIN dim.reporting_goods AS goods
+            ON goods.reporting_goods_id = assignment.reporting_goods_id
+          WHERE assignment.assignment_status = 'CONFIRMED'
+            AND assignment.valid_to IS NULL
+            AND goods.status = 'ACTIVE'
+            AND sku.is_active = true
+            AND store.is_active = true
+          ORDER BY store.store_code, sku.full_sku_id`)
+      : { rows: [] };
+    const reportingGoodsLookup = buildReportingGoodsLookup(reportingGoodsResult.rows);
 
     const [
       storeResult,
@@ -1599,34 +1712,45 @@ export async function readFullHomeHistory(pool) {
       qualityStatus: row.quality_status,
       sourceCodes: Array.isArray(row.source_codes) ? row.source_codes : [],
     }));
-    const productDaily = productResult.rows.map((row, index) => ({
-      storeCode: row.store_code,
-      date: pgDate(row.business_date),
-      productGrain: row.product_grain,
-      productKey: row.product_key,
-      platformSpuId: row.platform_spu_id ?? null,
-      platformSkcId: row.platform_skc_id ?? null,
-      supplierCode: row.supplier_code ?? null,
-      supplierSku: row.supplier_sku ?? null,
-      displayName: row.display_name ?? null,
-      salesQuantity: pgCount(
-        row.sales_quantity,
-        `home.productDaily[${index}].salesQuantity`,
-      ),
-      estimatedDealAmount: pgDecimal(
-        row.estimated_deal_amount,
-        `home.productDaily[${index}].estimatedDealAmount`,
-      ),
-      estimationCurrency: row.estimation_currency ?? null,
-      unitPriceEvidence: pgDecimal(
-        row.unit_price_evidence,
-        `home.productDaily[${index}].unitPriceEvidence`,
-      ),
-      estimationBasis: row.estimation_basis,
-      priceObservedAt: pgInstant(row.price_observed_at),
-      sourceUpdatedAt: pgInstant(row.source_updated_at),
-      observedAt: pgInstant(row.observed_at),
-    }));
+    const productDaily = productResult.rows.map((row, index) => {
+      const item = {
+        storeCode: row.store_code,
+        date: pgDate(row.business_date),
+        productGrain: row.product_grain,
+        productKey: row.product_key,
+        platformSpuId: row.platform_spu_id ?? null,
+        platformSkcId: row.platform_skc_id ?? null,
+        supplierCode: row.supplier_code ?? null,
+        supplierSku: row.supplier_sku ?? null,
+        displayName: row.display_name ?? null,
+        salesQuantity: pgCount(
+          row.sales_quantity,
+          `home.productDaily[${index}].salesQuantity`,
+        ),
+        estimatedDealAmount: pgDecimal(
+          row.estimated_deal_amount,
+          `home.productDaily[${index}].estimatedDealAmount`,
+        ),
+        estimationCurrency: row.estimation_currency ?? null,
+        unitPriceEvidence: pgDecimal(
+          row.unit_price_evidence,
+          `home.productDaily[${index}].unitPriceEvidence`,
+        ),
+        estimationBasis: row.estimation_basis,
+        priceObservedAt: pgInstant(row.price_observed_at),
+        sourceUpdatedAt: pgInstant(row.source_updated_at),
+        observedAt: pgInstant(row.observed_at),
+      };
+      const mapping = resolveReportingGoodsAssignment(reportingGoodsLookup, item);
+      return {
+        ...item,
+        standardGoodsCode: mapping?.standardGoodsCode ?? null,
+        standardGoodsName: mapping?.standardGoodsName ?? null,
+        reportingGoodsConfidence: mapping?.confidenceBand ?? null,
+        reportingGoodsPlanHash: mapping?.sourcePlanHash ?? null,
+        reportingMappingStatus: mapping ? 'OWNER_CONFIRMED' : 'UNMAPPED',
+      };
+    });
     const regionDaily = regionResult.rows.map((row, index) => ({
       storeCode: row.store_code,
       date: pgDate(row.business_date),
@@ -1798,38 +1922,49 @@ export async function readFullHomeHistory(pool) {
       observedAt: pgInstant(row.observed_at),
       basis: 'END_OF_PERIOD_PENDING_POSITION',
     }));
-    const productFinanceDaily = productFinanceResult.rows.map((row, index) => ({
-      storeCode: row.store_code,
-      date: pgDate(row.business_date),
-      currency: row.currency,
-      productKey: row.product_key,
-      platformSkuId: row.platform_sku_id ?? null,
-      platformSkcId: row.platform_skc_id ?? null,
-      supplierSku: row.supplier_sku ?? null,
-      incomeAmount: pgDecimal(
-        row.income_amount,
-        `home.productFinanceDaily[${index}].incomeAmount`,
-      ),
-      expenseAmount: pgDecimal(
-        row.expense_amount,
-        `home.productFinanceDaily[${index}].expenseAmount`,
-      ),
-      netAmount: pgSignedDecimal(
-        row.net_amount,
-        `home.productFinanceDaily[${index}].netAmount`,
-      ),
-      goodsCount: pgCount(
-        row.goods_count,
-        `home.productFinanceDaily[${index}].goodsCount`,
-      ),
-      latestUnitPrice: pgDecimal(
-        row.latest_unit_price,
-        `home.productFinanceDaily[${index}].latestUnitPrice`,
-      ),
-      priceObservedAt: pgInstant(row.price_observed_at),
-      observedAt: pgInstant(row.observed_at),
-      basis: 'FINANCE_DETAIL_BUSINESS_DATE',
-    }));
+    const productFinanceDaily = productFinanceResult.rows.map((row, index) => {
+      const item = {
+        storeCode: row.store_code,
+        date: pgDate(row.business_date),
+        currency: row.currency,
+        productKey: row.product_key,
+        platformSkuId: row.platform_sku_id ?? null,
+        platformSkcId: row.platform_skc_id ?? null,
+        supplierSku: row.supplier_sku ?? null,
+        incomeAmount: pgDecimal(
+          row.income_amount,
+          `home.productFinanceDaily[${index}].incomeAmount`,
+        ),
+        expenseAmount: pgDecimal(
+          row.expense_amount,
+          `home.productFinanceDaily[${index}].expenseAmount`,
+        ),
+        netAmount: pgSignedDecimal(
+          row.net_amount,
+          `home.productFinanceDaily[${index}].netAmount`,
+        ),
+        goodsCount: pgCount(
+          row.goods_count,
+          `home.productFinanceDaily[${index}].goodsCount`,
+        ),
+        latestUnitPrice: pgDecimal(
+          row.latest_unit_price,
+          `home.productFinanceDaily[${index}].latestUnitPrice`,
+        ),
+        priceObservedAt: pgInstant(row.price_observed_at),
+        observedAt: pgInstant(row.observed_at),
+        basis: 'FINANCE_DETAIL_BUSINESS_DATE',
+      };
+      const mapping = resolveReportingGoodsAssignment(reportingGoodsLookup, item);
+      return {
+        ...item,
+        standardGoodsCode: mapping?.standardGoodsCode ?? null,
+        standardGoodsName: mapping?.standardGoodsName ?? null,
+        reportingGoodsConfidence: mapping?.confidenceBand ?? null,
+        reportingGoodsPlanHash: mapping?.sourcePlanHash ?? null,
+        reportingMappingStatus: mapping ? 'OWNER_CONFIRMED' : 'UNMAPPED',
+      };
+    });
     const analysisCapabilities = analysisCapabilityResult.rows.map((row) => ({
       storeCode: row.store_code,
       status: row.result_status === 'SUCCEEDED'
@@ -1901,6 +2036,13 @@ export async function readFullHomeHistory(pool) {
         ledgerDailyRows: ledgerDaily.length,
         billDailyRows: billDaily.length,
         settlementPositionDailyRows: settlementPositionDaily.length,
+        reportingGoodsCount: new Set(
+          reportingGoodsResult.rows.map(({ standard_goods_code: code }) => code),
+        ).size,
+        reportingGoodsAssignedSkuCount: reportingGoodsResult.rows.length,
+        reportingGoodsPlanCount: new Set(
+          reportingGoodsResult.rows.map(({ source_plan_hash: hash }) => hash),
+        ).size,
         latestObservedAt: observed.at(-1) ?? null,
       },
     };

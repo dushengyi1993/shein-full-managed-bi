@@ -404,6 +404,8 @@ GRANT SELECT ON
     dim.canonical_product,
     dim.canonical_variant,
     dim.full_sku_canonical_assignment,
+    dim.reporting_goods,
+    dim.full_sku_reporting_goods_assignment,
     fact.full_sku_sales_snapshot,
     fact.purchase_order,
     fact.purchase_order_line,
@@ -542,6 +544,20 @@ GRANT SELECT, INSERT ON
     ops.product_match_candidate_evidence,
     ops.product_identity_decision,
     dim.full_sku_canonical_assignment
+TO sheinfm_supply_loader;
+-- Owner-confirmed reporting labels are deliberately separate from strict
+-- canonical identity. The supply loader can append plans and temporal
+-- assignments, then only close a current assignment or roll a plan back.
+GRANT SELECT, INSERT ON
+    dim.reporting_goods,
+    dim.full_sku_reporting_goods_assignment,
+    ops.reporting_goods_import_run
+TO sheinfm_supply_loader;
+GRANT UPDATE (assignment_status, superseded_by_plan_hash, valid_to, updated_at)
+ON dim.full_sku_reporting_goods_assignment
+TO sheinfm_supply_loader;
+GRANT UPDATE (result_status, rolled_back_at)
+ON ops.reporting_goods_import_run
 TO sheinfm_supply_loader;
 GRANT SELECT ON ops.sales_sync_run
 TO sheinfm_supply_loader;
@@ -691,6 +707,8 @@ BEGIN
             ('sheinfm_supply_loader', 'ops.product_match_candidate_evidence', 'product_match_candidate_evidence_id'),
             ('sheinfm_supply_loader', 'ops.product_identity_decision', 'product_identity_decision_id'),
             ('sheinfm_supply_loader', 'dim.full_sku_canonical_assignment', 'full_sku_canonical_assignment_id'),
+            ('sheinfm_supply_loader', 'dim.reporting_goods', 'reporting_goods_id'),
+            ('sheinfm_supply_loader', 'dim.full_sku_reporting_goods_assignment', 'full_sku_reporting_goods_assignment_id'),
             ('sheinfm_supply_loader', 'ops.supply_sync_attempt', 'supply_sync_attempt_event_id'),
             ('sheinfm_supply_loader', 'fact.supply_projection_batch', 'supply_projection_batch_id'),
             ('sheinfm_supply_loader', 'fact.supply_projection_member', 'supply_projection_member_id'),

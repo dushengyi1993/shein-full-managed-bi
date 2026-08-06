@@ -30,6 +30,8 @@
     "webapi:renew-sessions": "node scripts/renew_full_managed_webapi_sessions.mjs",
     "sync:product-identity-evidence": "node scripts/sync_full_managed_product_identity_evidence.mjs",
     "resolve:product-identity": "node scripts/resolve_full_managed_product_identity.mjs",
+    "build:reporting-goods-manifest": "node scripts/build_full_managed_reporting_goods_manifest.mjs",
+    "import:reporting-goods": "node scripts/import_full_managed_reporting_goods.mjs",
     "start:webhook": "node scripts/serve_full_managed_webhook.mjs",
     "worker:webhook": "node scripts/run_full_managed_webhook_worker.mjs",
     "webhook:configure-subscriptions": "node scripts/configure_full_managed_webhook_subscriptions.mjs",

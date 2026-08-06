@@ -79,6 +79,8 @@ function searchable(value) {
 
 function productSearchText(row) {
   return searchable([
+    row.standardGoodsCode,
+    row.standardGoodsName,
     row.productKey,
     row.platformSpuId,
     row.platformSkcId,
@@ -88,6 +90,12 @@ function productSearchText(row) {
     row.displayName,
     row.storeCode,
   ].filter(Boolean).join(' '));
+}
+
+function reportingProductIdentityKey(row) {
+  const standardGoodsCode = String(row?.standardGoodsCode || '').trim();
+  if (standardGoodsCode) return `STANDARD:${standardGoodsCode}`;
+  return `LOCAL:${row?.storeCode || ''}:${row?.productGrain || 'FINANCE'}:${row?.productKey || ''}`;
 }
 
 function allowedStoreCodes(dashboard, owner, store, query) {
@@ -132,7 +140,7 @@ function allowedStoreCodes(dashboard, owner, store, query) {
 function topProductKeys(inputRows, limit = PRODUCT_LIMIT) {
   const grouped = new Map();
   for (const row of inputRows) {
-    const key = `${row.storeCode}:${row.productKey}`;
+    const key = reportingProductIdentityKey(row);
     const item = grouped.get(key) || { income: 0, net: 0, goods: 0 };
     if (typeof row.incomeAmount === 'number' && Number.isFinite(row.incomeAmount)) {
       item.income += row.incomeAmount;
@@ -156,7 +164,7 @@ function topProductKeys(inputRows, limit = PRODUCT_LIMIT) {
 function topProductDailyKeys(inputRows, limit = PRODUCT_LIMIT) {
   const grouped = new Map();
   for (const row of inputRows) {
-    const key = `${row.storeCode}:${row.productGrain}:${row.productKey}`;
+    const key = reportingProductIdentityKey(row);
     const current = grouped.get(key) || { quantity: 0, amount: 0, hasAmount: false };
     if (Number.isSafeInteger(row.salesQuantity) && row.salesQuantity >= 0) {
       current.quantity += row.salesQuantity;
@@ -266,7 +274,7 @@ export function queryHomeDashboard(
     : productDailyCandidates.filter(storeMatches);
   const retainedProductDailyKeys = topProductDailyKeys(scopedProductDaily);
   const productDaily = scopedProductDaily.filter((row) => retainedProductDailyKeys.has(
-    `${row.storeCode}:${row.productGrain}:${row.productKey}`,
+    reportingProductIdentityKey(row),
   ));
   const regionDailyCandidates = rows(history.regionDaily).filter(dateMatches).filter(storeMatches);
   const retainedRegionKeys = topRegionKeys(regionDailyCandidates);
@@ -309,7 +317,7 @@ export function queryHomeDashboard(
   }
   const retainedProductKeys = topProductKeys(productFinanceCandidates);
   const productFinanceDaily = productFinanceCandidates.filter(
-    (row) => retainedProductKeys.has(`${row.storeCode}:${row.productKey}`),
+    (row) => retainedProductKeys.has(reportingProductIdentityKey(row)),
   );
   const countWindowRows = (inputRows, windowStart, windowEnd) => (
     inputRows.filter(({ date }) => (

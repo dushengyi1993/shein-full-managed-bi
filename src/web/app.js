@@ -5882,6 +5882,8 @@ function homeProductSearchMatch(row) {
   const query = normalizedQuery();
   if (!query) return true;
   return [
+    row.standardGoodsCode,
+    row.standardGoodsName,
     row.productKey,
     row.platformSpuId,
     row.platformSkcId,
@@ -7438,17 +7440,25 @@ function renderHistoryRankings() {
     sub: () => '',
   };
   const productIdentity = {
-    key: (row) => `${row.storeCode}:${row.productGrain}:${row.productKey}`,
-    label: (row) => row.supplierCode || row.supplierSku || row.productKey,
-    sub: (row) => [row.displayName, row.storeCode].filter(Boolean).join(' · '),
+    key: (row) => row.standardGoodsCode
+      ? `STANDARD:${row.standardGoodsCode}`
+      : `LOCAL:${row.storeCode}:${row.productGrain}:${row.productKey}`,
+    label: (row) => row.standardGoodsCode
+      || row.supplierCode
+      || row.supplierSku
+      || row.productKey,
+    sub: (row) => row.standardGoodsName || row.displayName || '',
   };
   const financeProductIdentity = {
-    key: (row) => `${row.storeCode}:${row.productKey}`,
-    label: (row) => row.supplierSku
+    key: (row) => row.standardGoodsCode
+      ? `STANDARD:${row.standardGoodsCode}`
+      : `LOCAL:${row.storeCode}:FINANCE:${row.productKey}`,
+    label: (row) => row.standardGoodsCode
+      || row.supplierSku
       || (row.platformSkcId ? `SKC ${row.platformSkcId}` : '')
       || (row.platformSkuId ? `SKU ${row.platformSkuId}` : '')
       || row.productKey,
-    sub: () => '待标准货号归并',
+    sub: (row) => row.standardGoodsName || '',
   };
   const resolvedStoreRows = resolvedHomeDaily({ ...bundle, productMode: false });
   const rankedFinanceCurrency = financeCurrency(bundle);
@@ -7519,6 +7529,7 @@ function renderHistoryRankings() {
     productAmountBasis = productAmount.length ? 'FINANCE' : 'UNAVAILABLE';
   }
   productAmount = productAmount.filter(({ value }) => value > 0).slice(0, 20).map((row) => {
+    const mapped = row.key.startsWith('STANDARD:');
     const next = {
       ...row,
       currency: row.currency || homeCurrency(bundle) || rankedFinanceCurrency,
@@ -7527,7 +7538,7 @@ function renderHistoryRankings() {
     return {
       ...next,
       sub: [
-        productAmountBasis === 'FINANCE' ? rankMetaText('待标准货号归并') : null,
+        mapped ? null : rankMetaText('未归并'),
         ...productHistoryRankMeta(next, 'amount'),
       ].filter(Boolean),
     };
@@ -7549,6 +7560,7 @@ function renderHistoryRankings() {
     productQuantityBasis = productQuantity.length ? 'FINANCE' : 'UNAVAILABLE';
   }
   productQuantity = productQuantity.filter(({ value }) => value > 0).slice(0, 20).map((row) => {
+    const mapped = row.key.startsWith('STANDARD:');
     const next = {
       ...row,
       currency: homeCurrency(bundle) || rankedFinanceCurrency,
@@ -7557,7 +7569,7 @@ function renderHistoryRankings() {
     return {
       ...next,
       sub: [
-        productQuantityBasis === 'FINANCE' ? rankMetaText('待标准货号归并') : null,
+        mapped ? null : rankMetaText('未归并'),
         ...productHistoryRankMeta(next, 'quantity'),
       ].filter(Boolean),
     };
@@ -7566,7 +7578,7 @@ function renderHistoryRankings() {
   const note = `${range.start} → ${range.end} · 当前筛选联动`;
   return `
     <section class="home-history-rankings" aria-label="经营排行榜">
-      <header class="head"><div class="title-with-help"><h3>排行榜</h3>${homeHelpTip('店铺展示所选范围内全部有销售记录；未归并货号暂按店内身份分别统计，金额、销量各展示 Top 20。', '排行榜说明')}</div><span class="sub">${escapeHtml(note)}</span></header>
+      <header class="head"><div class="title-with-help"><h3>排行榜</h3>${homeHelpTip('店铺展示所选范围内全部有销售记录；货号按已确认标准货号跨店归并，暂未识别的商品仍按店内身份分别统计，金额、销量各展示 Top 20。', '排行榜说明')}</div><span class="sub">${escapeHtml(note)}</span></header>
       <div class="rank-grid home-rank-grid">
         ${historyRankTable(
           '店铺净成交金额排行',
@@ -7581,7 +7593,7 @@ function renderHistoryRankings() {
           { defaultTone: 'store-quantity' },
         )}
         ${historyRankTable(
-          productAmountBasis === 'FINANCE' ? '货号报账销售款 Top 20（待归并）' : '货号销售金额 Top 20（估算）',
+          productAmountBasis === 'FINANCE' ? '标准货号报账销售款 Top 20' : '标准货号销售金额 Top 20（估算）',
           productAmountBasis === 'FINANCE'
             ? '按财务明细业务发生日汇总，不冒充经营后台净成交金额'
             : '销量 × 最新财务单价证据；无匹配单价则不入榜',
@@ -7589,7 +7601,7 @@ function renderHistoryRankings() {
           { money: true, estimated: productAmountBasis === 'ESTIMATED', defaultTone: 'product-amount' },
         )}
         ${historyRankTable(
-          productQuantityBasis === 'FINANCE' ? '货号财务件数 Top 20（待归并）' : '货号销量 Top 20（待归并）',
+          productQuantityBasis === 'FINANCE' ? '标准货号财务件数 Top 20' : '标准货号销量 Top 20',
           productQuantityBasis === 'FINANCE'
             ? '来自财务明细 goodsCount，按明细业务发生日汇总'
             : note,
