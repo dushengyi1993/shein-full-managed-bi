@@ -216,6 +216,43 @@ test('a slowly rendered account badge is rechecked before identity is rejected',
   await session.close();
 });
 
+test('an ambiguous SPA shell is polled until its late login form is ready', async () => {
+  let evaluation = 0;
+  const sleeps = [];
+  const { deps } = sessionDeps({
+    async sleep(milliseconds) { sleeps.push(milliseconds); },
+    cdpFactory: async () => ({
+      async send() { return {}; },
+      async savedCredentialGesture() { return { completed: true }; },
+      async evaluate() {
+        evaluation += 1;
+        if (evaluation <= 2) {
+          return { sameOrigin: true, onLoginView: false, aliasPresent: false, textLength: 20 };
+        }
+        if (evaluation === 3) {
+          return { sameOrigin: true, onLoginView: true, aliasPresent: false, textLength: 100 };
+        }
+        if (evaluation === 4) return { found: true, x: 320, y: 240 };
+        if (evaluation === 5) {
+          return { accountReady: true, passwordReady: true, submitReady: true, clicked: true };
+        }
+        return { sameOrigin: true, onLoginView: false, aliasPresent: true, textLength: 1200 };
+      },
+      close() {},
+    }),
+  });
+
+  const session = await openExperimentSession({
+    storeCode: 'CX2816',
+    deps,
+    allowSavedCredentialLogin: true,
+  });
+  assert.equal(session.identityProven, true);
+  assert.equal(evaluation, 6);
+  assert.equal(sleeps.includes(2_000), true);
+  await session.close();
+});
+
 test('the identity proof returns booleans only and never an identity value', () => {
   const expression = buildIdentityProofExpression({ origin: WEBAPI_ORIGIN, aliasDigits: '5477' });
   assert.match(expression, /sameOrigin: sameOrigin === true/);
@@ -335,6 +372,51 @@ test('saved credential verification polls to a bounded deadline before expiring'
   );
   assert.equal(evaluation, 6);
   assert.deepEqual(sleeps.slice(-3), [2_000, 2_000, 2_000]);
+});
+
+test('saved credential selection retries when Chrome has only painted a preview', async () => {
+  let evaluation = 0;
+  const gestures = [];
+  const { deps } = sessionDeps({
+    limits: {
+      navigationSettleMs: 0,
+      debuggerPollMs: 1,
+      debuggerReadyMs: 50,
+      savedCredentialVerifyMs: 6_000,
+      savedCredentialPollMs: 2_000,
+    },
+    cdpFactory: async () => ({
+      async send() { return {}; },
+      async savedCredentialGesture(stage) {
+        gestures.push(stage);
+        return { completed: true };
+      },
+      async evaluate() {
+        evaluation += 1;
+        if (evaluation === 1) {
+          return { sameOrigin: true, onLoginView: true, aliasPresent: false, textLength: 100 };
+        }
+        if (evaluation === 2 || evaluation === 4) return { found: true, x: 320, y: 240 };
+        if (evaluation === 3) {
+          return { accountReady: false, passwordReady: false, submitReady: true, clicked: false };
+        }
+        if (evaluation === 5) {
+          return { accountReady: true, passwordReady: true, submitReady: true, clicked: true };
+        }
+        return { sameOrigin: true, onLoginView: false, aliasPresent: true, textLength: 1200 };
+      },
+      close() {},
+    }),
+  });
+
+  const session = await openExperimentSession({
+    storeCode: 'MZ2406',
+    deps,
+    allowSavedCredentialLogin: true,
+  });
+  assert.equal(session.identityProven, true);
+  assert.deepEqual(gestures, ['focus', 'next', 'confirm', 'focus', 'next', 'confirm']);
+  await session.close();
 });
 
 test('the saved credential account probe returns coordinates and never a field value', () => {

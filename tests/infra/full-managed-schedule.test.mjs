@@ -50,7 +50,6 @@ test('hourly homepage plan splits the realtime contract into two bounded batches
       '--to=2026-08-03',
       '--no-products',
       '--retry-cdp=1',
-      '--allow-partial',
       '--execute',
     ]);
   }

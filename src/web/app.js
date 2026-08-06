@@ -6825,11 +6825,11 @@ function renderTodayCoreCards() {
     : operatingCurrency.length === 0 && referenceCurrency.length === 1
       ? referenceCurrency
       : [];
-  const completeSum = (rows, key, { signed = false } = {}) => {
-    if (!expectedStores || rows.length !== expectedStores) return null;
+  const knownSum = (rows, key, { signed = false } = {}) => {
+    if (!expectedStores) return null;
     return signed
-      ? completeSignedMetricSum(rows, key)
-      : completeMetricSum(rows, key);
+      ? availableSignedMetricSum(rows, key)
+      : availableMetricSum(rows, key);
   };
   const knownStores = (rows, key, { signed = false } = {}) => new Set(rows
     .filter((row) => (
@@ -6856,7 +6856,7 @@ function renderTodayCoreCards() {
     {
       key: 'netDealAmount',
       label: '净成交金额',
-      value: completeSum(operatingRows, 'netDealAmount'),
+      value: knownSum(operatingRows, 'netDealAmount'),
       money: true,
       primary: true,
       note: '经营后台当日累计净成交金额；不使用财务明细或商家账单覆盖。',
@@ -6864,35 +6864,35 @@ function renderTodayCoreCards() {
     {
       key: 'dealAmount',
       label: '成交金额',
-      value: completeSum(operatingRows, 'dealAmount'),
+      value: knownSum(operatingRows, 'dealAmount'),
       money: true,
       note: '经营后台当日累计成交金额。',
     },
     {
       key: 'salesQuantity',
       label: '销量',
-      value: completeSum(operatingRows, 'salesQuantity'),
+      value: knownSum(operatingRows, 'salesQuantity'),
       suffix: '件',
       note: '经营后台当日累计销量；不使用库存台账客单出库替换。',
     },
     {
       key: 'buyerCount',
       label: '支付人数',
-      value: completeSum(operatingRows, 'buyerCount'),
+      value: knownSum(operatingRows, 'buyerCount'),
       suffix: '人',
       note: '经营后台当日去重支付人数；小时去重人数不能直接相加。',
     },
     {
       key: 'goodsDetailVisitors',
       label: '商详访客',
-      value: completeSum(operatingRows, 'goodsDetailVisitors'),
+      value: knownSum(operatingRows, 'goodsDetailVisitors'),
       suffix: '人',
       note: '经营后台当日去重商品详情页访客；小时去重访客不能直接相加。',
     },
     {
       key: 'pendingSettlementAmount',
       label: '预计待结算金额',
-      value: completeSum(pendingRows, 'pendingSettlementAmount', { signed: true }),
+      value: knownSum(pendingRows, 'pendingSettlementAmount', { signed: true }),
       money: true,
       pending: true,
       note: '截至最新账单同步时仍未完成结算的预计金额；按当前状态汇总，不按天累加。',
@@ -6914,7 +6914,10 @@ function renderTodayCoreCards() {
       return pendingPositionSubvalue(pendingSummary)
         || `${known}/${expectedStores}家有返回`;
     }
-    return `${known}/${expectedStores}家有值${operatingDate ? ` · 数据 ${operatingDate.slice(5).replace('-', '/')}` : ''}`;
+    const coverage = known < expectedStores
+      ? `已返回 ${known}/${expectedStores} 家 · 当前为已返回店铺合计`
+      : `${known}/${expectedStores} 家已齐`;
+    return `${coverage}${operatingDate ? ` · 数据 ${operatingDate.slice(5).replace('-', '/')}` : ''}`;
   };
   return `
     <section class="home-today-core" aria-label="今日核心经营指标">

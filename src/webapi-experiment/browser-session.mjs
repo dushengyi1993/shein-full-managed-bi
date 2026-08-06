@@ -76,6 +76,8 @@ export const SESSION_DEFAULT_LIMITS = Object.freeze({
   debuggerPollMs: 500,
   navigationSettleMs: 3_000,
   identityStabilityMs: 3_000,
+  identityReadinessMs: 10_000,
+  identityPollMs: 2_000,
   identityTimeoutMs: 15_000,
   savedCredentialVerifyMs: 30_000,
   savedCredentialPollMs: 2_000,
@@ -387,34 +389,87 @@ export async function openExperimentSession({
         { timeoutMs: resolvedLimits.identityTimeoutMs },
       );
     }
+    if (
+      proof?.sameOrigin === true
+      && proof?.onLoginView !== true
+      && proof?.aliasPresent !== true
+    ) {
+      // A slow login redirect can briefly leave the SPA on an empty shell.
+      // Do not misclassify that transient state as a wrong account: wait for
+      // either the login form or the expected identity, without reading either
+      // credential field.
+      const readinessAttempts = Math.max(
+        1,
+        Math.ceil(
+          resolvedLimits.identityReadinessMs
+          / resolvedLimits.identityPollMs,
+        ),
+      );
+      for (let attempt = 0; attempt < readinessAttempts; attempt += 1) {
+        await sleep(resolvedLimits.identityPollMs);
+        proof = await cdp.evaluate(
+          buildIdentityProofExpression({
+            origin: WEBAPI_ORIGIN,
+            identityMarkers: fullManagedLoginIdentityMarkers(canonical, identityAliases),
+          }),
+          { timeoutMs: resolvedLimits.identityTimeoutMs },
+        );
+        if (
+          proof?.sameOrigin !== true
+          || proof?.onLoginView === true
+          || proof?.aliasPresent === true
+        ) break;
+      }
+    }
     if (proof?.sameOrigin !== true) {
       throw new WebApiSessionError(SESSION_REJECT_CODES.ORIGIN_MISMATCH, canonical);
     }
     if (proof?.onLoginView === true && allowSavedCredentialLogin === true) {
-      const accountBox = await cdp.evaluate(
-        buildSavedCredentialAccountBoxExpression(),
-        { timeoutMs: resolvedLimits.identityTimeoutMs },
+      // Chrome may paint a saved-account preview before committing it to the
+      // page's input values. Retry the real focus/selection gesture a few times
+      // inside a bounded window instead of treating the first empty DOM read as
+      // proof that no saved password exists.
+      const commitAttempts = Math.max(
+        1,
+        Math.min(
+          4,
+          Math.ceil(
+            resolvedLimits.savedCredentialVerifyMs
+            / Math.max(1, resolvedLimits.savedCredentialPollMs),
+          ),
+        ),
       );
-      if (
-        accountBox?.found === true
-        && Number.isFinite(accountBox.x)
-        && Number.isFinite(accountBox.y)
-      ) {
-        await cdp.savedCredentialGesture('focus', {
-          x: accountBox.x,
-          y: accountBox.y,
-        });
-        await sleep(800);
-        await cdp.savedCredentialGesture('next');
-        await sleep(500);
-        await cdp.savedCredentialGesture('confirm');
-        await sleep(500);
-        await sleep(1_200);
+      let renewal = null;
+      for (let attempt = 0; attempt < commitAttempts; attempt += 1) {
+        const accountBox = await cdp.evaluate(
+          buildSavedCredentialAccountBoxExpression(),
+          { timeoutMs: resolvedLimits.identityTimeoutMs },
+        );
+        if (
+          accountBox?.found === true
+          && Number.isFinite(accountBox.x)
+          && Number.isFinite(accountBox.y)
+        ) {
+          await cdp.savedCredentialGesture('focus', {
+            x: accountBox.x,
+            y: accountBox.y,
+          });
+          await sleep(800);
+          await cdp.savedCredentialGesture('next');
+          await sleep(500);
+          await cdp.savedCredentialGesture('confirm');
+          await sleep(500);
+          await sleep(1_200);
+        }
+        renewal = await cdp.evaluate(
+          buildSavedCredentialSubmitExpression(),
+          { timeoutMs: resolvedLimits.identityTimeoutMs },
+        );
+        if (renewal?.clicked === true) break;
+        if (attempt + 1 < commitAttempts) {
+          await sleep(resolvedLimits.savedCredentialPollMs);
+        }
       }
-      const renewal = await cdp.evaluate(
-        buildSavedCredentialSubmitExpression(),
-        { timeoutMs: resolvedLimits.identityTimeoutMs },
-      );
       if (renewal?.clicked === true) {
         const maximumAttempts = Math.max(
           1,

@@ -203,7 +203,6 @@ export function buildScheduledPlan({
         `--to=${dates.today}`,
         '--no-products',
         '--retry-cdp=1',
-        '--allow-partial',
         '--execute',
       ])]),
     });

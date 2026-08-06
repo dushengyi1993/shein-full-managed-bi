@@ -216,7 +216,9 @@ test('today core strip keeps six current metrics separate from the historical ra
   assert.match(today, /更新时间：/);
   assert.match(app, /function formatSourceUpdateTime\(/);
   assert.match(app, /second: '2-digit'/);
-  assert.match(today, /completeSum\(pendingRows, 'pendingSettlementAmount'/);
+  assert.match(today, /knownSum\(pendingRows, 'pendingSettlementAmount'/);
+  assert.match(today, /availableMetricSum/);
+  assert.match(today, /当前为已返回店铺合计/);
   assert.match(today, /referenceCurrency/);
   assert.match(today, /operatingDisplayCurrency/);
   assert.ok(home.indexOf('renderTodayCoreCards()') < home.indexOf('renderHistoryKpis()'));
