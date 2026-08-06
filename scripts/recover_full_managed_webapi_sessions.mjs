@@ -10,7 +10,10 @@ import {
 } from '../src/webapi-history/home-contracts.mjs';
 import { createFullHomePageTransport } from '../src/webapi-history/page-transport.mjs';
 import { createLinuxExperimentRuntime } from '../src/webapi-experiment/linux-runtime.mjs';
-import { createEncryptedWebApiSessionStoreFromEnvironment } from '../src/webapi-session/encrypted-session-store.mjs';
+import {
+  createEncryptedWebApiSessionStoreFromEnvironment,
+  createEphemeralWebApiSessionStore,
+} from '../src/webapi-session/encrypted-session-store.mjs';
 import { exportAuthenticatedWebApiSession } from '../src/webapi-session/profile-session-exporter.mjs';
 import {
   createFullHomeHttpTransport,
@@ -72,17 +75,23 @@ async function main() {
           session: browserSession,
           storeCode,
         });
-        await sessionStore.write(storeCode, bundle);
-        httpSession = await openFullHomeHttpSession({ storeCode, sessionStore });
+        const candidateStore = createEphemeralWebApiSessionStore(bundle, storeCode);
+        httpSession = await openFullHomeHttpSession({
+          storeCode,
+          sessionStore: candidateStore,
+        });
         const httpResponse = await createFullHomeHttpTransport({ session: httpSession })(
           'UPDATE_TIME',
           request,
         );
+        await httpSession.close();
+        httpSession = null;
         if (sha256Json(pageResponse.body) !== sha256Json(httpResponse.body)) {
           throw Object.assign(new Error('WEBAPI_SESSION_DUAL_READ_MISMATCH'), {
             code: 'WEBAPI_SESSION_DUAL_READ_MISMATCH',
           });
         }
+        await sessionStore.write(storeCode, candidateStore.snapshot());
         results.push({
           storeCode,
           ok: true,

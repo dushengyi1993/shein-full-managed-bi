@@ -277,6 +277,28 @@ export function createEncryptedWebApiSessionStore({
   return Object.freeze({ root, read, write, has });
 }
 
+/**
+ * Hold one exported candidate only in process memory while browser/HTTP parity
+ * is proved. Callers may promote `snapshot()` into the encrypted persistent
+ * store only after every gate succeeds. This prevents a failed dual-read from
+ * replacing the last known-good session on disk.
+ */
+export function createEphemeralWebApiSessionStore(input, expectedStoreCode) {
+  let bundle = normalizeWebApiSessionBundle(input, expectedStoreCode);
+  return Object.freeze({
+    async read(storeCode) {
+      return normalizeWebApiSessionBundle(bundle, storeCode);
+    },
+    async write(storeCode, next) {
+      bundle = normalizeWebApiSessionBundle(next, storeCode);
+      return Object.freeze({ storeCode: bundle.storeCode, updatedAt: bundle.updatedAt });
+    },
+    snapshot() {
+      return normalizeWebApiSessionBundle(bundle, expectedStoreCode);
+    },
+  });
+}
+
 export async function createEncryptedWebApiSessionStoreFromEnvironment({
   directory = process.env.FULL_FM_WEBAPI_SESSION_DIRECTORY
     || DEFAULT_WEBAPI_SESSION_DIRECTORY,

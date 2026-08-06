@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   createEncryptedWebApiSessionStore,
+  createEphemeralWebApiSessionStore,
   decodeWebApiSessionKey,
 } from '../../src/webapi-session/encrypted-session-store.mjs';
 import {
@@ -160,6 +161,35 @@ test('HTTP transport rejects redirects as expired authentication', async () => {
     { code: 'HOME_AUTH_EXPIRED' },
   );
   await session.close();
+});
+
+test('dual-read candidates remain memory-only until an explicit promotion', async () => {
+  const candidate = createEphemeralWebApiSessionStore(bundle(), 'DL5477');
+  const persistentWrites = [];
+  const persistent = {
+    async write(storeCode, next) { persistentWrites.push({ storeCode, next }); },
+  };
+  const session = await openFullHomeHttpSession({
+    storeCode: 'DL5477',
+    sessionStore: candidate,
+    clock: () => new Date(NOW),
+    fetchImpl: async () => ({
+      status: 200,
+      headers: {
+        getSetCookie: () => ['private_auth=candidate-only; Domain=.geiwohuo.com; Path=/; Secure'],
+      },
+      async text() { return '{"code":"0","info":[]}'; },
+    }),
+  });
+  await createFullHomeHttpTransport({ session })('UPDATE_TIME', {});
+  await session.close();
+  assert.equal(persistentWrites.length, 0);
+  assert.equal(
+    candidate.snapshot().cookies.find(({ name }) => name === 'private_auth').value,
+    'candidate-only',
+  );
+  await persistent.write('DL5477', candidate.snapshot());
+  assert.equal(persistentWrites.length, 1);
 });
 
 class FakeSocket extends EventTarget {
