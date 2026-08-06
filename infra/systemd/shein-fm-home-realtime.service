@@ -22,7 +22,7 @@ LoadCredential=webapi_session_key:/srv/shein-fm/secrets/webapi-session/session-k
 RuntimeDirectory=shein-fm-webapi
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
-ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh api-light fm api-critical /usr/bin/flock -n -E 75 /run/shein-fm-webapi/home-history.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=home-realtime --execute
+ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh api-light fm api-critical /usr/bin/flock -n -E 75 /run/shein-fm-webapi/home-history.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=home-realtime --batch=0 --execute
 SuccessExitStatus=75
 TimeoutStartSec=11min
 TimeoutStopSec=30s

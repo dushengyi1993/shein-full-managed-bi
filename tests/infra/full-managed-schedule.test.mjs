@@ -241,6 +241,7 @@ test('every heavy window has a hard stop before the next core lane', async () =>
   ]);
   assert.match(realtimeTimer, /^AccuracySec=1s$/m);
   assert.match(realtime, /^TimeoutStartSec=11min$/m);
+  assert.match(realtime, /--task=home-realtime --batch=0 --execute/);
   assert.match(sales, /^TimeoutStartSec=15min$/m);
   assert.match(session, /^TimeoutStartSec=5min$/m);
   assert.match(supply, /^TimeoutStartSec=35min$/m);
