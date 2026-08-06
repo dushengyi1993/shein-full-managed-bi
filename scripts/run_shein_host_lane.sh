@@ -33,32 +33,6 @@ readonly defer_code=75
 readonly host_gate='/run/lock/shein-host-heavy.lock'
 host_lane_slot=''
 
-# The semi-managed project owns standing authorization for daily limited-
-# discount repair. Reserve two bounded write windows in hours that do not
-# overlap ET forwarding or the storage-fee job. Full-managed API-light work is
-# still allowed; only a new full-managed heavy job is deferred. Jobs already
-# running are never interrupted here.
-full_managed_yields_to_marketing_write() {
-  [[ "$project" == 'fm' && "$lane" != 'api-light' ]] || return 1
-
-  local hhmm="${SHEIN_HOST_CLOCK_HHMM:-}"
-  if [[ ! "$hhmm" =~ ^[0-2][0-9][0-5][0-9]$ ]]; then
-    hhmm="$(TZ=Asia/Shanghai /usr/bin/date +%H%M)"
-  fi
-  local hour="${hhmm:0:2}"
-  local minute=$((10#${hhmm:2:2}))
-  case "$hour" in
-    12|15|16|18|19|21) ;;
-    *) return 1 ;;
-  esac
-  (( (minute >= 10 && minute <= 27) || (minute >= 40 && minute <= 57) ))
-}
-
-if full_managed_yields_to_marketing_write; then
-  printf '{"ok":true,"status":"DEFERRED","reasonCodes":["HALF_MARKETING_BROWSER_WRITE_RESERVED"]}\n'
-  exit "$defer_code"
-fi
-
 run_pressure_gate() {
   /usr/bin/node scripts/check_full_managed_resource_pressure.mjs \
     "--class=${1}"
