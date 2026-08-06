@@ -725,6 +725,46 @@ test('a range ending today anchors settled endpoints to yesterday', async () => 
   )).length, 1);
 });
 
+test('current-day product refresh waits until the provider has crossed the business date', async () => {
+  const endpoints = [];
+  const result = await runFullHomeHistorySync({
+    storeCodes: ['DL5477'],
+    startDate: '2026-08-03',
+    endDate: '2026-08-03',
+    clock: () => new Date('2026-08-02T16:02:00.000Z'),
+    openSession: async () => ({ async close() {} }),
+    transportFactory: () => async (endpointCode) => {
+      endpoints.push(endpointCode);
+      assert.equal(endpointCode, 'UPDATE_TIME');
+      return response({
+        code: '0',
+        info: {
+          areaCd: 'cn',
+          dt: '2026080222',
+          updateTime: '2026-08-02 23:00:00',
+        },
+      });
+    },
+    repository: {
+      async recordFetchAudit() {},
+      async upsertStoreDaily() {
+        assert.fail('stale realtime must not write homepage facts');
+      },
+      async upsertProducts() {
+        assert.fail('stale realtime must not write current-day product facts');
+      },
+      async upsertRegions() {},
+      async successfulDailyDates() {
+        return new Set();
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.results[0].realtime.payload.stale, true);
+  assert.equal(result.results[0].productDaily, null);
+  assert.deepEqual(endpoints, ['UPDATE_TIME']);
+});
+
 test('daily settlement stops before facts when the platform anchor is stale', async () => {
   const requests = [];
   const result = await runFullHomeHistorySync({

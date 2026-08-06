@@ -1053,7 +1053,11 @@ export async function runFullHomeHistorySync({
         // contracts.  The daily history window deliberately stops at D-1, so
         // current-day product facts must be refreshed explicitly here instead
         // of silently disappearing from the homepage rankings.
-        if (includeProducts && storeResults.at(-1).realtime?.ok) {
+        if (
+          includeProducts
+          && storeResults.at(-1).realtime?.ok
+          && storeResults.at(-1).realtime?.payload?.stale !== true
+        ) {
           storeResults.at(-1).productDaily = await syncProductDate({
             storeCode,
             businessDate: realtime.businessDate,
