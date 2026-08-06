@@ -157,6 +157,11 @@ test('host lanes allow two read browsers while writes and heavy IO stay exclusiv
   assert.match(laneWrapper, /flock -s -n 9/);
   assert.match(laneWrapper, /browser-secondary/);
   assert.match(laneWrapper, /browser-write\|db-heavy\|io-heavy/);
+  assert.match(laneWrapper, /SHEIN_HOST_CLOCK_HHMM/);
+  assert.match(laneWrapper, /12\|15\|16\|18\|19\|21/);
+  assert.match(laneWrapper, /minute >= 10 && minute <= 27/);
+  assert.match(laneWrapper, /minute >= 40 && minute <= 57/);
+  assert.match(laneWrapper, /HALF_MARKETING_BROWSER_WRITE_RESERVED/);
   assert.match(laneWrapper, /exec "\$@"/);
   assert.match(materializerWrapper, /run_shein_host_lane\.sh[\s\S]*db-heavy fm db-heavy/);
 });
