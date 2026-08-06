@@ -7,7 +7,7 @@
 
 | 时间 | 任务 | 数据边界 |
 | --- | --- | --- |
-| 每小时 `:02` | `shein-fm-home-realtime` | 加密 Cookie 会话 HTTP，一次刷新 25 店当天经营数据；不启动 Chrome |
+| 每小时 `:02` | `shein-fm-home-realtime` | 加密 Cookie 会话 HTTP，一次刷新 25 店当天店铺经营与货号销量；不启动 Chrome |
 | 每小时 `:05` | `shein-fm-sales-sync` | OpenAPI 销售快照；核心 API 车道，不等待浏览器或物化 |
 | `00:30` | `shein-fm-session-renewal` | 25 店 HTTP 健康/续期；只把失效店写入恢复队列 |
 | 每小时 `:18` | `shein-fm-session-recovery` | 仅队列非空时逐店打开 Profile，利用已保存密码恢复并重新导出加密会话 |
@@ -29,6 +29,7 @@ Profile，恢复成功后立即关闭 Chrome。
   不把未知补成零。
 - 财务通常比经营日报晚，固定重读 D-8 至 D-2，吸收迟到结算、补款和扣款。
 - OpenAPI 销售与 WebAPI 经营指标是两个事实域：任一域成功先落库，不能互相覆盖。
+- 货号销量来自经营分析商品诊断；货号报账销售款与明细件数来自财务明细。两种件数独立展示，禁止互相冒充或覆盖。
 - 每批写 `SUCCEEDED/PARTIAL/FAILED` marker。06:15 只读取 marker 定向补漏。
 - Dashboard 只发布校验通过的新版本；失败继续使用旧缓存。
 

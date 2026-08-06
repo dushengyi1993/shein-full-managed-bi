@@ -527,6 +527,9 @@ test('ranking tables show four windows, tiered magnitude and scope-preserving dr
   assert.match(historical, /STANDARD:/);
   assert.match(historical, /未归并/);
   assert.match(historical, /无匹配单价则不入榜/);
+  assert.match(historical, /财务明细件数与经营销量是不同口径/);
+  assert.match(historical, /经营货号/);
+  assert.match(historical, /财务货号/);
 });
 
 test('owner scope lives inside the single store selector with no separate owner control', async () => {

@@ -7380,26 +7380,67 @@ function storeHistoryRankMeta(row, primary) {
   return parts.filter(Boolean);
 }
 
-function productHistoryRankMeta(row, primary) {
-  const quantity = rankingKnownSum(row.rows, ['salesQuantity', 'goodsCount']);
-  const amount = rankingKnownSum(
-    row.rows,
-    ['estimatedDealAmount', 'netAmount', 'incomeAmount'],
-  );
+function productHistoryRankMeta(row, primary, {
+  basis = 'OPERATING',
+  operatingQuantity = null,
+  financeQuantity = null,
+  financeAmount = null,
+} = {}) {
+  const rowOperatingQuantity = rankingKnownSum(row.rows, ['salesQuantity']);
+  const rowFinanceQuantity = rankingKnownSum(row.rows, ['goodsCount']);
+  const estimatedAmount = rankingKnownSum(row.rows, ['estimatedDealAmount']);
+  const resolvedOperatingQuantity = operatingQuantity ?? rowOperatingQuantity;
+  const resolvedFinanceQuantity = financeQuantity ?? rowFinanceQuantity;
   const storeCodes = [...new Set(row.rows.map(({ storeCode }) => storeCode).filter(Boolean))];
   const days = rankingObservedDays(row.rows);
   const parts = primary === 'amount'
     ? [
-      rankMetaMetric('销量', quantity === null ? null : formatUnits(quantity), '件'),
+      basis === 'FINANCE'
+        ? rankMetaMetric(
+            '财务明细件数',
+            resolvedFinanceQuantity === null
+              ? null
+              : formatUnits(resolvedFinanceQuantity),
+            '件',
+          )
+        : rankMetaMetric(
+            '经营销量',
+            resolvedOperatingQuantity === null
+              ? null
+              : formatUnits(resolvedOperatingQuantity),
+            '件',
+          ),
+      basis === 'FINANCE'
+        ? rankMetaMetric(
+            '经营销量',
+            operatingQuantity === null ? null : formatUnits(operatingQuantity),
+            '件',
+          )
+        : null,
       rankMetaMetric('店铺', storeCodes.length ? storeCodes.join('、') : null),
       rankMetaMetric('', days ? formatUnits(days) : null, '天有数据'),
     ]
     : [
-      rankMetaMetric('金额', amount === null ? null : formatMoney(amount, row.currency)),
+      rankMetaMetric(
+        financeAmount === null ? '估算金额' : '报账销售款',
+        financeAmount === null && estimatedAmount === null
+          ? null
+          : formatMoney(financeAmount ?? estimatedAmount, row.currency),
+      ),
       rankMetaMetric('店铺', storeCodes.length ? storeCodes.join('、') : null),
       rankMetaMetric('', days ? formatUnits(days) : null, '天有数据'),
     ];
   return parts.filter(Boolean);
+}
+
+function rankingValueByKey(rows, identity, metricKey) {
+  return new Map(aggregateHistoryRanking(rows, identity, metricKey, null)
+    .map(({ key, value }) => [key, value]));
+}
+
+function productFactCoverage(rows, storeCodes, label) {
+  const covered = new Set(rows.map(({ storeCode }) => String(storeCode || '')).filter(Boolean));
+  return `${label}有明细 ${covered.size}/${storeCodes.size} 店`;
 }
 
 function historyRankTable(title, note, rows, {
@@ -7509,6 +7550,31 @@ function renderHistoryRankings() {
     };
     return { ...next, sub: storeHistoryRankMeta(next, 'quantity') };
   });
+  const operatingQuantityByKey = rankingValueByKey(
+    bundle.productDaily,
+    productIdentity,
+    'salesQuantity',
+  );
+  const financeQuantityByKey = rankingValueByKey(
+    bundle.productFinanceDaily,
+    financeProductIdentity,
+    'goodsCount',
+  );
+  const financeAmountByKey = rankingValueByKey(
+    bundle.productFinanceDaily,
+    financeProductIdentity,
+    'netAmount',
+  );
+  const operatingCoverage = productFactCoverage(
+    bundle.productDaily,
+    bundle.storeCodes,
+    '经营货号',
+  );
+  const financeCoverage = productFactCoverage(
+    bundle.productFinanceDaily,
+    bundle.storeCodes,
+    '财务货号',
+  );
   let productAmount = aggregateHistoryRanking(
     bundle.productDaily,
     productIdentity,
@@ -7539,7 +7605,11 @@ function renderHistoryRankings() {
       ...next,
       sub: [
         mapped ? null : rankMetaText('未归并'),
-        ...productHistoryRankMeta(next, 'amount'),
+        ...productHistoryRankMeta(next, 'amount', {
+          basis: productAmountBasis,
+          operatingQuantity: operatingQuantityByKey.get(row.key) ?? null,
+          financeQuantity: financeQuantityByKey.get(row.key) ?? null,
+        }),
       ].filter(Boolean),
     };
   });
@@ -7570,7 +7640,9 @@ function renderHistoryRankings() {
       ...next,
       sub: [
         mapped ? null : rankMetaText('未归并'),
-        ...productHistoryRankMeta(next, 'quantity'),
+        ...productHistoryRankMeta(next, 'quantity', {
+          financeAmount: financeAmountByKey.get(row.key) ?? null,
+        }),
       ].filter(Boolean),
     };
   });
@@ -7595,16 +7667,16 @@ function renderHistoryRankings() {
         ${historyRankTable(
           productAmountBasis === 'FINANCE' ? '标准货号报账销售款 Top 20' : '标准货号销售金额 Top 20（估算）',
           productAmountBasis === 'FINANCE'
-            ? '按财务明细业务发生日汇总，不冒充经营后台净成交金额'
-            : '销量 × 最新财务单价证据；无匹配单价则不入榜',
+            ? `按财务明细业务发生日汇总；${financeCoverage}。财务明细件数与经营销量是不同口径，分别标注，不再混称销量。`
+            : `销量 × 最新财务单价证据；无匹配单价则不入榜。${operatingCoverage}。`,
           productAmount,
           { money: true, estimated: productAmountBasis === 'ESTIMATED', defaultTone: 'product-amount' },
         )}
         ${historyRankTable(
           productQuantityBasis === 'FINANCE' ? '标准货号财务件数 Top 20' : '标准货号销量 Top 20',
           productQuantityBasis === 'FINANCE'
-            ? '来自财务明细 goodsCount，按明细业务发生日汇总'
-            : note,
+            ? `来自财务明细 goodsCount，按明细业务发生日汇总；${financeCoverage}`
+            : `来自经营分析商品诊断销量；${operatingCoverage}。无货号事实的店不补零。`,
           productQuantity,
           { defaultTone: 'product-quantity' },
         )}

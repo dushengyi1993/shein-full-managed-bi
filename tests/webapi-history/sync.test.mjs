@@ -419,6 +419,7 @@ test('history sync does not fan out before the first known metric availability f
 test('current-day sync aggregates only additive hourly realtime metrics', async () => {
   const audits = [];
   const storeRows = [];
+  const productRows = [];
   const endpoints = [];
   const merged = mergeRealtimeStoreRows([
     {
@@ -470,7 +471,6 @@ test('current-day sync aggregates only additive hourly realtime metrics', async 
     storeCodes: ['DL5477'],
     startDate: '2026-08-02',
     endDate: '2026-08-02',
-    includeProducts: false,
     clock: () => new Date('2026-08-02T13:00:00.000Z'),
     openSession: async () => ({ async close() {} }),
     transportFactory: () => async (endpointCode, request) => {
@@ -537,6 +537,19 @@ test('current-day sync aggregates only additive hourly realtime metrics', async 
           },
         });
       }
+      if (endpointCode === 'PRODUCT_DIAGNOSE_LIST') {
+        return response({
+          code: '0',
+          info: {
+            data: [{
+              spu: 'SPU-CURRENT',
+              goodsName: 'Current product',
+              c1dSaleCnt: '3',
+            }],
+            meta: { count: 1 },
+          },
+        });
+      }
       if (endpointCode === 'ANALYSE_MODEL') {
         return response({ code: '0', info: { status: true } });
       }
@@ -558,7 +571,9 @@ test('current-day sync aggregates only additive hourly realtime metrics', async 
       async upsertStoreDaily(rows) {
         storeRows.push(...rows);
       },
-      async upsertProducts() {},
+      async upsertProducts(rows) {
+        productRows.push(...rows);
+      },
       async upsertRegions() {},
       async successfulDailyDates() {
         return new Set();
@@ -570,6 +585,7 @@ test('current-day sync aggregates only additive hourly realtime metrics', async 
   assert.equal(result.complete, true);
   assert.equal(endpoints.filter((code) => code === 'STORE_REALTIME').length, 1);
   assert.equal(endpoints.filter((code) => code === 'STORE_REALTIME_SUMMARY').length, 1);
+  assert.equal(endpoints.filter((code) => code === 'PRODUCT_DIAGNOSE_LIST').length, 1);
   assert.equal(endpoints.filter((code) => code === 'STORE_DAILY_HISTORY').length, 0);
   assert.equal(result.windowCount, 0);
   const realtime = storeRows.find(({ buyerCount }) => buyerCount === 2);
@@ -578,6 +594,10 @@ test('current-day sync aggregates only additive hourly realtime metrics', async 
   assert.equal(realtime.buyerCount, 2);
   assert.equal(realtime.goodsDetailVisitors, 40);
   assert.equal(realtime.sourceUpdatedAt, '2026-08-02T20:00:00+08:00');
+  assert.equal(productRows.length, 1);
+  assert.equal(productRows[0].businessDate, '2026-08-02');
+  assert.equal(productRows[0].productKey, 'SPU-CURRENT');
+  assert.equal(result.results[0].productDaily.accepted, 1);
   const audit = audits.find(({ endpointCode }) => endpointCode === 'STORE_REALTIME');
   assert.equal(audit.acceptedRowCount, 2);
   assert.deepEqual(result.results[0].realtime.payload, {

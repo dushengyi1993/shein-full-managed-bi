@@ -199,7 +199,6 @@ export function buildScheduledPlan({
         `--stores=${storeCsv(selected.stores)}`,
         `--from=${dates.today}`,
         `--to=${dates.today}`,
-        '--no-products',
         '--retry-cdp=1',
         '--execute',
       ])]),
