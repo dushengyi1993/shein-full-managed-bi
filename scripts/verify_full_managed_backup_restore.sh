@@ -13,7 +13,7 @@ readonly container_name="${SHEIN_FM_DB_CONTAINER:-shein-fm-db}"
 
 latest_backup="$({
   find "$backup_dir" -maxdepth 1 -type f \
-    \( -name 'shein-fm-daily-*.dump' -o -name 'shein-fm-deploy-*.dump' \) \
+    \( -name 'shein-fm-weekly-*.dump' -o -name 'shein-fm-daily-*.dump' -o -name 'shein-fm-deploy-*.dump' \) \
     -printf '%T@ %p\n'
 } | sort -nr | head -n 1 | cut -d' ' -f2-)"
 if [[ -z "$latest_backup" || ! -f "$latest_backup" ]]; then

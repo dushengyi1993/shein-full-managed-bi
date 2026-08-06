@@ -3,12 +3,13 @@ set -euo pipefail
 
 # Full-managed PostgreSQL backup.
 #
-#   --mode daily   at most one successful backup per Shanghai business day
+#   --mode weekly  at most one successful backup per Shanghai ISO week
 #   --mode deploy  explicit high-risk data/schema change backup only
 #
 # A host lock serializes every mode, so a high-risk migration cannot race the
 # timer. After a successful dump the local cloud-disk retention tool keeps a
-# bounded daily/weekly/deploy union. No normal backup is copied to COS.
+# bounded weekly/deploy union while safely converging legacy daily dumps. No
+# normal backup is copied to COS.
 
 mode=""
 while (( $# > 0 )); do
@@ -29,8 +30,8 @@ while (( $# > 0 )); do
 done
 
 case "$mode" in
-  daily|deploy) ;;
-  *) printf 'usage: backup_full_managed_db.sh --mode daily|deploy\n' >&2; exit 2 ;;
+  weekly|deploy) ;;
+  *) printf 'usage: backup_full_managed_db.sh --mode weekly|deploy\n' >&2; exit 2 ;;
 esac
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -59,11 +60,11 @@ fi
 
 deploy_cooldown_seconds="${FULL_BI_DEPLOY_BACKUP_COOLDOWN_SECONDS:-7200}"
 deploy_local_max="${FULL_BI_DEPLOY_BACKUP_MAX:-1}"
-retain_daily="${FULL_BI_BACKUP_RETAIN_DAILY:-2}"
-retain_weekly="${FULL_BI_BACKUP_RETAIN_WEEKLY:-4}"
+retain_daily="${FULL_BI_BACKUP_RETAIN_DAILY:-0}"
+retain_weekly="${FULL_BI_BACKUP_RETAIN_WEEKLY:-2}"
 retain_deploy="${FULL_BI_BACKUP_RETAIN_DEPLOY:-1}"
 now_epoch="$(date -u +%s)"
-today_shanghai="$(TZ=Asia/Shanghai date +%Y%m%d)"
+week_shanghai="$(TZ=Asia/Shanghai date +%G-W%V)"
 
 newest_epoch_for() {
   # Newest mtime among dumps matching a glob, or 0 when none exist.
@@ -78,16 +79,16 @@ newest_epoch_for() {
   printf '%s' "$newest"
 }
 
-if [[ "$mode" == daily ]]; then
-  while IFS= read -r -d '' existing_daily; do
-    existing_epoch="$(stat -c %Y -- "$existing_daily")"
-    existing_day="$(TZ=Asia/Shanghai date -d "@${existing_epoch}" +%Y%m%d)"
-    if [[ "$existing_day" == "$today_shanghai" ]]; then
-      printf '{"ok":true,"skipped":"daily backup already exists for Shanghai day %s"}\n' \
-        "$today_shanghai"
+if [[ "$mode" == weekly ]]; then
+  while IFS= read -r -d '' existing_weekly; do
+    existing_epoch="$(stat -c %Y -- "$existing_weekly")"
+    existing_week="$(TZ=Asia/Shanghai date -d "@${existing_epoch}" +%G-W%V)"
+    if [[ "$existing_week" == "$week_shanghai" ]]; then
+      printf '{"ok":true,"skipped":"weekly backup already exists for Shanghai week %s"}\n' \
+        "$week_shanghai"
       exit 0
     fi
-  done < <(find "$backup_dir" -maxdepth 1 -type f -name 'shein-fm-daily-*.dump' -print0)
+  done < <(find "$backup_dir" -maxdepth 1 -type f -name 'shein-fm-weekly-*.dump' -print0)
 else
   last_deploy="$(newest_epoch_for 'shein-fm-deploy-*.dump')"
   if (( last_deploy > 0 )) \

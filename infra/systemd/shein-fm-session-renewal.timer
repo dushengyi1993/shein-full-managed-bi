@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily full-managed SHEIN Profile session renewal
+Description=Daily browserless renewal of encrypted full-managed SHEIN WebAPI sessions
 
 [Timer]
 OnCalendar=*-*-* 00:30:00 Asia/Shanghai

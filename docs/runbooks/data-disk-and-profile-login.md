@@ -45,22 +45,29 @@
 - `/srv/shein-fm/runtime/store-login/all-25-completed`
 - `/srv/shein-fm/runtime/webapi-history.enabled`
 
-随后启动 `shein-fm-home-webapi-backfill.service`。它只读取 25 个已验证
-Profile，从平台最早支持日期起串行回补首页店铺日指标、货号日指标，并按自然日
-回补交易概览和主销地区。交易概览、地区排行每个成功自然日都有审计断点，中断后
-只补尚未成功的日期，不会从头重复请求数万次；
-成功后独立触发 Dashboard 物化。任意店铺登录失效时任务失败关闭该浏览器，
-不会借用其他 Profile 或把其他店数据归入本店。
+随后先为 25 店各执行一次 `shein-fm-session-bootstrap@<店铺>.service`。建档过程只在
+该店已通过页面身份回读后，从 CDP 读取 SHEIN 官方域的 Cookie 与 User-Agent，使用
+systemd credential 提供的 AES-256-GCM 密钥按店加密保存，再以相同请求分别做页面内
+读取和直接 HTTP 读取；只有响应体 SHA-256 完全一致才接受该会话。Cookie、密码、请求头
+和明文响应都不进入日志、数据库或 Git。
 
-续期服务每天凌晨逐店检查已经标记登录完成的 Profile。只有当 Chrome 已自动填好账号和密码时
-才点击登录按钮；脚本只接收“字段是否有值”的布尔值，不接收字段内容。任何店铺
-身份无法确认时均记录为失败，禁止把其他店铺数据归到该店。历史抓取正在占用浏览器时，
-本次续期会安全跳过并在下一时段重试，禁止两个任务同时打开同一 Profile。
+通过双读门禁后启动 `shein-fm-home-webapi-backfill.service`。它默认只读取加密会话，
+以 `credentials: include` 的同源 HTTP 语义从平台最早支持日期起回补首页店铺日指标、
+货号日指标、交易概览和主销地区，正常运行不打开 Profile。每个成功自然日都有审计断点，
+中断后只补尚未成功的日期；成功后通过事件队列触发 Dashboard 物化。任意店铺返回登录页、
+鉴权业务码或 Cookie 过期时，只把该店写入恢复队列，不能借用其他店会话或把其他店数据
+归入本店。
+
+每日续期服务改为纯 HTTP 探测：逐店调用轻量的 `get_update_time`，接收平台返回的
+`Set-Cookie` 后立即合并并重新加密落盘，因此不会为了“续期”逐店打开 Chrome。只有
+失败或缺少加密会话的店铺进入 `/srv/shein-fm/runtime/store-login/session-recovery.json`；
+小时级恢复任务每次最多处理 3 店，才会打开对应 Profile、使用已保存密码恢复，并重新执行
+页面/HTTP 双读验真。未进入恢复队列的店铺不会启动浏览器。
 
 BI 的 `#system` 页面为系统管理员提供同一套 25 店登录维护动作。浏览器只调用
 Portal 的 `/api/system/store-login/*`；Portal 使用 systemd credential 在回环地址
 代理到登录服务，不把内部令牌、Cookie 或 Profile 文件返回浏览器。普通员工仍可查看
-脱敏登录与续期状态，但不能打开、关闭或验证云端 Profile。
+脱敏登录、HTTP 会话健康与恢复状态，但不能读取会话密文、Cookie 或 Profile 文件。
 
 ## OpenAPI 历史回补
 

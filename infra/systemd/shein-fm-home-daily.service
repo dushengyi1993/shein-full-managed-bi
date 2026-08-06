@@ -15,12 +15,14 @@ Slice=shein-host-heavy-fm.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
+Environment=FULL_FM_WEBAPI_TRANSPORT=http
 Environment=FULL_BI_SCHEDULE_MARKER_DIR=/srv/shein-fm/runtime/scheduler/home
 EnvironmentFile=/srv/shein-fm/secrets/webapi-experiment/database.env
+LoadCredential=webapi_session_key:/srv/shein-fm/secrets/webapi-session/session-key
 RuntimeDirectory=shein-fm-webapi
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
-ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh browser-read fm browser /usr/bin/flock -n -E 75 /run/shein-fm-webapi/home-history.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=home-daily-batch --execute
+ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh api-light fm openapi /usr/bin/flock -n -E 75 /run/shein-fm-webapi/home-history.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=home-daily-batch --execute
 SuccessExitStatus=75
 TimeoutStartSec=12min
 TimeoutStopSec=30s
@@ -49,7 +51,7 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadOnlyPaths=/srv/shein-fm/secrets/webapi-experiment/database.env
-ReadWritePaths=/run/lock/shein-host-heavy.lock /run/lock/shein-browser-read-0.lock /run/lock/shein-browser-read-1.lock /run/shein-fm-webapi /srv/shein-fm/runtime/webapi-locks /srv/shein-fm/webapi/profiles /srv/shein-fm/runtime/scheduler/home
-MemoryHigh=1100M
-MemoryMax=1600M
+ReadWritePaths=/run/lock/shein-api-light-0.lock /run/lock/shein-api-light-1.lock /run/shein-fm-webapi /srv/shein-fm/runtime/webapi-sessions /srv/shein-fm/runtime/scheduler/home
+MemoryHigh=512M
+MemoryMax=900M
 MemorySwapMax=128M

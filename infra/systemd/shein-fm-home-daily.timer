@@ -4,8 +4,8 @@ ConditionPathExists=/srv/shein-fm/runtime/webapi-history.enabled
 ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
 
 [Timer]
-# Five short, explicit store batches run after the D-1 readiness window. Each
-# slot sits between the hourly :02/:32 realtime batches; the schedule runner
+# Five short, explicit store batches run after the D-1 readiness window. The
+# schedule runner
 # maps the exact HH:MM slot to batch 0..4 instead of inferring from the hour.
 OnCalendar=*-*-* 03:45:00 Asia/Shanghai
 OnCalendar=*-*-* 04:15:00 Asia/Shanghai

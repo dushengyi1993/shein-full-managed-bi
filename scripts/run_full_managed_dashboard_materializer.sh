@@ -17,7 +17,7 @@ umask 0077
 
 set +e
 /usr/bin/bash scripts/run_shein_host_lane.sh \
-  db-heavy fm db-heavy \
+  db-read fm materializer \
   /usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock \
   /usr/bin/bash scripts/materialize_and_promote_full_managed_dashboard.sh
 readonly materialize_status=$?

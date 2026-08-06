@@ -69,10 +69,10 @@ test('resource pressure gate accepts an idle settled host', () => {
   assert.equal(result.evidence.normalizedLoad, 0.4);
 });
 
-test('a second browser requires four GiB and stricter host pressure', () => {
+test('a second browser requires three GiB and stricter host pressure', () => {
   assert.equal(
     RESOURCE_PRESSURE_PROFILES['browser-secondary'].minimumAvailableMemoryMiB,
-    4096,
+    3072,
   );
   assert.deepEqual(parseArgs(['--class=browser-secondary']), {
     resourceClass: 'browser-secondary',
@@ -82,10 +82,7 @@ test('a second browser requires four GiB and stricter host pressure', () => {
 
 test('host lanes allow two read browsers while writes and heavy IO stay exclusive', async () => {
   const browserUnitNames = [
-    'shein-fm-home-realtime.service',
-    'shein-fm-home-daily.service',
-    'shein-fm-home-daily-retry.service',
-    'shein-fm-session-renewal.service',
+    'shein-fm-session-recovery.service',
   ];
   const browserUnits = await Promise.all(browserUnitNames.map((name) => (
     readFile(new URL(`infra/systemd/${name}`, root), 'utf8')
@@ -97,22 +94,42 @@ test('host lanes allow two read browsers while writes and heavy IO stay exclusiv
     assert.match(unit, /shein-browser-read-1\.lock/);
   }
 
+  const sessionHttpUnitNames = [
+    'shein-fm-home-realtime.service',
+    'shein-fm-home-daily.service',
+    'shein-fm-home-daily-retry.service',
+    'shein-fm-session-renewal.service',
+  ];
+  const sessionHttpUnits = await Promise.all(sessionHttpUnitNames.map((name) => (
+    readFile(new URL(`infra/systemd/${name}`, root), 'utf8')
+  )));
+  for (const [index, unit] of sessionHttpUnits.entries()) {
+    assert.match(unit, /run_shein_host_lane\.sh api-light fm (?:openapi|api-critical)/, sessionHttpUnitNames[index]);
+    assert.match(unit, /webapi_session_key/, sessionHttpUnitNames[index]);
+    assert.match(unit, /webapi-sessions/, sessionHttpUnitNames[index]);
+    assert.doesNotMatch(unit, /shein-browser-read-[01]\.lock|webapi\/profiles/, sessionHttpUnitNames[index]);
+  }
+
   const exclusiveUnitNames = [
     'shein-fm-db-backup.service',
     'shein-fm-db-restore-test.service',
-    'shein-fm-dashboard-materialize.service',
-    'shein-fm-dashboard-materialize-retry.service',
   ];
   const exclusiveUnits = await Promise.all(exclusiveUnitNames.map((name) => (
     readFile(new URL(`infra/systemd/${name}`, root), 'utf8')
   )));
   for (const [index, unit] of exclusiveUnits.entries()) {
     assert.match(unit, /^Slice=shein-host-heavy-fm\.slice$/m, exclusiveUnitNames[index]);
-    if (exclusiveUnitNames[index].startsWith('shein-fm-dashboard-materialize')) {
-      assert.match(unit, /run_full_managed_dashboard_materializer\.sh/);
-    } else {
-      assert.match(unit, /run_shein_host_lane\.sh io-heavy fm io-heavy/);
-    }
+    assert.match(unit, /run_shein_host_lane\.sh io-heavy fm io-heavy/);
+  }
+
+  for (const name of [
+    'shein-fm-dashboard-materialize.service',
+    'shein-fm-dashboard-materialize-retry.service',
+  ]) {
+    const unit = await readFile(new URL(`infra/systemd/${name}`, root), 'utf8');
+    assert.match(unit, /run_full_managed_dashboard_materializer\.sh/);
+    assert.match(unit, /shein-db-read\.lock/);
+    assert.doesNotMatch(unit, /shein-host-heavy\.lock/);
   }
 
   for (const name of [
@@ -122,7 +139,7 @@ test('host lanes allow two read browsers while writes and heavy IO stay exclusiv
   ]) {
     const unit = await readFile(new URL(`infra/systemd/${name}`, root), 'utf8');
     assert.match(unit, /^Slice=shein-fm-heavy\.slice$/m, name);
-    assert.match(unit, /run_shein_host_lane\.sh api-light fm openapi/, name);
+    assert.match(unit, /run_shein_host_lane\.sh api-light fm (?:openapi|api-critical)/, name);
     assert.match(unit, /shein-api-light-0\.lock/, name);
     assert.match(unit, /shein-api-light-1\.lock/, name);
   }
@@ -153,12 +170,13 @@ test('host lanes allow two read browsers while writes and heavy IO stay exclusiv
   assert.match(tmpfiles, /f \/run\/lock\/shein-fm-heavy\.lock 0666 root root/);
   assert.match(tmpfiles, /f \/run\/lock\/shein-browser-read-0\.lock 0666 root root/);
   assert.match(tmpfiles, /f \/run\/lock\/shein-browser-read-1\.lock 0666 root root/);
+  assert.match(tmpfiles, /f \/run\/lock\/shein-db-read\.lock 0666 root root/);
   assert.match(tmpfiles, /d \/srv\/shein-fm\/runtime\/scheduler 0755 root root/);
   assert.match(laneWrapper, /flock -s -n 9/);
   assert.match(laneWrapper, /browser-secondary/);
   assert.match(laneWrapper, /browser-write\|db-heavy\|io-heavy/);
   assert.match(laneWrapper, /exec "\$@"/);
-  assert.match(materializerWrapper, /run_shein_host_lane\.sh[\s\S]*db-heavy fm db-heavy/);
+  assert.match(materializerWrapper, /run_shein_host_lane\.sh[\s\S]*db-read fm materializer/);
 });
 
 test('boot-sensitive timers never replay missed high-frequency work', async () => {

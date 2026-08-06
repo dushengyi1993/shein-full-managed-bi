@@ -12,9 +12,9 @@ Slice=shein-host-heavy-fm.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=FULL_BI_BACKUP_DIR=/srv/shein-fm/backups/db
-# `--mode daily` is required: the script keeps at most one successful backup per
-# Shanghai business day, then applies bounded local retention on the data disk.
-ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh io-heavy fm io-heavy /usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/bash scripts/backup_full_managed_db.sh --mode daily
+# Weekly full dump only. Ordinary releases do not create another full backup;
+# destructive migrations must request `--mode deploy` explicitly.
+ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh io-heavy fm io-heavy /usr/bin/flock -n -E 75 /run/lock/shein-fm-heavy.lock /usr/bin/bash scripts/backup_full_managed_db.sh --mode weekly
 SuccessExitStatus=75
 TimeoutStartSec=20min
 TimeoutStopSec=20s

@@ -1,10 +1,8 @@
 [Unit]
-Description=Renew saved-password sessions for full-managed SHEIN Profiles
+Description=Refresh encrypted full-managed WebAPI sessions without opening Chrome Profiles
 Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
 Wants=network-online.target
-After=network-online.target shein-fm-store-login.service systemd-tmpfiles-setup.service
-Requires=shein-fm-db.service
-RequiresMountsFor=/data /srv/shein-fm/runtime /srv/shein-fm/webapi/profiles
+After=network-online.target systemd-tmpfiles-setup.service
 ConditionPathExists=/srv/shein-fm/runtime/store-login/renewal.enabled
 ConditionPathExists=/srv/shein-fm/runtime/store-login/state.json
 
@@ -16,29 +14,26 @@ Slice=shein-host-heavy-fm.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
-EnvironmentFile=/srv/shein-fm/secrets/webapi-experiment/database.env
+LoadCredential=webapi_session_key:/srv/shein-fm/secrets/webapi-session/session-key
 RuntimeDirectory=shein-fm-webapi
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
-# History reads and renewal both own a Chrome Profile. Skip this renewal slot
-# when a history run is active; the next daily slot will retry.
-ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh browser-read fm browser /usr/bin/flock -n -E 75 /run/shein-fm-webapi/home-history.lock /usr/bin/flock -n -E 75 /srv/shein-fm/runtime/store-login/renewal.lock /usr/bin/node scripts/renew_full_managed_webapi_sessions.mjs
-# Exit 2 means the report was written with one or more store-level failures;
-# data health handles those stores without turning the scheduler itself red.
+ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh api-light fm openapi /usr/bin/flock -n -E 75 /srv/shein-fm/runtime/store-login/renewal.lock /usr/bin/node scripts/renew_full_managed_webapi_sessions.mjs
+# Store-level expiry writes a recovery queue and exit 2; that is a handled
+# condition, not a scheduler failure. The browser recovery unit consumes only
+# the affected stores.
 SuccessExitStatus=2 75
-TimeoutStartSec=10min
-TimeoutStopSec=30s
+TimeoutStartSec=5min
+TimeoutStopSec=20s
 KillMode=control-group
 SendSIGKILL=yes
-Nice=10
-CPUWeight=20
-CPUQuota=75%
-IOWeight=20
-IOSchedulingClass=best-effort
-IOSchedulingPriority=7
+Nice=8
+CPUWeight=30
+CPUQuota=60%
+IOWeight=25
 OOMPolicy=stop
-OOMScoreAdjust=500
-TasksMax=128
+OOMScoreAdjust=400
+TasksMax=64
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -52,8 +47,7 @@ LockPersonality=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadOnlyPaths=/srv/shein-fm/secrets/webapi-experiment/database.env
-ReadWritePaths=/run/lock/shein-host-heavy.lock /run/lock/shein-browser-read-0.lock /run/lock/shein-browser-read-1.lock /run/shein-fm-webapi /srv/shein-fm/runtime/store-login /srv/shein-fm/runtime/webapi-locks /srv/shein-fm/webapi/profiles
-MemoryHigh=1100M
-MemoryMax=1600M
-MemorySwapMax=128M
+ReadWritePaths=/run/lock/shein-api-light-0.lock /run/lock/shein-api-light-1.lock /run/shein-fm-webapi /srv/shein-fm/runtime/store-login /srv/shein-fm/runtime/webapi-sessions
+MemoryHigh=256M
+MemoryMax=512M
+MemorySwapMax=64M

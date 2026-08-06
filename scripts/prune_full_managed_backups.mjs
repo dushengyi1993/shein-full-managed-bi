@@ -36,8 +36,8 @@ async function listBackups(backupDir) {
 async function main() {
   const flags = parseFlags(process.argv.slice(2), FLAGS);
   const apply = flags.has('apply');
-  const retainDaily = boundedIntegerFlag(flags, 'retain-daily', 2, 1, 14);
-  const retainWeekly = boundedIntegerFlag(flags, 'retain-weekly', 4, 0, 12);
+  const retainDaily = boundedIntegerFlag(flags, 'retain-daily', 0, 0, 14);
+  const retainWeekly = boundedIntegerFlag(flags, 'retain-weekly', 2, 0, 12);
   const retainDeploy = boundedIntegerFlag(flags, 'retain-deploy', 1, 0, 5);
   const backupDir = resolveMaintenanceRoot('dbBackups', flags.get('backup-dir'));
   const runtimeRoot = resolveMaintenanceRoot('runtime', flags.get('runtime-dir'));

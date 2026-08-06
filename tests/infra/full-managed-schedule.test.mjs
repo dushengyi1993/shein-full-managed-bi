@@ -29,14 +29,14 @@ test('scheduled dates use the Shanghai business calendar', () => {
   });
 });
 
-test('hourly homepage plan splits the realtime contract into two bounded batches', () => {
-  assert.deepEqual(HOME_REALTIME_BATCH_BY_MINUTE, { 2: 0, 32: 1 });
+test('hourly homepage plan refreshes all stores through one browserless HTTP batch', () => {
+  assert.deepEqual(HOME_REALTIME_BATCH_BY_MINUTE, { 2: 0 });
   assert.deepEqual(
     HOME_REALTIME_BATCHES.flat(),
     FULL_MANAGED_STORE_CODES,
   );
-  assert.deepEqual(HOME_REALTIME_BATCHES.map((stores) => stores.length), [12, 13]);
-  for (const [minute, batch] of [[2, 0], [32, 1]]) {
+  assert.deepEqual(HOME_REALTIME_BATCHES.map((stores) => stores.length), [25]);
+  for (const [minute, batch] of [[2, 0]]) {
     const plan = buildScheduledPlan({
       task: 'home-realtime',
       now: new Date(`2026-08-03T00:${String(minute).padStart(2, '0')}:00+08:00`),
@@ -193,7 +193,7 @@ test('systemd schedule keeps hourly work ahead of bounded daily batches', async 
     readFile(new URL('infra/systemd/shein-fm-dashboard-materialize-retry.timer', root), 'utf8'),
   ]);
   assert.match(realtime, /OnCalendar=\*-\*-\* \*:02:00 Asia\/Shanghai/);
-  assert.match(realtime, /OnCalendar=\*-\*-\* \*:32:00 Asia\/Shanghai/);
+  assert.doesNotMatch(realtime, /\*:32:00/);
   assert.match(sales, /OnCalendar=\*-\*-\* \*:05:00 Asia\/Shanghai/);
   assert.match(supply, /OnCalendar=\*-\*-\* 02:20:00 Asia\/Shanghai/);
   for (const slot of ['03:45', '04:15', '04:45', '05:15', '05:45']) {
@@ -202,14 +202,14 @@ test('systemd schedule keeps hourly work ahead of bounded daily batches', async 
   assert.match(retry, /OnCalendar=\*-\*-\* 06:15:00 Asia\/Shanghai/);
   assert.match(finance, /OnCalendar=\*-\*-\* 03:15:00 Asia\/Shanghai/);
   assert.match(session, /OnCalendar=\*-\*-\* 00:30:00 Asia\/Shanghai/);
-  assert.match(backup, /OnCalendar=\*-\*-\* 00:15:00 Asia\/Shanghai/);
-  assert.match(restore, /OnCalendar=Sun \*-\*-01\.\.07 11:15:00 Asia\/Shanghai/);
+  assert.match(backup, /OnCalendar=Sun \*-\*-\* 00:15:00 Asia\/Shanghai/);
+  assert.match(restore, /OnCalendar=Sun \*-\*-01\.\.07 01:15:00 Asia\/Shanghai/);
   assert.doesNotMatch(backup, /Persistent=true/);
   assert.doesNotMatch(restore, /Persistent=true/);
   assert.match(materializer, /OnCalendar=\*-\*-\* 00,06,12,18:55:00 Asia\/Shanghai/);
   assert.doesNotMatch(materializer, /OnUnitInactiveSec=/);
   assert.doesNotMatch(materializer, /OnBootSec=/);
-  assert.match(materializerRetry, /OnCalendar=\*-\*-\* \*:00\/2:00 Asia\/Shanghai/);
+  assert.match(materializerRetry, /OnCalendar=\*-\*-\* \*:09,19,29,39,49,59:00 Asia\/Shanghai/);
   assert.doesNotMatch(materializerRetry, /Persistent=true|OnBootSec=/);
 });
 
@@ -242,13 +242,13 @@ test('every heavy window has a hard stop before the next core lane', async () =>
   assert.match(realtimeTimer, /^AccuracySec=1s$/m);
   assert.match(realtime, /^TimeoutStartSec=11min$/m);
   assert.match(sales, /^TimeoutStartSec=15min$/m);
-  assert.match(session, /^TimeoutStartSec=10min$/m);
+  assert.match(session, /^TimeoutStartSec=5min$/m);
   assert.match(supply, /^TimeoutStartSec=35min$/m);
   assert.match(finance, /^TimeoutStartSec=15min$/m);
   assert.match(daily, /^TimeoutStartSec=12min$/m);
   assert.match(retry, /^TimeoutStartSec=12min$/m);
   assert.match(backup, /^TimeoutStartSec=20min$/m);
-  assert.match(backup, /backup_full_managed_db\.sh --mode daily/);
+  assert.match(backup, /backup_full_managed_db\.sh --mode weekly/);
   assert.match(restore, /^TimeoutStartSec=45min$/m);
   assert.match(materializer, /^TimeoutStartSec=5min$/m);
 });

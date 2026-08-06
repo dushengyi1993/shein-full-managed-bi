@@ -21,7 +21,7 @@ EnvironmentFile=/srv/shein-fm/secrets/sales/database.env
 RuntimeDirectory=shein-fm-sales
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
-ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh api-light fm openapi /usr/bin/flock -n -E 75 /run/shein-fm-sales/sync.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=sales-hourly --execute
+ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh api-light fm api-critical /usr/bin/flock -n -E 75 /run/shein-fm-sales/sync.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=sales-hourly --execute
 SuccessExitStatus=75
 TimeoutStartSec=15min
 TimeoutStopSec=20s

@@ -1,8 +1,8 @@
 [Unit]
-Description=Daily SHEIN full-managed PostgreSQL backup
+Description=Weekly SHEIN full-managed PostgreSQL backup
 
 [Timer]
-OnCalendar=*-*-* 00:15:00 Asia/Shanghai
+OnCalendar=Sun *-*-* 00:15:00 Asia/Shanghai
 AccuracySec=1m
 Persistent=false
 Unit=shein-fm-db-backup.service

@@ -15,18 +15,21 @@
 
 | 模式 | 触发方式 | 频率约束 |
 | --- | --- | --- |
-| `--mode daily` | `shein-fm-db-backup.timer`（每日 00:15） | 每个上海自然日最多一份 |
+| `--mode weekly` | `shein-fm-db-backup.timer`（周日 00:15） | 每个上海 ISO 周最多一份 |
 | `--mode deploy` | 数据库迁移、高风险数据变更或人工明确要求 | 本地最多保留最新一份 |
 
 普通代码、前端和 systemd 发布不创建 deploy dump。所有备份落在已挂载云硬盘
 `/srv/shein-fm/backups/db`，不占根盘。两种模式共用数据库备份锁；生成后先做
 `pg_restore --list` 格式校验，再按 SHA-256 去重。
 
-本地保留集合是以下三项的**并集**：
+本地保留集合是以下两项的**并集**：
 
-- 最近 2 份 daily/scheduled dump；
-- 最近 4 个上海 ISO 周中，每周最新一份 daily/scheduled dump；
+- 最近 2 个上海 ISO 周中，每周最新一份 weekly dump；
 - 最近 1 份 deploy/pre-deploy dump。
+
+历史 `daily/scheduled` 文件只作为旧周备份候选参与收敛，不再产生新的每日大 dump。
+数据库业务事实大多可以重抓；周备份的目的只是给不可重建的人工归并、授权状态和数据库
+结构提供最后一道恢复点，不把 0.7–0.8 GiB 的全库备份当作每日任务。
 
 `scripts/prune_full_managed_backups.mjs` 默认只输出计划；`--apply` 才删除二次核对过
 大小、mtime 和路径的精确候选。未知文件、配置备份、edge 备份和软链永不删除，且
@@ -43,7 +46,7 @@ npm run maintenance:prune-backups -- --apply
 
 ## 2. 恢复演练
 
-`shein-fm-db-restore-test.timer` 在每月第一个周日 11:15 运行：选取最新 daily/deploy
+`shein-fm-db-restore-test.timer` 在每月第一个周日 01:15 运行：选取最新 weekly/deploy
 dump，先验证自定义归档清单，再恢复到严格命名的临时数据库，核对关键 schema、表和
 行数，最后无论成功失败都删除临时库。恢复演练进入 `io-heavy` 排他车道，Portal 和
 Webhook 保持在线，OpenAPI 销售快车道不受影响。

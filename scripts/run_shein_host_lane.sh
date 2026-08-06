@@ -4,6 +4,7 @@ set -euo pipefail
 # Neutral host resource-lane launcher shared by the two SHEIN projects.
 #
 #   api-light PROJECT PRESSURE_CLASS COMMAND...
+#   db-read PROJECT PRESSURE_CLASS COMMAND...
 #   browser-read PROJECT PRESSURE_CLASS COMMAND...
 #   browser-write PROJECT PRESSURE_CLASS COMMAND...
 #   db-heavy PROJECT PRESSURE_CLASS COMMAND...
@@ -83,6 +84,14 @@ case "$lane" in
   api-light)
     if ! take_preferred_slot api-light; then
       printf '{"ok":true,"status":"DEFERRED","reasonCodes":["API_LIGHT_SLOTS_BUSY"]}\n'
+      exit "$defer_code"
+    fi
+    run_pressure_gate "$pressure_class" || exit $?
+    ;;
+  db-read)
+    exec 8>"/run/lock/shein-db-read.lock"
+    if ! /usr/bin/flock -n 8; then
+      printf '{"ok":true,"status":"DEFERRED","reasonCodes":["DB_READ_SLOT_BUSY"]}\n'
       exit "$defer_code"
     fi
     run_pressure_gate "$pressure_class" || exit $?

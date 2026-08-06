@@ -28,6 +28,8 @@
     "start:store-login": "node scripts/serve_full_managed_store_login.mjs",
     "store-login:create-batch": "node scripts/create_full_managed_store_login_batch.mjs",
     "webapi:renew-sessions": "node scripts/renew_full_managed_webapi_sessions.mjs",
+    "webapi:bootstrap-sessions": "node scripts/bootstrap_full_managed_webapi_sessions.mjs",
+    "webapi:recover-sessions": "node scripts/recover_full_managed_webapi_sessions.mjs",
     "sync:product-identity-evidence": "node scripts/sync_full_managed_product_identity_evidence.mjs",
     "resolve:product-identity": "node scripts/resolve_full_managed_product_identity.mjs",
     "build:reporting-goods-manifest": "node scripts/build_full_managed_reporting_goods_manifest.mjs",

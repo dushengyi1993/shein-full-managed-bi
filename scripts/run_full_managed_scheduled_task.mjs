@@ -13,11 +13,9 @@ export const OPENAPI_SCHEDULE_LOCK_ID = '8842137002';
 export const HOME_DAILY_BATCH_SIZE = 5;
 export const HOME_REALTIME_BATCH_BY_MINUTE = Object.freeze({
   2: 0,
-  32: 1,
 });
 export const HOME_REALTIME_BATCHES = Object.freeze([
-  Object.freeze(FULL_MANAGED_STORE_CODES.slice(0, 12)),
-  Object.freeze(FULL_MANAGED_STORE_CODES.slice(12)),
+  Object.freeze([...FULL_MANAGED_STORE_CODES]),
 ]);
 export const HOME_DAILY_BATCH_BY_SLOT = Object.freeze({
   '03:45': 0,

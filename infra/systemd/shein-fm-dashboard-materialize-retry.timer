@@ -3,14 +3,14 @@ Description=Near-term retry for deferred SHEIN full-managed dashboard materializ
 ConditionPathExists=/srv/shein-fm/runtime/materializer.enabled
 
 [Timer]
-OnCalendar=*-*-* *:00/2:00 Asia/Shanghai
+OnCalendar=*-*-* *:09,19,29,39,49,59:00 Asia/Shanghai
 AccuracySec=15s
 Persistent=false
 Unit=shein-fm-dashboard-materialize-retry.service
 
-# The service performs only a cheap marker check when no fact domain changed.
-# Multiple successful jobs within two minutes collapse into one projection. A
-# failed/blocked build keeps the marker for a later retry; old JSON stays live.
+# Primary wake-up is event-driven through the path unit. This ten-minute timer
+# is only a bounded fallback when the immediate attempt was pressure-deferred.
+
 
 [Install]
 WantedBy=timers.target

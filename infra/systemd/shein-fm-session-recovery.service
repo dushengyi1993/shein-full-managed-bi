@@ -1,11 +1,11 @@
 [Unit]
-Description=Refresh current-day SHEIN full-managed homepage facts
+Description=Recover only expired full-managed WebAPI sessions through saved Profile credentials
+Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
 Wants=network-online.target
 Requires=shein-fm-db.service
-After=network-online.target shein-fm-db.service shein-fm-db-migrate.service systemd-tmpfiles-setup.service
-OnSuccess=shein-fm-dashboard-materialize-enqueue.service
+After=network-online.target shein-fm-store-login.service shein-fm-db.service systemd-tmpfiles-setup.service
+ConditionPathExists=/srv/shein-fm/runtime/store-login/session-recovery.json
 ConditionPathExists=/srv/shein-fm/runtime/webapi-history.enabled
-ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
 
 [Service]
 Type=oneshot
@@ -15,23 +15,21 @@ Slice=shein-host-heavy-fm.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
-Environment=FULL_FM_WEBAPI_TRANSPORT=http
-Environment=FULL_BI_SCHEDULE_MARKER_DIR=/srv/shein-fm/runtime/scheduler/home
 EnvironmentFile=/srv/shein-fm/secrets/webapi-experiment/database.env
 LoadCredential=webapi_session_key:/srv/shein-fm/secrets/webapi-session/session-key
 RuntimeDirectory=shein-fm-webapi
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
-ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh api-light fm api-critical /usr/bin/flock -n -E 75 /run/shein-fm-webapi/home-history.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=home-realtime --execute
-SuccessExitStatus=75
-TimeoutStartSec=11min
+ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh browser-read fm browser /usr/bin/flock -n -E 75 /srv/shein-fm/runtime/store-login/renewal.lock /usr/bin/node scripts/recover_full_managed_webapi_sessions.mjs
+SuccessExitStatus=2 75
+TimeoutStartSec=12min
 TimeoutStopSec=30s
 KillMode=control-group
 SendSIGKILL=yes
-Nice=5
-CPUWeight=50
-CPUQuota=90%
-IOWeight=40
+Nice=10
+CPUWeight=20
+CPUQuota=75%
+IOWeight=20
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 OOMPolicy=stop
@@ -51,7 +49,7 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadOnlyPaths=/srv/shein-fm/secrets/webapi-experiment/database.env
-ReadWritePaths=/run/lock/shein-api-light-0.lock /run/lock/shein-api-light-1.lock /run/shein-fm-webapi /srv/shein-fm/runtime/webapi-sessions /srv/shein-fm/runtime/scheduler/home
-MemoryHigh=512M
-MemoryMax=900M
+ReadWritePaths=/run/lock/shein-host-heavy.lock /run/lock/shein-browser-read-0.lock /run/lock/shein-browser-read-1.lock /run/shein-fm-webapi /srv/shein-fm/runtime/store-login /srv/shein-fm/runtime/webapi-locks /srv/shein-fm/runtime/webapi-sessions /srv/shein-fm/webapi/profiles
+MemoryHigh=1100M
+MemoryMax=1600M
 MemorySwapMax=128M

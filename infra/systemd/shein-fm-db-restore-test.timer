@@ -2,9 +2,9 @@
 Description=Monthly restore verification for SHEIN full-managed backups
 
 [Timer]
-# First Sunday of each month. One :32 homepage batch may defer while the full
-# restore is running; hourly OpenAPI sales remains in the independent fast lane.
-OnCalendar=Sun *-*-01..07 11:15:00 Asia/Shanghai
+# First Sunday of each month, after the weekly full dump. The test uses its own
+# temporary database and never blocks the hourly API-only homepage refresh.
+OnCalendar=Sun *-*-01..07 01:15:00 Asia/Shanghai
 AccuracySec=5m
 RandomizedDelaySec=5m
 Persistent=false

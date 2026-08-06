@@ -315,8 +315,10 @@ observations do not authorize or feed the purchase-order backfill.
 ## 9. Verified homepage history contract
 
 The homepage history loader is a separate, production contract rather than a
-promotion of the generic experiment. It supports the canonical 25-store roster
-and uses one cloud Profile at a time.
+promotion of the generic experiment. It supports the canonical 25-store roster.
+Production reads use one encrypted, store-bound HTTP session at a time; Chrome
+Profiles are used only to bootstrap a session or recover an individually failed
+store.
 
 Store history is fetched in contiguous windows of at most 90 days from
 `/sbn/index/get_critical_indicator_curve_chart`. The official endpoint may
@@ -370,15 +372,17 @@ The live management-analysis page sends compact `startDt` / `endDt` values.
 Trade overview requires `dtFlag=1`; the region ranking requires `statType=2`.
 The similarly named `startDate` / `endDate` plus `queryType` shape belongs to
 the store curve contract and must not be reused for these two endpoints.
-Within one Profile and one business date the two read-only requests may run in
-parallel. Dates remain serial, and the host-wide plus per-Profile leases still
-prohibit concurrent Profile sessions.
+Within one store session and one business date the two read-only requests may
+run in parallel. Dates remain serial. HTTP reads use bounded API concurrency and
+do not take a browser lease; bootstrap and recovery still take the host browser
+lease plus the exact Profile lease.
 
 ```bash
 npm run sync:home-history -- \
   --stores=DL5477,MZ2406,NM7418 \
   --from=2023-06-07 \
   --to=2026-08-02 \
+  --transport=http \
   --refresh-recent-days=7 \
   --retry-cdp=1
 
@@ -387,16 +391,21 @@ npm run sync:home-history -- \
   --stores=DL5477,MZ2406,NM7418 \
   --from=2023-06-07 \
   --to=2026-08-02 \
+  --transport=http \
   --refresh-recent-days=7 \
   --execute
 rm -f /srv/shein-fm/runtime/webapi-history.enabled
 ```
 
 Dry-run is the default. Real execution additionally requires the dedicated
-`FULL_BI_WEBAPI_DATABASE_URL`, the cloud Linux attestation, the exact Profile
-directories and the explicit `webapi-history.enabled` gate. The browser request
-executes in page context with `credentials: include`; cookies, storage and
-headers never leave the Profile.
+`FULL_BI_WEBAPI_DATABASE_URL`, the cloud Linux attestation, the explicit
+`webapi-history.enabled` gate and a valid encrypted session for every selected
+store. The AES key arrives only through systemd `LoadCredential`; the encrypted
+bundle is mode `0600`, bound to the canonical store by authenticated additional
+data and never printed. Direct HTTP requests are restricted to reviewed SHEIN
+origins and paths, reject redirects and size overruns, and atomically persist
+platform `Set-Cookie` rotation. `--transport=browser` remains an explicit
+diagnostic fallback, not the scheduled production default.
 
 Migration 0014 adds:
 
@@ -416,9 +425,9 @@ deduplicated store visitor count. Product amount is available only as
 unknown and does not enter the amount ranking.
 
 The first full backfill remains an explicit manual operation. After it is
-accepted, an incremental service may refresh only today/yesterday under the same
-Profile lock and gate; it must never reopen the full historical range on every
-timer tick.
+accepted, the incremental service refreshes the bounded current range through
+the same encrypted HTTP session and gate; it must never reopen the full
+historical range on every timer tick.
 
 ## 10. Deliberately deferred
 
@@ -431,4 +440,5 @@ timer tick.
 - No timer for the generic WebAPI discovery experiment.
 - No `fact.full_store_realtime_metric_snapshot`.
 - No metric definition rows, so no metric is `VERIFIED`.
-- No persistent production WebAPI gate file and no enabled WebAPI timer.
+- No persistent gate for the generic discovery experiment. The independently
+  reviewed homepage HTTP session services and timers are production components.

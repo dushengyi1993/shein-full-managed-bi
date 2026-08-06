@@ -287,8 +287,15 @@ export function classifyBackupName(name) {
   if (/^shein-fm-\d{8}T\d{6}Z\.dump$/.test(raw)) {
     return { kind: 'database', variant: 'scheduled' };
   }
-  if (/^shein-fm-(daily|deploy)-\d{8}T\d{6}Z\.dump$/.test(raw)) {
-    return { kind: 'database', variant: raw.includes('-deploy-') ? 'deploy' : 'daily' };
+  if (/^shein-fm-(daily|weekly|deploy)-\d{8}T\d{6}Z\.dump$/.test(raw)) {
+    return {
+      kind: 'database',
+      variant: raw.includes('-deploy-')
+        ? 'deploy'
+        : raw.includes('-weekly-')
+          ? 'weekly'
+          : 'daily',
+    };
   }
   if (/^pre-[A-Za-z0-9._-]+\.dump$/.test(raw)) {
     return { kind: 'database', variant: 'pre-deploy' };
@@ -364,16 +371,16 @@ export function selectBackupsForArchive(entries, {
 /**
  * Bounded local retention for the cloud data disk.
  *
- * - newest N daily/scheduled dumps;
- * - newest daily dump in each of the current N Shanghai ISO weeks;
+ * - newest N legacy daily/scheduled dumps (production now sets this to zero);
+ * - newest weekly or legacy daily dump in each of the current N Shanghai ISO weeks;
  * - newest N deploy/pre-deploy dumps.
  *
  * The keep sets are a union, so a current-week daily normally satisfies both
  * the short daily tail and one weekly slot. Unknown files are never deleted.
  */
 export function selectBackupsForLocalRetention(entries, {
-  retainDaily = 2,
-  retainWeekly = 4,
+  retainDaily = 0,
+  retainWeekly = 2,
   retainDeploy = 1,
   now = Date.now(),
 } = {}) {
@@ -396,6 +403,9 @@ export function selectBackupsForLocalRetention(entries, {
     right.modifiedAt - left.modifiedAt || left.name.localeCompare(right.name)
   ));
   const daily = ordered.filter(({ variant }) => ['daily', 'scheduled'].includes(variant));
+  const weeklySources = ordered.filter(({ variant }) => (
+    ['weekly', 'daily', 'scheduled'].includes(variant)
+  ));
   const deploy = ordered.filter(({ variant }) => ['deploy', 'pre-deploy'].includes(variant));
   const keep = new Map();
 
@@ -408,7 +418,7 @@ export function selectBackupsForLocalRetention(entries, {
     recentWeeks.add(shanghaiIsoWeekKey(now - offset * 7 * 86_400_000));
   }
   const weekly = new Set();
-  for (const entry of daily) {
+  for (const entry of weeklySources) {
     const week = shanghaiIsoWeekKey(entry.modifiedAt);
     if (!recentWeeks.has(week) || weekly.has(week)) continue;
     weekly.add(week);

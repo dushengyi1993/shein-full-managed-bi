@@ -67,11 +67,11 @@ test('Shanghai backup keys follow the local business day and ISO week', () => {
   assert.equal(shanghaiIsoWeekKey('2026-08-03T00:00:00.000Z'), '2026-W32');
 });
 
-test('local backup retention keeps two dailies, four weekly points and one deploy', () => {
+test('local backup retention keeps two weekly points and one deploy without a daily tail', () => {
   const entries = [
-    dump('shein-fm-daily-20260729T021500Z.dump', 0),
+    dump('shein-fm-weekly-20260729T021500Z.dump', 0),
     dump('shein-fm-daily-20260728T021500Z.dump', 1),
-    dump('shein-fm-daily-20260722T021500Z.dump', 7),
+    dump('shein-fm-weekly-20260722T021500Z.dump', 7),
     dump('shein-fm-daily-20260715T021500Z.dump', 14),
     dump('shein-fm-daily-20260708T021500Z.dump', 21),
     dump('shein-fm-daily-20260701T021500Z.dump', 28),
@@ -80,26 +80,26 @@ test('local backup retention keeps two dailies, four weekly points and one deplo
     dump('README.txt', 0),
   ];
   const selection = selectBackupsForLocalRetention(entries, {
-    retainDaily: 2,
-    retainWeekly: 4,
+    retainDaily: 0,
+    retainWeekly: 2,
     retainDeploy: 1,
     now: BASE,
   });
   const kept = new Set(selection.keep.map(({ name }) => name));
   assert.deepEqual(kept, new Set([
-    'shein-fm-daily-20260729T021500Z.dump',
-    'shein-fm-daily-20260728T021500Z.dump',
-    'shein-fm-daily-20260722T021500Z.dump',
-    'shein-fm-daily-20260715T021500Z.dump',
-    'shein-fm-daily-20260708T021500Z.dump',
+    'shein-fm-weekly-20260729T021500Z.dump',
+    'shein-fm-weekly-20260722T021500Z.dump',
     'shein-fm-deploy-20260729T101500Z.dump',
   ]));
   assert.deepEqual(
     selection.candidates.map(({ name }) => name).sort(),
     [
+      'shein-fm-daily-20260708T021500Z.dump',
+      'shein-fm-daily-20260715T021500Z.dump',
+      'shein-fm-daily-20260728T021500Z.dump',
       'shein-fm-daily-20260701T021500Z.dump',
       'shein-fm-deploy-20260720T101500Z.dump',
-    ],
+    ].sort(),
   );
   assert.equal(selection.skipped[0].name, 'README.txt');
 });
@@ -161,6 +161,8 @@ test('only database dumps are cleanup candidates', () => {
     { kind: 'database', variant: 'scheduled' });
   assert.deepEqual(classifyBackupName('shein-fm-daily-20260729T021500Z.dump'),
     { kind: 'database', variant: 'daily' });
+  assert.deepEqual(classifyBackupName('shein-fm-weekly-20260729T021500Z.dump'),
+    { kind: 'database', variant: 'weekly' });
   assert.deepEqual(classifyBackupName('shein-fm-deploy-20260729T101500Z.dump'),
     { kind: 'database', variant: 'deploy' });
   assert.deepEqual(classifyBackupName('pre-v8-rollout.dump'),

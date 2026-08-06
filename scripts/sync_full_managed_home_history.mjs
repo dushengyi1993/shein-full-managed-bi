@@ -10,6 +10,11 @@ import {
   runFullHomeHistorySync,
 } from '../src/webapi-history/sync.mjs';
 import { normalizeFullManagedStoreCode } from '../src/config/full-managed-stores.mjs';
+import { createEncryptedWebApiSessionStoreFromEnvironment } from '../src/webapi-session/encrypted-session-store.mjs';
+import {
+  createFullHomeHttpTransport,
+  openFullHomeHttpSession,
+} from '../src/webapi-session/http-home-transport.mjs';
 
 export const HOME_HISTORY_GATE_PATH = '/srv/shein-fm/runtime/webapi-history.enabled';
 
@@ -24,6 +29,7 @@ function parseArgs(argv) {
     requireSettledThrough: null,
     retryCdpCount: 0,
     allowPartial: false,
+    transport: process.env.FULL_FM_WEBAPI_TRANSPORT || 'http',
   };
   for (const token of argv) {
     const match = /^--([a-z-]+)(?:=(.*))?$/.exec(token);
@@ -48,6 +54,8 @@ function parseArgs(argv) {
       result.requireSettledThrough = value;
     } else if (name === 'retry-cdp' && /^[0-2]$/.test(value ?? '')) {
       result.retryCdpCount = Number(value);
+    } else if (name === 'transport' && ['http', 'browser'].includes(value)) {
+      result.transport = value;
     } else throw new Error('HOME_CLI_ARGUMENT_INVALID');
   }
   if (result.stores.length === 0 || !result.from || !result.to) {
@@ -71,6 +79,7 @@ function dryRunReport(args) {
     requireSettledThrough: args.requireSettledThrough,
     retryCdpCount: args.retryCdpCount,
     allowPartial: args.allowPartial,
+    transport: args.transport,
     includeTradeOverview: true,
     includeRegionRank: true,
     dailyDimensionResume: true,
@@ -88,10 +97,15 @@ async function main() {
   }
   const databaseUrl = process.env.FULL_BI_WEBAPI_DATABASE_URL;
   if (!databaseUrl) throw new Error('HOME_WEBAPI_DATABASE_URL_MISSING');
-  const runtime = await createLinuxExperimentRuntime({
-    databaseUrl,
-    gatePath: HOME_HISTORY_GATE_PATH,
-  });
+  const runtime = args.transport === 'browser'
+    ? await createLinuxExperimentRuntime({
+        databaseUrl,
+        gatePath: HOME_HISTORY_GATE_PATH,
+      })
+    : null;
+  const sessionStore = args.transport === 'http'
+    ? await createEncryptedWebApiSessionStoreFromEnvironment()
+    : null;
   const pool = new Pool({
     connectionString: databaseUrl,
     max: 2,
@@ -107,8 +121,12 @@ async function main() {
       refreshRecentSettledDays: args.refreshRecentSettledDays,
       requireSettledThrough: args.requireSettledThrough,
       retryCdpCount: args.retryCdpCount,
-      openSession: runtime.deps.openSession,
-      transportFactory: ({ session }) => createFullHomePageTransport({ session }),
+      openSession: args.transport === 'browser'
+        ? runtime.deps.openSession
+        : ({ storeCode }) => openFullHomeHttpSession({ storeCode, sessionStore }),
+      transportFactory: args.transport === 'browser'
+        ? ({ session }) => createFullHomePageTransport({ session })
+        : ({ session }) => createFullHomeHttpTransport({ session }),
       repository,
     });
     console.log(JSON.stringify(result, null, 2));
@@ -118,7 +136,7 @@ async function main() {
       process.exitCode = 2;
     }
   } finally {
-    await runtime.close().catch(() => {});
+    if (runtime) await runtime.close().catch(() => {});
     await pool.end().catch(() => {});
   }
 }

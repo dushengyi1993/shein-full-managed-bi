@@ -20,6 +20,9 @@ flowchart LR
     D --> GI["官方 goods/spu-info 只读同步"]
     GI --> IO["封存的 SPU / SKC / SKU 身份观察集"]
     IO --> IC["关系化候选、冲突与决定"]
+    CP["单店 Profile 建档/异常恢复"] --> ES["按店 AES-GCM 加密会话"]
+    ES --> WB["受限同源 WebAPI HTTP 读取"]
+    WB --> M
     WH["Webhook Receiver"] --> WR["密文回执 + Job"]
     WR --> WW["Worker 解密 / 标准化 / 回查指令"]
     SF --> M["Dashboard 物化器"]
@@ -53,6 +56,7 @@ flowchart LR
 6. **Dashboard 物化器**：使用独立只读数据库角色，读取销量、供应链、商品身份、权限与运行健康。轻量核心写入 `dashboard.json`，首页历史写入 `dashboard.home.json`；两个 staging 文件都成功后先提升首页分片、最后提升核心文件，避免 Portal 观察到半套新版本。
 7. **BI 服务**：只读 JSON，不持有数据库或平台凭据，不把缺数转换为零。核心文件按文件版本缓存在内存，首页使用带日期、负责人/店铺和关键词参数的 `/api/home` 按需读取，只返回当前区间、等长对比区间及金额/销量 Top 标准货号并集；同一 owner-confirmed 标准货号的跨店成员行完整保留，未归并商品仍以店内身份隔离。大响应协商 gzip。认证用户可通过 `refresh=1` 丢弃 Portal 进程内解析缓存并重新读取已物化文件；该操作不触发 SHEIN 抓取、数据库物化或平台写入。所有员工读取同一份全店数据；负责人/店铺仅作筛选，不限制看数范围。系统页通过独立 `/api/system` 合并经营快照与 root 定时发布的脱敏运行态，Portal 不能直接读取 Profile 或调用 systemd。
 8. **写权限骨架**：未来写入必须同时满足全局开关、仓库授权身份、角色、能力和本人 `PRIMARY / SUPPORT` 店铺分配。员工可以看全部店，但不能把写权限带到别人负责的店。当前 HTTP mutation 与 SHEIN 写操作均拒绝。
+9. **WebAPI 会话层**：正常经营数据读取使用按店 AES-256-GCM 加密的 Cookie 会话和固定同源 HTTP 客户端，不启动 Chrome；平台 `Set-Cookie` 原子轮换回密文。Profile 只用于首次建档和被恢复队列点名的单店，且必须先做页面身份回读、再做页面/HTTP 响应哈希一致性校验。会话失效只阻断该店，不阻断已经成功落库的 OpenAPI 域。
 
 ## 门户层
 

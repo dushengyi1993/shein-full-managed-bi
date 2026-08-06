@@ -1,0 +1,10 @@
+[Unit]
+Description=Wake full-managed dashboard materialization when a fact domain changes
+ConditionPathExists=/srv/shein-fm/runtime/materializer.enabled
+
+[Path]
+PathModified=/srv/shein-fm/runtime/dashboard/.materialize-kick
+Unit=shein-fm-dashboard-materialize-retry.service
+
+[Install]
+WantedBy=multi-user.target

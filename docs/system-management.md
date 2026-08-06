@@ -17,7 +17,7 @@
 页面刻意区分：
 
 - **登录登记**：同事在一次性页面完成 Profile 登录并被登记为 `completed`；
-- **续期验真**：续期任务最近一次实际打开 Profile 后得到 `ACTIVE / EXPIRED / BLOCKED / UNKNOWN`。
+- **会话验真**：每日 HTTP 探测得到 `ACTIVE / EXPIRED / BLOCKED / UNKNOWN`；只有异常店才打开 Profile 恢复。
 
 “已登记”不等于当前登录态有效。最近续期报告没有覆盖的店铺显示“待续期验真”，不能从旧登记推断为正常。页面只显示店铺、状态、错误码和事实时间，不读取或返回 Cookie、密码、Local Storage、IndexedDB、页面内容或 OpenAPI 凭据。
 
@@ -48,7 +48,7 @@ Portal 只读 `dashboard.json` 与脱敏的 `system-health.json`，没有 Profil
 
 - `shein-fm-system-health.timer` 每 5 分钟刷新一次脱敏运行态；
 - 浏览器的“重新读取运行态”只重读现有快照，不执行任何后台任务；
-- Profile 续期仍由独立的每日任务负责；系统页展示最近结果，并允许管理员在掉线时人工重新登录；
+- HTTP 会话续期由独立的每日轻任务负责；系统页展示最近结果和恢复队列，并允许管理员在掉线时人工重新登录；
 - Dashboard、供应链、Webhook 和磁盘仍由各自服务产生事实，系统投影不改变它们的调度。
 
 部署时必须先安装并验证 collector unit，成功生成 `system-health.json`，再重启引用该只读路径的 Portal。

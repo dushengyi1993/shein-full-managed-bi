@@ -12,18 +12,25 @@ export const RESOURCE_PRESSURE_PROFILES = Object.freeze({
     maximumIoFullAvg10: 5,
   }),
   'browser-secondary': Object.freeze({
-    minimumUptimeSeconds: 900,
-    minimumAvailableMemoryMiB: 4096,
-    maximumLoadPerCpu: 0.65,
-    maximumMemoryFullAvg10: 0.5,
-    maximumIoFullAvg10: 3,
+    minimumUptimeSeconds: 600,
+    minimumAvailableMemoryMiB: 3072,
+    maximumLoadPerCpu: 1.25,
+    maximumMemoryFullAvg10: 2,
+    maximumIoFullAvg10: 8,
+  }),
+  'api-critical': Object.freeze({
+    minimumUptimeSeconds: 60,
+    minimumAvailableMemoryMiB: 1024,
+    maximumLoadPerCpu: 2.5,
+    maximumMemoryFullAvg10: 10,
+    maximumIoFullAvg10: 20,
   }),
   openapi: Object.freeze({
     minimumUptimeSeconds: 180,
-    minimumAvailableMemoryMiB: 2048,
-    maximumLoadPerCpu: 0.85,
-    maximumMemoryFullAvg10: 2,
-    maximumIoFullAvg10: 8,
+    minimumAvailableMemoryMiB: 1536,
+    maximumLoadPerCpu: 1.5,
+    maximumMemoryFullAvg10: 5,
+    maximumIoFullAvg10: 15,
   }),
   'db-heavy': Object.freeze({
     minimumUptimeSeconds: 1200,
@@ -40,11 +47,11 @@ export const RESOURCE_PRESSURE_PROFILES = Object.freeze({
     maximumIoFullAvg10: 3,
   }),
   materializer: Object.freeze({
-    minimumUptimeSeconds: 1200,
-    minimumAvailableMemoryMiB: 2048,
-    maximumLoadPerCpu: 0.75,
-    maximumMemoryFullAvg10: 1,
-    maximumIoFullAvg10: 5,
+    minimumUptimeSeconds: 300,
+    minimumAvailableMemoryMiB: 1536,
+    maximumLoadPerCpu: 1.5,
+    maximumMemoryFullAvg10: 4,
+    maximumIoFullAvg10: 12,
   }),
 });
 
@@ -64,7 +71,7 @@ export function parseArgs(argv = []) {
       systemdCondition = true;
       continue;
     }
-    const match = /^--class=(browser|browser-secondary|openapi|db-heavy|io-heavy|materializer)$/.exec(token);
+    const match = /^--class=(browser|browser-secondary|api-critical|openapi|db-heavy|io-heavy|materializer)$/.exec(token);
     if (!match || resourceClass !== null) {
       throw new TypeError('RESOURCE_PRESSURE_ARGUMENT_INVALID');
     }
