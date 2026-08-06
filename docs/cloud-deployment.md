@@ -169,7 +169,7 @@ git diff --check
 ## 7. 生产发布顺序
 
 1. 仅当本次包含数据库迁移、高风险数据变更或用户明确要求时，创建一份 deploy 备份并
-   校验；普通代码、前端和 systemd 发布复用最近日备份，不再重复生成大 dump；
+   校验；普通代码、前端和 systemd 发布不创建数据库备份，周备份仍按独立定时器执行；
 2. 将目标 Git 提交安装到新的 `/opt/shein-fm/releases/<commit>`，执行 `npm ci --omit=dev --ignore-scripts`；
 3. 不切换 `current`，先在 release 内跑静态检查；
 4. 安装 root-private 迁移 EnvironmentFile；
