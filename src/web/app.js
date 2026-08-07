@@ -6032,12 +6032,17 @@ function estimatedCurrentProductRows(bundle) {
     }
     for (const { row, quantity } of allocations) {
       if (quantity <= 0) continue;
+      const referenceUnitAmount = finiteMetric(row.unitPriceEvidence)
+        ? row.unitPriceEvidence
+        : finiteMetric(row.estimatedDealAmount) && row.salesQuantity > 0
+          ? row.estimatedDealAmount / row.salesQuantity
+          : null;
       estimated.push({
         ...row,
         date: today,
         salesQuantity: quantity,
-        estimatedDealAmount: finiteMetric(row.unitPriceEvidence)
-          ? quantity * row.unitPriceEvidence
+        estimatedDealAmount: referenceUnitAmount !== null
+          ? quantity * referenceUnitAmount
           : null,
         estimationBasis: 'REALTIME_STORE_QUANTITY_X_LATEST_PRODUCT_SHARE',
         rankingSource: 'REALTIME_SHARE_ESTIMATE',

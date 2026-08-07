@@ -196,6 +196,7 @@ test('approved homepage uses six paired cards and keeps operating, finance and l
   const currentProductEstimate = functionBody(app, 'estimatedCurrentProductRows');
   assert.match(currentProductEstimate, /REALTIME_STORE_QUANTITY_X_LATEST_PRODUCT_SHARE/);
   assert.match(currentProductEstimate, /largest remainders|remainder/);
+  assert.match(currentProductEstimate, /row\.estimatedDealAmount \/ row\.salesQuantity/);
 });
 
 test('today core strip keeps six current metrics separate from the historical range', async () => {
