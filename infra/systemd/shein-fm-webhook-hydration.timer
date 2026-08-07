@@ -1,0 +1,12 @@
+[Unit]
+Description=Fallback poll for deferred full-managed Webhook hydration
+ConditionPathExists=/srv/shein-fm/runtime/webhook-hydration.enabled
+
+[Timer]
+OnCalendar=*-*-* *:07,17,27,37,47,57:00 Asia/Shanghai
+AccuracySec=15s
+Persistent=false
+Unit=shein-fm-webhook-hydration.service
+
+[Install]
+WantedBy=timers.target

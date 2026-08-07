@@ -38,6 +38,14 @@ function unpack(value, depth = 0) {
       });
     }
   }
+  if (Array.isArray(current)) {
+    if (current.length !== 1) {
+      throw Object.assign(new Error('Webhook array payload must contain exactly one event.'), {
+        code: 'WEBHOOK_PAYLOAD_INVALID',
+      });
+    }
+    return unpack(current[0], depth + 1);
+  }
   if (!object(current)) {
     throw Object.assign(new Error('Webhook payload must resolve to an object.'), {
       code: 'WEBHOOK_PAYLOAD_INVALID',
@@ -142,11 +150,12 @@ function baseBusinessKey(event, sources, identifiers) {
     case 'purchase_order':
       return firstField(sources, [
         'purchaseOrderNo', 'purchase_order_no', 'purchaseOrderSn',
-        'purchase_order_sn', 'poNo', 'po_no',
+        'purchase_order_sn', 'poNo', 'po_no', 'orderNo', 'order_no',
       ]);
     case 'delivery':
       return firstField(sources, [
         'deliveryNo', 'delivery_no', 'deliveryOrderNo', 'delivery_order_no',
+        'deliveryCode', 'delivery_code',
       ]);
     case 'logistics_forecast':
       return firstField(sources, [
@@ -222,7 +231,7 @@ export function normalizeFullManagedWebhookEvent({
   ], safeToken) || event.family;
   const eventTime = firstField(sourceNodes, [
     'eventTime', 'event_time', 'changeTime', 'change_time', 'updateTime',
-    'update_time', 'auditTime', 'audit_time', 'sendTimeStamp',
+    'update_time', 'auditTime', 'audit_time', 'sendTimeStamp', 'time',
   ], (value) => text(value).slice(0, 80));
   const quota = event.family === 'product_quota'
     ? numericField(sourceNodes, [
@@ -294,4 +303,3 @@ export function createUnknownWebhookAuditEvent({
     severity: 'P3',
   });
 }
-

@@ -111,7 +111,7 @@ sudo install -d -o root -g root -m 0700 \
 | `webhook-worker/application.secret.json` | `root:sheinfm-webhook-worker 0640` | 解密应用凭据 |
 | `db-migrate/runtime-role-passwords.env` | `root:root 0600` | 迁移期间注入六个密码 |
 
-不同组件使用独立普通文件；不得用指向更宽权限目录的符号链接。数据库 `database.env` 只包含该组件 LOGIN 的连接串。Webhook Worker 当前不会调用实际 OpenAPI 回查客户端，即使其配置中存在店铺映射。
+不同组件使用独立普通文件；不得用指向更宽权限目录的符号链接。数据库 `database.env` 只包含该组件 LOGIN 的连接串。Webhook Worker 不调用 OpenAPI 客户端，即使其配置中存在店铺映射。采购单/交付单的定向回查由独立 `sheinfm-supply` 服务读取指令并使用 supply 凭据；Worker 与该服务只通过固定标记和最小权限数据表交接。
 
 Portal 会话默认有效期为 30 天。合法会话使用超过一半有效期后，任一正常访问会签发新的 `HttpOnly / Secure / SameSite=Lax` Cookie，把有效期再延长 30 天；长期完全不访问仍会自然过期。生产 unit 必须显式设置 `FULL_BI_SESSION_TTL_SECONDS=2592000`，修改会话时长后旧 Cookie 会失效并要求重新登录一次。
 
@@ -219,6 +219,8 @@ git diff --check
 5. 对错误签名请求验证安全 `401`，日志不得出现签名、查询参数或密文；
 6. 用受控测试事件验证 receipt、job、标准化事件和 Dashboard；
 7. 所有事件采用 10 分钟签名投递窗口的至少一次语义：同窗口同密文重试去重，跨窗口同载荷形成新事件；窗口边界可能重复，所有下游处理必须幂等。
+8. 安装并启用 `shein-fm-webhook-dashboard-enqueue.path`、`shein-fm-webhook-hydration.path` 和兜底 timer，创建 `webhook-hydration.enabled`；用真实采购/交付事件验收指令终态、对应事实行与 Dashboard 版本推进；
+9. 修复事件合同后，先使用 `npm run webhook:replay-dead-letters` 只读预览，只有候选数量与错误范围符合时才增加 `-- --execute` 重放；永不重写已成功事件。
 
 本次不创建 SHEIN 平台订阅。订阅属于外部写操作，须另行实时读回、dry-run、明确确认和结果回读。
 

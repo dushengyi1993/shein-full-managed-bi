@@ -37,6 +37,8 @@
     "start:webhook": "node scripts/serve_full_managed_webhook.mjs",
     "worker:webhook": "node scripts/run_full_managed_webhook_worker.mjs",
     "webhook:configure-subscriptions": "node scripts/configure_full_managed_webhook_subscriptions.mjs",
+    "webhook:hydrate": "node scripts/run_full_managed_webhook_hydration.mjs",
+    "webhook:replay-dead-letters": "node scripts/requeue_full_managed_webhook_dead_letters.mjs",
     "materialize:dashboard": "node scripts/materialize_full_managed_dashboard.mjs",
     "backfill:plan": "node scripts/plan_full_managed_backfill.mjs",
     "backfill:run": "node scripts/run_full_managed_backfill.mjs",

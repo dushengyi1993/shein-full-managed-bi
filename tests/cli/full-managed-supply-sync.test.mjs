@@ -9,6 +9,7 @@ import {
   fetchSupplyDomainWithRetry,
   isRetryableSupplyFetchError,
   normalizeSupplyDomains,
+  normalizeSupplyPointLookups,
   parseArgs,
   readActiveFullManagedSkuUniverse,
   runSupplySync,
@@ -412,6 +413,8 @@ test('CLI arguments and default Shanghai overlap windows are explicit', () => {
     '--domains', 'products,inventory:PI',
     '--now', '2026-07-26T12:34:56Z',
     '--run-id', 'supply-fixed',
+    '--purchase-order-nos', 'PO-1,PO-2',
+    '--delivery-codes', 'DEL-1,DEL-2',
   ]), {
     config: 'openapi.secret.json',
     'database-url': 'postgres://warehouse',
@@ -419,6 +422,8 @@ test('CLI arguments and default Shanghai overlap windows are explicit', () => {
     domains: 'products,inventory:PI',
     now: '2026-07-26T12:34:56Z',
     'run-id': 'supply-fixed',
+    'purchase-order-nos': 'PO-1,PO-2',
+    'delivery-codes': 'DEL-1,DEL-2',
   });
   assert.deepEqual(normalizeSupplyDomains('products,inventory:pi,deliveries'), [
     'product-catalog',
@@ -426,6 +431,13 @@ test('CLI arguments and default Shanghai overlap windows are explicit', () => {
     'inventory:PI',
     'deliveries',
   ]);
+  assert.deepEqual(normalizeSupplyPointLookups({
+    purchaseOrderNos: 'PO-1,PO-1,PO-2',
+    deliveryCodes: 'DEL-1',
+  }), {
+    purchaseOrderNos: ['PO-1', 'PO-2'],
+    deliveryCodes: ['DEL-1'],
+  });
   const windows = computeSupplyWindows('2026-07-26T12:34:56Z');
   assert.equal(windows.sourceFetchedAt, '2026-07-26T12:34:56.000Z');
   assert.deepEqual(windows.purchaseOrders.windows, [{
@@ -443,6 +455,62 @@ test('CLI arguments and default Shanghai overlap windows are explicit', () => {
   assert.equal(windows.deliveries.rollingLookbackDays, 14);
   assert.equal(windows.deliveries.pendingPointLookup, true);
   assert.equal(windows.deliveries.completeHistoricalCoverage, false);
+});
+
+test('webhook hydration uses exact purchase and delivery identifiers', async () => {
+  const purchaseCalls = [];
+  const deliveryCalls = [];
+  const loads = [];
+  const summary = await runSupplySync({
+    config: config(),
+    databaseUrl: 'postgres://fake.invalid/warehouse',
+    stores: 'DL5477',
+    domains: 'purchase-orders,deliveries',
+    purchaseOrderNos: 'PO-1,PO-2',
+    deliveryCodes: 'DEL-1,DEL-2',
+    now: '2026-08-07T09:00:00Z',
+    runId: 'webhook-hydration',
+    poolFactory: async () => fakePool(),
+    clientFactory: () => ({}),
+    operations: {
+      ...supplyEvidenceOperations(),
+      async sleep() {},
+      async fetchPurchaseOrders(_client, options) {
+        purchaseCalls.push(options);
+        return {
+          orders: options.orderNos.map((orderNo) => ({ orderNo })),
+          pages: [],
+          terminalReason: 'POINT_LOOKUP_COMPLETE',
+          requestFingerprint: 'a'.repeat(64),
+        };
+      },
+      async fetchDeliveries(_client, options) {
+        deliveryCalls.push(options);
+        return {
+          deliveries: [{ deliveryCode: options.deliveryCode }],
+          pages: [],
+          terminalReason: 'POINT_LOOKUP_COMPLETE',
+          requestFingerprint: String(deliveryCalls.length).repeat(64).slice(0, 64),
+        };
+      },
+      async loadSnapshot(_pool, input) {
+        loads.push(input);
+        return {
+          purchaseOrderCount: input.purchaseOrders?.orders.length ?? 0,
+          deliveryCount: input.deliveries?.deliveries.length ?? 0,
+        };
+      },
+      async readPendingDeliveryCodes() {
+        assert.fail('exact Webhook hydration must not scan historical pending deliveries');
+      },
+    },
+  });
+  assert.equal(summary.ok, true);
+  assert.deepEqual(purchaseCalls.map(({ orderNos }) => orderNos), [['PO-1', 'PO-2']]);
+  assert.deepEqual(deliveryCalls.map(({ deliveryCode }) => deliveryCode), ['DEL-1', 'DEL-2']);
+  assert.equal(loads.length, 1);
+  assert.equal(loads[0].purchaseOrders.incrementalStrategy.mode, 'POINT_LOOKUP');
+  assert.equal(loads[0].deliveries.incrementalStrategy.mode, 'POINT_LOOKUP');
 });
 
 test('orchestrator uses only read-only endpoints, bounded batches and explicit inventory types', async () => {

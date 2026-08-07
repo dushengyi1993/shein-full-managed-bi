@@ -1,0 +1,11 @@
+[Unit]
+Description=Run targeted read-only hydration after a full-managed Webhook
+ConditionPathExists=/srv/shein-fm/runtime/webhook-hydration.enabled
+ConditionPathExists=/srv/shein-fm/runtime/webhook-requests
+
+[Path]
+PathModified=/srv/shein-fm/runtime/webhook-requests/hydration.request
+Unit=shein-fm-webhook-hydration.service
+
+[Install]
+WantedBy=multi-user.target

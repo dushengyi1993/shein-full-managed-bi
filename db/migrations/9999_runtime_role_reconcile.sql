@@ -581,6 +581,8 @@ TO sheinfm_supply_loader;
 -- anomaly tables, which are recomputed by owner-run maintenance.
 GRANT SELECT, INSERT, UPDATE ON ops.reconciliation_daily_detail
 TO sheinfm_supply_loader;
+GRANT SELECT, UPDATE ON ops.webhook_hydration_directive
+TO sheinfm_supply_loader;
 GRANT SELECT ON
     ops.reconciliation_daily_detail,
     ops.reconciliation_daily_summary,

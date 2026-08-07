@@ -475,8 +475,7 @@ export function createFullManagedWebhookRepository({ pool } = {}) {
           `INSERT INTO ops.webhook_hydration_directive (
              operational_event_id, store_id, directive_type,
              capability_code, lookup_projection, state
-           ) VALUES ($1, $2, $3, $4, $5::jsonb, 'PENDING')
-           ON CONFLICT (operational_event_id) DO NOTHING`,
+           ) VALUES ($1, $2, $3, $4, $5::jsonb, 'PENDING')`,
           [
             operationalEventId,
             storeId,

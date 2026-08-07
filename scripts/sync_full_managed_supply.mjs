@@ -112,6 +112,8 @@ export function parseArgs(argv) {
     '--mode',
     '--backfill-start',
     '--backfill-end',
+    '--purchase-order-nos',
+    '--delivery-codes',
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -165,6 +167,17 @@ export function normalizeSupplyDomains(value) {
     }
   }
   return expanded;
+}
+
+export function normalizeSupplyPointLookups({ purchaseOrderNos, deliveryCodes } = {}) {
+  const orders = uniqueCsv(purchaseOrderNos, 'purchaseOrderNos') ?? [];
+  const deliveries = uniqueCsv(deliveryCodes, 'deliveryCodes') ?? [];
+  if (orders.length > 200) throw new TypeError('purchaseOrderNos cannot exceed 200 values');
+  if (deliveries.length > 200) throw new TypeError('deliveryCodes cannot exceed 200 values');
+  return Object.freeze({
+    purchaseOrderNos: Object.freeze(orders),
+    deliveryCodes: Object.freeze(deliveries),
+  });
 }
 
 function normalizeNow(value = new Date()) {
@@ -842,6 +855,8 @@ function mergePurchaseOrderResults(results, plan) {
       maximumWindowDays: plan.maximumWindowDays ?? null,
       explanation: plan.mode === SUPPLY_SYNC_MODES.BACKFILL
         ? 'Explicit backfill covered the requested update-time range in windows of at most 60 days.'
+        : plan.mode === 'POINT_LOOKUP'
+          ? 'Webhook hydration queried the exact purchase-order identifiers supplied by SHEIN.'
         : 'Incremental mode used the exact caller-computed 48-hour Asia/Shanghai overlap window.',
     }),
   });
@@ -885,6 +900,8 @@ function mergeDeliveryResults(results, plan, pendingDeliveryCodes) {
       maximumWindowDays: plan.maximumWindowDays ?? null,
       explanation: plan.mode === SUPPLY_SYNC_MODES.BACKFILL
         ? 'Explicit backfill covered the requested creation-time range in bounded windows.'
+        : plan.mode === 'POINT_LOOKUP'
+          ? 'Webhook hydration queried the exact delivery identifiers supplied by SHEIN.'
         : 'Incremental mode combined a 14-day rolling creation window with point lookups for older deliveries still unreceived in the warehouse.',
     }),
   });
@@ -1165,6 +1182,7 @@ async function syncStore({
   pool,
   clientFactory,
   operations,
+  pointLookups,
 }) {
   const storeRunId = `${baseRunId}:${store.storeCode}`;
   const storeResult = {
@@ -1346,15 +1364,26 @@ async function syncStore({
 
   if (selected.has('purchase-orders')) {
     const purchaseOrderAttempt = await fetchSupplyDomainWithRetry(
-      () => fetchPurchaseOrderPlan(
-        client,
-        operations,
-        windows.purchaseOrders,
-        {
-          pageSize: Math.min(config.pageSize, 200),
-          fetchedAt: sourceFetchedAt,
-        },
-      ),
+      () => pointLookups.purchaseOrderNos.length > 0
+        ? operations.fetchPurchaseOrders(client, {
+            orderNos: pointLookups.purchaseOrderNos,
+            pageSize: Math.min(config.pageSize, 200),
+            fetchedAt: sourceFetchedAt,
+          }).then((result) => mergePurchaseOrderResults([result], {
+            mode: 'POINT_LOOKUP',
+            windows: [],
+            completeRequestedRange: true,
+            completeHistoricalCoverage: false,
+          }))
+        : fetchPurchaseOrderPlan(
+            client,
+            operations,
+            windows.purchaseOrders,
+            {
+              pageSize: Math.min(config.pageSize, 200),
+              fetchedAt: sourceFetchedAt,
+            },
+          ),
       { sleep: operations.sleep },
     );
     if (purchaseOrderAttempt.ok) {
@@ -1364,8 +1393,12 @@ async function syncStore({
         recordCount: countForPrimaryDomain('purchase-orders', purchaseOrders),
         pageCount: purchaseOrders.pages.length,
         terminalReason: purchaseOrders.terminalReason,
-        mode: windows.purchaseOrders.mode,
-        window: windows.purchaseOrders,
+        mode: pointLookups.purchaseOrderNos.length > 0
+          ? 'POINT_LOOKUP'
+          : windows.purchaseOrders.mode,
+        window: pointLookups.purchaseOrderNos.length > 0
+          ? null
+          : windows.purchaseOrders,
         attemptCount: purchaseOrderAttempt.attemptCount,
         retryCount: purchaseOrderAttempt.retryCount,
       }));
@@ -1381,17 +1414,36 @@ async function syncStore({
 
   if (selected.has('deliveries')) {
     const deliveryAttempt = await fetchSupplyDomainWithRetry(
-      () => fetchDeliveryPlan(
-        client,
-        pool,
-        operations,
-        store,
-        windows.deliveries,
-        {
-          pageSize: Math.min(config.pageSize, 200),
-          fetchedAt: sourceFetchedAt,
-        },
-      ),
+      async () => pointLookups.deliveryCodes.length > 0
+        ? mergeDeliveryResults(
+            await Promise.all(pointLookups.deliveryCodes.map((deliveryCode) => (
+              operations.fetchDeliveries(client, {
+                deliveryCode,
+                pageSize: Math.min(config.pageSize, 200),
+                fetchedAt: sourceFetchedAt,
+              })
+            ))),
+            {
+              mode: 'POINT_LOOKUP',
+              windows: [],
+              completeRequestedRange: true,
+              completeHistoricalCoverage: false,
+              pendingPointLookup: false,
+              pendingOlderThan: null,
+            },
+            [],
+          )
+        : fetchDeliveryPlan(
+            client,
+            pool,
+            operations,
+            store,
+            windows.deliveries,
+            {
+              pageSize: Math.min(config.pageSize, 200),
+              fetchedAt: sourceFetchedAt,
+            },
+          ),
       { sleep: operations.sleep },
     );
     if (deliveryAttempt.ok) {
@@ -1483,6 +1535,8 @@ export async function runSupplySync({
   mode = SUPPLY_SYNC_MODES.INCREMENTAL,
   backfillStart,
   backfillEnd,
+  purchaseOrderNos,
+  deliveryCodes,
   poolFactory = (connectionString) => new Pool({ connectionString, max: 3 }),
   clientFactory = (options) => new SheinOpenApiClient(options),
   operations: operationOverrides = {},
@@ -1500,6 +1554,13 @@ export async function runSupplySync({
     backfillEnd,
   });
   const normalizedDomains = normalizeSupplyDomains(domains);
+  const pointLookups = normalizeSupplyPointLookups({ purchaseOrderNos, deliveryCodes });
+  if (pointLookups.purchaseOrderNos.length > 0 && !normalizedDomains.includes('purchase-orders')) {
+    throw new TypeError('purchaseOrderNos requires the purchase-orders domain');
+  }
+  if (pointLookups.deliveryCodes.length > 0 && !normalizedDomains.includes('deliveries')) {
+    throw new TypeError('deliveryCodes requires the deliveries domain');
+  }
   const selectedStores = selectStores(config.stores, stores);
   const baseRunId = normalizeBaseRunId(runId, current);
   const operations = { ...DEFAULT_OPERATIONS, ...operationOverrides };
@@ -1535,6 +1596,7 @@ export async function runSupplySync({
           pool,
           clientFactory,
           operations,
+          pointLookups,
         });
       } catch (error) {
         if (Array.isArray(error?.startedSupplyAttempts)) {
@@ -1614,6 +1676,8 @@ async function main() {
     mode: args.mode,
     backfillStart: args['backfill-start'],
     backfillEnd: args['backfill-end'],
+    purchaseOrderNos: args['purchase-order-nos'],
+    deliveryCodes: args['delivery-codes'],
   });
   console.log(JSON.stringify(summary, null, 2));
   if (!summary.ok) process.exitCode = 2;

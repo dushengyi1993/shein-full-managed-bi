@@ -1,0 +1,11 @@
+[Unit]
+Description=Wake the full-managed Dashboard after a Webhook projection
+ConditionPathExists=/srv/shein-fm/runtime/materializer.enabled
+ConditionPathExists=/srv/shein-fm/runtime/webhook-requests
+
+[Path]
+PathModified=/srv/shein-fm/runtime/webhook-requests/dashboard.request
+Unit=shein-fm-dashboard-materialize-enqueue.service
+
+[Install]
+WantedBy=multi-user.target

@@ -15,6 +15,9 @@ Environment=NODE_ENV=production
 Environment=FULL_BI_WEBHOOK_WORKER_POLL_MS=1000
 Environment=FULL_BI_WEBHOOK_WORKER_LEASE_MS=120000
 Environment=FULL_BI_WEBHOOK_DB_POOL_MAX=4
+Environment=FULL_BI_WEBHOOK_NOTIFY_INTERVAL_MS=30000
+Environment=FULL_BI_WEBHOOK_DASHBOARD_MARKER=/srv/shein-fm/runtime/webhook-requests/dashboard.request
+Environment=FULL_BI_WEBHOOK_HYDRATION_MARKER=/srv/shein-fm/runtime/webhook-requests/hydration.request
 Environment=FULL_BI_WEBHOOK_DB_APPLICATION_NAME=shein_fm_webhook_worker
 Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/webhook-worker/stores.json
 Environment=FULL_BI_WEBHOOK_APPLICATION_FILE=/srv/shein-fm/secrets/webhook-worker/application.secret.json
@@ -41,6 +44,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadOnlyPaths=/srv/shein-fm/secrets/webhook-worker/stores.json
 ReadOnlyPaths=/srv/shein-fm/secrets/webhook-worker/application.secret.json
 ReadOnlyPaths=/srv/shein-fm/secrets/webhook-worker/database.env
+ReadWritePaths=/srv/shein-fm/runtime/webhook-requests
 MemoryHigh=384M
 MemoryMax=768M
 

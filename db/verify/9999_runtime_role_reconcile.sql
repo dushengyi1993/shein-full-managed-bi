@@ -911,6 +911,15 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'webhook worker privilege boundary is invalid';
     END IF;
+    IF NOT has_table_privilege(
+        'sheinfm_supply_loader', 'ops.webhook_hydration_directive', 'SELECT'
+    ) OR NOT has_table_privilege(
+        'sheinfm_supply_loader', 'ops.webhook_hydration_directive', 'UPDATE'
+    ) OR has_table_privilege(
+        'sheinfm_supply_loader', 'ops.webhook_hydration_directive', 'INSERT'
+    ) THEN
+        RAISE EXCEPTION 'supply webhook hydration boundary is invalid';
+    END IF;
 
     -- WebAPI loader: append-only evidence plus the reviewed homepage facts.
     FOREACH required_name IN ARRAY ARRAY[

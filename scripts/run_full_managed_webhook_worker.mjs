@@ -10,6 +10,7 @@ import {
   startWebhookRuntimeHeartbeat,
 } from '../src/webhook/runtime.mjs';
 import { createFullManagedWebhookWorker } from '../src/webhook/worker.mjs';
+import { createWebhookProjectionNotifier } from '../src/webhook/projection-notifier.mjs';
 import { createFullManagedWebhookRepository } from '../src/warehouse/webhook-repository.mjs';
 
 function wait(milliseconds) {
@@ -44,6 +45,17 @@ export async function runFullManagedWebhookWorker({ env = process.env } = {}) {
     credentialRegistry,
     leaseMs,
   });
+  const notifier = createWebhookProjectionNotifier({
+    dashboardMarker: env.FULL_BI_WEBHOOK_DASHBOARD_MARKER
+      ?? '/srv/shein-fm/runtime/webhook-requests/dashboard.request',
+    hydrationMarker: env.FULL_BI_WEBHOOK_HYDRATION_MARKER
+      ?? '/srv/shein-fm/runtime/webhook-requests/hydration.request',
+    minimumIntervalMs: positiveRuntimeInteger(
+      env.FULL_BI_WEBHOOK_NOTIFY_INTERVAL_MS,
+      30_000,
+      { minimum: 1_000, maximum: 300_000 },
+    ),
+  });
   const heartbeat = await startWebhookRuntimeHeartbeat({
     repository,
     componentCode: 'WORKER',
@@ -74,6 +86,9 @@ export async function runFullManagedWebhookWorker({ env = process.env } = {}) {
 
   while (!stopping) {
     const result = await worker.processOne();
+    if (result.claimed && !result.failed && result.status !== 'LEASE_LOST') {
+      await notifier.request({ hydration: result.hydrationQueued === true });
+    }
     if (!result.claimed) await wait(pollMs);
   }
   while (worker.processing) await wait(25);
@@ -83,6 +98,7 @@ export async function runFullManagedWebhookWorker({ env = process.env } = {}) {
       errorCode: String(error?.code ?? 'WEBHOOK_HEARTBEAT_STOP_FAILED').slice(0, 80),
     }));
   });
+  await notifier.stop();
   await repository.close();
 }
 

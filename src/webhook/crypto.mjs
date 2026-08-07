@@ -172,7 +172,6 @@ export function decryptFullManagedWebhookEvent(ciphertext, appSecretKey) {
   if (
     payload === null
     || (typeof payload !== 'object' && typeof payload !== 'string')
-    || Array.isArray(payload)
   ) {
     throw Object.assign(new Error('Webhook payload has an unsupported shape.'), {
       code: 'WEBHOOK_PAYLOAD_INVALID',

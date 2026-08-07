@@ -132,7 +132,7 @@
 - `raw.webhook_receipt`：验签后密文、指纹和重复计数；
 - `ops.webhook_job`：异步解密/标准化租约、重试和死信；
 - `ops.operational_event`：脱敏标准化事件；
-- `ops.webhook_hydration_directive`：需要后续只读回查的指令，不等于已完成回查；
+- `ops.webhook_hydration_directive`：需要后续只读回查的指令及其 `PENDING / RUNNING / RETRY / SUCCEEDED / FAILED`、租约、重试与脱敏错误状态；只有精确 OpenAPI 行入仓验真后才标记成功；
 - `ops.webhook_subscription_state / ops.webhook_store_gate`：订阅回读与店铺授权门禁；
 - `ops.webhook_runtime_heartbeat`：Receiver 与 Worker 的追加式运行心跳。
 
