@@ -189,6 +189,9 @@ function chromeArguments({ profileDirectory, debuggingPort }) {
     '--password-store=basic',
     '--no-first-run',
     '--no-default-browser-check',
+    // Match the proven cloud login-maintenance launcher. Chrome 148 can trap
+    // before opening CDP when its renderer uses the systemd-private /dev/shm.
+    '--disable-dev-shm-usage',
     '--disable-background-timer-throttling',
     '--disable-renderer-backgrounding',
     '--disable-backgrounding-occluded-windows',

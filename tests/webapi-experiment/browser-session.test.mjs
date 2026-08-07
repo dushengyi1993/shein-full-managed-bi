@@ -179,6 +179,7 @@ test('a successful session navigates only to the allow-listed origin and proves 
   assert.match(chromeArgs, /--user-data-dir=\/srv\/shein-fm\/webapi\/profiles\/persistent-dl5477-profile/);
   assert.match(chromeArgs, /--remote-debugging-address=127\.0\.0\.1/);
   assert.match(chromeArgs, new RegExp(`--remote-debugging-port=${STORE_RUNTIME_SLOTS.DL5477.debuggingPort}`));
+  assert.match(chromeArgs, /--disable-dev-shm-usage/);
   assert.equal(
     spawned[1].options.homeDirectory,
     '/srv/shein-fm/webapi/profiles/persistent-dl5477-profile',
