@@ -59,6 +59,18 @@ test('coordinator run ids are deterministic at the correct business grain', () =
   assert.equal(coordinatorRunId(COORDINATOR_TASKS.SUPPLY, now), 'fm-supply-daily-2026-08-07');
 });
 
+test('supply retries keep one business run while isolating mutable attempt evidence', () => {
+  const plan = buildCoordinatorPlan(
+    COORDINATOR_TASKS.SUPPLY,
+    new Date('2026-08-07T02:20:00+08:00'),
+  );
+  const [stage] = plan.stages;
+  assert.equal(stage.attemptScopedRunId, true);
+  const args = stageArgsForStores(stage, ['QY8886', 'JY8060'], 8);
+  assert.equal(args[args.indexOf('--run-id') + 1], 'fm-supply-daily-2026-08-07:attempt-8');
+  assert.equal(args[args.indexOf('--stores') + 1], 'QY8886,JY8060');
+});
+
 test('session maintenance ends with a 25-store HTTP validation after targeted recovery', () => {
   const plan = buildCoordinatorPlan(
     COORDINATOR_TASKS.SESSION,

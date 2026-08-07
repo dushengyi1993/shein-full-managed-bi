@@ -214,6 +214,7 @@ export function buildCoordinatorPlan(task, now = new Date()) {
         ], {
           lock: '/run/shein-fm-supply/sync.lock',
           storeArg: 'separate',
+          attemptScopedRunId: true,
         }),
       ]),
     });
