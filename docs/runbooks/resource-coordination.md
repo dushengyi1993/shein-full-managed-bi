@@ -46,9 +46,10 @@ Webhook > 上班前日更 > 常规库存/物化 > 营销与维护。所有 timer
 
 coordinator 的必需阶段全部完成后，才由 `OnSuccess` 直接执行一次 `db-read` 物化；原子
 替换成功后同一 run 从 `READY_TO_PUBLISH` 改为 `PUBLISHED` 并记录 manifest。`PARTIAL`、
-`WAITING` 和资源延期 `75` 都不能触发发布。Webhook 变化继续写 `.materialize-pending` 并
-由 path 合并唤醒；每 10 分钟的 timer 只兜底压力延期，不是业务刷新任务。资源忙时旧
-Dashboard 原子文件继续服务。
+`WAITING` 和资源延期 `75` 都不能触发发布。Webhook 的业务键定向回读仍立即执行；首页
+全量物化由 path 延迟 5 分钟合并，并在启动前确认请求 marker 确实比已发布 Dashboard 新。
+若期间已有 coordinator 发布了更新快照则直接跳过。固定 retry timer 保持停用，只有
+pending/kick 事件 path 负责资源延期后的重试；资源忙时旧 Dashboard 原子文件继续服务。
 
 ## 备份
 
@@ -78,7 +79,8 @@ systemctl daemon-reload
 3. 正常 `home-realtime` 运行时 Chrome、CDP、Profile 租约均为零。
 4. 401/403 只创建对应店恢复队列；恢复后双读一致、Chrome 清零。
 5. `FM_REALTIME_COCKPIT` 只有一个 run；OpenAPI 销售和 Session HTTP 可并行，但只发布一次。
-6. Dashboard path 能合并唤醒；失败时旧缓存仍可读，十分钟 timer 只补资源延期。
+6. Dashboard path 能在 5 分钟窗口合并唤醒并跳过已覆盖请求；失败时旧缓存仍可读，固定
+   retry timer 保持停用。
 7. Portal、Webhook、PostgreSQL、公网健康正常，半托 unit 和仓库未被覆盖。
 
 ## 回滚

@@ -15,7 +15,7 @@ timer。店铺分组、数据域、资源等待和定向重试都是同一次运
 | `05:45` | `FM_DAILY_OPERATIONS_CLOSE` | 一个 run 完成平台 readiness、25 店 D-2/D-1 经营历史与台账、缺店定向重试和一次原子发布 |
 | 每周日 `00:15` | `shein-fm-db-backup` | 每周一份完整 dump，保留最近两周 |
 | 每月首个周日 `01:15` | `shein-fm-db-restore-test` | 用最新 weekly/deploy dump 做真实临时库恢复 |
-| 事实变化时 | Dashboard 发布阶段 | coordinator 的全部必需阶段 READY 后直接物化；Webhook 只合并唤醒；十分钟 timer 仅补资源延期 |
+| 事实变化时 | Dashboard 发布阶段 | coordinator 的全部必需阶段 READY 后直接物化；Webhook 保持定向回读，并把首页全量物化合并到最多每 5 分钟一次 |
 
 所有 timer 均为 `Persistent=false`。OpenAPI 和 Session HTTP 按阶段领取 API 令牌，事实写入
 完成即释放；Dashboard 物化再领取独立 `db-read` 令牌。coordinator 不从开头到结尾持有
@@ -32,7 +32,8 @@ timer。店铺分组、数据域、资源等待和定向重试都是同一次运
 - 销售与经营指标是独立事实域，可以分别先落库；但同一小时的驾驶舱快照只在两域均达到
   本 run 的终态后发布一次。终端能力缺口会明确写 warning，不被未知值补零。
 - Dashboard materializer 是 coordinator 的末端发布阶段，不再拥有固定高频业务 timer。
-  `.path` 与十分钟 retry 只负责 Webhook 合并唤醒或资源延期后的技术兜底。
+  Webhook `.path` 等待 5 分钟后再次比较请求 marker 与已发布 Dashboard；只有仍存在更新的
+  事实才写 pending/kick，由事件 `.path` 重试，固定 retry timer 保持停用。
 
 ## 数据完整性
 

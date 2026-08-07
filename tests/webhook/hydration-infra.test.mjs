@@ -31,5 +31,5 @@ test('systemd crosses the webhook privilege boundary only through fixed markers'
   assert.doesNotMatch(hydrationService, /^OnSuccess=/m);
   assert.match(dashboardPath, /PathModified=.*dashboard\.request/);
   assert.match(hydrationTimer, /Persistent=false/);
-  assert.match(tmpfiles, /webhook-requests 0700 sheinfm-webhook-worker sheinfm-webhook-worker/);
+  assert.match(tmpfiles, /webhook-requests 0750 sheinfm-webhook-worker sheinfm-dashboard/);
 });

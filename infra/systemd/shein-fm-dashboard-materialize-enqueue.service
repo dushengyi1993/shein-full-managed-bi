@@ -9,9 +9,12 @@ Group=sheinfm-materializer
 SupplementaryGroups=sheinfm-dashboard
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
+Environment=FULL_BI_MATERIALIZE_DEBOUNCE_SECONDS=300
 ExecStart=/usr/bin/bash scripts/enqueue_full_managed_dashboard_materialization.sh
+TimeoutStartSec=6min
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/srv/shein-fm/runtime/dashboard
+ReadOnlyPaths=/srv/shein-fm/runtime/webhook-requests

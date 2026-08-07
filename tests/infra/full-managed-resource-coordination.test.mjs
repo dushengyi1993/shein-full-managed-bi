@@ -321,4 +321,17 @@ test('only complete coordinator runs trigger one independent projection', async 
     'utf8',
   );
   assert.match(enqueue, /enqueue_full_managed_dashboard_materialization\.sh/);
+  assert.match(enqueue, /FULL_BI_MATERIALIZE_DEBOUNCE_SECONDS=300/);
+  assert.match(enqueue, /TimeoutStartSec=6min/);
+  const enqueueScript = await readFile(
+    new URL('../../scripts/enqueue_full_managed_dashboard_materialization.sh', import.meta.url),
+    'utf8',
+  );
+  assert.match(enqueueScript, /dashboard\.request/);
+  assert.match(enqueueScript, /request_marker" -nt "\$dashboard_file/);
+  assert.match(enqueueScript, /\/usr\/bin\/sleep "\$debounce_seconds"/);
+  assert.ok(
+    enqueueScript.indexOf('request_marker" -nt')
+      < enqueueScript.indexOf('/usr/bin/touch "$pending_marker"'),
+  );
 });

@@ -77,6 +77,7 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
   assert.match(retryPath, /Unit=shein-fm-dashboard-materialize-retry\.service/);
   assert.equal(unitUser(enqueueService), 'sheinfm-materializer');
   assert.match(enqueueService, /enqueue_full_managed_dashboard_materialization\.sh/);
+  assert.match(enqueueService, /ReadOnlyPaths=\/srv\/shein-fm\/runtime\/webhook-requests/);
   assert.doesNotMatch(
     enqueueService,
     /DATABASE_URL|database\.env|OPENAPI|openapi\.json/i,

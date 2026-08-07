@@ -11,6 +11,7 @@ import {
   coordinatorRunId,
   extractLastJsonDocument,
   runCoordinator,
+  stageArgsForStores,
 } from '../../scripts/run_full_managed_business_coordinator.mjs';
 import { markReadyCoordinatorsPublished } from '../../scripts/mark_full_managed_coordinators_published.mjs';
 import { FULL_MANAGED_STORE_CODES } from '../../src/config/full-managed-stores.mjs';
@@ -26,6 +27,17 @@ test('realtime coordinator owns one hourly run and two internal source stages', 
   ]);
   assert.match(plan.stages[0].args[0], new RegExp(FULL_MANAGED_STORE_CODES.join(',')));
   assert.ok(plan.stages[1].args.includes('2'));
+  assert.equal(plan.stages[1].attemptScopedRunId, true);
+  assert.deepEqual(stageArgsForStores(plan.stages[1], null, 1).slice(-2), [
+    '--run-id',
+    'fm-realtime-cockpit-2026-08-07T20:attempt-1',
+  ]);
+  assert.deepEqual(stageArgsForStores(plan.stages[1], ['MZ2406'], 2).slice(-4), [
+    '--run-id',
+    'fm-realtime-cockpit-2026-08-07T20:attempt-2',
+    '--stores',
+    'MZ2406',
+  ]);
 });
 
 test('daily operations is one 25-store run instead of five public batches', () => {
@@ -150,8 +162,8 @@ test('one run retries only failed stores and becomes ready exactly once', async 
     retryDelayMs: 1,
     clock: () => new Date(nowMs),
     sleep: async (delay) => { nowMs += delay; },
-    runStage: async (stage, stores) => {
-      attempts.push({ stage: stage.name, stores });
+    runStage: async (stage, stores, attempt) => {
+      attempts.push({ stage: stage.name, stores, attempt });
       if (stage.name === 'sales-realtime' && attempts.filter(({ stage: name }) => name === stage.name).length === 1) {
         return {
           exitCode: 2,
@@ -165,6 +177,10 @@ test('one run retries only failed stores and becomes ready exactly once', async 
   assert.deepEqual(attempts.filter(({ stage }) => stage === 'sales-realtime').map(({ stores }) => stores), [
     null,
     ['MZ2406'],
+  ]);
+  assert.deepEqual(attempts.filter(({ stage }) => stage === 'sales-realtime').map(({ attempt }) => attempt), [
+    1,
+    2,
   ]);
   const state = JSON.parse(await readFile(
     path.join(stateDir, 'fm-realtime-cockpit-2026-08-07T20.json'),

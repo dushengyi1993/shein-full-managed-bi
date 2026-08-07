@@ -107,6 +107,7 @@ function nodeStage(name, script, args, {
   lock,
   storeArg = 'equals',
   environment = {},
+  attemptScopedRunId = false,
 } = {}) {
   return Object.freeze({
     name,
@@ -117,6 +118,7 @@ function nodeStage(name, script, args, {
     lock,
     storeArg,
     environment: Object.freeze({ ...environment }),
+    attemptScopedRunId,
   });
 }
 
@@ -164,6 +166,7 @@ export function buildCoordinatorPlan(task, now = new Date()) {
           lock: '/run/shein-fm-coordinator/sales.lock',
           storeArg: 'separate',
           environment: salesEnvironment,
+          attemptScopedRunId: true,
         }),
       ]),
     });
@@ -401,11 +404,19 @@ export function classifyStageResult(stageName, exitCode, summary) {
   });
 }
 
-function stageArgsForStores(stage, stores) {
-  if (!stage.storeArg || !Array.isArray(stores) || stores.length === 0) return [...stage.args];
+export function stageArgsForStores(stage, stores, attempt = 1) {
+  const sourceArgs = [...stage.args];
+  if (stage.attemptScopedRunId) {
+    const runIdIndex = sourceArgs.indexOf('--run-id');
+    if (runIdIndex < 0 || !sourceArgs[runIdIndex + 1]) {
+      throw new TypeError('COORDINATOR_STAGE_RUN_ID_REQUIRED');
+    }
+    sourceArgs[runIdIndex + 1] = `${sourceArgs[runIdIndex + 1]}:attempt-${attempt}`;
+  }
+  if (!stage.storeArg || !Array.isArray(stores) || stores.length === 0) return sourceArgs;
   const args = [];
-  for (let index = 0; index < stage.args.length; index += 1) {
-    const token = stage.args[index];
+  for (let index = 0; index < sourceArgs.length; index += 1) {
+    const token = sourceArgs[index];
     if (token === '--all') continue;
     if (token === '--stores') {
       index += 1;
@@ -450,7 +461,7 @@ function boundedAppend(existing, chunk) {
     : combined.slice(combined.length - MAX_CAPTURE_BYTES);
 }
 
-export async function runStageProcess(stage, stores = null) {
+export async function runStageProcess(stage, stores = null, attempt = 1) {
   const commandArgs = [
     'scripts/run_shein_host_lane.sh',
     stage.lane,
@@ -459,7 +470,7 @@ export async function runStageProcess(stage, stores = null) {
     '/usr/bin/flock', '-n', '-E', String(DEFER_EXIT_CODE), stage.lock,
     process.execPath,
     stage.script,
-    ...stageArgsForStores(stage, stores),
+    ...stageArgsForStores(stage, stores, attempt),
   ];
   const child = spawn('/usr/bin/bash', commandArgs, {
     cwd: PROJECT_ROOT,
@@ -588,7 +599,7 @@ export async function runCoordinator(plan, {
       };
       state.updatedAt = clock().toISOString();
       await persistState();
-      const result = await runStage(stage, pendingStores);
+      const result = await runStage(stage, pendingStores, attempts);
       const classification = classifyStageResult(stage.name, result.exitCode, result.summary);
       for (const warning of classification.terminalWarnings ?? []) terminalWarnings.add(warning);
       for (const detail of classification.terminalDetails ?? []) {

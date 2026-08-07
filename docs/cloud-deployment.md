@@ -182,7 +182,8 @@ git diff --check
 10. 切换 `/opt/shein-fm/current`；
 11. 手工启动一次 `shein-fm-system-health.service` 并回读成功，再启用其 timer；只创建
     `portal.enabled` 与 `materializer.enabled` 门禁，启动 Portal；物化由业务 coordinator
-    成功末端和 Webhook 合并 path 唤醒，十分钟 retry timer 仅补资源延期；
+    成功末端和 Webhook 合并 path 唤醒；Webhook 首页物化采用 5 分钟去重窗口，固定
+    retry timer 保持停用，资源延期只由 pending/kick 事件 path 重试；
 12. 安装 Nginx 和 logrotate，执行 `nginx -t` 成功后只 reload；
 13. 从 loopback 和公网验证登录墙、Dashboard API、`/api/system`、12 个路由和退出登录；
 14. 再按下节逐域开启数据服务。
