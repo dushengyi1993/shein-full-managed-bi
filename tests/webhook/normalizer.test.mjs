@@ -55,14 +55,33 @@ test('normalizes the production single-item purchase array contract', () => {
   });
 });
 
-test('rejects multi-item webhook arrays instead of silently dropping business events', () => {
-  assert.throws(() => normalizeFullManagedWebhookEvent({
+test('normalizes every business key in a bounded multi-item purchase batch', () => {
+  const result = normalizeFullManagedWebhookEvent({
     event: resolveFullManagedWebhookEvent('3001435'),
-    payload: [{ orderNo: 'PO-1' }, { orderNo: 'PO-2' }],
+    payload: [
+      { orderNo: 'PO-1', state: 1, time: 1_786_096_800_000 },
+      { orderNo: 'PO-2', state: 1, time: 1_786_096_801_000 },
+    ],
     storeCode: 'DL',
     deliveryScope: 'STORE',
     receivedAt: '2026-08-07T09:00:01.000Z',
-  }), /exactly one event/);
+  });
+  assert.equal(result.normalized.businessKey, 'PO-1');
+  assert.equal(result.normalized.eventCount, 2);
+  assert.deepEqual(result.hydrationDirective.lookup, {
+    businessKey: 'PO-1',
+    businessKeys: ['PO-1', 'PO-2'],
+  });
+});
+
+test('rejects an unbounded webhook event batch', () => {
+  assert.throws(() => normalizeFullManagedWebhookEvent({
+    event: resolveFullManagedWebhookEvent('3001435'),
+    payload: Array.from({ length: 65 }, (_, index) => ({ orderNo: `PO-${index}` })),
+    storeCode: 'DL',
+    deliveryScope: 'STORE',
+    receivedAt: '2026-08-07T09:00:01.000Z',
+  }), /1\.\.64/);
 });
 
 test('normalizes the production delivery JSON-string contract', () => {

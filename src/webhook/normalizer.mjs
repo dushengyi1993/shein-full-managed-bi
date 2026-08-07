@@ -40,7 +40,7 @@ function unpack(value, depth = 0) {
   }
   if (Array.isArray(current)) {
     if (current.length !== 1) {
-      throw Object.assign(new Error('Webhook array payload must contain exactly one event.'), {
+      throw Object.assign(new Error('Embedded webhook array must contain exactly one object.'), {
         code: 'WEBHOOK_PAYLOAD_INVALID',
       });
     }
@@ -55,6 +55,31 @@ function unpack(value, depth = 0) {
     return { ...current, data: unpack(current.data, depth + 1) };
   }
   return current;
+}
+
+function payloadItems(value) {
+  let current = value;
+  if (typeof current === 'string') {
+    if (Buffer.byteLength(current, 'utf8') > MAX_EMBEDDED_JSON_BYTES) {
+      throw Object.assign(new Error('Embedded webhook JSON is too large.'), {
+        code: 'WEBHOOK_PAYLOAD_LIMIT',
+      });
+    }
+    try {
+      current = JSON.parse(current);
+    } catch {
+      throw Object.assign(new Error('Embedded webhook data is invalid JSON.'), {
+        code: 'WEBHOOK_PAYLOAD_INVALID',
+      });
+    }
+  }
+  if (!Array.isArray(current)) return [unpack(current)];
+  if (current.length === 0 || current.length > 64) {
+    throw Object.assign(new Error('Webhook event batch must contain 1..64 items.'), {
+      code: current.length > 64 ? 'WEBHOOK_PAYLOAD_LIMIT' : 'WEBHOOK_PAYLOAD_INVALID',
+    });
+  }
+  return current.map((item) => unpack(item, 1));
 }
 
 function nodes(payload) {
@@ -219,7 +244,9 @@ export function normalizeFullManagedWebhookEvent({
   if (!event || event.family === 'unknown') {
     throw new TypeError('A known full-managed webhook event is required.');
   }
-  const sourceNodes = nodes(payload);
+  const items = payloadItems(payload);
+  const itemNodes = items.map((item) => nodes(item));
+  const sourceNodes = itemNodes.flat();
   const identifiers = productIdentity(sourceNodes);
   const status = firstField(sourceNodes, [
     'status', 'state', 'auditState', 'audit_state', 'auditStatus', 'audit_status',
@@ -240,7 +267,13 @@ export function normalizeFullManagedWebhookEvent({
     ])
     : null;
   const appScopedOnly = deliveryScope === 'APP_ONLY';
-  const businessKey = appScopedOnly ? '' : baseBusinessKey(event, sourceNodes, identifiers);
+  const businessKeys = appScopedOnly
+    ? []
+    : [...new Set(itemNodes
+        .map((sources) => baseBusinessKey(event, sources, productIdentity(sources)))
+        .filter(Boolean))];
+  const businessKey = businessKeys[0]
+    ?? (appScopedOnly ? '' : baseBusinessKey(event, sourceNodes, identifiers));
   const safeIdentifiers = appScopedOnly
     ? {}
     : Object.fromEntries(Object.entries(identifiers).filter(([, value]) => Boolean(value)));
@@ -262,13 +295,17 @@ export function normalizeFullManagedWebhookEvent({
     identifiers: safeIdentifiers,
     metrics: quota === null || appScopedOnly ? {} : { availableQuota: quota },
     severity: appScopedOnly ? 'P3' : severityFor(event, status, quota),
+    eventCount: items.length,
   };
   const hydrationDirective = appScopedOnly || !event.hydrationType
     ? null
     : {
       directiveType: event.hydrationType,
       capabilityCode: event.hydrationType,
-      lookup: lookupFor(event, businessKey, identifiers),
+      lookup: {
+        ...lookupFor(event, businessKey, identifiers),
+        ...(businessKeys.length > 1 ? { businessKeys } : {}),
+      },
     };
   return Object.freeze({
     normalized: Object.freeze(normalized),

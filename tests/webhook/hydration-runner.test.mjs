@@ -27,7 +27,7 @@ test('groups exact webhook lookups by store and closes directives after readback
           directiveId: '1',
           storeCode: 'DL5477',
           directiveType: 'PURCHASE_ORDER_READBACK',
-          lookup: { businessKey: 'PO-1' },
+          lookup: { businessKey: 'PO-1', businessKeys: ['PO-1', 'PO-2'] },
           attemptCount: 1,
         }, {
           directiveId: '2',
@@ -47,7 +47,7 @@ test('groups exact webhook lookups by store and closes directives after readback
         results: [{
           storeCode: 'DL5477',
           domains: [
-            { domain: 'purchase-orders', recordCount: 1 },
+            { domain: 'purchase-orders', recordCount: 2 },
             { domain: 'deliveries', recordCount: 1 },
           ],
         }],
@@ -57,7 +57,7 @@ test('groups exact webhook lookups by store and closes directives after readback
   assert.deepEqual(completed, [['1', '2']]);
   assert.deepEqual(failed, []);
   assert.equal(syncCalls[0].stores, 'DL5477');
-  assert.equal(syncCalls[0].purchaseOrderNos, 'PO-1');
+  assert.equal(syncCalls[0].purchaseOrderNos, 'PO-1,PO-2');
   assert.equal(syncCalls[0].deliveryCodes, 'DEL-1');
   assert.deepEqual(summary, {
     ok: true,

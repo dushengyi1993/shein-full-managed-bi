@@ -26,7 +26,11 @@ function groups(rows) {
 function businessKeys(rows, type) {
   return [...new Set(rows
     .filter((row) => row.directiveType === type)
-    .map((row) => String(row.lookup?.businessKey ?? '').trim())
+    .flatMap((row) => [
+      row.lookup?.businessKey,
+      ...(Array.isArray(row.lookup?.businessKeys) ? row.lookup.businessKeys : []),
+    ])
+    .map((value) => String(value ?? '').trim())
     .filter(Boolean))];
 }
 
@@ -57,7 +61,10 @@ export async function runWebhookHydration({
   const summary = { claimed: 0, succeeded: 0, retrying: 0, groups: 0 };
   try {
     for (let batch = 0; batch < 10; batch += 1) {
-      const claimed = await repository.claimBatch({ workerId, limit: 100 });
+      // A single platform receipt may contain up to 64 business keys. Claiming
+      // at most three directives per batch keeps the downstream point lookup
+      // below the supply adapter's audited 200-key boundary.
+      const claimed = await repository.claimBatch({ workerId, limit: 3 });
       if (claimed.length === 0) break;
       summary.claimed += claimed.length;
       for (const [storeCode, rows] of groups(claimed)) {
