@@ -738,6 +738,7 @@ const state = {
   homeCalendarAnchor: null,
   homeCalendarPickingEnd: false,
   homeTrendMetric: 'netDealAmount',
+  homeRankingBasis: 'OPERATING',
   query: initialHashState.query,
   owner: initialHashState.owner,
   store: initialHashState.store,
@@ -5962,6 +5963,91 @@ function homeScopedRows(range = selectedHomeDateRange()) {
   };
 }
 
+/**
+ * SHEIN's product-diagnose endpoint settles at day grain and returns an empty
+ * catalogue for the current Shanghai business day. Keep the exact historical
+ * rows untouched, but make the current-day ranking useful by allocating each
+ * store's verified realtime quantity over that store's latest settled product
+ * mix. Allocation uses largest remainders, so every store's estimated product
+ * quantities add back to the exact realtime store total.
+ */
+function estimatedCurrentProductRows(bundle) {
+  const today = shanghaiToday();
+  if (bundle?.range?.end !== today) return [];
+  const history = homeHistory();
+  const allowedStores = bundle.storeCodes instanceof Set
+    ? bundle.storeCodes
+    : new Set(bundle.storeCodes || []);
+  const actualTodayStores = new Set((bundle.productDaily || [])
+    .filter(({ date }) => date === today)
+    .map(({ storeCode }) => String(storeCode)));
+  const todayQuantityByStore = new Map();
+  for (const row of bundle.storeDaily || []) {
+    if (row.date !== today || !isUnit(row.salesQuantity)) continue;
+    todayQuantityByStore.set(
+      String(row.storeCode),
+      (todayQuantityByStore.get(String(row.storeCode)) || 0) + row.salesQuantity,
+    );
+  }
+  const candidates = (Array.isArray(history.productDaily) ? history.productDaily : [])
+    .filter((row) => allowedStores.has(String(row.storeCode)))
+    .filter((row) => typeof row.date === 'string' && row.date < today)
+    .filter(homeProductSearchMatch)
+    .filter((row) => isUnit(row.salesQuantity) && row.salesQuantity > 0);
+  const latestDateByStore = new Map();
+  for (const row of candidates) {
+    const storeCode = String(row.storeCode);
+    if (!latestDateByStore.has(storeCode) || row.date > latestDateByStore.get(storeCode)) {
+      latestDateByStore.set(storeCode, row.date);
+    }
+  }
+  const rowsByStore = new Map();
+  for (const row of candidates) {
+    const storeCode = String(row.storeCode);
+    if (row.date !== latestDateByStore.get(storeCode)) continue;
+    const values = rowsByStore.get(storeCode) || [];
+    values.push(row);
+    rowsByStore.set(storeCode, values);
+  }
+  const estimated = [];
+  for (const [storeCode, realtimeQuantity] of todayQuantityByStore) {
+    if (actualTodayStores.has(storeCode) || realtimeQuantity <= 0) continue;
+    const referenceRows = rowsByStore.get(storeCode) || [];
+    const referenceTotal = referenceRows.reduce((sum, row) => sum + row.salesQuantity, 0);
+    if (referenceTotal <= 0) continue;
+    const allocations = referenceRows.map((row) => {
+      const exact = (realtimeQuantity * row.salesQuantity) / referenceTotal;
+      return { row, quantity: Math.floor(exact), remainder: exact - Math.floor(exact) };
+    });
+    let remaining = realtimeQuantity - allocations.reduce((sum, row) => sum + row.quantity, 0);
+    allocations.sort((left, right) => (
+      right.remainder - left.remainder
+      || right.row.salesQuantity - left.row.salesQuantity
+      || String(left.row.productKey).localeCompare(String(right.row.productKey))
+    ));
+    for (const allocation of allocations) {
+      if (remaining <= 0) break;
+      allocation.quantity += 1;
+      remaining -= 1;
+    }
+    for (const { row, quantity } of allocations) {
+      if (quantity <= 0) continue;
+      estimated.push({
+        ...row,
+        date: today,
+        salesQuantity: quantity,
+        estimatedDealAmount: finiteMetric(row.unitPriceEvidence)
+          ? quantity * row.unitPriceEvidence
+          : null,
+        estimationBasis: 'REALTIME_STORE_QUANTITY_X_LATEST_PRODUCT_SHARE',
+        rankingSource: 'REALTIME_SHARE_ESTIMATE',
+        rankingReferenceDate: row.date,
+      });
+    }
+  }
+  return estimated;
+}
+
 function dateSpanDays(range) {
   const start = new Date(`${range.start}T00:00:00.000Z`);
   const end = new Date(`${range.end}T00:00:00.000Z`);
@@ -7393,8 +7479,12 @@ function productHistoryRankMeta(row, primary, {
   const resolvedFinanceQuantity = financeQuantity ?? rowFinanceQuantity;
   const storeCodes = [...new Set(row.rows.map(({ storeCode }) => storeCode).filter(Boolean))];
   const days = rankingObservedDays(row.rows);
+  const hasRealtimeEstimate = row.rows.some(
+    ({ rankingSource }) => rankingSource === 'REALTIME_SHARE_ESTIMATE',
+  );
   const parts = primary === 'amount'
     ? [
+      hasRealtimeEstimate ? rankMetaText('实时估算') : null,
       basis === 'FINANCE'
         ? rankMetaMetric(
             '财务明细件数',
@@ -7417,17 +7507,18 @@ function productHistoryRankMeta(row, primary, {
             '件',
           )
         : null,
-      rankMetaMetric('店铺', storeCodes.length ? storeCodes.join('、') : null),
+      rankMetaMetric('覆盖', storeCodes.length ? formatUnits(storeCodes.length) : null, '店'),
       rankMetaMetric('', days ? formatUnits(days) : null, '天有数据'),
     ]
     : [
+      hasRealtimeEstimate ? rankMetaText('实时估算') : null,
       rankMetaMetric(
         financeAmount === null ? '估算金额' : '报账销售款',
         financeAmount === null && estimatedAmount === null
           ? null
           : formatMoney(financeAmount ?? estimatedAmount, row.currency),
       ),
-      rankMetaMetric('店铺', storeCodes.length ? storeCodes.join('、') : null),
+      rankMetaMetric('覆盖', storeCodes.length ? formatUnits(storeCodes.length) : null, '店'),
       rankMetaMetric('', days ? formatUnits(days) : null, '天有数据'),
     ];
   return parts.filter(Boolean);
@@ -7471,6 +7562,14 @@ function historyRankTable(title, note, rows, {
 
 function renderHistoryRankings() {
   const bundle = homeScopedRows();
+  const rankingBasis = state.homeRankingBasis === 'FINANCE' ? 'FINANCE' : 'OPERATING';
+  const realtimeProductEstimates = rankingBasis === 'OPERATING'
+    ? estimatedCurrentProductRows(bundle)
+    : [];
+  const operatingProductRows = [
+    ...bundle.productDaily,
+    ...realtimeProductEstimates,
+  ];
   const storeIdentity = {
     key: (row) => row.storeCode,
     label: (row) => baseStores().find(({ code }) => code === row.storeCode)?.name || row.storeCode,
@@ -7511,15 +7610,31 @@ function renderHistoryRankings() {
       bases.has('WEBAPI_REALTIME') ? '含日内实时暂估' : null,
     ].filter(Boolean).join(' + ') || '当前可用口径';
   };
-  const storeAmountBasisNote = rankingBasisNote(
-    'operatingAmountBasis',
-    '经营后台净成交金额',
-  );
+  const storeAmountBasisNote = rankingBasis === 'FINANCE'
+    ? '财务明细净额，按业务发生日'
+    : rankingBasisNote('operatingAmountBasis', '经营后台净成交金额');
+  const storeQuantityBasisNote = rankingBasis === 'FINANCE'
+    ? '财务明细 goodsCount，按业务发生日'
+    : rankingBasisNote('salesQuantityBasis', '经营后台销量');
   const storeAmountCurrency = homeCurrency(bundle) || rankedFinanceCurrency;
-  const storeAmount = aggregateHistoryRanking(
-    resolvedStoreRows,
+  const storeFinanceQuantityByKey = rankingValueByKey(
+    bundle.productFinanceDaily,
     storeIdentity,
-    'netDealAmount',
+    'goodsCount',
+  );
+  const storeFinanceAmountByKey = rankingValueByKey(
+    bundle.financeDaily,
+    storeIdentity,
+    'netAmount',
+  );
+  const storeAmountSource = rankingBasis === 'FINANCE'
+    ? bundle.financeDaily
+    : resolvedStoreRows;
+  const storeAmountMetric = rankingBasis === 'FINANCE' ? 'netAmount' : 'netDealAmount';
+  const storeAmount = aggregateHistoryRanking(
+    storeAmountSource,
+    storeIdentity,
+    storeAmountMetric,
     null,
   ).filter(({ value }) => value > 0).map((row) => {
     const store = baseStores().find(({ code }) => code === row.key);
@@ -7529,16 +7644,30 @@ function renderHistoryRankings() {
       currency: row.currency || storeAmountCurrency,
       tone: ownerDisplayTone(ownerKey),
     };
-    return { ...next, sub: storeHistoryRankMeta(next, 'amount') };
+    return {
+      ...next,
+      sub: rankingBasis === 'FINANCE'
+        ? [
+            rankMetaMetric(
+              '财务件数',
+              storeFinanceQuantityByKey.has(row.key)
+                ? formatUnits(storeFinanceQuantityByKey.get(row.key))
+                : null,
+              '件',
+            ),
+            rankMetaMetric('', rankingObservedDays(row.rows) || null, '天有数据'),
+          ].filter(Boolean)
+        : storeHistoryRankMeta(next, 'amount'),
+    };
   });
-  const storeQuantityBasisNote = rankingBasisNote(
-    'salesQuantityBasis',
-    '经营后台销量',
-  );
+  const storeQuantitySource = rankingBasis === 'FINANCE'
+    ? bundle.productFinanceDaily
+    : resolvedStoreRows;
+  const storeQuantityMetric = rankingBasis === 'FINANCE' ? 'goodsCount' : 'salesQuantity';
   const storeQuantity = aggregateHistoryRanking(
-    resolvedStoreRows,
+    storeQuantitySource,
     storeIdentity,
-    'salesQuantity',
+    storeQuantityMetric,
     null,
   ).filter(({ value }) => value > 0).map((row) => {
     const store = baseStores().find(({ code }) => code === row.key);
@@ -7548,10 +7677,23 @@ function renderHistoryRankings() {
       currency: homeCurrency(bundle) || rankedFinanceCurrency,
       tone: ownerDisplayTone(ownerKey),
     };
-    return { ...next, sub: storeHistoryRankMeta(next, 'quantity') };
+    return {
+      ...next,
+      sub: rankingBasis === 'FINANCE'
+        ? [
+            rankMetaMetric(
+              '财务净额',
+              storeFinanceAmountByKey.has(row.key)
+                ? formatMoney(storeFinanceAmountByKey.get(row.key), rankedFinanceCurrency)
+                : null,
+            ),
+            rankMetaMetric('', rankingObservedDays(row.rows) || null, '天有数据'),
+          ].filter(Boolean)
+        : storeHistoryRankMeta(next, 'quantity'),
+    };
   });
   const operatingQuantityByKey = rankingValueByKey(
-    bundle.productDaily,
+    operatingProductRows,
     productIdentity,
     'salesQuantity',
   );
@@ -7566,7 +7708,7 @@ function renderHistoryRankings() {
     'netAmount',
   );
   const operatingCoverage = productFactCoverage(
-    bundle.productDaily,
+    operatingProductRows,
     bundle.storeCodes,
     '经营货号',
   );
@@ -7575,61 +7717,46 @@ function renderHistoryRankings() {
     bundle.storeCodes,
     '财务货号',
   );
-  let productAmount = aggregateHistoryRanking(
-    bundle.productDaily,
-    productIdentity,
-    'estimatedDealAmount',
+  const productAmountBasis = rankingBasis === 'FINANCE' ? 'FINANCE' : 'ESTIMATED';
+  const productAmount = aggregateHistoryRanking(
+    rankingBasis === 'FINANCE' ? bundle.productFinanceDaily : operatingProductRows,
+    rankingBasis === 'FINANCE' ? financeProductIdentity : productIdentity,
+    rankingBasis === 'FINANCE' ? 'netAmount' : 'estimatedDealAmount',
     20,
-  );
-  let productAmountBasis = 'ESTIMATED';
-  if (!productAmount.length && rankedFinanceCurrency) {
-    productAmount = aggregateHistoryRanking(
-      bundle.productFinanceDaily,
-      financeProductIdentity,
-      'netAmount',
-      20,
-    ).map((row) => ({
-      ...row,
-      currency: rankedFinanceCurrency,
-    }));
-    productAmountBasis = productAmount.length ? 'FINANCE' : 'UNAVAILABLE';
-  }
-  productAmount = productAmount.filter(({ value }) => value > 0).slice(0, 20).map((row) => {
-    const mapped = row.key.startsWith('STANDARD:');
-    const next = {
-      ...row,
-      currency: row.currency || homeCurrency(bundle) || rankedFinanceCurrency,
-      tone: 'product-amount',
-    };
-    return {
-      ...next,
-      sub: [
-        mapped ? null : rankMetaText('未归并'),
-        ...productHistoryRankMeta(next, 'amount', {
-          basis: productAmountBasis,
-          operatingQuantity: operatingQuantityByKey.get(row.key) ?? null,
-          financeQuantity: financeQuantityByKey.get(row.key) ?? null,
-        }),
-      ].filter(Boolean),
-    };
-  });
-  let productQuantity = aggregateHistoryRanking(
-    bundle.productDaily,
-    productIdentity,
-    'salesQuantity',
+  )
+    .map((row) => rankingBasis === 'FINANCE'
+      ? { ...row, currency: rankedFinanceCurrency }
+      : row)
+    .filter(({ value }) => value > 0).slice(0, 20).map((row) => {
+      const mapped = row.key.startsWith('STANDARD:');
+      const next = {
+        ...row,
+        currency: row.currency || homeCurrency(bundle) || rankedFinanceCurrency,
+        tone: 'product-amount',
+      };
+      return {
+        ...next,
+        sub: [
+          mapped ? null : rankMetaText('未归并'),
+          ...productHistoryRankMeta(next, 'amount', {
+            basis: productAmountBasis,
+            operatingQuantity: rankingBasis === 'OPERATING'
+              ? operatingQuantityByKey.get(row.key) ?? null
+              : null,
+            financeQuantity: rankingBasis === 'FINANCE'
+              ? financeQuantityByKey.get(row.key) ?? null
+              : null,
+          }),
+        ].filter(Boolean),
+      };
+    });
+  const productQuantityBasis = rankingBasis;
+  const productQuantity = aggregateHistoryRanking(
+    rankingBasis === 'FINANCE' ? bundle.productFinanceDaily : operatingProductRows,
+    rankingBasis === 'FINANCE' ? financeProductIdentity : productIdentity,
+    rankingBasis === 'FINANCE' ? 'goodsCount' : 'salesQuantity',
     20,
-  );
-  let productQuantityBasis = 'OPERATING';
-  if (!productQuantity.length) {
-    productQuantity = aggregateHistoryRanking(
-      bundle.productFinanceDaily,
-      financeProductIdentity,
-      'goodsCount',
-      20,
-    );
-    productQuantityBasis = productQuantity.length ? 'FINANCE' : 'UNAVAILABLE';
-  }
-  productQuantity = productQuantity.filter(({ value }) => value > 0).slice(0, 20).map((row) => {
+  ).filter(({ value }) => value > 0).slice(0, 20).map((row) => {
     const mapped = row.key.startsWith('STANDARD:');
     const next = {
       ...row,
@@ -7641,25 +7768,35 @@ function renderHistoryRankings() {
       sub: [
         mapped ? null : rankMetaText('未归并'),
         ...productHistoryRankMeta(next, 'quantity', {
-          financeAmount: financeAmountByKey.get(row.key) ?? null,
+          financeAmount: rankingBasis === 'FINANCE'
+            ? financeAmountByKey.get(row.key) ?? null
+            : null,
         }),
       ].filter(Boolean),
     };
   });
   const range = selectedHomeDateRange();
   const note = `${range.start} → ${range.end} · 当前筛选联动`;
+  const estimateStoreCount = new Set(realtimeProductEstimates.map(({ storeCode }) => storeCode)).size;
   return `
     <section class="home-history-rankings" aria-label="经营排行榜">
-      <header class="head"><div class="title-with-help"><h3>排行榜</h3>${homeHelpTip('店铺展示所选范围内全部有销售记录；货号按已确认标准货号跨店归并，暂未识别的商品仍按店内身份分别统计，金额、销量各展示 Top 20。', '排行榜说明')}</div><span class="sub">${escapeHtml(note)}</span></header>
+      <header class="head home-ranking-head">
+        <div class="title-with-help"><h3>排行榜</h3>${homeHelpTip('经营口径使用经营后台净成交金额和销量；商品接口当天尚未结算时，今日货号榜按店铺实时销量与最近已结算货号构成估算并明确标记。财务口径只使用财务明细业务发生日，不会被经营估算覆盖。店铺展示全部有销售记录，货号展示 Top 20。', '排行榜说明')}</div>
+        <div class="ranking-basis-toggle" role="group" aria-label="排行榜数据口径">
+          <button type="button" class="${rankingBasis === 'OPERATING' ? 'active' : ''}" data-home-ranking-basis="OPERATING" aria-pressed="${rankingBasis === 'OPERATING' ? 'true' : 'false'}">经营口径</button>
+          <button type="button" class="${rankingBasis === 'FINANCE' ? 'active' : ''}" data-home-ranking-basis="FINANCE" aria-pressed="${rankingBasis === 'FINANCE' ? 'true' : 'false'}">财务口径</button>
+        </div>
+        <span class="sub">${escapeHtml(note)}${rankingBasis === 'OPERATING' && estimateStoreCount ? ` · 今日 ${numberFormatter.format(estimateStoreCount)} 店货号为实时估算` : ''}</span>
+      </header>
       <div class="rank-grid home-rank-grid">
         ${historyRankTable(
-          '店铺净成交金额排行',
+          rankingBasis === 'FINANCE' ? '店铺财务净额排行' : '店铺净成交金额排行',
           `${note} · ${storeAmountBasisNote}`,
           storeAmount,
           { money: true, defaultTone: 'store-amount' },
         )}
         ${historyRankTable(
-          '店铺销量排行',
+          rankingBasis === 'FINANCE' ? '店铺财务明细件数排行' : '店铺销量排行',
           `${note} · ${storeQuantityBasisNote}`,
           storeQuantity,
           { defaultTone: 'store-quantity' },
@@ -7668,7 +7805,7 @@ function renderHistoryRankings() {
           productAmountBasis === 'FINANCE' ? '标准货号报账销售款 Top 20' : '标准货号销售金额 Top 20（估算）',
           productAmountBasis === 'FINANCE'
             ? `按财务明细业务发生日汇总；${financeCoverage}。财务明细件数与经营销量是不同口径，分别标注，不再混称销量。`
-            : `销量 × 最新财务单价证据；无匹配单价则不入榜。${operatingCoverage}。`,
+            : `销量 × 最新财务单价证据；无匹配单价则不入榜。${operatingCoverage}。${estimateStoreCount ? `今日逐货号数据尚未结算，${estimateStoreCount} 店按实时店铺销量与最近货号构成估算。` : ''}`,
           productAmount,
           { money: true, estimated: productAmountBasis === 'ESTIMATED', defaultTone: 'product-amount' },
         )}
@@ -7676,7 +7813,7 @@ function renderHistoryRankings() {
           productQuantityBasis === 'FINANCE' ? '标准货号财务件数 Top 20' : '标准货号销量 Top 20',
           productQuantityBasis === 'FINANCE'
             ? `来自财务明细 goodsCount，按明细业务发生日汇总；${financeCoverage}`
-            : `来自经营分析商品诊断销量；${operatingCoverage}。无货号事实的店不补零。`,
+            : `已结算日期来自经营分析商品诊断销量；${operatingCoverage}。${estimateStoreCount ? `今日 ${estimateStoreCount} 店按实时店铺销量与最近货号构成估算；新货当日可能暂未进入。` : '无货号事实的店不补零。'}`,
           productQuantity,
           { defaultTone: 'product-quantity' },
         )}
@@ -10952,6 +11089,15 @@ elements.view.addEventListener('click', (event) => {
     const metric = String(trendMetric.dataset.homeTrendMetric || '');
     if (Object.prototype.hasOwnProperty.call(HOME_TREND_METRICS, metric)) {
       state.homeTrendMetric = metric;
+      render();
+    }
+    return;
+  }
+  const rankingBasis = event.target.closest?.('[data-home-ranking-basis]');
+  if (rankingBasis && elements.view.contains(rankingBasis)) {
+    const basis = String(rankingBasis.dataset.homeRankingBasis || '').toUpperCase();
+    if (['OPERATING', 'FINANCE'].includes(basis)) {
+      state.homeRankingBasis = basis;
       render();
     }
     return;

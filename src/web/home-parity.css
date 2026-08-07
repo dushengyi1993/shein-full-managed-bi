@@ -1404,6 +1404,45 @@ body {
   margin-bottom: 10px;
 }
 
+.home-ranking-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.home-ranking-head > .sub {
+  grid-column: 1 / -1;
+}
+
+.ranking-basis-toggle {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f3f0e9;
+}
+
+.ranking-basis-toggle button {
+  min-height: 30px;
+  padding: 5px 12px;
+  color: var(--muted-strong);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 720;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.ranking-basis-toggle button.active {
+  color: #fff;
+  background: var(--ink);
+  box-shadow: 0 3px 10px rgba(35, 31, 27, 0.16);
+}
+
 .home-rank-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2719,6 +2758,16 @@ body {
   font-style: normal;
 }
 
+.rank-meta .meta-part.meta-text em {
+  padding: 1px 6px;
+  color: color-mix(in srgb, var(--bar-color) 82%, #241f19);
+  font-weight: 760;
+  line-height: 1.45;
+  border: 1px solid color-mix(in srgb, var(--bar-color) 28%, #fff);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bar-color) 10%, #fff);
+}
+
 .rank-meta .meta-sep {
   display: inline-block;
   margin: 0 9px;
@@ -2727,6 +2776,10 @@ body {
 }
 
 .rank-value {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 3px;
   font-weight: 820;
   text-align: right;
   white-space: nowrap;
@@ -2734,8 +2787,8 @@ body {
 }
 
 .rank-value small {
-  display: block;
-  margin-top: 2px;
+  display: inline;
+  margin-top: 0;
   color: var(--muted);
   font-size: 11px;
   font-weight: 500;
@@ -3136,7 +3189,20 @@ body {
 
   .rank-value {
     grid-column: 2;
+    justify-content: flex-start;
     text-align: left;
+  }
+
+  .home-ranking-head {
+    grid-template-columns: 1fr;
+  }
+
+  .ranking-basis-toggle {
+    width: 100%;
+  }
+
+  .ranking-basis-toggle button {
+    flex: 1 1 0;
   }
 
   .rank-meta {

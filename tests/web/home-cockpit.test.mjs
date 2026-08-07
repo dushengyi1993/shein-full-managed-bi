@@ -185,10 +185,17 @@ test('approved homepage uses six paired cards and keeps operating, finance and l
   assert.match(resolved, /homeOperatingBasis\(live\)/);
   assert.match(operatingBasis, /WEBAPI_REALTIME/);
   assert.match(operatingBasis, /WEBAPI_INDEX/);
-  assert.match(rankings, /'netDealAmount',\s*null/);
-  assert.match(rankings, /'salesQuantity',\s*null/);
-  assert.match(rankings, /'estimatedDealAmount',\s*20/);
-  assert.match(rankings, /'goodsCount',\s*20/);
+  assert.match(rankings, /storeAmountMetric/);
+  assert.match(rankings, /storeQuantityMetric/);
+  assert.match(rankings, /'netDealAmount'/);
+  assert.match(rankings, /'salesQuantity'/);
+  assert.match(rankings, /'estimatedDealAmount'/);
+  assert.match(rankings, /'goodsCount'/);
+  assert.match(rankings, /data-home-ranking-basis="OPERATING"/);
+  assert.match(rankings, /data-home-ranking-basis="FINANCE"/);
+  const currentProductEstimate = functionBody(app, 'estimatedCurrentProductRows');
+  assert.match(currentProductEstimate, /REALTIME_STORE_QUANTITY_X_LATEST_PRODUCT_SHARE/);
+  assert.match(currentProductEstimate, /largest remainders|remainder/);
 });
 
 test('today core strip keeps six current metrics separate from the historical range', async () => {

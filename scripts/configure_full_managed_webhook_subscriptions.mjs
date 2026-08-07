@@ -120,6 +120,26 @@ function redactedText(value) {
 }
 
 async function inspectPage(page, entity, appName, requestUrls, responseBodies) {
+  const apiPermissionTab = page.getByRole('tab', { name: /API权限(?:设置|包)/ });
+  let salesPermission = Object.freeze({ status: 'unavailable', rowText: null });
+  if (await apiPermissionTab.isVisible().catch(() => false)) {
+    await apiPermissionTab.click();
+    await page.waitForTimeout(1_200);
+    const salesRow = page.locator('tr').filter({ hasText: /^销量查询/ }).first();
+    if (await salesRow.isVisible().catch(() => false)) {
+      const rowText = (await salesRow.innerText()).trim();
+      salesPermission = Object.freeze({
+        status: rowText.includes('已订阅')
+          ? 'approved'
+          : rowText.includes('审核中')
+            ? 'pending-review'
+            : rowText.includes('申请权限包')
+              ? 'not-applied'
+              : 'unknown',
+        rowText: redactedText(rowText),
+      });
+    }
+  }
   const webhookTab = page.getByRole('tab', { name: 'Webhook设置', exact: true });
   if (await webhookTab.isVisible().catch(() => false)) {
     await webhookTab.click();
@@ -154,6 +174,7 @@ async function inspectPage(page, entity, appName, requestUrls, responseBodies) {
     links,
     buttons,
     controls,
+    salesPermission,
     callbackUrl: CALLBACK_URL,
     requestUrls: [...requestUrls].filter((url) => (
       /event|message|subscribe|callback|webhook/i.test(url)
@@ -206,6 +227,13 @@ async function configureCallback(page, editIndex, label) {
   return { label, action: 'submitted', status, dialogText };
 }
 
+function eventCodeFromRowText(value) {
+  return String(value || '').split(/\s+/).find((token) => (
+    /^[a-z][a-z0-9_]{3,120}$/.test(token)
+    && (token.includes('_notice') || token.startsWith('product_'))
+  )) || '';
+}
+
 async function configureSubscriptions(page, entity, appName, responseBodies) {
   const webhookTab = page.getByRole('tab', { name: 'Webhook设置', exact: true });
   await webhookTab.click();
@@ -220,18 +248,23 @@ async function configureSubscriptions(page, entity, appName, responseBodies) {
   const switchCount = await switches.count();
   const enabled = [];
   const blocked = [];
+  const requested = [];
   for (let index = 0; index < switchCount; index += 1) {
     const item = switches.nth(index);
     const row = item.locator('xpath=ancestor::tr[1]');
     const text = (await row.innerText().catch(() => '')).trim();
-    const eventCode = /([a-z][a-z0-9_]+_notice|product_[a-z0-9_]+)/i.exec(text)?.[1] || '';
+    const eventCode = eventCodeFromRowText(text);
     const isVideo = eventCode === 'product_video_conversion_completed';
     if (isVideo) continue;
     if (await item.isDisabled()) {
-      blocked.push(eventCode || `row-${index + 1}`);
+      blocked.push({ eventCode: eventCode || `row-${index + 1}`, reason: 'disabled' });
       continue;
     }
     if ((await item.getAttribute('aria-checked')) !== 'true') {
+      const responsePromise = page.waitForResponse(
+        (response) => response.url().includes('/event/config/subscribeEventConfig'),
+        { timeout: 10_000 },
+      ).catch(() => null);
       await item.click();
       const confirmation = page.getByRole('dialog').last();
       if (await confirmation.isVisible().catch(() => false)) {
@@ -240,12 +273,51 @@ async function configureSubscriptions(page, entity, appName, responseBodies) {
           await clickFirstVisible(button, `${eventCode} subscription confirmation`);
         }
       }
-      await page.waitForTimeout(350);
+      const response = await responsePromise;
+      let responseBody = null;
+      if (response) {
+        responseBody = await response.json().catch(() => null);
+      }
+      await page.waitForTimeout(500);
+      if (String(responseBody?.code ?? '') === '0') {
+        requested.push(eventCode);
+        continue;
+      }
+      if ((await item.getAttribute('aria-checked')) !== 'true') {
+        blocked.push({
+          eventCode: eventCode || `row-${index + 1}`,
+          reason: String(responseBody?.code || 'readback-failed'),
+          message: redactedText(responseBody?.msg || ''),
+        });
+        continue;
+      }
     }
     const checked = (await item.getAttribute('aria-checked')) === 'true';
-    if (!checked) throw new Error(`Subscription readback failed for ${eventCode || index}.`);
+    if (!checked) {
+      blocked.push({ eventCode: eventCode || `row-${index + 1}`, reason: 'readback-failed' });
+      continue;
+    }
     enabled.push(eventCode);
   }
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
+  await page.getByRole('tab', { name: 'Webhook设置', exact: true }).click();
+  await page.waitForTimeout(1_500);
+  const verified = [];
+  const verifiedSwitches = page.getByRole('switch');
+  for (let index = 0; index < await verifiedSwitches.count(); index += 1) {
+    const item = verifiedSwitches.nth(index);
+    if ((await item.getAttribute('aria-checked')) !== 'true') continue;
+    const eventCode = eventCodeFromRowText(
+      await item.locator('xpath=ancestor::tr[1]').innerText().catch(() => ''),
+    );
+    if (eventCode) verified.push(eventCode);
+  }
+  for (const eventCode of requested) {
+    if (!verified.includes(eventCode)) {
+      blocked.push({ eventCode, reason: 'final-readback-failed' });
+    }
+  }
+  const subscribedEvents = [...new Set([...enabled, ...verified])];
   return {
     ok: blocked.length === 0,
     action: blocked.length === 0 ? 'subscribed' : 'callback-submitted',
@@ -254,7 +326,7 @@ async function configureSubscriptions(page, entity, appName, responseBodies) {
     appName,
     callback,
     testCallback,
-    subscribedEvents: enabled,
+    subscribedEvents,
     blockedEvents: blocked,
     verifiedAt: new Date().toISOString(),
   };
