@@ -493,7 +493,9 @@ export async function runCoordinator(plan, {
   if (!stateDir) throw new TypeError('COORDINATOR_STATE_DIR_REQUIRED');
   const stateFile = path.join(stateDir, safeStateName(plan.runId));
   const existing = await readState(stateFile);
-  if (existing?.status === 'PUBLISHED') return existing;
+  const publishedPlanComplete = existing?.status === 'PUBLISHED'
+    && plan.stages.every((stage) => existing?.stages?.[stage.name]?.status === 'COMPLETE');
+  if (publishedPlanComplete) return existing;
   const startedAt = existing?.startedAt ?? clock().toISOString();
   // A persisted run is resumable across coordinator activations. The business
   // run keeps its original startedAt/checkpoints, but every activation gets a
