@@ -10,6 +10,7 @@ ConditionPathExists=/srv/shein-fm/runtime/store-login/state.json
 Type=oneshot
 User=sheinfm
 Group=sheinfm
+SupplementaryGroups=sheinfm-dashboard
 Slice=shein-host-heavy-fm.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current

@@ -247,6 +247,20 @@ test('shared runtime directories survive sequential oneshot jobs', async () => {
   }
 });
 
+test('every coordinator can resume state atomically replaced by the materializer group', async () => {
+  const units = [
+    'shein-fm-home-realtime.service',
+    'shein-fm-home-daily.service',
+    'shein-fm-home-finance-daily.service',
+    'shein-fm-supply-sync.service',
+    'shein-fm-session-renewal.service',
+  ];
+  for (const unitName of units) {
+    const unit = await readFile(new URL(`infra/systemd/${unitName}`, root), 'utf8');
+    assert.match(unit, /^SupplementaryGroups=sheinfm-dashboard$/m, unitName);
+  }
+});
+
 test('materializer lock deferral cannot publish nonexistent staging files', async () => {
   const unit = await readFile(
     new URL('infra/systemd/shein-fm-dashboard-materialize.service', root),

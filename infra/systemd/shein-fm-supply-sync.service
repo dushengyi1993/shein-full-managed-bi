@@ -11,6 +11,7 @@ ConditionPathExists=/srv/shein-fm/runtime/supply-backfill.verified
 Type=oneshot
 User=sheinfm-supply
 Group=sheinfm-supply
+SupplementaryGroups=sheinfm-dashboard
 Slice=shein-fm-heavy.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current

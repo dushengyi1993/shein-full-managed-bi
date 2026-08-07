@@ -10,6 +10,7 @@ ConditionPathExists=/srv/shein-fm/runtime/home-finance-backfill.enabled
 Type=oneshot
 User=sheinfm-sales
 Group=sheinfm-sales
+SupplementaryGroups=sheinfm-dashboard
 Slice=shein-fm-heavy.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
