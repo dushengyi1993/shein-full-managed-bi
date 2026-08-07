@@ -26,8 +26,7 @@ export async function requeueWebhookDeadLetters({
         FROM ops.webhook_job job
         JOIN raw.webhook_receipt receipt ON receipt.receipt_id = job.receipt_id
         LEFT JOIN ops.operational_event event ON event.receipt_id = receipt.receipt_id
-       WHERE job.status = 'DEAD_LETTER'
-         AND receipt.delivery_scope = 'STORE'
+       WHERE job.status IN ('DEAD_LETTER', 'RETRY')
          AND receipt.event_code = ANY($1::text[])
          AND job.last_error_code = ANY($2::text[])
          AND event.operational_event_id IS NULL
@@ -42,8 +41,7 @@ export async function requeueWebhookDeadLetters({
           FROM ops.webhook_job job
           JOIN raw.webhook_receipt receipt ON receipt.receipt_id = job.receipt_id
           LEFT JOIN ops.operational_event event ON event.receipt_id = receipt.receipt_id
-         WHERE job.status = 'DEAD_LETTER'
-           AND receipt.delivery_scope = 'STORE'
+         WHERE job.status IN ('DEAD_LETTER', 'RETRY')
            AND receipt.event_code = ANY($1::text[])
            AND job.last_error_code = ANY($2::text[])
            AND event.operational_event_id IS NULL

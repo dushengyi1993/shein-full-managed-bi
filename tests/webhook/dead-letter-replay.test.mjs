@@ -28,6 +28,7 @@ test('dead-letter replay is dry-run by default and targets only repaired event c
   });
   assert.equal(queries.length, 1);
   assert.deepEqual(queries[0].values[0], REPLAYABLE_EVENT_CODES);
+  assert.match(queries[0].sql, /status IN \('DEAD_LETTER', 'RETRY'\)/);
   assert.match(queries[0].sql, /event\.operational_event_id IS NULL/);
 });
 
@@ -48,6 +49,7 @@ test('execute resets only selected dead letters into a clean retry state', async
   });
   assert.equal(summary.requeuedCount, 2);
   assert.match(queries[1].sql, /status = 'RETRY'/);
+  assert.match(queries[1].sql, /status IN \('DEAD_LETTER', 'RETRY'\)/);
   assert.match(queries[1].sql, /attempt_count = 0/);
   assert.match(queries[1].sql, /FOR UPDATE OF job/);
 });
