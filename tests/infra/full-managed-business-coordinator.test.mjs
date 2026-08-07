@@ -79,17 +79,61 @@ test('last JSON extractor ignores pressure-gate evidence before the business sum
   });
 });
 
-test('terminal sales quality gaps do not cause endless retries', () => {
+test('terminal sales quality gaps are classified separately from capability gaps', () => {
   assert.deepEqual(classifyStageResult('sales-realtime', 2, {
-    results: [{ storeCode: 'DL5477', status: 'quality_blocked' }],
+    results: [{
+      storeCode: 'NM8831',
+      status: 'quality_blocked',
+      errorCode: 'MIXED_STATISTICS_DATES',
+    }],
   }), {
     complete: true,
     terminalPartial: true,
     retryStores: [],
+    terminalWarnings: ['TERMINAL_DATA_QUALITY_GAP'],
+    terminalDetails: [{
+      warning: 'TERMINAL_DATA_QUALITY_GAP',
+      storeCode: 'NM8831',
+      errorCode: 'MIXED_STATISTICS_DATES',
+    }],
   });
+  assert.deepEqual(classifyStageResult('sales-realtime', 2, {
+    results: [{ storeCode: 'DL5477', status: 'pending', errorCode: 'PERMISSION_PENDING' }],
+  }).terminalWarnings, ['TERMINAL_CAPABILITY_GAP']);
   assert.deepEqual(classifyStageResult('sales-realtime', 2, {
     results: [{ storeCode: 'DL5477', status: 'error' }],
   }).retryStores, ['DL5477']);
+});
+
+test('terminal sales evidence is persisted in the safe stage summary', async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), 'fm-coordinator-quality-'));
+  const plan = buildCoordinatorPlan(
+    COORDINATOR_TASKS.REALTIME,
+    new Date('2026-08-07T23:02:00+08:00'),
+  );
+  const result = await runCoordinator(plan, {
+    stateDir,
+    runStage: async (stage) => (stage.name === 'sales-realtime'
+      ? {
+        exitCode: 2,
+        summary: {
+          results: [{
+            storeCode: 'NM8831',
+            status: 'quality_blocked',
+            errorCode: 'MIXED_STATISTICS_DATES',
+          }],
+        },
+      }
+      : { exitCode: 0, summary: { ok: true } }),
+  });
+  assert.deepEqual(result.stages['sales-realtime'].terminalWarnings, [
+    'TERMINAL_DATA_QUALITY_GAP',
+  ]);
+  assert.deepEqual(result.stages['sales-realtime'].terminalDetails, [{
+    warning: 'TERMINAL_DATA_QUALITY_GAP',
+    storeCode: 'NM8831',
+    errorCode: 'MIXED_STATISTICS_DATES',
+  }]);
 });
 
 test('one run retries only failed stores and becomes ready exactly once', async () => {

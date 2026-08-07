@@ -6,7 +6,10 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { FULL_MANAGED_STORE_CODES } from '../src/config/full-managed-stores.mjs';
+import {
+  FULL_MANAGED_STORE_CODES,
+  normalizeFullManagedStoreCode,
+} from '../src/config/full-managed-stores.mjs';
 
 const PROJECT_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const DEFER_EXIT_CODE = 75;
@@ -347,9 +350,31 @@ export function classifyStageResult(stageName, exitCode, summary) {
       .map(({ storeCode }) => storeCode));
   }
   else if (stageName === 'sales-realtime') {
-    retryStores = uniqueStoreCodes((summary?.results ?? [])
+    const results = Array.isArray(summary?.results) ? summary.results : [];
+    retryStores = uniqueStoreCodes(results
       .filter(({ status }) => status === 'error')
       .map(({ storeCode }) => storeCode));
+    const terminalDetails = results
+      .filter(({ status }) => !['loaded', 'error'].includes(status))
+      .map(({ storeCode, status, errorCode }) => ({
+        warning: status === 'quality_blocked'
+          ? 'TERMINAL_DATA_QUALITY_GAP'
+          : 'TERMINAL_CAPABILITY_GAP',
+        storeCode: normalizeFullManagedStoreCode(storeCode),
+        errorCode: /^[A-Z0-9_]{3,64}$/.test(String(errorCode ?? ''))
+          ? String(errorCode)
+          : 'UNCLASSIFIED_PARTIAL',
+      }))
+      .filter(({ storeCode }) => storeCode !== null);
+    if (retryStores.length === 0 && terminalDetails.length > 0) {
+      return Object.freeze({
+        complete: true,
+        terminalPartial: true,
+        retryStores,
+        terminalWarnings: [...new Set(terminalDetails.map(({ warning }) => warning))],
+        terminalDetails,
+      });
+    }
   } else if (stageName === 'supply') {
     retryStores = uniqueStoreCodes((summary?.results ?? [])
       .filter(({ status }) => ['partial', 'error'].includes(status))
@@ -477,6 +502,7 @@ function stageSnapshot(stageState) {
     attempts: stageState.attempts,
     pendingStores: stageState.pendingStores ?? [],
     terminalWarnings: stageState.terminalWarnings ?? [],
+    terminalDetails: stageState.terminalDetails ?? [],
     completedAt: stageState.completedAt ?? null,
     lastExitCode: stageState.lastExitCode ?? null,
   };
@@ -546,25 +572,36 @@ export async function runCoordinator(plan, {
       ? prior.pendingStores
       : null;
     let attempts = Number.isSafeInteger(prior.attempts) ? prior.attempts : 0;
+    const terminalWarnings = new Set(prior.terminalWarnings ?? []);
+    const terminalDetails = new Map((prior.terminalDetails ?? []).map((detail) => (
+      [`${detail.warning}:${detail.storeCode}:${detail.errorCode}`, detail]
+    )));
     while (clock().valueOf() < deadline) {
       attempts += 1;
       state.stages[stage.name] = {
         status: 'RUNNING',
         attempts,
         pendingStores: pendingStores ?? [],
+        terminalWarnings: [...terminalWarnings],
+        terminalDetails: [...terminalDetails.values()],
         startedAt: prior.startedAt ?? clock().toISOString(),
       };
       state.updatedAt = clock().toISOString();
       await persistState();
       const result = await runStage(stage, pendingStores);
       const classification = classifyStageResult(stage.name, result.exitCode, result.summary);
+      for (const warning of classification.terminalWarnings ?? []) terminalWarnings.add(warning);
+      for (const detail of classification.terminalDetails ?? []) {
+        terminalDetails.set(`${detail.warning}:${detail.storeCode}:${detail.errorCode}`, detail);
+      }
       if (classification.complete) {
         const completed = {
           status: 'COMPLETE',
           attempts,
           pendingStores: [],
           needsRecovery: classification.needsRecovery === true,
-          terminalWarnings: classification.terminalPartial ? ['TERMINAL_CAPABILITY_GAP'] : [],
+          terminalWarnings: classification.terminalPartial ? [...terminalWarnings] : [],
+          terminalDetails: classification.terminalPartial ? [...terminalDetails.values()] : [],
           lastExitCode: result.exitCode,
           completedAt: clock().toISOString(),
         };
@@ -589,6 +626,8 @@ export async function runCoordinator(plan, {
         status: classification.deferred ? 'WAITING_RESOURCE' : 'RETRYING',
         attempts,
         pendingStores: pendingStores ?? [],
+        terminalWarnings: [...terminalWarnings],
+        terminalDetails: [...terminalDetails.values()],
         lastExitCode: result.exitCode,
       };
       state.status = classification.deferred ? 'WAITING_RESOURCE' : 'WAITING_PLATFORM';
