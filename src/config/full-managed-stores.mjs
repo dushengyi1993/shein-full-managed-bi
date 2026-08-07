@@ -42,8 +42,9 @@ export function fullManagedProfileKey(value) {
 export function fullManagedRuntimeSlot(value) {
   const storeCode = normalizeFullManagedStoreCode(value);
   if (!storeCode) return null;
-  // Preserve the two proven production ports, then allocate the remaining
-  // roster deterministically without changing either existing Profile runtime.
+  // Keep fixed CDP listeners outside Linux's default ephemeral port range
+  // (32768-60999). Otherwise an unrelated outbound loopback connection can
+  // occupy the same local port before Chrome binds it.
   const allocationOrder = [
     'DL5477',
     'MZ2406',
@@ -51,7 +52,7 @@ export function fullManagedRuntimeSlot(value) {
   ];
   const index = allocationOrder.indexOf(storeCode);
   return Object.freeze({
-    debuggingPort: 39_541 + index,
+    debuggingPort: 62_041 + index,
     display: `:${941 + index}`,
   });
 }

@@ -28,6 +28,16 @@ test('the login roster contains 25 unique canonical Profiles and runtime slots',
     new Set(FULL_MANAGED_STORE_CODES.map((storeCode) => fullManagedRuntimeSlot(storeCode).debuggingPort)).size,
     25,
   );
+  assert.ok(
+    FULL_MANAGED_STORE_CODES.every((storeCode) => fullManagedRuntimeSlot(storeCode).debuggingPort > 60_999),
+    'all persistent Profile CDP ports must remain outside the Linux ephemeral range',
+  );
+});
+
+test('the transient login browser also uses a non-ephemeral CDP port', async () => {
+  const source = await readFile(new URL('../../scripts/serve_full_managed_store_login.mjs', import.meta.url), 'utf8');
+  assert.match(source, /debuggingPort:\s*62_070/);
+  assert.doesNotMatch(source, /debuggingPort:\s*39_700/);
 });
 
 test('a batch persists only a hash while the one-time token remains caller-only', () => {

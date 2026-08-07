@@ -202,11 +202,11 @@ function fakeCdpDeps({ messages = [], failMethod = null } = {}) {
   };
   return {
     sent,
-    port: 39_541,
+    port: 62_041,
     httpJson: async () => ([{
       type: 'page',
       url: `${WEBAPI_ORIGIN}/#/home`,
-      webSocketDebuggerUrl: 'ws://127.0.0.1:39541/devtools/page/1',
+      webSocketDebuggerUrl: 'ws://127.0.0.1:62041/devtools/page/1',
     }]),
     createWebSocket: () => socket,
   };
@@ -275,7 +275,7 @@ test('the CDP client refuses a non-loopback target and a rejected command', asyn
       httpJson: async () => ([{
         type: 'page',
         url: 'https://example.com',
-        webSocketDebuggerUrl: 'ws://10.0.0.5:39541/devtools/page/1',
+        webSocketDebuggerUrl: 'ws://10.0.0.5:62041/devtools/page/1',
       }]),
     }),
     (error) => error.code === 'CDP_PAGE_TARGET_NOT_LOOPBACK',

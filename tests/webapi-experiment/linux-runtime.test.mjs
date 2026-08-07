@@ -128,7 +128,7 @@ function fakeSystem({ platform = 'linux' } = {}) {
         ? [{
           type: 'page',
           url: 'https://sso.geiwohuo.com/#/home',
-          webSocketDebuggerUrl: 'ws://127.0.0.1:39541/devtools/page/1',
+          webSocketDebuggerUrl: 'ws://127.0.0.1:62041/devtools/page/1',
         }]
         : {}
     ),
@@ -152,10 +152,10 @@ test('the loopback debugger allowlist covers every one of the 25 runtime slots',
     }
   }
   for (const url of [
-    'http://127.0.0.1:39540/json/version',
-    'http://127.0.0.1:39566/json/version',
-    'http://127.0.0.2:39565/json/version',
-    'https://127.0.0.1:39565/json/version',
+    'http://127.0.0.1:62040/json/version',
+    'http://127.0.0.1:62066/json/version',
+    'http://127.0.0.2:62065/json/version',
+    'https://127.0.0.1:62065/json/version',
   ]) {
     assert.equal(isAllowedLoopbackDebugUrl(url), false, url);
   }

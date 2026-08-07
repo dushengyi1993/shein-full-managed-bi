@@ -121,6 +121,7 @@ test('the runtime slot allocation is deterministic and loopback-bounded per stor
   assert.equal(new Set(ports).size, FULL_MANAGED_STORE_CODES.length);
   for (const port of ports) {
     assert.ok(Number.isSafeInteger(port) && port > 1024 && port < 65_535, String(port));
+    assert.ok(port > 60_999, `${port} must remain outside Linux's default ephemeral range`);
   }
 });
 

@@ -46,7 +46,7 @@ const RUNTIME = Object.freeze({
   display: ':220',
   vncPort: 5_920,
   websockifyPort: 16_220,
-  debuggingPort: 39_700,
+  debuggingPort: 62_070,
 });
 const SESSION_MINUTES = 60;
 

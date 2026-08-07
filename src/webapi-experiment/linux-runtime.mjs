@@ -30,7 +30,7 @@ import { createExperimentLockManager } from './profile-lock.mjs';
 import { createWebApiExperimentRepository } from './repository.mjs';
 
 const LOCK_DIRECTORY = '/srv/shein-fm/runtime/webapi-locks';
-const LOOPBACK_DEBUG_PATH = /^http:\/\/127\.0\.0\.1:395(?:4[1-9]|5[0-9]|6[0-5])\/json\/(version|list)$/;
+const LOOPBACK_DEBUG_PATH = /^http:\/\/127\.0\.0\.1:620(?:4[1-9]|5[0-9]|6[0-5])\/json\/(version|list)$/;
 const MAX_DEBUG_RESPONSE_BYTES = 1024 * 1024;
 
 export function isAllowedLoopbackDebugUrl(value) {
