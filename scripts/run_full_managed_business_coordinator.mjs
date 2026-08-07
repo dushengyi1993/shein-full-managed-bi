@@ -459,7 +459,12 @@ export async function runCoordinator(plan, {
   const existing = await readState(stateFile);
   if (existing?.status === 'PUBLISHED') return existing;
   const startedAt = existing?.startedAt ?? clock().toISOString();
-  const deadline = Date.parse(startedAt) + budgetMs;
+  // A persisted run is resumable across coordinator activations. The business
+  // run keeps its original startedAt/checkpoints, but every activation gets a
+  // fresh bounded execution budget. Anchoring the deadline to the first ever
+  // startedAt made an expired WAITING run impossible to resume after its
+  // resource/platform blocker had been fixed.
+  const deadline = clock().valueOf() + budgetMs;
   const state = {
     schemaVersion: 1,
     task: plan.task,

@@ -117,6 +117,55 @@ test('one run retries only failed stores and becomes ready exactly once', async 
   }
 });
 
+test('a persisted waiting run receives a fresh bounded budget when resumed', async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), 'fm-coordinator-resume-'));
+  const plan = buildCoordinatorPlan(
+    COORDINATOR_TASKS.SESSION,
+    new Date('2026-08-07T00:30:00+08:00'),
+  );
+  const stateFile = path.join(stateDir, 'fm-session-maintenance-2026-08-07.json');
+  await writeFile(stateFile, JSON.stringify({
+    schemaVersion: 1,
+    task: plan.task,
+    runId: plan.runId,
+    businessDate: plan.businessDate,
+    status: 'WAITING_PLATFORM',
+    startedAt: '2026-08-06T16:30:00.000Z',
+    updatedAt: '2026-08-06T16:55:00.000Z',
+    readyAt: null,
+    publishedAt: null,
+    stages: {
+      'session-renewal': {
+        status: 'COMPLETE',
+        attempts: 1,
+        needsRecovery: true,
+        completedAt: '2026-08-06T16:31:00.000Z',
+      },
+      'session-recovery': {
+        status: 'WAITING',
+        attempts: 4,
+        pendingStores: [],
+        lastExitCode: 2,
+      },
+    },
+  }));
+  const attempts = [];
+  const result = await runCoordinator(plan, {
+    stateDir,
+    budgetMs: 60_000,
+    clock: () => new Date('2026-08-07T14:00:00.000Z'),
+    sleep: async () => {},
+    runStage: async (stage) => {
+      attempts.push(stage.name);
+      return { exitCode: 0, summary: { ok: true } };
+    },
+  });
+  assert.deepEqual(attempts, ['session-recovery']);
+  assert.equal(result.status, 'READY_TO_PUBLISH');
+  assert.equal(result.startedAt, '2026-08-06T16:30:00.000Z');
+  assert.equal(result.stages['session-recovery'].attempts, 5);
+});
+
 test('materializer marks only runs that were ready before its snapshot began', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fm-publish-'));
   const root = path.join(directory, 'coordinator');
