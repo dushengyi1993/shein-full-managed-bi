@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   REPLAYABLE_EVENT_CODES,
+  isReplayEntrypoint,
   requeueWebhookDeadLetters,
 } from '../../scripts/requeue_full_managed_webhook_dead_letters.mjs';
 
@@ -49,4 +50,12 @@ test('execute resets only selected dead letters into a clean retry state', async
   assert.match(queries[1].sql, /status = 'RETRY'/);
   assert.match(queries[1].sql, /attempt_count = 0/);
   assert.match(queries[1].sql, /FOR UPDATE OF job/);
+});
+
+test('replay CLI recognizes its real entrypoint and refuses unrelated paths', () => {
+  assert.equal(isReplayEntrypoint(new URL(
+    '../../scripts/requeue_full_managed_webhook_dead_letters.mjs',
+    import.meta.url,
+  )), true);
+  assert.equal(isReplayEntrypoint(new URL(import.meta.url)), false);
 });

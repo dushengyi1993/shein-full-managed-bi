@@ -1,7 +1,8 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { Pool } from 'pg';
 
@@ -120,10 +121,17 @@ export async function runWebhookHydration({
   return Object.freeze({ ok: true, ...summary });
 }
 
-if (
-  process.argv[1]
-  && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
-) {
+export function isHydrationEntrypoint(argv1 = process.argv[1]) {
+  if (!argv1) return false;
+  try {
+    const candidate = argv1 instanceof URL ? fileURLToPath(argv1) : argv1;
+    return realpathSync(path.resolve(candidate)) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isHydrationEntrypoint()) {
   runWebhookHydration()
     .then((summary) => console.log(JSON.stringify(summary)))
     .catch((error) => {

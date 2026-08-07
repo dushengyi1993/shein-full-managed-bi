@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { Pool } from 'pg';
 
@@ -73,10 +74,17 @@ export async function requeueWebhookDeadLetters({
   }
 }
 
-if (
-  process.argv[1]
-  && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
-) {
+export function isReplayEntrypoint(argv1 = process.argv[1]) {
+  if (!argv1) return false;
+  try {
+    const candidate = argv1 instanceof URL ? fileURLToPath(argv1) : argv1;
+    return realpathSync(path.resolve(candidate)) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isReplayEntrypoint()) {
   requeueWebhookDeadLetters({
     databaseUrl: process.env.FULL_BI_DATABASE_URL ?? process.env.DATABASE_URL,
     execute: process.argv.includes('--execute'),

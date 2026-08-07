@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { runWebhookHydration } from '../../scripts/run_full_managed_webhook_hydration.mjs';
+import {
+  isHydrationEntrypoint,
+  runWebhookHydration,
+} from '../../scripts/run_full_managed_webhook_hydration.mjs';
 
 test('groups exact webhook lookups by store and closes directives after readback', async () => {
   const completed = [];
@@ -102,4 +105,12 @@ test('keeps a directive retryable until the exact OpenAPI row is visible', async
   assert.equal(summary.retrying, 1);
   assert.deepEqual(failures[0].ids, ['3']);
   assert.equal(failures[0].options.errorCode, 'WEBHOOK_READBACK_NOT_READY');
+});
+
+test('hydration CLI recognizes its real entrypoint and refuses unrelated paths', () => {
+  assert.equal(isHydrationEntrypoint(new URL(
+    '../../scripts/run_full_managed_webhook_hydration.mjs',
+    import.meta.url,
+  )), true);
+  assert.equal(isHydrationEntrypoint(new URL(import.meta.url)), false);
 });
