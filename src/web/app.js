@@ -5967,9 +5967,10 @@ function homeScopedRows(range = selectedHomeDateRange()) {
  * SHEIN's product-diagnose endpoint settles at day grain and returns an empty
  * catalogue for the current Shanghai business day. Keep the exact historical
  * rows untouched, but make the current-day ranking useful by allocating each
- * store's verified realtime quantity over that store's latest settled product
- * mix. Allocation uses largest remainders, so every store's estimated product
- * quantities add back to the exact realtime store total.
+ * store's verified realtime quantity and net-deal amount over that store's
+ * latest settled product mix. Quantity allocation uses largest remainders, so
+ * every store's estimated product quantities add back to the exact realtime
+ * store total; amount allocation preserves the exact store amount as well.
  */
 function estimatedCurrentProductRows(bundle) {
   const today = shanghaiToday();
@@ -5982,17 +5983,26 @@ function estimatedCurrentProductRows(bundle) {
     .filter(({ date }) => date === today)
     .map(({ storeCode }) => String(storeCode)));
   const todayQuantityByStore = new Map();
+  const todayAmountByStore = new Map();
   for (const row of bundle.storeDaily || []) {
-    if (row.date !== today || !isUnit(row.salesQuantity)) continue;
-    todayQuantityByStore.set(
-      String(row.storeCode),
-      (todayQuantityByStore.get(String(row.storeCode)) || 0) + row.salesQuantity,
-    );
+    if (row.date !== today) continue;
+    const storeCode = String(row.storeCode);
+    if (isUnit(row.salesQuantity)) {
+      todayQuantityByStore.set(
+        storeCode,
+        (todayQuantityByStore.get(storeCode) || 0) + row.salesQuantity,
+      );
+    }
+    if (finiteMetric(row.netDealAmount)) {
+      todayAmountByStore.set(
+        storeCode,
+        (todayAmountByStore.get(storeCode) || 0) + row.netDealAmount,
+      );
+    }
   }
   const candidates = (Array.isArray(history.productDaily) ? history.productDaily : [])
     .filter((row) => allowedStores.has(String(row.storeCode)))
     .filter((row) => typeof row.date === 'string' && row.date < today)
-    .filter(homeProductSearchMatch)
     .filter((row) => isUnit(row.salesQuantity) && row.salesQuantity > 0);
   const latestDateByStore = new Map();
   for (const row of candidates) {
@@ -6015,6 +6025,7 @@ function estimatedCurrentProductRows(bundle) {
     const referenceRows = rowsByStore.get(storeCode) || [];
     const referenceTotal = referenceRows.reduce((sum, row) => sum + row.salesQuantity, 0);
     if (referenceTotal <= 0) continue;
+    const realtimeAmount = todayAmountByStore.get(storeCode);
     const allocations = referenceRows.map((row) => {
       const exact = (realtimeQuantity * row.salesQuantity) / referenceTotal;
       return { row, quantity: Math.floor(exact), remainder: exact - Math.floor(exact) };
@@ -6037,17 +6048,20 @@ function estimatedCurrentProductRows(bundle) {
         : finiteMetric(row.estimatedDealAmount) && row.salesQuantity > 0
           ? row.estimatedDealAmount / row.salesQuantity
           : null;
-      estimated.push({
+      const estimatedRow = {
         ...row,
         date: today,
         salesQuantity: quantity,
-        estimatedDealAmount: referenceUnitAmount !== null
-          ? quantity * referenceUnitAmount
-          : null,
-        estimationBasis: 'REALTIME_STORE_QUANTITY_X_LATEST_PRODUCT_SHARE',
+        estimatedDealAmount: finiteMetric(realtimeAmount)
+          ? realtimeAmount * (row.salesQuantity / referenceTotal)
+          : referenceUnitAmount !== null
+            ? quantity * referenceUnitAmount
+            : null,
+        estimationBasis: 'REALTIME_STORE_TOTALS_X_LATEST_PRODUCT_SHARE',
         rankingSource: 'REALTIME_SHARE_ESTIMATE',
         rankingReferenceDate: row.date,
-      });
+      };
+      if (homeProductSearchMatch(estimatedRow)) estimated.push(estimatedRow);
     }
   }
   return estimated;

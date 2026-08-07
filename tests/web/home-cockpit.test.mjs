@@ -194,9 +194,11 @@ test('approved homepage uses six paired cards and keeps operating, finance and l
   assert.match(rankings, /data-home-ranking-basis="OPERATING"/);
   assert.match(rankings, /data-home-ranking-basis="FINANCE"/);
   const currentProductEstimate = functionBody(app, 'estimatedCurrentProductRows');
-  assert.match(currentProductEstimate, /REALTIME_STORE_QUANTITY_X_LATEST_PRODUCT_SHARE/);
+  assert.match(currentProductEstimate, /REALTIME_STORE_TOTALS_X_LATEST_PRODUCT_SHARE/);
   assert.match(currentProductEstimate, /largest remainders|remainder/);
   assert.match(currentProductEstimate, /row\.estimatedDealAmount \/ row\.salesQuantity/);
+  assert.match(currentProductEstimate, /realtimeAmount \* \(row\.salesQuantity \/ referenceTotal\)/);
+  assert.match(currentProductEstimate, /homeProductSearchMatch\(estimatedRow\)/);
 });
 
 test('today core strip keeps six current metrics separate from the historical range', async () => {
