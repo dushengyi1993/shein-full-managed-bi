@@ -15,6 +15,9 @@ const PROJECT_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const DEFER_EXIT_CODE = 75;
 const PARTIAL_EXIT_CODE = 2;
 const MAX_CAPTURE_BYTES = 16 * 1024 * 1024;
+const TERMINAL_SUPPLY_PLATFORM_CODES = new Set([
+  'PENDING_DELIVERY_POINT_LOOKUP_MISSING',
+]);
 
 export const COORDINATOR_TASKS = Object.freeze({
   REALTIME: 'realtime-cockpit',
@@ -380,9 +383,39 @@ export function classifyStageResult(stageName, exitCode, summary) {
       });
     }
   } else if (stageName === 'supply') {
-    retryStores = uniqueStoreCodes((summary?.results ?? [])
-      .filter(({ status }) => ['partial', 'error'].includes(status))
+    const incomplete = (summary?.results ?? [])
+      .filter(({ status }) => ['partial', 'error'].includes(status));
+    const terminalDetails = [];
+    retryStores = uniqueStoreCodes(incomplete
+      .filter((row) => {
+        const failedDomains = (row?.domains ?? []).filter(({ status, coverageStatus }) => (
+          ['fetch_error', 'load_error', 'blocked_by_dependency'].includes(status)
+          || coverageStatus === 'PARTIAL'
+        ));
+        const terminal = row.status === 'partial'
+          && failedDomains.length > 0
+          && failedDomains.every(({ errorCode, reasonCode }) => (
+            TERMINAL_SUPPLY_PLATFORM_CODES.has(String(errorCode ?? reasonCode ?? ''))
+          ));
+        if (terminal) {
+          terminalDetails.push({
+            warning: 'TERMINAL_PLATFORM_DATA_GAP',
+            storeCode: normalizeFullManagedStoreCode(row.storeCode),
+            errorCode: String(failedDomains[0].errorCode ?? failedDomains[0].reasonCode),
+          });
+        }
+        return !terminal;
+      })
       .map(({ storeCode }) => storeCode));
+    if (retryStores.length === 0 && terminalDetails.length > 0) {
+      return Object.freeze({
+        complete: true,
+        terminalPartial: true,
+        retryStores,
+        terminalWarnings: ['TERMINAL_PLATFORM_DATA_GAP'],
+        terminalDetails,
+      });
+    }
   } else if (stageName === 'finance') {
     retryStores = uniqueStoreCodes((summary?.stores ?? [])
       .filter(({ failedWindows }) => Number(failedWindows) > 0)

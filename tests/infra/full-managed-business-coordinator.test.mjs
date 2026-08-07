@@ -129,6 +129,37 @@ test('terminal sales quality gaps are classified separately from capability gaps
   }).retryStores, ['DL5477']);
 });
 
+test('missing platform delivery point lookups preserve prior facts without hot-looping', () => {
+  assert.deepEqual(classifyStageResult('supply', 2, {
+    results: [{
+      storeCode: 'QY8886',
+      status: 'partial',
+      domains: [{
+        domain: 'deliveries',
+        status: 'fetch_error',
+        errorCode: 'PENDING_DELIVERY_POINT_LOOKUP_MISSING',
+      }],
+    }],
+  }), {
+    complete: true,
+    terminalPartial: true,
+    retryStores: [],
+    terminalWarnings: ['TERMINAL_PLATFORM_DATA_GAP'],
+    terminalDetails: [{
+      warning: 'TERMINAL_PLATFORM_DATA_GAP',
+      storeCode: 'QY8886',
+      errorCode: 'PENDING_DELIVERY_POINT_LOOKUP_MISSING',
+    }],
+  });
+  assert.deepEqual(classifyStageResult('supply', 2, {
+    results: [{
+      storeCode: 'JY8060',
+      status: 'partial',
+      domains: [{ domain: 'inventory:PI', status: 'load_error', errorCode: 'WAREHOUSE_LOAD_ERROR' }],
+    }],
+  }).retryStores, ['JY8060']);
+});
+
 test('terminal sales evidence is persisted in the safe stage summary', async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), 'fm-coordinator-quality-'));
   const plan = buildCoordinatorPlan(
