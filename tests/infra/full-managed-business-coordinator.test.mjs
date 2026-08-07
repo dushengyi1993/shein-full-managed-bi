@@ -47,6 +47,25 @@ test('coordinator run ids are deterministic at the correct business grain', () =
   assert.equal(coordinatorRunId(COORDINATOR_TASKS.SUPPLY, now), 'fm-supply-daily-2026-08-07');
 });
 
+test('session maintenance ends with a 25-store HTTP validation after targeted recovery', () => {
+  const plan = buildCoordinatorPlan(
+    COORDINATOR_TASKS.SESSION,
+    new Date('2026-08-07T00:30:00+08:00'),
+  );
+  assert.deepEqual(plan.stages.map(({ name }) => name), [
+    'session-renewal',
+    'session-recovery',
+    'session-final-renewal',
+    'session-final-recovery',
+    'session-final-validation',
+  ]);
+  assert.equal(plan.stages[1].onlyAfterPartial, 'session-renewal');
+  assert.equal(plan.stages[3].onlyAfterPartial, 'session-final-renewal');
+  assert.equal(classifyStageResult('session-final-renewal', 2, {}).needsRecovery, true);
+  assert.equal(classifyStageResult('session-final-recovery', 2, {}).complete, false);
+  assert.equal(classifyStageResult('session-final-validation', 2, {}).complete, false);
+});
+
 test('last JSON extractor ignores pressure-gate evidence before the business summary', () => {
   assert.deepEqual(extractLastJsonDocument([
     '{"ok":true,"status":"READY"}',
@@ -160,7 +179,11 @@ test('a persisted waiting run receives a fresh bounded budget when resumed', asy
       return { exitCode: 0, summary: { ok: true } };
     },
   });
-  assert.deepEqual(attempts, ['session-recovery']);
+  assert.deepEqual(attempts, [
+    'session-recovery',
+    'session-final-renewal',
+    'session-final-validation',
+  ]);
   assert.equal(result.status, 'READY_TO_PUBLISH');
   assert.equal(result.startedAt, '2026-08-06T16:30:00.000Z');
   assert.equal(result.stages['session-recovery'].attempts, 5);

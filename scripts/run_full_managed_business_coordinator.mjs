@@ -260,6 +260,38 @@ export function buildCoordinatorPlan(task, now = new Date()) {
         environment: Object.freeze({}),
         onlyAfterPartial: 'session-renewal',
       }),
+      Object.freeze({
+        name: 'session-final-renewal',
+        script: 'scripts/renew_full_managed_webapi_sessions.mjs',
+        args: Object.freeze([]),
+        lane: 'api-light',
+        pressureClass: 'openapi',
+        lock: '/srv/shein-fm/runtime/store-login/renewal.lock',
+        storeArg: null,
+        environment: Object.freeze({}),
+        continueOnPartial: true,
+      }),
+      Object.freeze({
+        name: 'session-final-recovery',
+        script: 'scripts/recover_full_managed_webapi_sessions.mjs',
+        args: Object.freeze([]),
+        lane: 'browser-read',
+        pressureClass: 'browser',
+        lock: '/srv/shein-fm/runtime/store-login/renewal.lock',
+        storeArg: null,
+        environment: Object.freeze({}),
+        onlyAfterPartial: 'session-final-renewal',
+      }),
+      Object.freeze({
+        name: 'session-final-validation',
+        script: 'scripts/renew_full_managed_webapi_sessions.mjs',
+        args: Object.freeze([]),
+        lane: 'api-light',
+        pressureClass: 'openapi',
+        lock: '/srv/shein-fm/runtime/store-login/renewal.lock',
+        storeArg: null,
+        environment: Object.freeze({}),
+      }),
     ]),
   });
 }
@@ -326,12 +358,16 @@ export function classifyStageResult(stageName, exitCode, summary) {
     retryStores = uniqueStoreCodes((summary?.stores ?? [])
       .filter(({ failedWindows }) => Number(failedWindows) > 0)
       .map(({ storeCode }) => storeCode));
-  } else if (stageName === 'session-renewal' || stageName === 'session-recovery') {
+  } else if (stageName === 'session-final-validation') {
+    return Object.freeze({ complete: false, retryStores: [] });
+  } else if (stageName === 'session-renewal' || stageName === 'session-final-renewal') {
     return Object.freeze({
-      complete: stageName === 'session-renewal',
-      needsRecovery: stageName === 'session-renewal',
+      complete: true,
+      needsRecovery: true,
       retryStores: [],
     });
+  } else if (stageName === 'session-recovery' || stageName === 'session-final-recovery') {
+    return Object.freeze({ complete: false, retryStores: [] });
   }
   return Object.freeze({
     complete: retryStores.length === 0,
@@ -491,7 +527,17 @@ export async function runCoordinator(plan, {
     if (stage.onlyAfterPartial) {
       const dependency = state.stages[stage.onlyAfterPartial];
       if (dependency?.needsRecovery !== true) {
-        return { status: 'COMPLETE', attempts: 0, completedAt: clock().toISOString() };
+        const skipped = {
+          status: 'COMPLETE',
+          attempts: 0,
+          pendingStores: [],
+          terminalWarnings: [],
+          completedAt: clock().toISOString(),
+        };
+        state.stages[stage.name] = skipped;
+        state.updatedAt = clock().toISOString();
+        await persistState();
+        return skipped;
       }
     }
     let pendingStores = Array.isArray(prior.pendingStores) && prior.pendingStores.length > 0
