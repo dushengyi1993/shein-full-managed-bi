@@ -5,6 +5,7 @@ import {
   failedProbe,
   failedResult,
   fetchAndLoadSalesWithDateRetry,
+  runKeyedStoreGroups,
   summarizeSyncResults,
 } from '../../scripts/sync_full_managed_sales.mjs';
 import {
@@ -43,6 +44,7 @@ test('mixed statistics dates preserve granted permission but keep the service fa
   });
   assert.deepEqual(summarizeSyncResults([result]), {
     loaded: 0,
+    pending: 0,
     errors: 0,
     qualityBlocked: 1,
     ok: false,
@@ -67,6 +69,17 @@ test('an untyped or generic error remains an ERROR even when its message resembl
   const plainProbe = failedProbe('TEST', new Error('generic failure'));
   assert.equal(plainProbe.outcome, 'ERROR');
   assert.equal(plainProbe.platformErrorCode, 'SYNC_ERROR');
+});
+
+test('an unauthorized or unconfigured store cannot make a sales run look complete', () => {
+  assert.deepEqual(summarizeSyncResults([{ storeCode: 'TEST', status: 'pending' }]), {
+    loaded: 0,
+    pending: 1,
+    errors: 0,
+    qualityBlocked: 0,
+    ok: false,
+    exitCode: 2,
+  });
 });
 
 test('mixed statistics dates refetch the whole store before loading', async () => {
@@ -150,4 +163,24 @@ test('date retry never retries a generic load failure or exceeds its bound', asy
     (error) => error.code === MIXED_STATISTICS_DATES_CODE,
   );
   assert.equal(rolloverFetches, 2);
+});
+
+test('store concurrency never overlaps shops owned by one legal entity', async () => {
+  const stores = [
+    { storeCode: 'NM7397', legalEntityName: '南墨', openKeyId: 'nm-a' },
+    { storeCode: 'DL5477', legalEntityName: '地利', openKeyId: 'dl-a' },
+    { storeCode: 'NM7418', legalEntityName: '南墨', openKeyId: 'nm-b' },
+  ];
+  const active = new Map();
+  let differentEntitiesOverlapped = false;
+  const results = await runKeyedStoreGroups(stores, 2, async (store) => {
+    assert.equal(active.get(store.legalEntityName) ?? 0, 0);
+    active.set(store.legalEntityName, 1);
+    if ([...active.values()].filter(Boolean).length === 2) differentEntitiesOverlapped = true;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active.set(store.legalEntityName, 0);
+    return store.storeCode;
+  });
+  assert.equal(differentEntitiesOverlapped, true);
+  assert.deepEqual(results, ['NM7397', 'DL5477', 'NM7418']);
 });

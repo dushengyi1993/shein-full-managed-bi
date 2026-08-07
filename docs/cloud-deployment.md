@@ -181,7 +181,8 @@ git diff --check
    `materialize_full_managed_system_health.mjs`，确认脱敏快照已经原子生成且不含凭据；
 10. 切换 `/opt/shein-fm/current`；
 11. 手工启动一次 `shein-fm-system-health.service` 并回读成功，再启用其 timer；只创建
-    `portal.enabled` 与 `materializer.enabled` 门禁，启动 Portal 和物化 timer；
+    `portal.enabled` 与 `materializer.enabled` 门禁，启动 Portal；物化由业务 coordinator
+    成功末端和 Webhook 合并 path 唤醒，十分钟 retry timer 仅补资源延期；
 12. 安装 Nginx 和 logrotate，执行 `nginx -t` 成功后只 reload；
 13. 从 loopback 和公网验证登录墙、Dashboard API、`/api/system`、12 个路由和退出登录；
 14. 再按下节逐域开启数据服务。
@@ -197,7 +198,8 @@ git diff --check
 3. 对一个完整零销量、无 `dt` 的店铺验证 `LEGAL_ZERO_UNANCHORED`，不得告警为失败；
 4. 扩大到当前已授权店并核对权限、SKU 数、业务日期、四窗口总量和店铺覆盖；新增店逐店通过后扩至 25 店；
 5. 物化并回读 Portal；
-6. 只有全部门禁通过后创建 `sales-sync.enabled` 并启用 timer。
+6. 只有全部门禁通过后创建 `sales-sync.enabled`；OpenAPI 销售由每小时
+   `FM_REALTIME_COCKPIT` coordinator 内部阶段执行，不再启用独立 sales timer。
 
 ### 供应链
 
@@ -230,7 +232,6 @@ git diff --check
 systemctl status \
   shein-fm-db.service \
   shein-fm-portal.service \
-  shein-fm-dashboard-materialize.timer \
   shein-fm-dashboard-materialize-retry.timer \
   shein-fm-db-restore-test.timer \
   shein-fm-system-health.timer \
@@ -308,7 +309,7 @@ Webhook receiver/worker 常运行在较旧的发布上，仅按“最新 5 个�
 | `shein-fm-db-backup.timer` | 每周日 00:15 | 传 `--mode weekly`；进入 IO 重车道 |
 | `shein-fm-db-restore-test.timer` | 每月首个周日 01:15 | 完整恢复到临时库并核对关键表 |
 | `shein-fm-session-renewal.timer` | 每日一次 | 25 店纯 HTTP 轻探测并接受 Cookie 轮换，不开 Chrome |
-| `shein-fm-session-recovery.timer` | 每小时 `:18` | 仅恢复队列非空时最多打开 3 个对应 Profile |
+| `shein-fm-session-renewal.timer` | 每日 `00:30` | 同一 coordinator 先做 25 店 HTTP 验证，只恢复失效 Profile |
 | `shein-fm-disk-guard.timer` | 每 15 分钟 | 只观测，`>=85%` 时 unit failed |
 | `shein-fm-profile-cache-prune.timer` | 每周日 12:20 | Profile 占用时 fail closed |
 | `shein-fm-system-health.timer` | 每 5 分钟 | root 读取固定白名单并原子发布脱敏运行态 |

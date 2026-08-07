@@ -97,18 +97,24 @@ test('host lanes allow two read browsers while writes and heavy IO stay exclusiv
   const sessionHttpUnitNames = [
     'shein-fm-home-realtime.service',
     'shein-fm-home-daily.service',
-    'shein-fm-home-daily-retry.service',
-    'shein-fm-session-renewal.service',
   ];
   const sessionHttpUnits = await Promise.all(sessionHttpUnitNames.map((name) => (
     readFile(new URL(`infra/systemd/${name}`, root), 'utf8')
   )));
   for (const [index, unit] of sessionHttpUnits.entries()) {
-    assert.match(unit, /run_shein_host_lane\.sh api-light fm (?:openapi|api-critical)/, sessionHttpUnitNames[index]);
+    assert.match(unit, /run_full_managed_business_coordinator\.mjs/, sessionHttpUnitNames[index]);
+    assert.match(unit, /shein-api-light-0\.lock/, sessionHttpUnitNames[index]);
     assert.match(unit, /webapi_session_key/, sessionHttpUnitNames[index]);
     assert.match(unit, /webapi-sessions/, sessionHttpUnitNames[index]);
     assert.doesNotMatch(unit, /shein-browser-read-[01]\.lock|webapi\/profiles/, sessionHttpUnitNames[index]);
   }
+  const sessionCoordinator = await readFile(
+    new URL('infra/systemd/shein-fm-session-renewal.service', root),
+    'utf8',
+  );
+  assert.match(sessionCoordinator, /--task=session-maintenance/);
+  assert.match(sessionCoordinator, /shein-browser-read-0\.lock/);
+  assert.match(sessionCoordinator, /webapi_session_key/);
 
   const exclusiveUnitNames = [
     'shein-fm-db-backup.service',
@@ -133,13 +139,12 @@ test('host lanes allow two read browsers while writes and heavy IO stay exclusiv
   }
 
   for (const name of [
-    'shein-fm-sales-sync.service',
     'shein-fm-supply-sync.service',
     'shein-fm-home-finance-daily.service',
   ]) {
     const unit = await readFile(new URL(`infra/systemd/${name}`, root), 'utf8');
     assert.match(unit, /^Slice=shein-fm-heavy\.slice$/m, name);
-    assert.match(unit, /run_shein_host_lane\.sh api-light fm (?:openapi|api-critical)/, name);
+    assert.match(unit, /run_full_managed_business_coordinator\.mjs/, name);
     assert.match(unit, /shein-api-light-0\.lock/, name);
     assert.match(unit, /shein-api-light-1\.lock/, name);
   }
@@ -182,15 +187,12 @@ test('host lanes allow two read browsers while writes and heavy IO stay exclusiv
 test('boot-sensitive timers never replay missed high-frequency work', async () => {
   const timers = await Promise.all([
     'shein-fm-home-realtime.timer',
-    'shein-fm-sales-sync.timer',
-    'shein-fm-dashboard-materialize.timer',
     'shein-fm-dashboard-materialize-retry.timer',
   ].map((name) => readFile(new URL(`infra/systemd/${name}`, root), 'utf8')));
   for (const timer of timers) {
     assert.doesNotMatch(timer, /Persistent=true/);
   }
-  assert.doesNotMatch(timers[2], /OnBootSec=/);
-  assert.doesNotMatch(timers[3], /OnBootSec=/);
+  assert.doesNotMatch(timers[1], /OnBootSec=/);
 });
 
 test('shared runtime directories survive sequential oneshot jobs', async () => {
@@ -274,13 +276,11 @@ test('materializer lock deferral cannot publish nonexistent staging files', asyn
   assert.match(wrapper, /materialize_and_promote_full_managed_dashboard\.sh/);
 });
 
-test('scheduled data jobs coalesce successful and partial facts without rebuilding on failure', async () => {
+test('only complete coordinator runs trigger one independent projection', async () => {
   const unitNames = [
     'shein-fm-home-realtime.service',
     'shein-fm-home-daily.service',
-    'shein-fm-home-daily-retry.service',
     'shein-fm-home-finance-daily.service',
-    'shein-fm-sales-sync.service',
     'shein-fm-supply-sync.service',
   ];
   const units = await Promise.all(unitNames.map((name) => (
@@ -289,10 +289,18 @@ test('scheduled data jobs coalesce successful and partial facts without rebuildi
   for (const [index, unit] of units.entries()) {
     assert.match(
       unit,
-      /^OnSuccess=shein-fm-dashboard-materialize-enqueue\.service$/m,
+      /^OnSuccess=shein-fm-dashboard-materialize\.service$/m,
       unitNames[index],
     );
     assert.doesNotMatch(unit, /^OnFailure=/m, unitNames[index]);
+  }
+  for (const name of [
+    'shein-fm-home-daily-retry.service',
+    'shein-fm-sales-sync.service',
+    'shein-fm-webhook-hydration.service',
+  ]) {
+    const unit = await readFile(new URL(`infra/systemd/${name}`, root), 'utf8');
+    assert.doesNotMatch(unit, /^OnSuccess=/m, name);
   }
   const enqueue = await readFile(
     new URL('infra/systemd/shein-fm-dashboard-materialize-enqueue.service', root),

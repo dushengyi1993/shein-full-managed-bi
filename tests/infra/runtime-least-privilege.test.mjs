@@ -33,9 +33,6 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
   const service = await text(
     'infra/systemd/shein-fm-dashboard-materialize.service',
   );
-  const timer = await text(
-    'infra/systemd/shein-fm-dashboard-materialize.timer',
-  );
   const promotion = await text(
     'scripts/materialize_and_promote_full_managed_dashboard.sh',
   );
@@ -71,13 +68,6 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
   assert.doesNotMatch(
     service,
     /FULL_BI_OPENAPI_CONFIG|openapi\.json|warehouse\.env/i,
-  );
-  assert.match(timer, /OnCalendar=\*-\*-\* 00,06,12,18:55:00 Asia\/Shanghai/);
-  assert.doesNotMatch(timer, /OnUnitInactiveSec=/);
-  assert.doesNotMatch(timer, /OnBootSec=/);
-  assert.match(
-    timer,
-    /ConditionPathExists=\/srv\/shein-fm\/runtime\/materializer\.enabled/,
   );
   assert.equal(unitUser(retryService), 'sheinfm-materializer');
   assert.match(retryService, /run_full_managed_dashboard_materializer\.sh --only-pending/);
@@ -139,20 +129,26 @@ test('sales, supply, ingress and worker use distinct users and private credentia
   }
 });
 
-test('domain sync units never materialize and always trigger the independent projection', async () => {
+test('coordinator units never inline materialization and publish once on success', async () => {
   for (const path of [
-    'infra/systemd/shein-fm-sales-sync.service',
     'infra/systemd/shein-fm-supply-sync.service',
+    'infra/systemd/shein-fm-home-realtime.service',
+    'infra/systemd/shein-fm-home-daily.service',
+    'infra/systemd/shein-fm-home-finance-daily.service',
   ]) {
     const unit = await text(path);
     assert.doesNotMatch(unit, /FULL_BI_DATA_FILE/);
     assert.doesNotMatch(unit, /materialize_full_managed_dashboard/);
     assert.match(
       unit,
-      /OnSuccess=shein-fm-dashboard-materialize-enqueue\.service/,
+      /OnSuccess=shein-fm-dashboard-materialize\.service/,
     );
     assert.doesNotMatch(unit, /^OnFailure=/m);
   }
+  assert.doesNotMatch(
+    await text('infra/systemd/shein-fm-sales-sync.service'),
+    /^OnSuccess=/m,
+  );
 });
 
 test('profile cache pruning can write only its runtime lock and guarded Profile root', async () => {
@@ -174,7 +170,6 @@ test('all mutable application runtimes and timers are fail-closed behind explici
     ['infra/systemd/shein-fm-authorization.service', 'authorization.enabled'],
     ['infra/systemd/shein-fm-portal.service', 'portal.enabled'],
     ['infra/systemd/shein-fm-dashboard-materialize.service', 'materializer.enabled'],
-    ['infra/systemd/shein-fm-dashboard-materialize.timer', 'materializer.enabled'],
     ['infra/systemd/shein-fm-dashboard-materialize-retry.service', 'materializer.enabled'],
     ['infra/systemd/shein-fm-dashboard-materialize-retry.timer', 'materializer.enabled'],
     ['infra/systemd/shein-fm-dashboard-materialize-retry.path', 'materializer.enabled'],
@@ -183,11 +178,9 @@ test('all mutable application runtimes and timers are fail-closed behind explici
     ['infra/systemd/shein-fm-home-daily.service', 'webapi-history.enabled'],
     ['infra/systemd/shein-fm-home-daily.timer', 'webapi-history.enabled'],
     ['infra/systemd/shein-fm-home-daily-retry.service', 'webapi-history.enabled'],
-    ['infra/systemd/shein-fm-home-daily-retry.timer', 'webapi-history.enabled'],
     ['infra/systemd/shein-fm-home-finance-daily.service', 'home-finance-backfill.enabled'],
     ['infra/systemd/shein-fm-home-finance-daily.timer', 'home-finance-backfill.enabled'],
     ['infra/systemd/shein-fm-sales-sync.service', 'sales-sync.enabled'],
-    ['infra/systemd/shein-fm-sales-sync.timer', 'sales-sync.enabled'],
     ['infra/systemd/shein-fm-supply-sync.service', 'supply-sync.enabled'],
     ['infra/systemd/shein-fm-supply-sync.timer', 'supply-sync.enabled'],
     ['infra/systemd/shein-fm-webhook-receiver.service', 'webhook-ingress.enabled'],

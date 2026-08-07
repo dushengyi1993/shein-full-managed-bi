@@ -114,6 +114,7 @@ export function parseArgs(argv) {
     '--backfill-end',
     '--purchase-order-nos',
     '--delivery-codes',
+    '--concurrency',
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -1537,6 +1538,7 @@ export async function runSupplySync({
   backfillEnd,
   purchaseOrderNos,
   deliveryCodes,
+  concurrency = 1,
   poolFactory = (connectionString) => new Pool({ connectionString, max: 3 }),
   clientFactory = (options) => new SheinOpenApiClient(options),
   operations: operationOverrides = {},
@@ -1562,6 +1564,10 @@ export async function runSupplySync({
     throw new TypeError('deliveryCodes requires the deliveries domain');
   }
   const selectedStores = selectStores(config.stores, stores);
+  const normalizedConcurrency = Number(concurrency);
+  if (!Number.isSafeInteger(normalizedConcurrency) || normalizedConcurrency < 1 || normalizedConcurrency > 4) {
+    throw new TypeError('concurrency must be an integer from 1 to 4');
+  }
   const baseRunId = normalizeBaseRunId(runId, current);
   const operations = { ...DEFAULT_OPERATIONS, ...operationOverrides };
   const pool = await poolFactory(databaseUrl);
@@ -1569,9 +1575,22 @@ export async function runSupplySync({
     throw new TypeError('poolFactory must return a pool with end()');
   }
 
-  const results = [];
+  const results = Array(selectedStores.length);
   try {
-    for (const store of selectedStores) {
+    const groups = new Map();
+    selectedStores.forEach((store, index) => {
+      const key = String(store.legalEntityName ?? store.appId ?? store.openKeyId ?? store.storeCode);
+      const group = groups.get(key) ?? [];
+      group.push({ store, index });
+      groups.set(key, group);
+    });
+    const queue = [...groups.values()];
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(normalizedConcurrency, queue.length) }, async () => {
+      while (cursor < queue.length) {
+        const groupIndex = cursor;
+        cursor += 1;
+        for (const { store, index } of queue[groupIndex]) {
       const storeRunId = `${baseRunId}:${store.storeCode}`;
       let attempts = [];
       let storeResult;
@@ -1630,8 +1649,11 @@ export async function runSupplySync({
           };
         }
       }
-      results.push(storeResult);
-    }
+          results[index] = storeResult;
+        }
+      }
+    });
+    await Promise.all(workers);
   } finally {
     await pool.end();
   }
@@ -1678,6 +1700,7 @@ async function main() {
     backfillEnd: args['backfill-end'],
     purchaseOrderNos: args['purchase-order-nos'],
     deliveryCodes: args['delivery-codes'],
+    concurrency: args.concurrency ?? 1,
   });
   console.log(JSON.stringify(summary, null, 2));
   if (!summary.ok) process.exitCode = 2;

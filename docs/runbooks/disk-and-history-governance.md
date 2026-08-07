@@ -222,7 +222,7 @@ member → batch（member 引用 batch）。
 ```bash
 # 1. 停止会写入的定时器与服务
 systemctl stop shein-fm-supply-sync.timer shein-fm-supply-sync.service
-systemctl stop shein-fm-dashboard-materialize.timer
+systemctl stop shein-fm-home-realtime.timer
 systemctl status shein-fm-supply-sync.service   # 确认 inactive
 
 # 2. 迁移前全量备份（这是唯一的回滚证据）
@@ -238,7 +238,7 @@ bash scripts/migrate_full_managed_db.sh
 
 # 5. 恢复服务
 systemctl start shein-fm-supply-sync.timer
-systemctl start shein-fm-dashboard-materialize.timer
+systemctl start shein-fm-home-realtime.timer
 
 # 6. 观察一次真实同步后再次确认当前表行数接近粒度数
 ```

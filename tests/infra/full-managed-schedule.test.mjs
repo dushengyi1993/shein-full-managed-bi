@@ -102,7 +102,7 @@ test('daily homepage schedule maps five early slots to disjoint five-store batch
   );
 });
 
-test('a partial history command does not fail the scheduler or prevent ledger refresh', async () => {
+test('a partial history command still runs ledger but remains non-publishable', async () => {
   const seen = [];
   const exitCode = await runPlan({
     commands: [
@@ -114,7 +114,7 @@ test('a partial history command does not fail the scheduler or prevent ledger re
     return entry.args[0] === 'history' ? 2 : 0;
   });
   assert.deepEqual(seen, ['history', 'ledger']);
-  assert.equal(exitCode, 0);
+  assert.equal(exitCode, 2);
 });
 
 test('daily retry selects only batches without a successful terminal marker', () => {
@@ -165,88 +165,72 @@ test('OpenAPI schedules share one advisory lease and keep finance on settled D-2
   assert.ok(finance.commands[0].args.includes('--no-resume'));
 });
 
-test('systemd schedule keeps hourly work ahead of bounded daily batches', async () => {
+test('systemd schedule exposes one timer per logical full-managed task', async () => {
   const [
     realtime,
-    sales,
     supply,
     daily,
-    retry,
     finance,
     session,
     backup,
     restore,
-    materializer,
     materializerRetry,
   ] = await Promise.all([
     readFile(new URL('infra/systemd/shein-fm-home-realtime.timer', root), 'utf8'),
-    readFile(new URL('infra/systemd/shein-fm-sales-sync.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-supply-sync.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-home-daily.timer', root), 'utf8'),
-    readFile(new URL('infra/systemd/shein-fm-home-daily-retry.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-home-finance-daily.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-session-renewal.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-db-backup.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-db-restore-test.timer', root), 'utf8'),
-    readFile(new URL('infra/systemd/shein-fm-dashboard-materialize.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-dashboard-materialize-retry.timer', root), 'utf8'),
   ]);
   assert.match(realtime, /OnCalendar=\*-\*-\* \*:02:00 Asia\/Shanghai/);
   assert.doesNotMatch(realtime, /\*:32:00/);
-  assert.match(sales, /OnCalendar=\*-\*-\* \*:05:00 Asia\/Shanghai/);
   assert.match(supply, /OnCalendar=\*-\*-\* 02:20:00 Asia\/Shanghai/);
-  for (const slot of ['03:45', '04:15', '04:45', '05:15', '05:45']) {
-    assert.match(daily, new RegExp(`OnCalendar=\\*-\\*-\\* ${slot}:00 Asia/Shanghai`));
-  }
-  assert.match(retry, /OnCalendar=\*-\*-\* 06:15:00 Asia\/Shanghai/);
+  assert.match(daily, /OnCalendar=\*-\*-\* 05:45:00 Asia\/Shanghai/);
+  assert.doesNotMatch(daily, /03:45|04:15|04:45|05:15/);
   assert.match(finance, /OnCalendar=\*-\*-\* 03:15:00 Asia\/Shanghai/);
   assert.match(session, /OnCalendar=\*-\*-\* 00:30:00 Asia\/Shanghai/);
   assert.match(backup, /OnCalendar=Sun \*-\*-\* 00:15:00 Asia\/Shanghai/);
   assert.match(restore, /OnCalendar=Sun \*-\*-01\.\.07 01:15:00 Asia\/Shanghai/);
   assert.doesNotMatch(backup, /Persistent=true/);
   assert.doesNotMatch(restore, /Persistent=true/);
-  assert.match(materializer, /OnCalendar=\*-\*-\* 00,06,12,18:55:00 Asia\/Shanghai/);
-  assert.doesNotMatch(materializer, /OnUnitInactiveSec=/);
-  assert.doesNotMatch(materializer, /OnBootSec=/);
   assert.match(materializerRetry, /OnCalendar=\*-\*-\* \*:09,19,29,39,49,59:00 Asia\/Shanghai/);
   assert.doesNotMatch(materializerRetry, /Persistent=true|OnBootSec=/);
 });
 
-test('every heavy window has a hard stop before the next core lane', async () => {
+test('coordinator units own bounded end-to-end business windows', async () => {
   const [
     realtimeTimer,
     realtime,
-    sales,
     session,
     supply,
     finance,
     daily,
-    retry,
     backup,
     restore,
     materializer,
   ] = await Promise.all([
     readFile(new URL('infra/systemd/shein-fm-home-realtime.timer', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-home-realtime.service', root), 'utf8'),
-    readFile(new URL('infra/systemd/shein-fm-sales-sync.service', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-session-renewal.service', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-supply-sync.service', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-home-finance-daily.service', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-home-daily.service', root), 'utf8'),
-    readFile(new URL('infra/systemd/shein-fm-home-daily-retry.service', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-db-backup.service', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-db-restore-test.service', root), 'utf8'),
     readFile(new URL('infra/systemd/shein-fm-dashboard-materialize.service', root), 'utf8'),
   ]);
   assert.match(realtimeTimer, /^AccuracySec=1s$/m);
-  assert.match(realtime, /^TimeoutStartSec=11min$/m);
-  assert.match(realtime, /--task=home-realtime --batch=0 --execute/);
-  assert.match(sales, /^TimeoutStartSec=15min$/m);
-  assert.match(session, /^TimeoutStartSec=5min$/m);
-  assert.match(supply, /^TimeoutStartSec=35min$/m);
-  assert.match(finance, /^TimeoutStartSec=15min$/m);
-  assert.match(daily, /^TimeoutStartSec=12min$/m);
-  assert.match(retry, /^TimeoutStartSec=12min$/m);
+  assert.match(realtime, /^TimeoutStartSec=12min$/m);
+  assert.match(realtime, /--task=realtime-cockpit --execute/);
+  assert.match(session, /^TimeoutStartSec=25min$/m);
+  assert.match(session, /--task=session-maintenance --execute/);
+  assert.match(supply, /^TimeoutStartSec=60min$/m);
+  assert.match(finance, /^TimeoutStartSec=35min$/m);
+  assert.match(daily, /^TimeoutStartSec=80min$/m);
+  assert.match(daily, /--task=daily-operations --execute/);
   assert.match(backup, /^TimeoutStartSec=20min$/m);
   assert.match(backup, /backup_full_managed_db\.sh --mode weekly/);
   assert.match(restore, /^TimeoutStartSec=45min$/m);

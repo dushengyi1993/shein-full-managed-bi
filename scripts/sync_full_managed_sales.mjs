@@ -23,20 +23,16 @@ import {
   persistPermissionProbe,
   SalesDataQualityError,
 } from '../src/warehouse/full-managed-sales-repository.mjs';
-import {
-  atomicWriteJson,
-  materializeDashboardFromDatabase,
-} from '../src/warehouse/dashboard-materializer.mjs';
 
 function parseArgs(argv) {
-  const result = {};
+  const result = { concurrency: 1 };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === '--all') {
       result.all = true;
       continue;
     }
-    if (['--config', '--database-url', '--stores', '--run-id', '--dashboard-out'].includes(flag)) {
+    if (['--config', '--database-url', '--stores', '--run-id', '--concurrency'].includes(flag)) {
       const value = argv[index + 1];
       if (typeof value !== 'string' || value.trim() === '' || value.startsWith('--')) {
         throw new Error(`${flag} requires a value.`);
@@ -48,7 +44,41 @@ function parseArgs(argv) {
     throw new Error(`Unknown argument: ${flag}`);
   }
   if (result.all && result.stores) throw new Error('--all cannot be combined with --stores.');
+  if (!/^[1-4]$/.test(String(result.concurrency))) {
+    throw new Error('--concurrency must be an integer from 1 to 4.');
+  }
+  result.concurrency = Number(result.concurrency);
   return result;
+}
+
+export async function runKeyedStoreGroups(stores, concurrency, worker) {
+  if (!Array.isArray(stores) || stores.length === 0) return [];
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 4) {
+    throw new TypeError('concurrency must be an integer from 1 to 4');
+  }
+  const groups = new Map();
+  stores.forEach((store, index) => {
+    // One legal entity may own several shops under one Open Platform account.
+    // Keep those calls sequential even when their store-specific OpenKeys differ.
+    const key = String(store.legalEntityName ?? store.appId ?? store.openKeyId ?? store.storeCode);
+    const group = groups.get(key) ?? [];
+    group.push({ store, index });
+    groups.set(key, group);
+  });
+  const queue = [...groups.values()];
+  const results = Array(stores.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+    while (cursor < queue.length) {
+      const groupIndex = cursor;
+      cursor += 1;
+      for (const { store, index } of queue[groupIndex]) {
+        results[index] = await worker(store, index);
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function defaultRunId() {
@@ -127,14 +157,16 @@ export function failedResult(storeCode, probe) {
 
 export function summarizeSyncResults(results) {
   const loaded = results.filter(({ status }) => status === 'loaded').length;
+  const pending = results.filter(({ status }) => status === 'pending').length;
   const errors = results.filter(({ status }) => status === 'error').length;
   const qualityBlocked = results.filter(({ status }) => status === 'quality_blocked').length;
   return {
     loaded,
+    pending,
     errors,
     qualityBlocked,
-    ok: errors === 0 && qualityBlocked === 0,
-    exitCode: errors > 0 || qualityBlocked > 0 ? 2 : 0,
+    ok: pending === 0 && errors === 0 && qualityBlocked === 0,
+    exitCode: pending > 0 || errors > 0 || qualityBlocked > 0 ? 2 : 0,
   };
 }
 
@@ -189,11 +221,12 @@ async function main() {
   const config = await loadFullManagedConfig(args.config);
   const databaseUrl = args['database-url'] ?? process.env.FULL_BI_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error('FULL_BI_DATABASE_URL is required.');
-  const pool = new Pool({ connectionString: databaseUrl, max: 3 });
+  const pool = new Pool({ connectionString: databaseUrl, max: args.concurrency + 2 });
   const baseRunId = args['run-id'] ?? defaultRunId();
-  const results = [];
+  let results = [];
   try {
-    for (const store of selectStores(config.stores, args.stores)) {
+    const selectedStores = selectStores(config.stores, args.stores);
+    results = await runKeyedStoreGroups(selectedStores, args.concurrency, async (store) => {
       const storeRunId = `${baseRunId}:${store.storeCode}`;
       const reason = fullManagedStoreCallBlock(store);
       if (reason) {
@@ -208,8 +241,7 @@ async function main() {
         await persistPermissionProbe(pool, {
           store, runId: storeRunId, permissionPackageCode: config.permissionPackageCode, probe,
         });
-        results.push({ storeCode: store.storeCode, status: 'pending', skuCount: null });
-        continue;
+        return { storeCode: store.storeCode, status: 'pending', skuCount: null };
       }
       try {
         const client = new SheinOpenApiClient({
@@ -232,8 +264,7 @@ async function main() {
           await persistPermissionProbe(pool, {
             store, runId: storeRunId, permissionPackageCode: config.permissionPackageCode, probe,
           });
-          results.push({ storeCode: store.storeCode, status: 'pending', skuCount: 0 });
-          continue;
+          return { storeCode: store.storeCode, status: 'pending', skuCount: 0 };
         }
         const loaded = await fetchAndLoadSalesWithDateRetry({
           client,
@@ -243,27 +274,21 @@ async function main() {
           inventory,
           pool,
         });
-        results.push({
+        return {
           storeCode: store.storeCode,
           status: loaded.qualityStatus === 'UNANCHORED_NONZERO'
             ? 'quality_blocked'
             : 'loaded',
           ...loaded,
-        });
+        };
       } catch (error) {
         const probe = failedProbe(store.storeCode, error);
         await persistPermissionProbe(pool, {
           store, runId: storeRunId, permissionPackageCode: config.permissionPackageCode, probe,
         });
-        results.push(failedResult(store.storeCode, probe));
+        return failedResult(store.storeCode, probe);
       }
-    }
-
-    const dashboardOut = args['dashboard-out'] ?? process.env.FULL_BI_DATA_FILE;
-    if (dashboardOut) {
-      const dashboard = await materializeDashboardFromDatabase(pool, { storeCatalog: config.stores });
-      await atomicWriteJson(dashboardOut, dashboard);
-    }
+    });
   } finally {
     await pool.end();
   }

@@ -1,5 +1,5 @@
 [Unit]
-Description=Refresh encrypted full-managed WebAPI sessions without opening Chrome Profiles
+Description=Validate all full-managed HTTP sessions and recover only expired Profiles
 Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
 Wants=network-online.target
 After=network-online.target systemd-tmpfiles-setup.service
@@ -14,16 +14,14 @@ Slice=shein-host-heavy-fm.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
+Environment=FULL_BI_COORDINATOR_STATE_DIR=/srv/shein-fm/runtime/coordinator/session
+EnvironmentFile=/srv/shein-fm/secrets/webapi-experiment/database.env
 LoadCredential=webapi_session_key:/srv/shein-fm/secrets/webapi-session/session-key
 RuntimeDirectory=shein-fm-webapi
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
-ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh api-light fm openapi /usr/bin/flock -n -E 75 /srv/shein-fm/runtime/store-login/renewal.lock /usr/bin/node scripts/renew_full_managed_webapi_sessions.mjs
-# Store-level expiry writes a recovery queue and exit 2; that is a handled
-# condition, not a scheduler failure. The browser recovery unit consumes only
-# the affected stores.
-SuccessExitStatus=2 75
-TimeoutStartSec=5min
+ExecStart=/usr/bin/node scripts/run_full_managed_business_coordinator.mjs --task=session-maintenance --execute
+TimeoutStartSec=25min
 TimeoutStopSec=20s
 KillMode=control-group
 SendSIGKILL=yes
@@ -47,7 +45,7 @@ LockPersonality=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/run/lock/shein-api-light-0.lock /run/lock/shein-api-light-1.lock /run/shein-fm-webapi /srv/shein-fm/runtime/store-login /srv/shein-fm/runtime/webapi-sessions
+ReadWritePaths=/run/lock/shein-api-light-0.lock /run/lock/shein-api-light-1.lock /run/lock/shein-host-heavy.lock /run/lock/shein-browser-read-0.lock /run/lock/shein-browser-read-1.lock /run/shein-fm-webapi /srv/shein-fm/runtime/store-login /srv/shein-fm/runtime/webapi-locks /srv/shein-fm/runtime/webapi-sessions /srv/shein-fm/runtime/coordinator/session /srv/shein-fm/webapi/profiles
 MemoryHigh=256M
 MemoryMax=512M
 MemorySwapMax=64M

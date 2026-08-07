@@ -34,23 +34,21 @@ Webhook > 上班前日更 > 常规库存/物化 > 营销与维护。所有 timer
 
 | 时间 | 任务 | 资源/边界 |
 | --- | --- | --- |
-| 每小时 `:02` | 首页当天经营事实 | `api-critical`；25 店 Session HTTP；无 Chrome |
-| 每小时 `:05` | OpenAPI 销售 | `api-critical`；独立事实域、独立终态 |
-| `00:30` | 会话 HTTP 续期 | `api-light`；失效店进入恢复队列 |
-| 每小时 `:18` | 单店会话恢复 | 队列非空才进 `browser-read`，每次最多 3 店 |
-| `02:20` | OpenAPI 供应链 | `api-light` |
-| `03:15` | 财务滚动核对 | `api-light`，D-8 至 D-2 |
-| `03:45` 至 `05:45` | 首页 D-1 日更 | Session HTTP 五个五店批次 |
-| `06:15` | 历史缺口重试 | 只补 marker 缺口 |
+| 每小时 `:02` | `FM_REALTIME_COCKPIT` | 一个 run 并行 OpenAPI 销售与 25 店 Session HTTP；同主体串行、全局并发 2；无 Chrome；完整后一次发布 |
+| `00:30` | `FM_SESSION_MAINTENANCE` | 一个 run 先 HTTP 验证，仅失效店进入 `browser-read` 恢复，再回到同一 manifest |
+| `02:20` | `FM_SUPPLY_DAILY` | `api-light`；同主体串行、全局并发 2；只重试失败店 |
+| `03:15` | `FM_FINANCE_DAILY` | `api-light`，D-8 至 D-2；只重试失败店/窗口 |
+| `05:45` | `FM_DAILY_OPERATIONS_CLOSE` | 一个 run 完成 readiness、25 店历史/台账、定向重试和一次发布 |
 | 周日 `00:15` | PostgreSQL 周备份 | `io-heavy`，保留最近 2 周 |
 | 月首周日 `01:15` | 恢复演练 | `io-heavy` |
 
 ## Dashboard 物化
 
-事实任务成功或部分成功后只写 `.materialize-pending` 并更新 `.materialize-kick`。
-`shein-fm-dashboard-materialize-retry.path` 立即唤醒一次 `db-read` 物化；多个变化由 pending
-标记合并。资源延期时旧 Dashboard 原子文件继续服务，每 10 分钟的 timer 兜底重试；
-不再每 2 分钟启动一个空 service，也不拿主机排他锁。
+coordinator 的必需阶段全部完成后，才由 `OnSuccess` 直接执行一次 `db-read` 物化；原子
+替换成功后同一 run 从 `READY_TO_PUBLISH` 改为 `PUBLISHED` 并记录 manifest。`PARTIAL`、
+`WAITING` 和资源延期 `75` 都不能触发发布。Webhook 变化继续写 `.materialize-pending` 并
+由 path 合并唤醒；每 10 分钟的 timer 只兜底压力延期，不是业务刷新任务。资源忙时旧
+Dashboard 原子文件继续服务。
 
 ## 备份
 
@@ -79,8 +77,8 @@ systemctl daemon-reload
 2. DL/MZ 浏览器内 fetch 与 Session HTTP 响应哈希一致后，才批量导出 25 店。
 3. 正常 `home-realtime` 运行时 Chrome、CDP、Profile 租约均为零。
 4. 401/403 只创建对应店恢复队列；恢复后双读一致、Chrome 清零。
-5. OpenAPI 销售和 Session HTTP 首页可同时持有两个 API 令牌。
-6. Dashboard path 能立即唤醒，失败时旧缓存仍可读，十分钟 timer 可兜底。
+5. `FM_REALTIME_COCKPIT` 只有一个 run；OpenAPI 销售和 Session HTTP 可并行，但只发布一次。
+6. Dashboard path 能合并唤醒；失败时旧缓存仍可读，十分钟 timer 只补资源延期。
 7. Portal、Webhook、PostgreSQL、公网健康正常，半托 unit 和仓库未被覆盖。
 
 ## 回滚

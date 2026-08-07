@@ -28,7 +28,8 @@ test('systemd crosses the webhook privilege boundary only through fixed markers'
   assert.match(hydrationPath, /Unit=shein-fm-webhook-hydration\.service/);
   assert.match(hydrationService, /User=sheinfm-supply/);
   assert.match(hydrationService, /run_shein_host_lane\.sh api-light/);
-  assert.match(hydrationService, /OnSuccess=shein-fm-dashboard-materialize-enqueue\.service/);
+  assert.doesNotMatch(hydrationService, /^OnSuccess=/m);
+  assert.match(dashboardPath, /PathModified=.*dashboard\.request/);
   assert.match(hydrationTimer, /Persistent=false/);
   assert.match(tmpfiles, /webhook-requests 0700 sheinfm-webhook-worker sheinfm-webhook-worker/);
 });

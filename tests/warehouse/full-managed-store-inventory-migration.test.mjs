@@ -476,9 +476,9 @@ test('production wrapper uses root-only owner credentials without tracing or pri
   );
   assert.match(wrapper, /EUID/);
   assert.match(wrapper, /postgres\.env/);
-  assert.match(wrapper, /SALES_SYNC_MUST_BE_DISABLED/);
-  assert.match(wrapper, /systemctl is-active shein-fm-sales-sync\.service/);
-  assert.match(wrapper, /systemctl is-enabled shein-fm-sales-sync\.timer/);
+  assert.match(wrapper, /REALTIME_COORDINATOR_MUST_BE_DISABLED/);
+  assert.match(wrapper, /systemctl is-active shein-fm-home-realtime\.service/);
+  assert.match(wrapper, /systemctl is-enabled shein-fm-home-realtime\.timer/);
   assert.match(wrapper, /O_NOFOLLOW/);
   assert.match(wrapper, /metadata\.uid !== 0/);
   assert.match(wrapper, /metadata\.mode & 0o027/);

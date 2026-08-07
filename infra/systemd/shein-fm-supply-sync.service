@@ -3,7 +3,7 @@ Description=Refresh SHEIN full-managed read-only supply facts
 Wants=network-online.target
 Requires=shein-fm-db.service
 After=network-online.target shein-fm-db.service shein-fm-db-migrate.service systemd-tmpfiles-setup.service
-OnSuccess=shein-fm-dashboard-materialize-enqueue.service
+OnSuccess=shein-fm-dashboard-materialize.service
 ConditionPathExists=/srv/shein-fm/runtime/supply-sync.enabled
 ConditionPathExists=/srv/shein-fm/runtime/supply-backfill.verified
 
@@ -17,14 +17,13 @@ WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
 Environment=SHEIN_FM_CLOUD_EXECUTION=1
 Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/supply/openapi.json
-Environment=FULL_BI_SCHEDULE_MARKER_DIR=/srv/shein-fm/runtime/scheduler/supply
+Environment=FULL_BI_COORDINATOR_STATE_DIR=/srv/shein-fm/runtime/coordinator/supply
 EnvironmentFile=/srv/shein-fm/secrets/supply/database.env
 RuntimeDirectory=shein-fm-supply
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
-ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh api-light fm openapi /usr/bin/flock -n -E 75 /run/shein-fm-supply/sync.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=supply-daily --execute
-SuccessExitStatus=75
-TimeoutStartSec=35min
+ExecStart=/usr/bin/node scripts/run_full_managed_business_coordinator.mjs --task=supply-daily --execute
+TimeoutStartSec=60min
 TimeoutStopSec=20s
 KillMode=control-group
 SendSIGKILL=yes
@@ -52,7 +51,7 @@ RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadOnlyPaths=/srv/shein-fm/secrets/supply/openapi.json
 ReadOnlyPaths=/srv/shein-fm/secrets/supply/database.env
-ReadWritePaths=/run/lock/shein-api-light-0.lock /run/lock/shein-api-light-1.lock /run/shein-fm-supply /srv/shein-fm/runtime/scheduler/supply
+ReadWritePaths=/run/lock/shein-api-light-0.lock /run/lock/shein-api-light-1.lock /run/shein-fm-supply /srv/shein-fm/runtime/coordinator/supply
 MemoryHigh=512M
 MemoryMax=1024M
 MemorySwapMax=64M

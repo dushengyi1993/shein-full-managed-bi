@@ -3,7 +3,7 @@ Description=Refresh settled SHEIN full-managed finance windows
 Wants=network-online.target
 Requires=shein-fm-db.service
 After=network-online.target shein-fm-db.service shein-fm-db-migrate.service systemd-tmpfiles-setup.service
-OnSuccess=shein-fm-dashboard-materialize-enqueue.service
+OnSuccess=shein-fm-dashboard-materialize.service
 ConditionPathExists=/srv/shein-fm/runtime/home-finance-backfill.enabled
 
 [Service]
@@ -16,14 +16,13 @@ WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
 Environment=SHEIN_FM_CLOUD_EXECUTION=1
 Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/sales/openapi.json
-Environment=FULL_BI_SCHEDULE_MARKER_DIR=/srv/shein-fm/runtime/scheduler/finance
+Environment=FULL_BI_COORDINATOR_STATE_DIR=/srv/shein-fm/runtime/coordinator/finance
 EnvironmentFile=/srv/shein-fm/secrets/sales/database.env
 RuntimeDirectory=shein-fm-sales
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
-ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh api-light fm openapi /usr/bin/flock -n -E 75 /run/shein-fm-sales/home-finance-daily.lock /usr/bin/node scripts/run_full_managed_scheduled_task.mjs --task=finance-daily --execute
-SuccessExitStatus=75
-TimeoutStartSec=15min
+ExecStart=/usr/bin/node scripts/run_full_managed_business_coordinator.mjs --task=finance-daily --execute
+TimeoutStartSec=35min
 TimeoutStopSec=20s
 KillMode=control-group
 SendSIGKILL=yes
@@ -51,7 +50,7 @@ RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadOnlyPaths=/srv/shein-fm/secrets/sales/openapi.json
 ReadOnlyPaths=/srv/shein-fm/secrets/sales/database.env
-ReadWritePaths=/run/lock/shein-api-light-0.lock /run/lock/shein-api-light-1.lock /run/shein-fm-sales /srv/shein-fm/runtime/scheduler/finance
+ReadWritePaths=/run/lock/shein-api-light-0.lock /run/lock/shein-api-light-1.lock /run/shein-fm-sales /srv/shein-fm/runtime/coordinator/finance
 MemoryHigh=512M
 MemoryMax=1024M
 MemorySwapMax=64M

@@ -14,10 +14,10 @@ fi
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 credentials_file="/srv/shein-fm/secrets/postgres.env"
 
-if [[ "$(/usr/bin/systemctl is-active shein-fm-sales-sync.service 2>/dev/null || true)" != "inactive" ]] \
-  || [[ "$(/usr/bin/systemctl is-active shein-fm-sales-sync.timer 2>/dev/null || true)" != "inactive" ]] \
-  || [[ "$(/usr/bin/systemctl is-enabled shein-fm-sales-sync.timer 2>/dev/null || true)" != "disabled" ]]; then
-  printf '%s\n' '{"ok":false,"errorCode":"SALES_SYNC_MUST_BE_DISABLED"}' >&2
+if [[ "$(/usr/bin/systemctl is-active shein-fm-home-realtime.service 2>/dev/null || true)" != "inactive" ]] \
+  || [[ "$(/usr/bin/systemctl is-active shein-fm-home-realtime.timer 2>/dev/null || true)" != "inactive" ]] \
+  || [[ "$(/usr/bin/systemctl is-enabled shein-fm-home-realtime.timer 2>/dev/null || true)" != "disabled" ]]; then
+  printf '%s\n' '{"ok":false,"errorCode":"REALTIME_COORDINATOR_MUST_BE_DISABLED"}' >&2
   exit 1
 fi
 

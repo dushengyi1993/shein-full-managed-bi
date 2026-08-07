@@ -4,13 +4,8 @@ ConditionPathExists=/srv/shein-fm/runtime/webapi-history.enabled
 ConditionPathExists=/srv/shein-fm/runtime/store-login/all-25-completed
 
 [Timer]
-# Five short, explicit store batches run after the D-1 readiness window. The
-# schedule runner
-# maps the exact HH:MM slot to batch 0..4 instead of inferring from the hour.
-OnCalendar=*-*-* 03:45:00 Asia/Shanghai
-OnCalendar=*-*-* 04:15:00 Asia/Shanghai
-OnCalendar=*-*-* 04:45:00 Asia/Shanghai
-OnCalendar=*-*-* 05:15:00 Asia/Shanghai
+# One business run owns readiness, all 25 stores, targeted retries and the
+# final atomic publish. Internal checkpoints replace public five-store timers.
 OnCalendar=*-*-* 05:45:00 Asia/Shanghai
 AccuracySec=1m
 Persistent=false

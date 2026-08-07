@@ -338,7 +338,10 @@ export async function runPlanWithResult(plan, runner = runCommand) {
     else if (exitCode !== 0 && firstFailure === 0) firstFailure = exitCode;
   }
   return Object.freeze({
-    exitCode: firstFailure,
+    // A partial child is a non-terminal business run. Returning zero here made
+    // systemd execute OnSuccess and publish a dashboard assembled from an
+    // incomplete store/domain set.
+    exitCode: firstFailure || (partial ? 2 : 0),
     status: firstFailure !== 0 ? 'FAILED' : partial ? 'PARTIAL' : 'SUCCEEDED',
     commands: Object.freeze(commands),
   });
