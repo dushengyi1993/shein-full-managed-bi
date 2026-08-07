@@ -2,7 +2,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -367,6 +367,9 @@ async function atomicWriteState(file, value) {
   await mkdir(path.dirname(file), { recursive: true, mode: 0o770 });
   const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o660 });
+  // systemd services run with UMask=0077. Explicitly restore the intended
+  // dashboard-group contract before the atomic rename.
+  await chmod(temporary, 0o660);
   await rename(temporary, file);
 }
 

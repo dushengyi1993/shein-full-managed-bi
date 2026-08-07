@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { chmod, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const ROOT = process.env.FULL_BI_COORDINATOR_ROOT
@@ -43,6 +43,7 @@ async function stateFiles(root) {
 async function atomicWrite(file, value) {
   const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o660 });
+  await chmod(temporary, 0o660);
   await rename(temporary, file);
 }
 

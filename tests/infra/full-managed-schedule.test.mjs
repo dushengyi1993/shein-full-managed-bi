@@ -225,6 +225,7 @@ test('coordinator units own bounded end-to-end business windows', async () => {
   assert.match(realtimeTimer, /^AccuracySec=1s$/m);
   assert.match(realtime, /^TimeoutStartSec=12min$/m);
   assert.match(realtime, /--task=realtime-cockpit --execute/);
+  assert.match(realtime, /^Environment=SHEIN_FM_CLOUD_EXECUTION=1$/m);
   assert.match(session, /^TimeoutStartSec=25min$/m);
   assert.match(session, /--task=session-maintenance --execute/);
   assert.match(supply, /^TimeoutStartSec=60min$/m);

@@ -15,6 +15,7 @@ Slice=shein-host-heavy-fm.slice
 UMask=0077
 WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
+Environment=SHEIN_FM_CLOUD_EXECUTION=1
 Environment=FULL_FM_WEBAPI_TRANSPORT=http
 Environment=FULL_BI_COORDINATOR_STATE_DIR=/srv/shein-fm/runtime/coordinator/realtime
 Environment=FULL_BI_SALES_OPENAPI_CONFIG_FILE=%d/sales_openapi_config

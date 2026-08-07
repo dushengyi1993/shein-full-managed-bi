@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -109,6 +109,12 @@ test('one run retries only failed stores and becomes ready exactly once', async 
   ));
   assert.equal(state.status, 'READY_TO_PUBLISH');
   assert.equal(state.stages['sales-realtime'].attempts, 2);
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(path.join(
+      stateDir,
+      'fm-realtime-cockpit-2026-08-07T20.json',
+    ))).mode & 0o777, 0o660);
+  }
 });
 
 test('materializer marks only runs that were ready before its snapshot began', async () => {
