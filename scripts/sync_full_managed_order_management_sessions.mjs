@@ -30,13 +30,39 @@ import { atomicWriteJson } from '../src/warehouse/dashboard-materializer.mjs';
 
 const ROSTER = new Set(FULL_MANAGED_STORE_CODES);
 
-export function parseArgs(argv) {
+/**
+ * Strict YYYY-MM-DD calendar-date parse.  Returns the normalized text or
+ * null so callers can fail closed with their own error codes.
+ */
+export function parseStrictIsoDate(value) {
+  const text = String(value ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const parsed = new Date(`${text}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== text) return null;
+  return text;
+}
+
+/**
+ * The calendar date (YYYY-MM-DD) in Asia/Shanghai for an instant.  The
+ * "future window" gate is defined against this calendar so it stays stable
+ * no matter which timezone the host runs in.
+ */
+export function shanghaiDate(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).formatToParts(now);
+  const field = (type) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${field('year')}-${field('month')}-${field('day')}`;
+}
+
+export function parseArgs(argv, { now = new Date() } = {}) {
   const result = {
     stores: [],
     output: process.env.FULL_BI_ORDER_MANAGEMENT_SESSION_SNAPSHOT ?? null,
     windowDays: ORDER_MANAGEMENT_WINDOW_MAX_DAYS,
+    startDate: null,
+    endDate: null,
     execute: false,
   };
+  let windowDaysProvided = false;
   for (const token of argv) {
     const match = /^--([a-z-]+)(?:=(.*))?$/.exec(token);
     if (!match) throw new Error('ORDER_MANAGEMENT_SYNC_ARGUMENT_INVALID');
@@ -45,8 +71,11 @@ export function parseArgs(argv) {
     else if (name === 'stores' && value) {
       result.stores = [...new Set(value.split(',').map((item) => item.trim().toUpperCase()))];
     } else if (name === 'output' && value) result.output = value;
+    else if (name === 'start-date' && value) result.startDate = value;
+    else if (name === 'end-date' && value) result.endDate = value;
     else if (name === 'window-days' && /^[1-9]$|^[12][0-9]$|^30$/.test(value ?? '')) {
       result.windowDays = Number(value);
+      windowDaysProvided = true;
     } else throw new Error('ORDER_MANAGEMENT_SYNC_ARGUMENT_INVALID');
   }
   if (
@@ -59,6 +88,27 @@ export function parseArgs(argv) {
     && result.stores.every((store) => ROSTER.has(store));
   if (!rosterCovered) {
     throw new Error('ORDER_MANAGEMENT_SYNC_STORE_SCOPE_REQUIRED');
+  }
+  const hasStart = result.startDate !== null;
+  const hasEnd = result.endDate !== null;
+  if (hasStart !== hasEnd) throw new Error('ORDER_MANAGEMENT_SYNC_WINDOW_PAIR_REQUIRED');
+  if (hasStart && windowDaysProvided) throw new Error('ORDER_MANAGEMENT_SYNC_WINDOW_CONFLICT');
+  if (hasStart) {
+    const start = parseStrictIsoDate(result.startDate);
+    const end = parseStrictIsoDate(result.endDate);
+    if (!start || !end || start > end) throw new Error('ORDER_MANAGEMENT_SYNC_WINDOW_INVALID');
+    try {
+      orderManagementWindow({
+        startDate: start,
+        endDate: end,
+        maximumDays: ORDER_MANAGEMENT_WINDOW_MAX_DAYS,
+      });
+    } catch {
+      throw new Error('ORDER_MANAGEMENT_SYNC_WINDOW_INVALID');
+    }
+    if (end > shanghaiDate(now)) throw new Error('ORDER_MANAGEMENT_SYNC_WINDOW_FUTURE');
+    result.startDate = start;
+    result.endDate = end;
   }
   return result;
 }
@@ -246,28 +296,30 @@ function storePageGates(page) {
   });
 }
 
-async function syncOneStore(transport, storeCode, { window, maxPages }) {
+async function syncOneStore(transport, storeCode, { window, maxPages, includeStatistics = true }) {
   const stock = await fetchPageRows(transport, 'STOCK_RECORDS_LIST', { window, maxPages });
   const waybills = await fetchPageRows(transport, 'WAYBILLS_PAGE', { window, maxPages });
   const statistics = [];
-  for (const statisticsType of ORDER_MANAGEMENT_ENDPOINTS.WAYBILLS_STATISTICS.statisticsTypes) {
-    const body = Object.freeze({
-      ...orderManagementRequestBody('WAYBILLS_STATISTICS', { window }),
-      statisticsType,
-    });
-    try {
-      const response = await transport.fetch('WAYBILLS_STATISTICS', body);
-      const value = response?.body?.info;
-      statistics.push(Object.freeze({
+  if (includeStatistics) {
+    for (const statisticsType of ORDER_MANAGEMENT_ENDPOINTS.WAYBILLS_STATISTICS.statisticsTypes) {
+      const body = Object.freeze({
+        ...orderManagementRequestBody('WAYBILLS_STATISTICS', { window }),
         statisticsType,
-        value: typeof value === 'string' || typeof value === 'number' ? value : null,
-      }));
-    } catch (error) {
-      statistics.push(Object.freeze({
-        statisticsType,
-        value: null,
-        errorCode: String(error?.code ?? error?.message ?? 'STATISTICS_FETCH_FAILED'),
-      }));
+      });
+      try {
+        const response = await transport.fetch('WAYBILLS_STATISTICS', body);
+        const value = response?.body?.info;
+        statistics.push(Object.freeze({
+          statisticsType,
+          value: typeof value === 'string' || typeof value === 'number' ? value : null,
+        }));
+      } catch (error) {
+        statistics.push(Object.freeze({
+          statisticsType,
+          value: null,
+          errorCode: String(error?.code ?? error?.message ?? 'STATISTICS_FETCH_FAILED'),
+        }));
+      }
     }
   }
   return Object.freeze({
@@ -304,13 +356,24 @@ export async function runOrderManagementSessionSync({
   storeCodes,
   output,
   windowDays = ORDER_MANAGEMENT_WINDOW_MAX_DAYS,
+  window = null,
+  includeStatistics = true,
   sessionStore,
   openSession = ({ storeCode }) => openOrderManagementHttpSession({ storeCode, sessionStore }),
   now = new Date(),
   maxPages = ORDER_MANAGEMENT_MAX_PAGES,
 } = {}) {
   const roster = [...FULL_MANAGED_STORE_CODES];
-  const window = buildWindow({ days: windowDays, now });
+  const boundedWindow = window
+    ? orderManagementWindow({
+        startDate: window.startDate,
+        endDate: window.endDate,
+        maximumDays: windowDays,
+      })
+    : buildWindow({ days: windowDays, now });
+  if (window && boundedWindow.endDate > shanghaiDate(now)) {
+    throw new Error('ORDER_MANAGEMENT_SYNC_WINDOW_FUTURE');
+  }
   const perStore = [];
   const rawByStore = {
     'stock-records': new Map(),
@@ -320,7 +383,11 @@ export async function runOrderManagementSessionSync({
     const session = await openSession({ storeCode });
     const transport = createOrderManagementHttpTransport({ session });
     try {
-      const result = await syncOneStore(transport, storeCode, { window, maxPages });
+      const result = await syncOneStore(transport, storeCode, {
+        window: boundedWindow,
+        maxPages,
+        includeStatistics,
+      });
       rawByStore['stock-records'].set(storeCode, result.stock.rows);
       rawByStore.waybills.set(storeCode, result.waybills.rows);
       perStore.push(Object.freeze({
@@ -385,7 +452,7 @@ export async function runOrderManagementSessionSync({
     schemaVersion: 1,
     updatedAt: fetchedAt,
     roster: Object.freeze(roster),
-    window: Object.freeze(window),
+    window: Object.freeze(boundedWindow),
     pages: Object.freeze(pages),
     evidence: Object.freeze({
       perStore: Object.freeze(perStore),
@@ -403,6 +470,9 @@ async function main() {
       mode: 'DRY_RUN',
       stores: [...FULL_MANAGED_STORE_CODES],
       windowDays: args.windowDays,
+      window: args.startDate
+        ? { startDate: args.startDate, endDate: args.endDate }
+        : buildWindow({ days: args.windowDays }),
       maxPages: ORDER_MANAGEMENT_MAX_PAGES,
       endpoints: Object.keys(ORDER_MANAGEMENT_ENDPOINTS),
       output: args.output,
@@ -415,6 +485,7 @@ async function main() {
     storeCodes: args.stores,
     output: args.output,
     windowDays: args.windowDays,
+    window: args.startDate ? { startDate: args.startDate, endDate: args.endDate } : undefined,
     sessionStore,
   });
   console.log(JSON.stringify({

@@ -71,9 +71,84 @@ test('sync windows are bounded to 30 inclusive days', () => {
   assert.throws(() => buildWindow({ days: 31 }), /ORDER_MANAGEMENT_WINDOW_INVALID/);
 });
 
+test('session sync accepts an explicit paired date window only', () => {
+  const stores = FULL_MANAGED_STORE_CODES.join(',');
+  const now = new Date('2026-08-08T06:00:00.000Z');
+  const args = parseSyncArgs([
+    `--stores=${stores}`,
+    '--start-date=2026-07-01',
+    '--end-date=2026-07-31',
+  ], { now });
+  assert.equal(args.startDate, '2026-07-01');
+  assert.equal(args.endDate, '2026-07-31');
+  assert.equal(args.windowDays, 30);
+  assert.equal(args.execute, false);
+  assert.throws(
+    () => parseSyncArgs([`--stores=${stores}`, '--start-date=2026-07-01'], { now }),
+    /ORDER_MANAGEMENT_SYNC_WINDOW_PAIR_REQUIRED/,
+  );
+  assert.throws(
+    () => parseSyncArgs([`--stores=${stores}`, '--end-date=2026-07-31'], { now }),
+    /ORDER_MANAGEMENT_SYNC_WINDOW_PAIR_REQUIRED/,
+  );
+  assert.throws(
+    () => parseSyncArgs([
+      `--stores=${stores}`,
+      '--start-date=2026-07-02',
+      '--end-date=2026-07-01',
+    ], { now }),
+    /ORDER_MANAGEMENT_SYNC_WINDOW_INVALID/,
+  );
+  assert.throws(
+    () => parseSyncArgs([
+      `--stores=${stores}`,
+      '--start-date=2026-02-30',
+      '--end-date=2026-03-31',
+    ], { now }),
+    /ORDER_MANAGEMENT_SYNC_WINDOW_INVALID/,
+  );
+  assert.throws(
+    () => parseSyncArgs([
+      `--stores=${stores}`,
+      '--start-date=2026-06-01',
+      '--end-date=2026-07-31',
+    ], { now }),
+    /ORDER_MANAGEMENT_SYNC_WINDOW_INVALID/,
+  );
+  assert.throws(
+    () => parseSyncArgs([
+      `--stores=${stores}`,
+      '--start-date=2026-08-01',
+      '--end-date=2026-08-09',
+    ], { now }),
+    /ORDER_MANAGEMENT_SYNC_WINDOW_FUTURE/,
+  );
+  assert.throws(
+    () => parseSyncArgs([
+      `--stores=${stores}`,
+      '--start-date=2026-07-01',
+      '--end-date=2026-07-31',
+      '--window-days=30',
+    ], { now }),
+    /ORDER_MANAGEMENT_SYNC_WINDOW_CONFLICT/,
+  );
+});
+
 function fakeOpenSession(respond) {
   return async () => ({
     request: async (endpointCode) => ({ httpStatus: 200, byteLength: 1, body: respond(endpointCode) }),
+    close: async () => ({ closed: true }),
+    expiry: () => ({}),
+  });
+}
+
+function fakeOpenSessionWithCapture(respond) {
+  return async () => ({
+    request: async (endpointCode, body) => {
+      const captured = body ?? {};
+      respond(endpointCode, captured);
+      return { httpStatus: 200, byteLength: 1, body: GOOD_RESPONSES[endpointCode] };
+    },
     close: async () => ({ closed: true }),
     expiry: () => ({}),
   });
@@ -159,6 +234,49 @@ test('session sync writes a gate-passing snapshot with allowlisted rows only', a
   assert.ok(!JSON.stringify(waybillRow).includes('senderProvinceName'));
   assert.ok(!JSON.stringify(waybillRow).includes('receiverCityName'));
   assert.equal(result.written, output);
+});
+
+test('session sync sends explicit window dates in every request body', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'om-sync-window-'));
+  const output = path.join(directory, 'order-management.sessions.json');
+  const bodies = [];
+  const result = await runOrderManagementSessionSync({
+    storeCodes: [...FULL_MANAGED_STORE_CODES],
+    output,
+    window: { startDate: '2026-07-01', endDate: '2026-07-30' },
+    openSession: fakeOpenSessionWithCapture((endpointCode, body) => {
+      bodies.push({ endpointCode, body });
+    }),
+    now: new Date('2026-08-08T06:00:00.000Z'),
+  });
+  assert.equal(result.snapshot.window.startDate, '2026-07-01');
+  assert.equal(result.snapshot.window.endDate, '2026-07-30');
+  const stockBody = bodies.find((entry) => entry.endpointCode === 'STOCK_RECORDS_LIST').body;
+  assert.equal(stockBody.addTimeBegin, '2026-07-01 00:00:00');
+  assert.equal(stockBody.addTimeEnd, '2026-07-30 23:59:59');
+  const waybillBody = bodies.find((entry) => entry.endpointCode === 'WAYBILLS_PAGE').body;
+  assert.equal(waybillBody.addTimeStart, '2026-07-01 00:00:00');
+  assert.equal(waybillBody.addTimeEnd, '2026-07-30 23:59:59');
+});
+
+test('session sync refuses an explicit future window before any request', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'om-sync-future-'));
+  const output = path.join(directory, 'order-management.sessions.json');
+  let opened = 0;
+  await assert.rejects(
+    () => runOrderManagementSessionSync({
+      storeCodes: [...FULL_MANAGED_STORE_CODES],
+      output,
+      window: { startDate: '2026-08-09', endDate: '2026-08-30' },
+      openSession: async () => {
+        opened += 1;
+        throw new Error('MUST_NOT_OPEN');
+      },
+      now: new Date('2026-08-08T06:00:00.000Z'),
+    }),
+    /ORDER_MANAGEMENT_SYNC_WINDOW_FUTURE/,
+  );
+  assert.equal(opened, 0);
 });
 
 test('session sync fails the gate closed when the platform hides the total', async () => {

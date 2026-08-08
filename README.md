@@ -78,9 +78,17 @@ npm run materialize:order-management -- --out .\outputs\order-management.next.js
 npm run sync:order-management-sessions -- `
   --stores=CX4412,XL2801,... `   # 必须为完整 25 店清单
   --execute --output .\outputs\order-management.sessions.json
+
+# 历史回填会拆成连续、不重叠且不超过 30 天的窗口；任一窗口失败
+# 都不会覆盖最终聚合快照。
+npm run backfill:order-management-sessions -- `
+  --stores=CX4412,XL2801,... `   # 必须为完整 25 店清单
+  --start-date=2024-01-01 --end-date=2026-08-08 `
+  --output=.\outputs\order-management.sessions.json --execute
 ```
 
 会话同步只调用 `sso.geiwohuo.com` 上已验证的固定 POST 查询路径（`/idms/order-apply/list`、`/clms/waybill/page`、`/clms/waybill/statistics`），全程不落盘地址、联系人、电话等 PII；分页/总数/去重/25 店覆盖任一失败，物化结果保持不可提升。
+历史回填逐窗口保留审计 part 文件，只在全部窗口通过后原子写入最终快照；订单管理定时抓取在页面由业务方确认前保持未配置，不新增或修改现有 timer。
 
 已有标准化销量快照和店铺权限 JSON 时，可生成门户输入：
 
