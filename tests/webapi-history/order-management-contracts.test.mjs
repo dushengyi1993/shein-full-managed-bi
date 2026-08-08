@@ -2,20 +2,26 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  ORDER_MANAGEMENT_ONCE_ONLY_PAGES,
+  ORDER_MANAGEMENT_SESSION_PAGES,
   ORDER_MANAGEMENT_ENDPOINT_FIELD_ALLOWLISTS,
   ORDER_MANAGEMENT_ENDPOINTS,
   ORDER_MANAGEMENT_RESEARCHED_ENDPOINTS,
   ORDER_MANAGEMENT_WEBAPI_ORIGIN,
   ORDER_MANAGEMENT_WINDOW_MAX_DAYS,
+  assertOrderManagementTransportRequest,
   orderManagementEndpointUrl,
   orderManagementRequestBody,
   orderManagementWindow,
 } from '../../src/webapi-history/order-management-contracts.mjs';
 import {
   PAGE_FIELD_ALLOWLISTS,
+  containsSensitiveText,
   fieldHash,
   isDeniedKeyName,
   pickFieldsByAllowlist,
+  scrubPiiText,
+  validateOrderManagementRow,
   validateOrderManagementIndex,
 } from '../../src/order-management/order-management-contract.mjs';
 
@@ -158,6 +164,10 @@ test('windows are bounded to the verified 30-day maximum', () => {
   );
   assert.equal(ORDER_MANAGEMENT_WINDOW_MAX_DAYS, 30);
   assert.throws(
+    () => orderManagementWindow({ startDate: '2026-07-01', endDate: '2026-07-31' }),
+    /ORDER_MANAGEMENT_WINDOW_TOO_WIDE/,
+  );
+  assert.throws(
     () => orderManagementWindow({ startDate: '2026-01-01', endDate: '2026-08-08' }),
     /ORDER_MANAGEMENT_WINDOW_TOO_WIDE/,
   );
@@ -177,6 +187,163 @@ test('request bodies freeze the verified templates with bounded window fields', 
   assert.equal(body.addTimeEnd, '2026-08-08 23:59:59');
   assert.equal(Object.isFrozen(body), true);
   assert.throws(() => orderManagementRequestBody('UNKNOWN'), /ORDER_MANAGEMENT_ENDPOINT_NOT_ALLOWED/);
+  assert.throws(
+    () => orderManagementRequestBody('RETURN_APPLICATIONS_LIST'),
+    /ORDER_MANAGEMENT_WINDOW_REQUIRED/,
+  );
+});
+
+test('the transport seal rejects arbitrary filters and widened pagination', () => {
+  const base = orderManagementRequestBody('RETURN_APPLICATIONS_LIST', {
+    window: { startDate: '2026-07-01', endDate: '2026-07-30' },
+  });
+  assert.equal(assertOrderManagementTransportRequest('RETURN_APPLICATIONS_LIST', {
+    ...base,
+    page: 1,
+    perPage: 50,
+  }), true);
+  assert.throws(
+    () => assertOrderManagementTransportRequest('RETURN_APPLICATIONS_LIST', {
+      ...base,
+      page: 999,
+      perPage: 999,
+      unexpected: 'arbitrary',
+    }),
+    /ORDER_MANAGEMENT_REQUEST/,
+  );
+});
+
+test('free-text PII is scrubbed and cannot hide in status, secondary or tags', () => {
+  assert.equal(containsSensitiveText('联系人张三，邮箱 test@example.com，电话 021-12345678'), true);
+  assert.equal(scrubPiiText('联系人张三，邮箱 test@example.com，电话 021-12345678'), null);
+  const baseRow = {
+    id: 'WO-1',
+    storeCode: 'CX4412',
+    statusCode: '1',
+    statusName: '联系人张三 13800138000',
+    createdAt: null,
+    updatedAt: '2026-08-08T06:00:00.000Z',
+    primary: 'WO-1',
+    secondary: 'test@example.com',
+    tags: ['电话 021-12345678'],
+    metrics: [],
+    facts: [],
+    details: [],
+  };
+  const verdict = validateOrderManagementRow(baseRow, { pageId: 'exceptions' });
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.errors.join(' | '), /sensitive text/);
+});
+
+test('the five verified order-management pages fix their request windows and page keys', () => {
+  const returnPlan = ORDER_MANAGEMENT_ENDPOINTS.RETURN_APPLICATIONS_LIST;
+  assert.equal(returnPlan.path, '/pfmp/returnPlan/list');
+  assert.deepEqual(returnPlan.windowFields, { start: 'returnTimeStart', end: 'returnTimeEnd' });
+  assert.equal(returnPlan.pageKey, 'page');
+  assert.equal(returnPlan.pageSizeKey, 'perPage');
+  assert.equal(returnPlan.defaultPageSize, 50);
+  assert.deepEqual(returnPlan.totalPath, ['info', 'meta', 'count']);
+  assert.deepEqual(returnPlan.rowsPath, ['info', 'data']);
+
+  const returnOrder = ORDER_MANAGEMENT_ENDPOINTS.RETURN_ORDERS_PAGE;
+  assert.equal(returnOrder.path, '/pfmp/returnOrder/page');
+  assert.deepEqual(returnOrder.windowFields, { start: 'addTimeStart', end: 'addTimeEnd' });
+  assert.deepEqual(returnOrder.totalPath, ['info', 'meta', 'count']);
+  assert.deepEqual(returnOrder.rowsPath, ['info', 'data']);
+
+  const quality = ORDER_MANAGEMENT_ENDPOINTS.QUALITY_REPORTS_PAGE;
+  assert.equal(quality.path, '/gmpj/quality/qcReportNew');
+  assert.deepEqual(quality.windowFields, {
+    start: 'inspectionTimeStart',
+    end: 'inspectionTimeEnd',
+  });
+  assert.equal(quality.bodyTemplate.reportUrl, 1);
+  assert.equal(quality.pageSizeValue, '50');
+  assert.deepEqual(quality.totalPath, ['info', 'totalCount']);
+  assert.deepEqual(quality.rowsPath, ['info', 'list']);
+
+  const exceptions = ORDER_MANAGEMENT_ENDPOINTS.EXCEPTIONS_PAGE;
+  assert.equal(exceptions.path, '/pfmp/exceptionWorkorder/order/page');
+  assert.equal(exceptions.windowFields, null);
+  assert.deepEqual(exceptions.totalPath, ['info', 'meta', 'count']);
+
+  const vas = ORDER_MANAGEMENT_ENDPOINTS.VALUE_ADDED_SERVICES_PAGE;
+  assert.equal(vas.path, '/vssv/order/page');
+  assert.equal(vas.windowFields, null);
+  assert.equal(vas.pageKey, 'pageNumber');
+  assert.equal(vas.pageSizeKey, 'pageSize');
+  assert.deepEqual(vas.totalPath, ['info', 'count']);
+  assert.deepEqual(vas.rowsPath, ['info', 'list']);
+});
+
+test('no-date-filter endpoints are once-only and never carry window keys in a body', () => {
+  assert.deepEqual(ORDER_MANAGEMENT_ONCE_ONLY_PAGES, ['exceptions', 'value-added-services']);
+  assert.deepEqual(Object.keys(ORDER_MANAGEMENT_SESSION_PAGES).sort(), [
+    'exceptions',
+    'quality-reports',
+    'return-applications',
+    'return-orders',
+    'stock-records',
+    'value-added-services',
+    'waybills',
+  ]);
+  for (const endpointCode of ['EXCEPTIONS_PAGE', 'VALUE_ADDED_SERVICES_PAGE']) {
+    const body = orderManagementRequestBody(endpointCode, {
+      window: { startDate: '2026-07-01', endDate: '2026-07-30' },
+    });
+    assert.ok(!Object.keys(body).some((key) => /Time|Date/.test(key)));
+  }
+  const returnPlanBody = orderManagementRequestBody('RETURN_APPLICATIONS_LIST', {
+    window: { startDate: '2026-07-01', endDate: '2026-07-30' },
+  });
+  assert.equal(returnPlanBody.returnTimeStart, '2026-07-01 00:00:00');
+  assert.equal(returnPlanBody.returnTimeEnd, '2026-07-30 23:59:59');
+  const qualityBody = orderManagementRequestBody('QUALITY_REPORTS_PAGE', {
+    window: { startDate: '2026-07-01', endDate: '2026-07-30' },
+  });
+  assert.equal(qualityBody.inspectionTimeStart, '2026-07-01 00:00:00');
+  assert.equal(qualityBody.inspectionTimeEnd, '2026-07-30 23:59:59');
+  assert.equal(qualityBody.reportUrl, 1);
+});
+
+test('the five verified page allowlists exclude every researched PII/free-text key', () => {
+  const forbidden = [
+    'sellerAddress', 'address', 'phone', 'contract', 'returnAddress',
+    'driverName', 'thumb', 'url', 'img', 'reportUrl', 'sellerTitle',
+    'creator', 'problemDesc', 'resultReply', 'attachmentUrlList',
+    'goodsThumb', 'remark', 'user', 'serviceDesc', 'uid', 'merchant',
+    'operatorShowName', 'instructions',
+  ];
+  for (const endpointCode of [
+    'RETURN_APPLICATIONS_LIST',
+    'RETURN_ORDERS_PAGE',
+    'EXCEPTIONS_PAGE',
+    'VALUE_ADDED_SERVICES_PAGE',
+    'QUALITY_REPORTS_PAGE',
+  ]) {
+    const allowlist = ORDER_MANAGEMENT_ENDPOINT_FIELD_ALLOWLISTS[endpointCode];
+    const names = allowlist.map((field) => field.name);
+    for (const name of forbidden) {
+      assert.ok(!names.includes(name), `${endpointCode} must not allow ${name}`);
+    }
+    // Every forbidden name that the shared deny pattern covers must be denied
+    // by the second line of defence as well.
+    for (const name of forbidden) {
+      if (/address|phone|tel|mobile|contact|receiver|sender|consignee|recipient|postcode|postal|zip/i.test(name)) {
+        assert.ok(isDeniedKeyName(name), `${name} must be a denied key name`);
+      }
+    }
+    assert.ok(allowlist.length > 0, `${endpointCode} needs a verified allowlist`);
+    assert.ok(
+      !allowlist.some((field) => /^(img|image|pic|url|thumb|attachment)/i.test(field.name)),
+      `${endpointCode} must not allow image/URL keys`,
+    );
+  }
+  assert.ok(
+    !ORDER_MANAGEMENT_ENDPOINT_FIELD_ALLOWLISTS.QUALITY_REPORTS_PAGE
+      .some((field) => field.name === 'id'),
+    'quality-reports rows are keyed by qcInspectionNo, not a raw id',
+  );
 });
 
 test('the index contract validates an empty skeleton and rejects missing pages', () => {
@@ -193,7 +360,6 @@ test('the index contract validates an empty skeleton and rejects missing pages',
     promotable: false,
     pages: Object.fromEntries([
       'delivery-notes',
-      'delivery-desk',
       'stock-records',
       'waybills',
       'return-applications',

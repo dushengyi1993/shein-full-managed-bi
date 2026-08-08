@@ -22,7 +22,6 @@ function functionBody(source, functionName) {
 
 const ORDER_PAGES = [
   'delivery-notes',
-  'delivery-desk',
   'stock-records',
   'waybills',
   'return-applications',
@@ -57,7 +56,7 @@ async function loadHashStateContract() {
   `)();
 }
 
-test('the nine order-management pages are registered routes with researched copy', async () => {
+test('the eight order-management pages are registered routes with researched copy', async () => {
   const [html, app] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),

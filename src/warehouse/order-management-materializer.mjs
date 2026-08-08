@@ -8,6 +8,7 @@ import {
   validateOrderManagementIndex,
   validateOrderManagementRow,
 } from '../order-management/order-management-contract.mjs';
+import { ORDER_MANAGEMENT_SESSION_PAGES } from '../webapi-history/order-management-contracts.mjs';
 
 function isoInstant(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -120,15 +121,6 @@ function emptyPage(pageId, source, reason, { now } = {}) {
     rows: Object.freeze([]),
   });
 }
-
-export const ORDER_MANAGEMENT_UNAVAILABLE_REASONS = Object.freeze({
-  'delivery-desk': 'VERIFIED_ENDPOINTS_LACK_TOTAL: research captured POST /pfmp/delivery/shippingOrderList {page,perPage} and POST /pfmp/delivery/getIntelligentUnpackingResult {isDeliveryShipping:1}, but neither response carries a total, so the paging/total gate cannot be satisfied; the page stays UNAVAILABLE until a total-bearing contract is verified.',
-  'return-applications': 'NO_VERIFIED_CONTRACT: research documented DOM only for sso.geiwohuo.com/#/pfmp/return-management/return-plan-list; no API request/response contract was captured and no path may be guessed.',
-  'return-orders': 'NO_VERIFIED_CONTRACT: research documented DOM only for sso.geiwohuo.com/#/pfmp/return-management/return-order-list; no API request/response contract was captured and no path may be guessed.',
-  exceptions: 'NO_VERIFIED_CONTRACT: only the URL /pfmp/order/exceptionProblems was observed without a request body or response shape; the request cannot be safely frozen.',
-  'value-added-services': 'NO_VERIFIED_CONTRACT: research documented DOM only for sso.geiwohuo.com/#/vssv/order-management; no API request/response contract was captured and no path may be guessed.',
-  'quality-reports': 'NO_VERIFIED_CONTRACT: research documented DOM only for sso.geiwohuo.com/#/gmp-unity/inspection-report; no API request/response contract was captured and no path may be guessed.',
-});
 
 function lineGroupKey(storeId, deliveryId) {
   return `${String(storeId)}\u001f${String(deliveryId)}`;
@@ -382,6 +374,7 @@ function normalizeSnapshotPage(page, pageId, { now, expectedStoreCount } = {}) {
     && page.gates.totalVerified === true
     && page.gates.pagingVerified === true
     && page.gates.dedupeVerified === true
+    && page.gates.contentVerified !== false
     && Number.isSafeInteger(page.gates.storeCount)
     && page.gates.storeCount === expectedStoreCount;
   const rows = Array.isArray(page.rows) ? page.rows : [];
@@ -399,6 +392,18 @@ function normalizeSnapshotPage(page, pageId, { now, expectedStoreCount } = {}) {
         source: 'SESSION_HTTP',
         latestSourceFetchedAt: page.latestSourceFetchedAt ?? null,
         reason: `SESSION_SNAPSHOT_ROW_INVALID: ${rowErrors[0]}`,
+        rows: Object.freeze([]),
+      }),
+      storeCodes,
+    });
+  }
+  if (page.status === 'UNAVAILABLE') {
+    return Object.freeze({
+      page: Object.freeze({
+        status: 'UNAVAILABLE',
+        source: 'SESSION_HTTP',
+        latestSourceFetchedAt: page.latestSourceFetchedAt ?? null,
+        reason: page.reason ?? 'SESSION_GATE_FAILED: no store produced a complete page.',
         rows: Object.freeze([]),
       }),
       storeCodes,
@@ -439,29 +444,41 @@ export function mergeOrderManagementSessionSnapshot(snapshot, {
   expectedStoreCount = ORDER_MANAGEMENT_EXPECTED_STORE_COUNT,
   waybillCoreRows = [],
 } = {}) {
-  const hasSnapshot = snapshot && typeof snapshot === 'object' && snapshot.pages;
-  const stockNormalized = hasSnapshot
-    ? normalizeSnapshotPage(snapshot.pages?.['stock-records'], 'stock-records', { now, expectedStoreCount })
-    : Object.freeze({
-        page: emptyPage(
-          'stock-records',
-          'SESSION_HTTP',
-          'SESSION_SNAPSHOT_ABSENT: run scripts/sync_full_managed_order_management_sessions.mjs with --execute to produce the snapshot; the materializer never guesses a live request.',
-          { now },
-        ),
-        storeCodes: Object.freeze([]),
-      });
-  const stockPage = stockNormalized.page;
+  const hasSnapshot = Boolean(snapshot && typeof snapshot === 'object' && snapshot.pages);
+  const sessionPageIds = Object.keys(ORDER_MANAGEMENT_SESSION_PAGES);
+  const absentReason = 'SESSION_SNAPSHOT_ABSENT: run scripts/sync_full_managed_order_management_sessions.mjs with --execute to produce the snapshot; the materializer never guesses a live request.';
+  const normalizedByPage = {};
+  const pages = {};
+  const evidence = {};
+
+  for (const pageId of sessionPageIds) {
+    if (pageId === 'waybills') continue;
+    const normalized = hasSnapshot
+      ? normalizeSnapshotPage(snapshot.pages?.[pageId], pageId, { now, expectedStoreCount })
+      : Object.freeze({
+          page: emptyPage(pageId, 'SESSION_HTTP', absentReason, { now }),
+          storeCodes: Object.freeze([]),
+        });
+    normalizedByPage[pageId] = normalized;
+    pages[pageId] = normalized.page;
+    evidence[pageId] = Object.freeze({
+      gates: normalized.page.status === 'AVAILABLE'
+        ? Object.freeze({ totalVerified: true, pagingVerified: true, dedupeVerified: true, contentVerified: true })
+        : Object.freeze({ totalVerified: false, pagingVerified: false, dedupeVerified: false, contentVerified: false }),
+      storeCodes: Object.freeze(normalized.storeCodes),
+      rowCount: normalized.page.rows.length,
+      skippedDuplicates: 0,
+      sessionSnapshotUsed: hasSnapshot,
+    });
+  }
+
+  const stockPage = pages['stock-records'];
+  const stockNormalized = normalizedByPage['stock-records'];
 
   const waybillNormalized = hasSnapshot
     ? normalizeSnapshotPage(snapshot.pages?.waybills, 'waybills', { now, expectedStoreCount })
     : Object.freeze({
-        page: emptyPage(
-          'waybills',
-          'SESSION_HTTP',
-          'SESSION_SNAPSHOT_ABSENT: run scripts/sync_full_managed_order_management_sessions.mjs with --execute to produce the snapshot; the materializer never guesses a live request.',
-          { now },
-        ),
+        page: emptyPage('waybills', 'SESSION_HTTP', absentReason, { now }),
         storeCodes: Object.freeze([]),
       });
   const waybillSessionPage = waybillNormalized.page;
@@ -523,14 +540,14 @@ export function mergeOrderManagementSessionSnapshot(snapshot, {
   return Object.freeze({
     now: now.toISOString(),
     pages: Object.freeze({
-      'stock-records': stockPage,
+      ...pages,
       waybills: waybillsPage,
     }),
     evidence: Object.freeze({
       'stock-records': Object.freeze({
         gates: stockPage.status === 'AVAILABLE'
-          ? Object.freeze({ totalVerified: true, pagingVerified: true, dedupeVerified: true })
-          : Object.freeze({ totalVerified: false, pagingVerified: false, dedupeVerified: false }),
+          ? Object.freeze({ totalVerified: true, pagingVerified: true, dedupeVerified: true, contentVerified: true })
+          : Object.freeze({ totalVerified: false, pagingVerified: false, dedupeVerified: false, contentVerified: false }),
         storeCodes: Object.freeze(stockNormalized.storeCodes),
         rowCount: stockPage.rows.length,
         skippedDuplicates: 0,
@@ -538,13 +555,18 @@ export function mergeOrderManagementSessionSnapshot(snapshot, {
       }),
       waybills: Object.freeze({
         gates: waybillsPage.status === 'AVAILABLE'
-          ? Object.freeze({ totalVerified: true, pagingVerified: true, dedupeVerified: true })
-          : Object.freeze({ totalVerified: false, pagingVerified: false, dedupeVerified: false }),
+          ? Object.freeze({ totalVerified: true, pagingVerified: true, dedupeVerified: true, contentVerified: true })
+          : Object.freeze({ totalVerified: false, pagingVerified: false, dedupeVerified: false, contentVerified: false }),
         storeCodes: Object.freeze(waybillStores),
         rowCount: mergedWaybillRows.length,
         skippedDuplicates: sessionDedupeSkipped,
         sessionSnapshotUsed: hasSnapshot,
       }),
+      ...Object.fromEntries(
+        sessionPageIds
+          .filter((pageId) => pageId !== 'stock-records' && pageId !== 'waybills')
+          .map((pageId) => [pageId, evidence[pageId]]),
+      ),
     }),
   });
 }
@@ -597,7 +619,12 @@ export async function materializeOrderManagement({
   }
   for (const pageId of ORDER_MANAGEMENT_PAGE_IDS) {
     if (pages[pageId]) continue;
-    pages[pageId] = emptyPage(pageId, 'NONE', ORDER_MANAGEMENT_UNAVAILABLE_REASONS[pageId], { now });
+    pages[pageId] = emptyPage(
+      pageId,
+      'NONE',
+      'NO_VERIFIED_SOURCE: no database page or session snapshot page produced this page id.',
+      { now },
+    );
     evidencePages[pageId] = Object.freeze({
       gates: Object.freeze({
         totalVerified: false,
@@ -614,19 +641,24 @@ export async function materializeOrderManagement({
     .filter((pageId) => pages[pageId].status === 'AVAILABLE');
   const partialPages = ORDER_MANAGEMENT_PAGE_IDS
     .filter((pageId) => pages[pageId].status === 'PARTIAL');
+  const unavailablePages = ORDER_MANAGEMENT_PAGE_IDS
+    .filter((pageId) => pages[pageId].status === 'UNAVAILABLE');
   const storeCodes = intersectionOf(availablePages.map((pageId) => evidencePages[pageId]));
   const completed = availablePages.length === 0
     ? 0
     : storeCodes.length;
+  const everyPageAvailable = availablePages.length === ORDER_MANAGEMENT_PAGE_IDS.length;
   const coverageStatus = availablePages.length === 0 && partialPages.length === 0
     ? 'UNAVAILABLE'
-    : partialPages.length === 0 && completed === expectedStoreCount
+    : everyPageAvailable && partialPages.length === 0 && completed === expectedStoreCount
       ? 'COMPLETE'
       : 'PARTIAL';
   const coverageReason = coverageStatus === 'COMPLETE'
     ? null
     : partialPages.length > 0
       ? `PAGE_GATE_FAILED: ${partialPages.map((pageId) => `${pageId}: ${pages[pageId].reason}`).join(' | ')}`
+      : unavailablePages.length > 0
+        ? `PAGE_UNAVAILABLE: ${unavailablePages.map((pageId) => `${pageId}: ${pages[pageId].reason}`).join(' | ')}`
       : availablePages.length === 0
         ? 'NO_AVAILABLE_PAGES: every page is UNAVAILABLE; nothing can be promoted.'
         : `STORE_COVERAGE_INCOMPLETE: ${completed}/${expectedStoreCount} stores covered by every available page.`;

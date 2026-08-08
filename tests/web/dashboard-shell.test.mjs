@@ -26,7 +26,6 @@ test('full-managed primary navigation keeps home first and nests shipping orders
     'home',
     'fulfilment',
     'delivery-notes',
-    'delivery-desk',
     'stock-records',
     'waybills',
     'return-applications',
@@ -47,7 +46,7 @@ test('full-managed primary navigation keeps home first and nests shipping orders
     assert.match(html, new RegExp(`data-route="${route}"`));
     assert.match(app, new RegExp(`\\b['"]?${route}['"]?: \\{ title:`));
   }
-  assert.equal((html.match(/data-route=/g) || []).length, 18);
+  assert.equal((html.match(/data-route=/g) || []).length, 17);
   assert.deepEqual(
     [...html.matchAll(/data-route="([^"]+)"/g)].map((match) => match[1]),
     routes,
@@ -76,7 +75,6 @@ test('full-managed primary navigation keeps home first and nests shipping orders
     [
       'fulfilment',
       'delivery-notes',
-      'delivery-desk',
       'stock-records',
       'waybills',
       'return-applications',

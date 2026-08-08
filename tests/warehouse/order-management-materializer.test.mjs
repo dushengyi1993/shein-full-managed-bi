@@ -135,7 +135,7 @@ test('materializes delivery-note and waybill cores from fact.delivery with the s
   assert.equal(commands.at(-1), 'RELEASE');
 });
 
-test('the orchestrator exposes all nine fixed pages and gates promotion on coverage', async () => {
+test('the orchestrator exposes all eight fixed pages and blocks promotion while session pages are absent', async () => {
   const { pool } = mockPool(TWO_STORE_DELIVERIES);
   const index = await materializeOrderManagement({
     pool,
@@ -143,13 +143,13 @@ test('the orchestrator exposes all nine fixed pages and gates promotion on cover
     expectedStoreCount: 2,
   });
   assert.deepEqual(Object.keys(index.pages).sort(), [...ORDER_MANAGEMENT_PAGE_IDS].sort());
-  assert.equal(index.coverage.status, 'COMPLETE');
+  assert.equal(index.coverage.status, 'PARTIAL');
   assert.equal(index.coverage.completedStoreCount, 2);
   assert.deepEqual(index.coverage.storeCodes, ['DL5477', 'MZ2406']);
-  assert.equal(index.promotable, true);
+  assert.equal(index.promotable, false);
+  assert.match(index.coverage.reason, /PAGE_UNAVAILABLE/);
   assert.equal(validateOrderManagementIndex(index).ok, true);
   for (const pageId of [
-    'delivery-desk',
     'return-applications',
     'return-orders',
     'exceptions',
@@ -157,9 +157,9 @@ test('the orchestrator exposes all nine fixed pages and gates promotion on cover
     'quality-reports',
   ]) {
     assert.equal(index.pages[pageId].status, 'UNAVAILABLE');
-    assert.ok(index.pages[pageId].reason, `${pageId} needs an explicit reason`);
+    assert.match(index.pages[pageId].reason, /SESSION_SNAPSHOT_ABSENT/);
   }
-  assert.match(index.pages['delivery-desk'].reason, /total/);
+  assert.equal(index.pages['delivery-desk'], undefined);
   assert.equal(index.pages['stock-records'].status, 'UNAVAILABLE');
   assert.match(index.pages['stock-records'].reason, /SESSION_SNAPSHOT_ABSENT/);
 });
@@ -213,44 +213,113 @@ const WAYBILL_SNAPSHOT_ROW = {
   details: [],
 };
 
+const RETURN_APPLICATION_SNAPSHOT_ROW = {
+  id: 'RA-9001',
+  storeCode: 'DL5477',
+  statusCode: '1',
+  statusName: '待商家确认',
+  createdAt: '2026-08-07T00:00:00.000Z',
+  updatedAt: '2026-08-08T06:00:00.000Z',
+  primary: 'RA-9001',
+  secondary: null,
+  tags: ['退货申请'],
+  metrics: [{ name: 'returnQuantity', value: 10 }],
+  facts: [{ name: 'returnReasonName', value: '滞销退' }],
+  details: [],
+};
+
+const RETURN_ORDER_SNAPSHOT_ROW = {
+  id: 'RO-9001',
+  storeCode: 'DL5477',
+  statusCode: '2',
+  statusName: '待退货',
+  createdAt: '2026-08-07T00:00:00.000Z',
+  updatedAt: '2026-08-08T06:00:00.000Z',
+  primary: 'RO-9001',
+  secondary: null,
+  tags: ['退货单'],
+  metrics: [{ name: 'returnQuantity', value: 5 }],
+  facts: [{ name: 'warehouseName', value: '总仓' }],
+  details: [],
+};
+
+const EXCEPTION_SNAPSHOT_ROW = {
+  id: 'WO-9001',
+  storeCode: 'DL5477',
+  statusCode: '1',
+  statusName: '处理中',
+  createdAt: '2026-08-07T00:00:00.000Z',
+  updatedAt: '2026-08-08T06:00:00.000Z',
+  primary: 'WO-9001',
+  secondary: null,
+  tags: ['收货/退货异常'],
+  metrics: [],
+  facts: [{ name: 'categoryName', value: '收货异常' }],
+  details: [],
+};
+
+const VALUE_ADDED_SNAPSHOT_ROW = {
+  id: 'VA-9001',
+  storeCode: 'DL5477',
+  statusCode: '1',
+  statusName: '服务中',
+  createdAt: null,
+  updatedAt: '2026-08-08T06:00:00.000Z',
+  primary: 'VA-9001',
+  secondary: null,
+  tags: ['增值服务'],
+  metrics: [{ name: 'actualTotalAmount', value: 12.5 }],
+  facts: [{ name: 'serviceSiteName', value: '华东仓' }],
+  details: [],
+};
+
+const QUALITY_REPORT_SNAPSHOT_ROW = {
+  id: 'QC-9001',
+  storeCode: 'DL5477',
+  statusCode: '1',
+  statusName: '合格',
+  createdAt: '2026-08-07T00:00:00.000Z',
+  updatedAt: '2026-08-08T06:00:00.000Z',
+  primary: 'QC-9001',
+  secondary: null,
+  tags: ['质检报告'],
+  metrics: [{ name: 'defectiveTotalQty', value: 0 }],
+  facts: [{ name: 'qcTypeName', value: '出库质检' }],
+  details: [],
+};
+
 function snapshotWith({ stockStatus = 'AVAILABLE', stockStoreCount = 2, waybillStatus = 'AVAILABLE' } = {}) {
+  const page = (pageId, rows, status = 'AVAILABLE', storeCount = 2) => Object.freeze({
+    status,
+    source: 'SESSION_HTTP',
+    latestSourceFetchedAt: '2026-08-08T06:00:00.000Z',
+    reason: status === 'AVAILABLE' ? null : 'SESSION_GATE_FAILED: test',
+    storeCodes: ['DL5477', 'MZ2406'],
+    gates: {
+      totalVerified: true,
+      pagingVerified: true,
+      dedupeVerified: true,
+      contentVerified: true,
+      storeCount,
+    },
+    rows: status === 'AVAILABLE' ? rows : [],
+  });
   return {
     schemaVersion: 1,
     updatedAt: '2026-08-08T06:00:00.000Z',
     pages: {
-      'stock-records': {
-        status: stockStatus,
-        source: 'SESSION_HTTP',
-        latestSourceFetchedAt: '2026-08-08T06:00:00.000Z',
-        reason: stockStatus === 'AVAILABLE' ? null : 'SESSION_GATE_FAILED: test',
-        storeCodes: ['DL5477', 'MZ2406'],
-        gates: {
-          totalVerified: true,
-          pagingVerified: true,
-          dedupeVerified: true,
-          storeCount: stockStoreCount,
-        },
-        rows: stockStatus === 'AVAILABLE' ? [STOCK_SNAPSHOT_ROW] : [],
-      },
-      waybills: {
-        status: waybillStatus,
-        source: 'SESSION_HTTP',
-        latestSourceFetchedAt: '2026-08-08T06:00:00.000Z',
-        reason: waybillStatus === 'AVAILABLE' ? null : 'SESSION_GATE_FAILED: test',
-        storeCodes: ['DL5477', 'MZ2406'],
-        gates: {
-          totalVerified: true,
-          pagingVerified: true,
-          dedupeVerified: true,
-          storeCount: 2,
-        },
-        rows: waybillStatus === 'AVAILABLE' ? [WAYBILL_SNAPSHOT_ROW] : [],
-      },
+      'stock-records': page('stock-records', [STOCK_SNAPSHOT_ROW], stockStatus, stockStoreCount),
+      waybills: page('waybills', [WAYBILL_SNAPSHOT_ROW], waybillStatus, 2),
+      'return-applications': page('return-applications', [RETURN_APPLICATION_SNAPSHOT_ROW]),
+      'return-orders': page('return-orders', [RETURN_ORDER_SNAPSHOT_ROW]),
+      exceptions: page('exceptions', [EXCEPTION_SNAPSHOT_ROW]),
+      'value-added-services': page('value-added-services', [VALUE_ADDED_SNAPSHOT_ROW]),
+      'quality-reports': page('quality-reports', [QUALITY_REPORT_SNAPSHOT_ROW]),
     },
   };
 }
 
-test('a passing session snapshot merges stock records and waybills into the index', async () => {
+test('a passing session snapshot merges all seven session pages into the index', async () => {
   const { pool } = mockPool(TWO_STORE_DELIVERIES);
   const index = await materializeOrderManagement({
     pool,
@@ -265,9 +334,70 @@ test('a passing session snapshot merges stock records and waybills into the inde
   assert.equal(index.pages.waybills.rows.length, 3);
   assert.ok(index.pages.waybills.rows.some((row) => row.id === 'SF-9001'));
   assert.ok(index.pages.waybills.rows.some((row) => row.id === 'SF-1001'));
+  for (const [pageId, rowId] of [
+    ['return-applications', 'RA-9001'],
+    ['return-orders', 'RO-9001'],
+    ['exceptions', 'WO-9001'],
+    ['value-added-services', 'VA-9001'],
+    ['quality-reports', 'QC-9001'],
+  ]) {
+    assert.equal(index.pages[pageId].status, 'AVAILABLE');
+    assert.equal(index.pages[pageId].source, 'SESSION_HTTP');
+    assert.equal(index.pages[pageId].rows[0].id, rowId);
+    assert.equal(index.evidence.pages[pageId].gates.contentVerified, true);
+  }
   assert.equal(index.coverage.status, 'COMPLETE');
   assert.equal(index.promotable, true);
+  for (const evidence of Object.values(index.evidence.pages)) {
+    assert.equal(typeof evidence.sessionSnapshotUsed === 'undefined'
+      ? true
+      : evidence.sessionSnapshotUsed, true);
+  }
   assert.equal(validateOrderManagementIndex(index).ok, true);
+});
+
+test('a session page with a false content gate blocks promotion', async () => {
+  const { pool } = mockPool(TWO_STORE_DELIVERIES);
+  const snapshot = snapshotWith();
+  snapshot.pages['quality-reports'].gates.contentVerified = false;
+  const index = await materializeOrderManagement({
+    pool,
+    sessionSnapshot: snapshot,
+    now: new Date('2026-08-08T06:00:00.000Z'),
+    expectedStoreCount: 2,
+  });
+  assert.equal(index.pages['quality-reports'].status, 'PARTIAL');
+  assert.equal(index.coverage.status, 'PARTIAL');
+  assert.equal(index.promotable, false);
+});
+
+test('an unavailable session page stays unavailable and cannot become an HTTP-200 partial page', async () => {
+  const { pool } = mockPool(TWO_STORE_DELIVERIES);
+  const snapshot = snapshotWith();
+  snapshot.pages['quality-reports'] = {
+    ...snapshot.pages['quality-reports'],
+    status: 'UNAVAILABLE',
+    reason: 'SESSION_GATE_FAILED: NO_STORE_SUCCEEDED',
+    storeCodes: [],
+    gates: {
+      totalVerified: false,
+      pagingVerified: false,
+      dedupeVerified: false,
+      contentVerified: false,
+      storeCount: 0,
+    },
+    rows: [],
+  };
+  const index = await materializeOrderManagement({
+    pool,
+    sessionSnapshot: snapshot,
+    now: new Date('2026-08-08T06:00:00.000Z'),
+    expectedStoreCount: 2,
+  });
+  assert.equal(index.pages['quality-reports'].status, 'UNAVAILABLE');
+  assert.equal(index.pages['quality-reports'].rows.length, 0);
+  assert.equal(index.coverage.status, 'PARTIAL');
+  assert.equal(index.promotable, false);
 });
 
 test('a failing snapshot gate blocks promotion of the whole index', async () => {

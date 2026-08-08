@@ -159,7 +159,7 @@ test('rejects non-allowlisted metric names and numeric PII values instead of for
   );
 });
 
-test('drops rows whose tags carry numeric PII and marks the page PARTIAL', async (t) => {
+test('rejects the whole index when status or tags carry sensitive text', async (t) => {
   const index = indexWithDeliveryRows([
     deliveryRow(),
     deliveryRow({
@@ -174,12 +174,11 @@ test('drops rows whose tags carry numeric PII and marks the page PARTIAL', async
     }),
   ]);
   const file = await writeTempIndex(t, index);
-  const loaded = await loadOrderManagementData(file, { runtimeEnvironment: 'production' });
-  const page = loaded.pages['delivery-notes'];
-  assert.equal(page.status, 'PARTIAL');
-  assert.match(page.reason, /ROWS_REJECTED_PII:1/);
-  assert.deepEqual(page.rows.map((row) => row.id), ['DN-1001', 'DN-9002']);
-  assert.doesNotMatch(JSON.stringify(page.rows), /13800138000/);
+  await assert.rejects(
+    loadOrderManagementData(file, { runtimeEnvironment: 'production' }),
+    (error) => error instanceof OrderManagementDataError
+      && error.code === 'ORDER_MANAGEMENT_SCHEMA_INVALID',
+  );
 });
 
 test('returns an unavailable empty index in development without a file and never fabricates rows', async () => {

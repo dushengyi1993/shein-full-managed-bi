@@ -17,6 +17,8 @@ import {
   ORDER_MANAGEMENT_ENDPOINT_FIELD_ALLOWLISTS,
   ORDER_MANAGEMENT_ENDPOINTS,
   ORDER_MANAGEMENT_MAX_PAGES,
+  ORDER_MANAGEMENT_ONCE_ONLY_PAGES,
+  ORDER_MANAGEMENT_SESSION_PAGES,
   ORDER_MANAGEMENT_WINDOW_MAX_DAYS,
   orderManagementRequestBody,
   orderManagementWindow,
@@ -137,6 +139,32 @@ function parseShanghaiDateTime(value) {
   return Number.isNaN(date.valueOf()) ? null : date.toISOString();
 }
 
+/**
+ * Accepts the platform's two observed timestamp spellings: Shanghai
+ * "YYYY-MM-DD HH:mm:ss" and ISO-8601 instants.  Returns null for anything
+ * that is not a valid instant so the row stays honest about unknown times.
+ */
+function parseInstant(value) {
+  const shanghai = parseShanghaiDateTime(value);
+  if (shanghai !== null) return shanghai;
+  if (value === null || value === undefined || value === '') return null;
+  const date = new Date(String(value));
+  return Number.isNaN(date.valueOf()) ? null : date.toISOString();
+}
+
+/**
+ * Join a scalar or scalar-array platform value with a pipe.  Arrays with
+ * non-scalar members are dropped item by item; the result is null when
+ * nothing usable remains.  The PII scrub still applies to the joined text.
+ */
+function joinList(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const items = (Array.isArray(value) ? value : [value])
+    .map((item) => (typeof item === 'string' || typeof item === 'number' ? String(item).trim() : ''))
+    .filter(Boolean);
+  return items.length > 0 ? items.join('|') : null;
+}
+
 function toNumber(value, { nonNegative = true } = {}) {
   if (value === null || value === undefined || value === '' || value === '-') return null;
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -235,8 +263,249 @@ function buildWaybillRow(record, storeCode, fetchedAt) {
   });
 }
 
+function buildReturnApplicationRow(record, storeCode, fetchedAt) {
+  const returnPlanNo = String(record.returnPlanNo ?? '').trim();
+  if (!returnPlanNo) return null;
+  return Object.freeze({
+    id: returnPlanNo,
+    storeCode,
+    statusCode: String(record.state ?? '').trim() || null,
+    statusName: String(record.stateName ?? '').trim() || null,
+    createdAt: parseInstant(record.returnTime) ?? parseInstant(record.addTime),
+    updatedAt: fetchedAt,
+    primary: returnPlanNo,
+    secondary: String(record.originNo ?? record.returnReasonName ?? '').trim() || null,
+    tags: Object.freeze(['退货申请', record.returnDealTypeName, record.returnModeName].filter(Boolean)),
+    metrics: Object.freeze([
+      metricEntry('return-applications', 'returnQuantity', record.returnQuantity),
+      metricEntry('return-applications', 'returnGenerateQuantity', record.returnGenerateQuantity),
+      metricEntry('return-applications', 'returnScrappedQuantity', record.returnScrappedQuantity),
+      metricEntry('return-applications', 'returnVssQuantity', record.returnVssQuantity),
+      metricEntry('return-applications', 'returnTotalAmount', record.returnTotalAmount),
+    ].filter((entry) => entry.value !== null)),
+    facts: Object.freeze([
+      factEntry('return-applications', 'returnPlanNo', record.returnPlanNo),
+      factEntry('return-applications', 'returnReasonType', record.returnReasonType),
+      factEntry('return-applications', 'returnReasonName', record.returnReasonName),
+      factEntry('return-applications', 'returnDimensions', record.returnDimensions),
+      factEntry('return-applications', 'returnDimensionsName', record.returnDimensionsName),
+      factEntry('return-applications', 'originNo', record.originNo),
+      factEntry('return-applications', 'state', record.state),
+      factEntry('return-applications', 'stateName', record.stateName),
+      factEntry('return-applications', 'returnDealType', record.returnDealType),
+      factEntry('return-applications', 'returnDealTypeName', record.returnDealTypeName),
+      factEntry('return-applications', 'returnMode', record.returnMode),
+      factEntry('return-applications', 'returnModeName', record.returnModeName),
+      factEntry('return-applications', 'pricingCurrencyId', record.pricingCurrencyId),
+      factEntry('return-applications', 'currencyCode', record.currencyCode),
+      factEntry('return-applications', 'billCurrencyId', record.billCurrencyId),
+      factEntry('return-applications', 'billCurrencyCode', record.billCurrencyCode),
+      factEntry('return-applications', 'warehouseIds', joinList(record.warehouseIds)),
+      factEntry('return-applications', 'returnTime', record.returnTime),
+      factEntry('return-applications', 'addTime', record.addTime),
+      factEntry('return-applications', 'lastUpdateTime', record.lastUpdateTime),
+    ].filter(Boolean)),
+    details: Object.freeze([]),
+  });
+}
+
+function buildReturnOrderRow(record, storeCode, fetchedAt) {
+  const returnOrderNo = String(record.returnOrderNo ?? '').trim();
+  if (!returnOrderNo) return null;
+  return Object.freeze({
+    id: returnOrderNo,
+    storeCode,
+    statusCode: String(record.returnOrderStatus ?? '').trim() || null,
+    statusName: String(record.returnOrderStatusName ?? '').trim() || null,
+    createdAt: parseInstant(record.addTime),
+    updatedAt: fetchedAt,
+    primary: returnOrderNo,
+    secondary: String(record.returnPlanNo ?? '').trim() || null,
+    tags: Object.freeze(['退货单', record.returnOrderTypeName, record.returnWayTypeName].filter(Boolean)),
+    metrics: Object.freeze([
+      metricEntry('return-orders', 'waitReturnQuantity', record.waitReturnQuantity),
+      metricEntry('return-orders', 'returnQuantity', record.returnQuantity),
+      metricEntry('return-orders', 'returnAmount', record.returnAmount),
+      metricEntry('return-orders', 'returnBoxNum', record.returnBoxNum),
+      metricEntry('return-orders', 'skcNum', record.skcNum),
+    ].filter((entry) => entry.value !== null)),
+    facts: Object.freeze([
+      factEntry('return-orders', 'returnPlanNo', record.returnPlanNo),
+      factEntry('return-orders', 'returnOrderType', record.returnOrderType),
+      factEntry('return-orders', 'returnOrderTypeName', record.returnOrderTypeName),
+      factEntry('return-orders', 'returnOrderStatus', record.returnOrderStatus),
+      factEntry('return-orders', 'returnOrderStatusName', record.returnOrderStatusName),
+      factEntry('return-orders', 'returnWayType', record.returnWayType),
+      factEntry('return-orders', 'changeReturnWayType', record.changeReturnWayType),
+      factEntry('return-orders', 'returnWayTypeName', record.returnWayTypeName),
+      factEntry('return-orders', 'returnExpressCompanyCode', record.returnExpressCompanyCode),
+      factEntry('return-orders', 'returnExpressCompanyName', record.returnExpressCompanyName),
+      factEntry('return-orders', 'expressNoList', joinList(record.expressNoList)),
+      factEntry('return-orders', 'warehouseId', record.warehouseId),
+      factEntry('return-orders', 'warehouseName', record.warehouseName),
+      factEntry('return-orders', 'subWarehouseId', record.subWarehouseId),
+      factEntry('return-orders', 'subWarehouseName', record.subWarehouseName),
+      factEntry('return-orders', 'skcNameList', joinList(record.skcNameList)),
+      factEntry('return-orders', 'supplierCodeList', joinList(record.supplierCodeList)),
+      factEntry('return-orders', 'returnReasonType', record.returnReasonType),
+      factEntry('return-orders', 'returnReasonName', record.returnReasonName),
+      factEntry('return-orders', 'returnScrapType', record.returnScrapType),
+      factEntry('return-orders', 'returnScrapTypeName', record.returnScrapTypeName),
+      factEntry('return-orders', 'returnDimensions', record.returnDimensions),
+      factEntry('return-orders', 'isSign', record.isSign),
+      factEntry('return-orders', 'sellerOrderNo', joinList(record.sellerOrderNo)),
+      factEntry('return-orders', 'sellerOrderNoList', joinList(record.sellerOrderNoList)),
+      factEntry('return-orders', 'sellerDeliveryNo', joinList(record.sellerDeliveryNo)),
+      factEntry('return-orders', 'sellerDeliveryNoList', joinList(record.sellerDeliveryNoList)),
+      factEntry('return-orders', 'currencyCode', record.currencyCode),
+      factEntry('return-orders', 'billCurrencyCode', record.billCurrencyCode),
+      factEntry('return-orders', 'canApplyReconsider', record.canApplyReconsider),
+      factEntry('return-orders', 'signTime', record.signTime),
+      factEntry('return-orders', 'completeTime', record.completeTime),
+      factEntry('return-orders', 'waybillPickupTime', record.waybillPickupTime),
+      factEntry('return-orders', 'waybillSignTime', record.waybillSignTime),
+      factEntry('return-orders', 'updateTime', record.updateTime),
+      factEntry('return-orders', 'addTime', record.addTime),
+    ].filter(Boolean)),
+    details: Object.freeze([]),
+  });
+}
+
+function buildExceptionRow(record, storeCode, fetchedAt) {
+  const workorderNo = String(record.workorderNo ?? '').trim();
+  if (!workorderNo) return null;
+  return Object.freeze({
+    id: workorderNo,
+    storeCode,
+    statusCode: String(record.statusValue ?? '').trim() || null,
+    statusName: String(record.statusName ?? '').trim() || null,
+    createdAt: parseInstant(record.createTime),
+    updatedAt: fetchedAt,
+    primary: workorderNo,
+    secondary: String(record.externalNo ?? record.categoryName ?? '').trim() || null,
+    tags: Object.freeze(['收货/退货异常', record.categoryName, record.sceneTypeName].filter(Boolean)),
+    metrics: Object.freeze([]),
+    facts: Object.freeze([
+      factEntry('exceptions', 'categoryId', record.categoryId),
+      factEntry('exceptions', 'categoryCode', record.categoryCode),
+      factEntry('exceptions', 'categoryName', record.categoryName),
+      factEntry('exceptions', 'firstCategoryCode', record.firstCategoryCode),
+      factEntry('exceptions', 'firstCategoryName', record.firstCategoryName),
+      factEntry('exceptions', 'applyType', record.applyType),
+      factEntry('exceptions', 'applyTypeName', record.applyTypeName),
+      factEntry('exceptions', 'sceneType', record.sceneType),
+      factEntry('exceptions', 'sceneTypeName', record.sceneTypeName),
+      factEntry('exceptions', 'statusValue', record.statusValue),
+      factEntry('exceptions', 'statusName', record.statusName),
+      factEntry('exceptions', 'externalSystem', record.externalSystem),
+      factEntry('exceptions', 'externalNo', record.externalNo),
+      factEntry('exceptions', 'workorderType', record.workorderType),
+      factEntry('exceptions', 'createTime', record.createTime),
+    ].filter(Boolean)),
+    details: Object.freeze([]),
+  });
+}
+
+function buildValueAddedServiceRow(record, storeCode, fetchedAt) {
+  const orderNo = String(record.orderNo ?? '').trim();
+  if (!orderNo) return null;
+  const rowId = String(record.id ?? record.subOrderNo ?? orderNo).trim();
+  if (!rowId) return null;
+  return Object.freeze({
+    id: rowId,
+    storeCode,
+    statusCode: String(record.orderState ?? '').trim() || null,
+    statusName: String(record.orderStateName ?? '').trim() || null,
+    createdAt: null,
+    updatedAt: fetchedAt,
+    primary: orderNo,
+    secondary: String(record.subOrderNo ?? record.purchaseNo ?? '').trim() || null,
+    tags: Object.freeze(['增值服务', record.totalFlagName, record.vendorReplenishStateName].filter(Boolean)),
+    metrics: Object.freeze([
+      metricEntry('value-added-services', 'actualTotalAmount', record.actualTotalAmount),
+      metricEntry('value-added-services', 'estimateIncrementAmount', record.estimateIncrementAmount),
+      metricEntry('value-added-services', 'defectiveQuantity', record.defectiveQuantity),
+      metricEntry('value-added-services', 'skcNum', record.skcNum),
+    ].filter((entry) => entry.value !== null)),
+    facts: Object.freeze([
+      factEntry('value-added-services', 'subOrderNo', record.subOrderNo),
+      factEntry('value-added-services', 'serviceSiteId', record.serviceSiteId),
+      factEntry('value-added-services', 'serviceSiteName', record.serviceSiteName),
+      factEntry('value-added-services', 'purchaseNo', record.purchaseNo),
+      factEntry('value-added-services', 'newPurchaseNo', record.newPurchaseNo),
+      factEntry('value-added-services', 'skc', record.skc),
+      factEntry('value-added-services', 'multiPartFlag', record.multiPartFlag),
+      factEntry('value-added-services', 'supplierProductNumber', record.supplierProductNumber),
+      factEntry('value-added-services', 'totalFlag', record.totalFlag),
+      factEntry('value-added-services', 'totalFlagName', record.totalFlagName),
+      factEntry('value-added-services', 'orderState', record.orderState),
+      factEntry('value-added-services', 'orderStateName', record.orderStateName),
+      factEntry('value-added-services', 'lowValueFlag', record.lowValueFlag),
+      factEntry('value-added-services', 'valueAddedResult', record.valueAddedResult),
+      factEntry('value-added-services', 'qcInspectionNo', record.qcInspectionNo),
+      factEntry('value-added-services', 'orderScene', record.orderScene),
+      factEntry('value-added-services', 'returnFlag', record.returnFlag),
+      factEntry('value-added-services', 'returnNo', record.returnNo),
+      factEntry('value-added-services', 'deliveryNo', record.deliveryNo),
+      factEntry('value-added-services', 'vendorReplenishState', record.vendorReplenishState),
+      factEntry('value-added-services', 'vendorReplenishStateName', record.vendorReplenishStateName),
+      factEntry('value-added-services', 'showFeeTag', record.showFeeTag),
+      factEntry('value-added-services', 'supplierSource', record.supplierSource),
+      factEntry('value-added-services', 'supplierSourceName', record.supplierSourceName),
+    ].filter(Boolean)),
+    details: Object.freeze([]),
+  });
+}
+
+function buildQualityReportRow(record, storeCode, fetchedAt) {
+  const qcInspectionNo = String(record.qcInspectionNo ?? '').trim();
+  if (!qcInspectionNo) return null;
+  return Object.freeze({
+    id: qcInspectionNo,
+    storeCode,
+    statusCode: String(record.inspectionResult ?? '').trim() || null,
+    statusName: String(record.inspectionResultName ?? '').trim() || null,
+    createdAt: parseInstant(record.inspectionTime),
+    updatedAt: fetchedAt,
+    primary: qcInspectionNo,
+    secondary: String(record.purchaseCode ?? '').trim() || null,
+    tags: Object.freeze(['质检报告', record.qcTypeName, record.hasDefectiveTotalName].filter(Boolean)),
+    metrics: Object.freeze([
+      metricEntry('quality-reports', 'defectiveTotalQty', record.defectiveTotalQty),
+      metricEntry('quality-reports', 'orderDefectiveTotalQty', record.orderDefectiveTotalQty),
+    ].filter((entry) => entry.value !== null)),
+    facts: Object.freeze([
+      factEntry('quality-reports', 'purchaseCode', record.purchaseCode),
+      factEntry('quality-reports', 'skc', record.skc),
+      factEntry('quality-reports', 'qcType', record.qcType),
+      factEntry('quality-reports', 'qcTypeName', record.qcTypeName),
+      factEntry('quality-reports', 'orderQcResult', record.orderQcResult),
+      factEntry('quality-reports', 'orderQcResultName', record.orderQcResultName),
+      factEntry('quality-reports', 'inspectionResult', record.inspectionResult),
+      factEntry('quality-reports', 'inspectionResultName', record.inspectionResultName),
+      factEntry('quality-reports', 'hasDefectiveTotal', record.hasDefectiveTotal),
+      factEntry('quality-reports', 'hasDefectiveTotalName', record.hasDefectiveTotalName),
+      factEntry('quality-reports', 'inspectionTime', record.inspectionTime),
+    ].filter(Boolean)),
+    details: Object.freeze([]),
+  });
+}
+
+const PAGE_ROW_BUILDERS = Object.freeze({
+  'stock-records': buildStockRecordRow,
+  waybills: buildWaybillRow,
+  'return-applications': buildReturnApplicationRow,
+  'return-orders': buildReturnOrderRow,
+  exceptions: buildExceptionRow,
+  'value-added-services': buildValueAddedServiceRow,
+  'quality-reports': buildQualityReportRow,
+});
+
 async function fetchPageRows(transport, endpointCode, { window, maxPages }) {
   const endpoint = ORDER_MANAGEMENT_ENDPOINTS[endpointCode];
+  if (endpoint.windowFields && !window) {
+    throw new TypeError(`ORDER_MANAGEMENT_WINDOW_REQUIRED: ${endpointCode}`);
+  }
   const failures = [];
   const rows = [];
   let total = null;
@@ -246,7 +515,7 @@ async function fetchPageRows(transport, endpointCode, { window, maxPages }) {
     const body = Object.freeze({
       ...orderManagementRequestBody(endpointCode, { window }),
       [endpoint.pageKey]: page,
-      [endpoint.pageSizeKey]: endpoint.defaultPageSize,
+      [endpoint.pageSizeKey]: endpoint.pageSizeValue ?? endpoint.defaultPageSize,
     });
     let response;
     try {
@@ -256,7 +525,15 @@ async function fetchPageRows(transport, endpointCode, { window, maxPages }) {
       break;
     }
     const reader = orderManagementResponseReader(endpointCode, response);
-    total = reader.total;
+    if (reader.total === null) {
+      failures.push(`PAGE_${page}_TOTAL_MISSING`);
+      break;
+    }
+    if (total === null) total = reader.total;
+    else if (reader.total !== total) {
+      failures.push(`PAGE_${page}_TOTAL_DRIFT`);
+      break;
+    }
     if (!Array.isArray(reader.rows)) {
       failures.push(`PAGE_${page}_ROWS_PATH_MISSING`);
       break;
@@ -279,28 +556,77 @@ async function fetchPageRows(transport, endpointCode, { window, maxPages }) {
   });
 }
 
-function storePageGates(page) {
-  const ids = page.rows
-    .map((record) => record.id ?? record.trackingNumber ?? record.orderNo ?? null)
+function storePageGates(fetched, built) {
+  const ids = built.rows
+    .map((row) => row.id)
     .filter((value) => value !== null && value !== undefined)
     .map((value) => String(value));
   const dedupeVerified = new Set(ids).size === ids.length;
-  const totalVerified = page.total !== null;
-  const pagingVerified = page.pagesFetched > 0 && page.failures.length === 0;
-  const ok = totalVerified && pagingVerified && dedupeVerified;
+  const totalVerified = fetched.total !== null
+    && fetched.rows.length === fetched.total
+    && built.rows.length === fetched.total;
+  const pagingVerified = fetched.pagesFetched > 0 && fetched.failures.length === 0;
+  // Every fetched raw record must produce a row (the allowlist must carry the
+  // row id key) and a positive total must yield at least one row.  This keeps
+  // a drifted allowlist or an empty capture from publishing an empty page.
+  const contentVerified = built.dropped === 0
+    && (fetched.total === 0 || built.rows.length > 0);
+  const ok = totalVerified && pagingVerified && dedupeVerified && contentVerified;
   return Object.freeze({
     ok,
     totalVerified,
     pagingVerified,
     dedupeVerified,
+    contentVerified,
   });
 }
 
-async function syncOneStore(transport, storeCode, { window, maxPages, includeStatistics = true }) {
-  const stock = await fetchPageRows(transport, 'STOCK_RECORDS_LIST', { window, maxPages });
-  const waybills = await fetchPageRows(transport, 'WAYBILLS_PAGE', { window, maxPages });
+function buildRowsForPage(pageId, records, storeCode, fetchedAt) {
+  const allowlist = endpointAllowlistFor(pageId);
+  const builder = PAGE_ROW_BUILDERS[pageId];
+  const rows = [];
+  let dropped = 0;
+  for (const record of records) {
+    const picked = pickFieldsByAllowlist(allowlist, record);
+    const row = builder(picked, storeCode, fetchedAt);
+    if (row === null) {
+      dropped += 1;
+      continue;
+    }
+    const check = validateOrderManagementRow(row, { pageId });
+    if (!check.ok) {
+      throw new TypeError(`ORDER_MANAGEMENT_SYNC_ROW_INVALID ${storeCode}: ${check.errors[0]}`);
+    }
+    rows.push(row);
+  }
+  return Object.freeze({ rows: Object.freeze(rows), dropped });
+}
+
+async function syncOneStore(transport, storeCode, {
+  window,
+  maxPages,
+  pageIds,
+  includeStatistics = true,
+  fetchedAt,
+}) {
+  const pages = {};
+  for (const pageId of pageIds) {
+    const endpointCode = ORDER_MANAGEMENT_SESSION_PAGES[pageId];
+    const endpoint = ORDER_MANAGEMENT_ENDPOINTS[endpointCode];
+    const pageWindow = endpoint.windowFields ? window : null;
+    const fetched = await fetchPageRows(transport, endpointCode, { window: pageWindow, maxPages });
+    const built = buildRowsForPage(pageId, fetched.rows, storeCode, fetchedAt);
+    pages[pageId] = Object.freeze({
+      rows: built.rows,
+      dropped: built.dropped,
+      total: fetched.total,
+      pagesFetched: fetched.pagesFetched,
+      failures: fetched.failures,
+      gates: storePageGates(fetched, built),
+    });
+  }
   const statistics = [];
-  if (includeStatistics) {
+  if (includeStatistics && pageIds.includes('waybills')) {
     for (const statisticsType of ORDER_MANAGEMENT_ENDPOINTS.WAYBILLS_STATISTICS.statisticsTypes) {
       const body = Object.freeze({
         ...orderManagementRequestBody('WAYBILLS_STATISTICS', { window }),
@@ -323,40 +649,39 @@ async function syncOneStore(transport, storeCode, { window, maxPages, includeSta
     }
   }
   return Object.freeze({
-    stock: Object.freeze({ ...stock, gates: storePageGates(stock) }),
-    waybills: Object.freeze({ ...waybills, gates: storePageGates(waybills) }),
+    pages: Object.freeze(pages),
     statistics: Object.freeze(statistics),
   });
 }
 
-function buildPageRows(pageId, recordsByStore, storeCodes, buildRow, fetchedAt) {
-  const rows = [];
-  for (const storeCode of storeCodes) {
-    const allowlist = endpointAllowlistFor(pageId);
-    for (const record of recordsByStore.get(storeCode) ?? []) {
-      const row = buildRow(pickFieldsByAllowlist(allowlist, record), storeCode, fetchedAt);
-      if (row === null) continue;
-      const check = validateOrderManagementRow(row, { pageId });
-      if (!check.ok) {
-        throw new TypeError(`ORDER_MANAGEMENT_SYNC_ROW_INVALID ${storeCode}: ${check.errors[0]}`);
-      }
-      rows.push(row);
-    }
-  }
-  return rows;
+function endpointAllowlistFor(pageId) {
+  const endpointCode = ORDER_MANAGEMENT_SESSION_PAGES[String(pageId ?? '')];
+  const allowlist = ORDER_MANAGEMENT_ENDPOINT_FIELD_ALLOWLISTS[endpointCode];
+  if (!allowlist) throw new TypeError(`ORDER_MANAGEMENT_SYNC_PAGE_UNKNOWN: ${pageId}`);
+  return allowlist;
 }
 
-function endpointAllowlistFor(pageId) {
-  if (pageId === 'stock-records') return ORDER_MANAGEMENT_ENDPOINT_FIELD_ALLOWLISTS.STOCK_RECORDS_LIST;
-  if (pageId === 'waybills') return ORDER_MANAGEMENT_ENDPOINT_FIELD_ALLOWLISTS.WAYBILLS_PAGE;
-  throw new TypeError(`ORDER_MANAGEMENT_SYNC_PAGE_UNKNOWN: ${pageId}`);
+/**
+ * Deterministic page-id scope for one session sync run.  Unknown page ids,
+ * duplicates and an empty scope are refused before any session opens.
+ */
+export function normalizeSessionPageScope(pageIds) {
+  const input = Array.isArray(pageIds) ? pageIds : [pageIds];
+  if (input.length === 0) throw new TypeError('ORDER_MANAGEMENT_SYNC_PAGE_SCOPE_REQUIRED');
+  const known = new Set(Object.keys(ORDER_MANAGEMENT_SESSION_PAGES));
+  const deduped = [...new Set(input.map((value) => String(value ?? '').trim()).filter(Boolean))];
+  if (deduped.length === 0 || deduped.some((pageId) => !known.has(pageId))) {
+    throw new TypeError('ORDER_MANAGEMENT_SYNC_PAGE_UNKNOWN');
+  }
+  return Object.freeze(deduped);
 }
 
 export async function runOrderManagementSessionSync({
   storeCodes,
   output,
   windowDays = ORDER_MANAGEMENT_WINDOW_MAX_DAYS,
-  window = null,
+  window = undefined,
+  pageIds = Object.keys(ORDER_MANAGEMENT_SESSION_PAGES),
   includeStatistics = true,
   storeConcurrency = 1,
   sessionStore,
@@ -367,22 +692,27 @@ export async function runOrderManagementSessionSync({
   if (!Number.isSafeInteger(storeConcurrency) || storeConcurrency < 1 || storeConcurrency > 5) {
     throw new TypeError('ORDER_MANAGEMENT_SYNC_CONCURRENCY_INVALID');
   }
+  const scopedPageIds = normalizeSessionPageScope(pageIds);
+  const onceOnlyPages = new Set(ORDER_MANAGEMENT_ONCE_ONLY_PAGES);
+  const hasWindowedPage = scopedPageIds.some((pageId) => !onceOnlyPages.has(pageId));
+  if (window === null && hasWindowedPage) {
+    throw new TypeError('ORDER_MANAGEMENT_SYNC_WINDOW_REQUIRED_FOR_WINDOWED_PAGES');
+  }
   const roster = [...FULL_MANAGED_STORE_CODES];
-  const boundedWindow = window
-    ? orderManagementWindow({
-        startDate: window.startDate,
-        endDate: window.endDate,
-        maximumDays: windowDays,
-      })
-    : buildWindow({ days: windowDays, now });
-  if (window && boundedWindow.endDate > shanghaiDate(now)) {
+  const boundedWindow = window === undefined
+    ? buildWindow({ days: windowDays, now })
+    : window === null
+      ? null
+      : orderManagementWindow({
+          startDate: window.startDate,
+          endDate: window.endDate,
+          maximumDays: windowDays,
+        });
+  if (boundedWindow && boundedWindow.endDate > shanghaiDate(now)) {
     throw new Error('ORDER_MANAGEMENT_SYNC_WINDOW_FUTURE');
   }
   const perStore = [];
-  const rawByStore = {
-    'stock-records': new Map(),
-    waybills: new Map(),
-  };
+  const rawByStore = new Map();
   async function syncStore(storeCode) {
     const session = await openSession({ storeCode });
     const transport = createOrderManagementHttpTransport({ session });
@@ -390,7 +720,9 @@ export async function runOrderManagementSessionSync({
       const result = await syncOneStore(transport, storeCode, {
         window: boundedWindow,
         maxPages,
+        pageIds: scopedPageIds,
         includeStatistics,
+        fetchedAt: now.toISOString(),
       });
       return Object.freeze({
         storeCode,
@@ -406,15 +738,13 @@ export async function runOrderManagementSessionSync({
     // Promise.all preserves the input order, so evidence stays deterministic
     // even though stores inside a bounded batch run concurrently.
     for (const { storeCode, result } of completed) {
-      rawByStore['stock-records'].set(storeCode, result.stock.rows);
-      rawByStore.waybills.set(storeCode, result.waybills.rows);
+      rawByStore.set(storeCode, result.pages);
       perStore.push(Object.freeze({
         storeCode,
-        ok: result.stock.gates.ok && result.waybills.gates.ok,
-        pages: Object.freeze({
-          'stock-records': result.stock.gates,
-          waybills: result.waybills.gates,
-        }),
+        ok: scopedPageIds.every((pageId) => result.pages[pageId].gates.ok),
+        pages: Object.freeze(Object.fromEntries(
+          scopedPageIds.map((pageId) => [pageId, result.pages[pageId].gates]),
+        )),
         statistics: result.statistics,
       }));
     }
@@ -422,10 +752,8 @@ export async function runOrderManagementSessionSync({
 
   const fetchedAt = now.toISOString();
   const pages = {};
-  for (const [pageId, endpointCode] of [
-    ['stock-records', 'STOCK_RECORDS_LIST'],
-    ['waybills', 'WAYBILLS_PAGE'],
-  ]) {
+  for (const pageId of scopedPageIds) {
+    const endpointCode = ORDER_MANAGEMENT_SESSION_PAGES[pageId];
     const okStores = perStore
       .filter((entry) => entry.pages[pageId].ok)
       .map((entry) => entry.storeCode)
@@ -437,16 +765,16 @@ export async function runOrderManagementSessionSync({
         && okStores.every((store) => perStore.find((entry) => entry.storeCode === store).pages[pageId].pagingVerified),
       dedupeVerified: okStores.length === roster.length
         && okStores.every((store) => perStore.find((entry) => entry.storeCode === store).pages[pageId].dedupeVerified),
+      contentVerified: okStores.length === roster.length
+        && okStores.every((store) => perStore.find((entry) => entry.storeCode === store).pages[pageId].contentVerified),
       storeCount: okStores.length,
     };
     const failedStores = perStore
       .filter((entry) => !entry.pages[pageId].ok)
       .map((entry) => `${entry.storeCode}:GATE_FAILED`);
-    const rows = pageId === 'stock-records'
-      ? buildPageRows(pageId, rawByStore[pageId], okStores, buildStockRecordRow, fetchedAt)
-      : buildPageRows(pageId, rawByStore[pageId], okStores, buildWaybillRow, fetchedAt);
+    const rows = okStores.flatMap((storeCode) => rawByStore.get(storeCode)[pageId].rows);
     const status = okStores.length === roster.length
-      && gates.totalVerified && gates.pagingVerified && gates.dedupeVerified
+      && gates.totalVerified && gates.pagingVerified && gates.dedupeVerified && gates.contentVerified
       ? 'AVAILABLE'
       : okStores.length === 0
         ? 'UNAVAILABLE'
@@ -468,7 +796,7 @@ export async function runOrderManagementSessionSync({
     schemaVersion: 1,
     updatedAt: fetchedAt,
     roster: Object.freeze(roster),
-    window: Object.freeze(boundedWindow),
+    window: boundedWindow ? Object.freeze(boundedWindow) : null,
     pages: Object.freeze(pages),
     evidence: Object.freeze({
       perStore: Object.freeze(perStore),
@@ -490,6 +818,7 @@ async function main() {
         ? { startDate: args.startDate, endDate: args.endDate }
         : buildWindow({ days: args.windowDays }),
       maxPages: ORDER_MANAGEMENT_MAX_PAGES,
+      pageIds: Object.keys(ORDER_MANAGEMENT_SESSION_PAGES),
       endpoints: Object.keys(ORDER_MANAGEMENT_ENDPOINTS),
       output: args.output,
     }, null, 2));

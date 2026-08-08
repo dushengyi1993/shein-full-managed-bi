@@ -742,29 +742,15 @@ const ORDER_MANAGEMENT_INDEX = {
       ],
     },
     exceptions: {
-      status: 'AVAILABLE',
+      status: 'PARTIAL',
       source: 'OPENAPI_EXCEPTIONS',
       latestSourceFetchedAt: '2026-08-08T07:50:00.000Z',
-      reason: null,
+      reason: 'EXCEPTIONS_PARTIAL_SYNC',
       rows: [
         {
           id: 'EX-1001', storeCode: 'DL5477', statusCode: 'OPEN', statusName: '待处理',
           createdAt: '2026-08-08T01:00:00.000Z', updatedAt: '2026-08-08T07:00:00.000Z',
           primary: '异常单 1001', secondary: '', tags: [], metrics: [],
-          facts: [], details: [],
-        },
-      ],
-    },
-    'delivery-desk': {
-      status: 'PARTIAL',
-      source: 'OPENAPI_DELIVERY_DESK',
-      latestSourceFetchedAt: '2026-08-08T07:30:00.000Z',
-      reason: 'DELIVERY_DESK_PARTIAL_SYNC',
-      rows: [
-        {
-          id: 'DD-1001', storeCode: 'DL5477', statusCode: 'GROUPED', statusName: '已分组',
-          createdAt: '2026-08-08T01:00:00.000Z', updatedAt: '2026-08-08T07:00:00.000Z',
-          primary: '配货台 1001', secondary: '', tags: [], metrics: [],
           facts: [], details: [],
         },
       ],
@@ -847,7 +833,7 @@ test('GET /api/orders is a bounded read-only order-management page surface', asy
     assert.doesNotMatch(JSON.stringify(payload), /13800138000|科技园路|联系电话|联系人/);
     assert.equal(response.headers.get('cache-control'), 'no-store');
 
-    const partial = await fetch(`${ordersBaseUrl}/api/orders?page=delivery-desk`);
+    const partial = await fetch(`${ordersBaseUrl}/api/orders?page=exceptions`);
     assert.equal(partial.status, 200);
     const partialPayload = await partial.json();
     assert.equal(partialPayload.page.status, 'PARTIAL');

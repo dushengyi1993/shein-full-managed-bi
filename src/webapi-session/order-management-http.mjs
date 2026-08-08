@@ -2,6 +2,7 @@ import {
   ORDER_MANAGEMENT_ENDPOINTS,
   ORDER_MANAGEMENT_TRANSPORT_LIMITS,
   ORDER_MANAGEMENT_WEBAPI_ORIGIN,
+  assertOrderManagementTransportRequest,
   orderManagementEndpointUrl,
 } from '../webapi-history/order-management-contracts.mjs';
 import {
@@ -108,6 +109,11 @@ export async function openOrderManagementHttpSession({
     const endpoint = ORDER_MANAGEMENT_ENDPOINTS[String(endpointCode ?? '')];
     if (!endpoint) throw new OrderManagementTransportError('ORDER_MANAGEMENT_ENDPOINT_NOT_ALLOWED');
     if (endpoint.method !== 'POST') throw new OrderManagementTransportError('ORDER_MANAGEMENT_METHOD_NOT_ALLOWED');
+    try {
+      assertOrderManagementTransportRequest(endpointCode, body);
+    } catch {
+      throw new OrderManagementTransportError('ORDER_MANAGEMENT_REQUEST_BODY_INVALID');
+    }
     const url = orderManagementEndpointUrl(endpointCode);
     const cookieHeader = cookieHeaderForUrl(bundle, url, clock());
     if (!cookieHeader) throw new OrderManagementTransportError('ORDER_MANAGEMENT_AUTH_EXPIRED');

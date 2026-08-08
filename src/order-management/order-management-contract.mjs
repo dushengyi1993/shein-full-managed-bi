@@ -16,7 +16,6 @@ export const ORDER_MANAGEMENT_EXPECTED_STORE_COUNT = 25;
 
 export const ORDER_MANAGEMENT_PAGE_IDS = Object.freeze([
   'delivery-notes',
-  'delivery-desk',
   'stock-records',
   'waybills',
   'return-applications',
@@ -57,6 +56,9 @@ const DENIED_KEY_PATTERN =
   /address|phone|tel\b|mobile|contact|receiver|sender|consignee|recipient|postcode|postal|zip\b/i;
 const PHONE_PATTERN = /(?<!\d)1[3-9]\d{9}(?!\d)/;
 const LONG_DIGITS_PATTERN = /\d{11,}/;
+const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+const LANDLINE_PATTERN = /(?<!\d)0\d{2,3}[-\s]?\d{7,8}(?!\d)/;
+const SENSITIVE_TEXT_PATTERN = /联系人|联系电话|收件人|收货人|手机(?:号)?|电话|邮箱|电子邮件|详细地址|门牌|街道|contact|recipient|receiver|consignee|phone|mobile|e-?mail|address/i;
 
 /**
  * Fail-closed PII checks.  The allowlist is the primary control; these
@@ -71,10 +73,18 @@ export function containsNumericPii(value) {
   return PHONE_PATTERN.test(text) || LONG_DIGITS_PATTERN.test(text);
 }
 
+export function containsSensitiveText(value) {
+  const text = String(value ?? '');
+  return PHONE_PATTERN.test(text)
+    || LANDLINE_PATTERN.test(text)
+    || EMAIL_PATTERN.test(text)
+    || SENSITIVE_TEXT_PATTERN.test(text);
+}
+
 export function scrubPiiText(value) {
   const text = String(value ?? '').trim();
   if (!text) return null;
-  return containsNumericPii(text) ? null : text;
+  return containsNumericPii(text) || containsSensitiveText(text) ? null : text;
 }
 
 export function fieldHash(name) {
@@ -193,6 +203,142 @@ const FIELD_NAMES = Object.freeze({
     'orderNo',
     'addTime',
     'timezone',
+  ]),
+  'return-applications': Object.freeze([
+    'returnTime',
+    'addTime',
+    'lastUpdateTime',
+    'returnPlanNo',
+    'state',
+    'stateName',
+    'returnReasonType',
+    'returnReasonName',
+    'returnDimensions',
+    'returnDimensionsName',
+    'originNo',
+    'returnQuantity',
+    'returnTotalAmount',
+    'pricingCurrencyId',
+    'currencyCode',
+    'billCurrencyId',
+    'billCurrencyCode',
+    'returnDealType',
+    'returnDealTypeName',
+    'returnMode',
+    'returnModeName',
+    'returnGenerateQuantity',
+    'returnScrappedQuantity',
+    'returnVssQuantity',
+    'warehouseIds',
+  ]),
+  'return-orders': Object.freeze([
+    'returnOrderNo',
+    'returnWayType',
+    'changeReturnWayType',
+    'returnWayTypeName',
+    'returnExpressCompanyCode',
+    'returnExpressCompanyName',
+    'expressNoList',
+    'warehouseId',
+    'warehouseName',
+    'subWarehouseId',
+    'subWarehouseName',
+    'returnPlanNo',
+    'returnOrderType',
+    'returnOrderTypeName',
+    'returnOrderStatus',
+    'returnOrderStatusName',
+    'addTime',
+    'skcNameList',
+    'supplierCodeList',
+    'waitReturnQuantity',
+    'returnQuantity',
+    'returnReasonType',
+    'returnReasonName',
+    'returnScrapType',
+    'returnScrapTypeName',
+    'returnDimensions',
+    'isSign',
+    'signTime',
+    'completeTime',
+    'sellerOrderNo',
+    'sellerOrderNoList',
+    'sellerDeliveryNo',
+    'sellerDeliveryNoList',
+    'returnAmount',
+    'currencyCode',
+    'billCurrencyCode',
+    'returnBoxNum',
+    'waybillPickupTime',
+    'waybillSignTime',
+    'updateTime',
+    'skcNum',
+    'canApplyReconsider',
+  ]),
+  exceptions: Object.freeze([
+    'workorderNo',
+    'categoryId',
+    'categoryCode',
+    'categoryName',
+    'firstCategoryCode',
+    'firstCategoryName',
+    'applyType',
+    'applyTypeName',
+    'sceneType',
+    'sceneTypeName',
+    'statusValue',
+    'statusName',
+    'createTime',
+    'externalSystem',
+    'externalNo',
+    'workorderType',
+  ]),
+  'value-added-services': Object.freeze([
+    'orderNo',
+    'subOrderNo',
+    'serviceSiteId',
+    'serviceSiteName',
+    'purchaseNo',
+    'newPurchaseNo',
+    'skc',
+    'multiPartFlag',
+    'supplierProductNumber',
+    'skcNum',
+    'totalFlag',
+    'totalFlagName',
+    'orderState',
+    'orderStateName',
+    'actualTotalAmount',
+    'lowValueFlag',
+    'valueAddedResult',
+    'defectiveQuantity',
+    'qcInspectionNo',
+    'orderScene',
+    'returnFlag',
+    'returnNo',
+    'deliveryNo',
+    'vendorReplenishState',
+    'vendorReplenishStateName',
+    'estimateIncrementAmount',
+    'showFeeTag',
+    'supplierSource',
+    'supplierSourceName',
+  ]),
+  'quality-reports': Object.freeze([
+    'purchaseCode',
+    'qcInspectionNo',
+    'skc',
+    'hasDefectiveTotal',
+    'hasDefectiveTotalName',
+    'inspectionTime',
+    'defectiveTotalQty',
+    'qcType',
+    'qcTypeName',
+    'orderDefectiveTotalQty',
+    'orderQcResult',
+    'orderQcResultName',
+    'inspectionResult',
+    'inspectionResultName',
   ]),
 });
 
@@ -333,6 +479,17 @@ export function validateOrderManagementRow(row, { pageId } = {}) {
   if (!Array.isArray(row.tags) || row.tags.some((tag) => typeof tag !== 'string')) {
     errors.push('row.tags must be an array of strings');
   }
+  for (const [location, value] of [
+    ['row.statusName', row.statusName],
+    ['row.secondary', row.secondary],
+  ]) {
+    if (value !== null && value !== undefined && containsSensitiveText(value)) {
+      errors.push(`${location} contains sensitive text`);
+    }
+  }
+  if (Array.isArray(row.tags) && row.tags.some((tag) => containsSensitiveText(tag))) {
+    errors.push('row.tags contains sensitive text');
+  }
   errors.push(...validateEntryArray(pageId, row.metrics, 'row.metrics'));
   errors.push(...validateEntryArray(pageId, row.facts, 'row.facts'));
   errors.push(...validateEntryArray(pageId, row.details, 'row.details'));
@@ -451,7 +608,7 @@ export function isOrderManagementPromotable(index) {
   return ORDER_MANAGEMENT_PAGE_IDS.every((pageId) => {
     const page = index.pages?.[pageId];
     if (!page) return false;
-    if (page.status !== 'AVAILABLE' && page.status !== 'UNAVAILABLE') return false;
+    if (page.status !== 'AVAILABLE') return false;
     return Array.isArray(page.rows);
   });
 }

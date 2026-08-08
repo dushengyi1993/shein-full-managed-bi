@@ -76,13 +76,21 @@ test('session sync accepts an explicit paired date window only', () => {
   const now = new Date('2026-08-08T06:00:00.000Z');
   const args = parseSyncArgs([
     `--stores=${stores}`,
-    '--start-date=2026-07-01',
+    '--start-date=2026-07-02',
     '--end-date=2026-07-31',
   ], { now });
-  assert.equal(args.startDate, '2026-07-01');
+  assert.equal(args.startDate, '2026-07-02');
   assert.equal(args.endDate, '2026-07-31');
   assert.equal(args.windowDays, 30);
   assert.equal(args.execute, false);
+  assert.throws(
+    () => parseSyncArgs([
+      `--stores=${stores}`,
+      '--start-date=2026-07-01',
+      '--end-date=2026-07-31',
+    ], { now }),
+    /ORDER_MANAGEMENT_SYNC_WINDOW_INVALID/,
+  );
   assert.throws(
     () => parseSyncArgs([`--stores=${stores}`, '--start-date=2026-07-01'], { now }),
     /ORDER_MANAGEMENT_SYNC_WINDOW_PAIR_REQUIRED/,
@@ -200,6 +208,85 @@ const GOOD_RESPONSES = {
     },
   },
   WAYBILLS_STATISTICS: { code: '0', msg: 'OK', info: '491' },
+  RETURN_APPLICATIONS_LIST: {
+    code: '0',
+    msg: 'OK',
+    info: {
+      data: [{
+        id: 1,
+        returnPlanNo: 'RA-SYNC-1',
+        state: '1',
+        stateName: '待商家确认',
+        returnTime: '2026-07-20 10:00:00',
+        returnQuantity: 10,
+        returnDealTypeName: '退货',
+      }],
+      meta: { count: 1 },
+    },
+  },
+  RETURN_ORDERS_PAGE: {
+    code: '0',
+    msg: 'OK',
+    info: {
+      data: [{
+        id: 2,
+        returnOrderNo: 'RO-SYNC-2',
+        returnOrderStatus: '2',
+        returnOrderStatusName: '待退货',
+        addTime: '2026-07-20 10:00:00',
+        warehouseName: '总仓',
+        returnQuantity: 5,
+      }],
+      meta: { count: 1 },
+    },
+  },
+  EXCEPTIONS_PAGE: {
+    code: '0',
+    msg: 'OK',
+    info: {
+      data: [{
+        id: 3,
+        workorderNo: 'WO-SYNC-3',
+        statusValue: '1',
+        statusName: '处理中',
+        createTime: '2026-07-20 10:00:00',
+        categoryName: '收货异常',
+      }],
+      meta: { count: 1 },
+    },
+  },
+  VALUE_ADDED_SERVICES_PAGE: {
+    code: '0',
+    msg: 'OK',
+    info: {
+      list: [{
+        id: 4,
+        orderNo: 'VA-SYNC-4',
+        orderState: '1',
+        orderStateName: '服务中',
+        actualTotalAmount: 12.5,
+        serviceSiteName: '华东仓',
+      }],
+      count: 1,
+    },
+  },
+  QUALITY_REPORTS_PAGE: {
+    code: '0',
+    msg: 'OK',
+    info: {
+      list: [{
+        purchaseCode: 'PB-SYNC-1',
+        qcInspectionNo: 'QC-SYNC-5',
+        skc: 'sv-1',
+        inspectionTime: '2026-07-20 10:00:00',
+        defectiveTotalQty: 0,
+        qcTypeName: '出库质检',
+        inspectionResult: '1',
+        inspectionResultName: '合格',
+      }],
+      totalCount: 1,
+    },
+  },
 };
 
 test('session sync writes a gate-passing snapshot with allowlisted rows only', async () => {
@@ -219,10 +306,18 @@ test('session sync writes a gate-passing snapshot with allowlisted rows only', a
     totalVerified: true,
     pagingVerified: true,
     dedupeVerified: true,
+    contentVerified: true,
     storeCount: 25,
   });
   assert.equal(snapshot.pages.waybills.status, 'AVAILABLE');
   assert.equal(snapshot.pages.waybills.rows.length, 25);
+  assert.equal(snapshot.pages['return-applications'].status, 'AVAILABLE');
+  assert.equal(snapshot.pages['return-applications'].rows.length, 25);
+  assert.equal(snapshot.pages['return-applications'].rows[0].statusName, '待商家确认');
+  assert.equal(snapshot.pages['quality-reports'].status, 'AVAILABLE');
+  assert.equal(snapshot.pages['quality-reports'].rows[0].id, 'QC-SYNC-5');
+  assert.equal(snapshot.pages['value-added-services'].rows[0].id, '4');
+  assert.equal(snapshot.pages['value-added-services'].rows[0].primary, 'VA-SYNC-4');
   const stockRow = snapshot.pages['stock-records'].rows[0];
   assert.equal(stockRow.id, 'PB-SYNC-1');
   assert.equal(stockRow.statusName, null);
@@ -257,6 +352,22 @@ test('session sync sends explicit window dates in every request body', async () 
   const waybillBody = bodies.find((entry) => entry.endpointCode === 'WAYBILLS_PAGE').body;
   assert.equal(waybillBody.addTimeStart, '2026-07-01 00:00:00');
   assert.equal(waybillBody.addTimeEnd, '2026-07-30 23:59:59');
+  const returnPlanBody = bodies.find((entry) => entry.endpointCode === 'RETURN_APPLICATIONS_LIST').body;
+  assert.equal(returnPlanBody.returnTimeStart, '2026-07-01 00:00:00');
+  assert.equal(returnPlanBody.returnTimeEnd, '2026-07-30 23:59:59');
+  const returnOrderBody = bodies.find((entry) => entry.endpointCode === 'RETURN_ORDERS_PAGE').body;
+  assert.equal(returnOrderBody.addTimeStart, '2026-07-01 00:00:00');
+  assert.equal(returnOrderBody.addTimeEnd, '2026-07-30 23:59:59');
+  const qualityBody = bodies.find((entry) => entry.endpointCode === 'QUALITY_REPORTS_PAGE').body;
+  assert.equal(qualityBody.inspectionTimeStart, '2026-07-01 00:00:00');
+  assert.equal(qualityBody.inspectionTimeEnd, '2026-07-30 23:59:59');
+  assert.equal(qualityBody.reportUrl, 1);
+  const exceptionBody = bodies.find((entry) => entry.endpointCode === 'EXCEPTIONS_PAGE').body;
+  assert.ok(!Object.keys(exceptionBody).some((key) => /Time|Date/.test(key)));
+  const vasBody = bodies.find((entry) => entry.endpointCode === 'VALUE_ADDED_SERVICES_PAGE').body;
+  assert.ok(!Object.keys(vasBody).some((key) => /Time|Date/.test(key)));
+  assert.equal(vasBody.pageNumber, 1);
+  assert.equal(vasBody.pageSize, 50);
 });
 
 test('session sync refuses an explicit future window before any request', async () => {
@@ -300,6 +411,60 @@ test('session sync fails the gate closed when the platform hides the total', asy
   assert.equal(snapshot.pages['stock-records'].gates.storeCount, 0);
   assert.match(snapshot.pages['stock-records'].reason, /SESSION_GATE_FAILED|NO_STORE_SUCCEEDED/);
   assert.equal(result.snapshot.pages.waybills.status, 'AVAILABLE');
+});
+
+test('session sync fails the total gate when retained rows do not exactly match total', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'om-sync-total-mismatch-'));
+  const output = path.join(directory, 'order-management.sessions.json');
+  const result = await runOrderManagementSessionSync({
+    storeCodes: [...FULL_MANAGED_STORE_CODES],
+    output,
+    pageIds: ['quality-reports'],
+    windowDays: 30,
+    openSession: fakeOpenSession((endpointCode) => ({
+      ...GOOD_RESPONSES[endpointCode],
+      info: {
+        ...GOOD_RESPONSES[endpointCode].info,
+        totalCount: 2,
+      },
+    })),
+    now: new Date('2026-08-08T06:00:00.000Z'),
+  });
+  assert.equal(result.snapshot.pages['quality-reports'].status, 'UNAVAILABLE');
+  assert.equal(result.snapshot.pages['quality-reports'].gates.totalVerified, false);
+  assert.match(result.snapshot.pages['quality-reports'].reason, /SESSION_GATE_FAILED|NO_STORE_SUCCEEDED/);
+});
+
+test('session sync requires the total on every page and rejects total drift', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'om-sync-page-total-'));
+  const output = path.join(directory, 'order-management.sessions.json');
+  const firstPage = Array.from({ length: 50 }, (_, index) => ({
+    qcInspectionNo: `QC-PAGE-${index + 1}`,
+    purchaseCode: `PB-${index + 1}`,
+    inspectionTime: '2026-07-20 10:00:00',
+    inspectionResult: 1,
+    inspectionResultName: '合格',
+  }));
+  const result = await runOrderManagementSessionSync({
+    storeCodes: [...FULL_MANAGED_STORE_CODES],
+    output,
+    pageIds: ['quality-reports'],
+    windowDays: 30,
+    openSession: async () => ({
+      request: async (_endpointCode, body) => ({
+        httpStatus: 200,
+        byteLength: 1,
+        body: body.page === 1
+          ? { code: '0', info: { totalCount: 50, list: firstPage } }
+          : { code: '0', info: { list: [] } },
+      }),
+      close: async () => ({ closed: true }),
+      expiry: () => ({}),
+    }),
+    now: new Date('2026-08-08T06:00:00.000Z'),
+  });
+  assert.equal(result.snapshot.pages['quality-reports'].status, 'UNAVAILABLE');
+  assert.equal(result.snapshot.pages['quality-reports'].gates.totalVerified, false);
 });
 
 test('coordinator publish marking tolerates not-yet-published optional dashboard files', async () => {

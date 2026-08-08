@@ -82,6 +82,66 @@ const INDEX = Object.freeze({
       reason: 'STOCK_RECORDS_FETCH_FAILED',
       rows: Object.freeze([]),
     }),
+    'return-applications': Object.freeze({
+      status: 'AVAILABLE',
+      source: 'SESSION_HTTP',
+      latestSourceFetchedAt: '2026-08-08T07:59:00.000Z',
+      reason: null,
+      rows: Object.freeze([
+        row(
+          'RA-1001', 'DL5477', '1', '待商家确认',
+          '2026-08-08T01:00:00.000Z', '2026-08-08T07:00:00.000Z',
+          '退货申请 1001', '滞销退', ['退货申请'],
+          [{ name: 'returnQuantity', value: 10 }],
+          [{ name: 'returnReasonName', value: '滞销退' }], [],
+        ),
+      ]),
+    }),
+    'return-orders': Object.freeze({
+      status: 'AVAILABLE',
+      source: 'SESSION_HTTP',
+      latestSourceFetchedAt: '2026-08-08T07:59:00.000Z',
+      reason: null,
+      rows: Object.freeze([
+        row(
+          'RO-1001', 'DL5477', '2', '待退货',
+          '2026-08-08T01:00:00.000Z', '2026-08-08T07:00:00.000Z',
+          '退货单 1001', '总仓', ['退货单'],
+          [{ name: 'returnQuantity', value: 5 }],
+          [{ name: 'warehouseName', value: '总仓' }], [],
+        ),
+      ]),
+    }),
+    'value-added-services': Object.freeze({
+      status: 'AVAILABLE',
+      source: 'SESSION_HTTP',
+      latestSourceFetchedAt: '2026-08-08T07:59:00.000Z',
+      reason: null,
+      rows: Object.freeze([
+        row(
+          'VA-1001', 'MZ2406', '1', '服务中',
+          null, '2026-08-08T07:00:00.000Z',
+          '增值服务 1001', '华东仓', ['增值服务'],
+          [{ name: 'actualTotalAmount', value: 12.5 }],
+          [{ name: 'serviceSiteName', value: '华东仓' }], [],
+        ),
+      ]),
+    }),
+    'quality-reports': Object.freeze({
+      status: 'AVAILABLE',
+      source: 'SESSION_HTTP',
+      latestSourceFetchedAt: '2026-08-08T07:59:00.000Z',
+      reason: null,
+      rows: Object.freeze([
+        row(
+          'QC-1001', 'DL5477', '1', '合格',
+          '2026-08-08T01:00:00.000Z', '2026-08-08T07:00:00.000Z',
+          '质检单 1001', '出库质检', ['质检报告'],
+          [{ name: 'defectiveTotalQty', value: 0 }],
+          [{ name: 'qcTypeName', value: '出库质检' }], [],
+        ),
+      ]),
+    }),
   }),
 });
 
@@ -226,7 +286,7 @@ test('discloses PARTIAL page and coverage states without claiming COMPLETE', () 
 });
 
 test('fails closed for missing or UNAVAILABLE pages', () => {
-  for (const pageId of ['waybills', 'delivery-desk', 'return-applications', 'return-orders', 'value-added-services', 'quality-reports']) {
+  for (const pageId of ['waybills', 'stock-records']) {
     assert.throws(
       () => queryOrderManagement(INDEX, new URLSearchParams(`page=${pageId}`)),
       (error) => error instanceof OrderManagementQueryError
@@ -234,11 +294,32 @@ test('fails closed for missing or UNAVAILABLE pages', () => {
         && error.statusCode === 503,
     );
   }
+});
+
+test('serves the five session-backed pages when their snapshot is available', () => {
+  for (const pageId of [
+    'return-applications',
+    'return-orders',
+    'value-added-services',
+    'quality-reports',
+  ]) {
+    const result = queryOrderManagement(INDEX, new URLSearchParams(`page=${pageId}`));
+    assert.equal(result.page.status, 'AVAILABLE');
+    assert.equal(result.page.source, 'SESSION_HTTP');
+    assert.equal(result.complete, true);
+    assert.equal(result.rows.length, 1);
+  }
+  assert.equal(
+    queryOrderManagement(INDEX, new URLSearchParams('page=quality-reports')).rows[0].id,
+    'QC-1001',
+  );
+});
+
+test('rejects the retired delivery-desk page id', () => {
   assert.throws(
-    () => queryOrderManagement(INDEX, new URLSearchParams('page=stock-records')),
+    () => queryOrderManagement(INDEX, new URLSearchParams('page=delivery-desk')),
     (error) => error instanceof OrderManagementQueryError
-      && error.code === 'ORDER_MANAGEMENT_PAGE_UNAVAILABLE'
-      && error.statusCode === 503,
+      && error.code === 'QUERY_PARAMETER_INVALID',
   );
 });
 
