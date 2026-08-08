@@ -529,14 +529,22 @@ async function fetchPageRows(transport, endpointCode, { window, maxPages }) {
       failures.push(`PAGE_${page}_TOTAL_MISSING`);
       break;
     }
-    if (total === null) total = reader.total;
-    else if (reader.total !== total) {
-      failures.push(`PAGE_${page}_TOTAL_DRIFT`);
-      break;
-    }
     if (!Array.isArray(reader.rows)) {
       failures.push(`PAGE_${page}_ROWS_PATH_MISSING`);
       break;
+    }
+    if (total === null) total = reader.total;
+    else {
+      // PFMP return pages expose the full total on page 1 but may expose the
+      // remaining count (or current-page count) on later pages. Page 1 stays
+      // authoritative and the final exact rows===total gate proves coverage.
+      const offset = (page - 1) * endpoint.defaultPageSize;
+      const remaining = Math.max(total - offset, 0);
+      const acceptedTotals = new Set([total, remaining, reader.rows.length]);
+      if (!acceptedTotals.has(reader.total)) {
+        failures.push(`PAGE_${page}_TOTAL_DRIFT`);
+        break;
+      }
     }
     rows.push(...reader.rows);
     pagesFetched += 1;
