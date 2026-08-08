@@ -38,6 +38,7 @@ test('supply pages consume real purchase, shipping-order, inventory and stock-ad
   // Both now aggregate the scoped snapshot into a compact overview instead.
   assert.match(app, /采购单状态紧凑总览/);
   assert.match(app, /shipping-orders-hero/);
+  assert.match(app, /storeName !== storeCode/);
   assert.doesNotMatch(app, /店铺×采购单状态汇总/);
   assert.doesNotMatch(app, /店铺×交付里程碑汇总/);
 });

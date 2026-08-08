@@ -9151,12 +9151,17 @@ function shippingOrdersList(orders, capabilities) {
       && !['complete', 'voided'].includes(status.tone)
       && new Date(requestedAt).valueOf() < Date.now();
     const typeLabel = String(order.orderTypeName || '').includes('急采') ? '急采' : '备货';
+    const storeCode = String(order.storeCode || '').trim();
+    const storeName = String(order.storeName || '').trim();
+    const storeLabel = storeName && storeName !== storeCode
+      ? `${storeCode || '店铺待确认'} · ${storeName}`
+      : (storeCode || storeName || '店铺待确认');
     return `
       <article class="shipping-order-card" data-order-no="${escapeHtml(order.orderNo)}">
         <header class="shipping-order-head">
           <div class="shipping-order-identity">
             <div><span class="shipping-order-type">${escapeHtml(typeLabel)}</span><strong>${escapeHtml(order.orderNo)}</strong></div>
-            <p>${escapeHtml(order.storeCode || '店铺待确认')} · ${escapeHtml(order.storeName || '店铺名称待确认')}</p>
+            <p>${escapeHtml(storeLabel)}</p>
           </div>
           <div class="shipping-order-state">
             <span class="shipping-status-badge ${status.tone}">${escapeHtml(status.label)}</span>
