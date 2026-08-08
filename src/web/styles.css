@@ -5949,10 +5949,13 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 /* --- order-management navigation group ---
-   Desktop: clicking 订单管理 opens a fixed flyout panel beside the sidebar.
-   Mobile (<=1080px): the same panel becomes an accordion sheet anchored under
-   the sticky top bar. Flat colors only; no gradients or shadows beyond the
-   shared --shadow token. */
+   Desktop (>=1081px): clicking 订单管理 expands the group in place inside the
+   sidebar rail and pushes the following nav items down, like the official
+   backend group navigation; it never floats over the workspace.
+   Mobile (<=1080px): the same panel stays an accordion sheet anchored under
+   the sticky top bar, and becomes a true in-place accordion at <=620px.
+   Flat colors only; no gradients or shadows beyond the shared --shadow
+   token. */
 .nav-group {
   position: relative;
 }
@@ -6019,7 +6022,7 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .nav-subgroup-label {
   margin: 0 8px 4px;
-  color: var(--muted);
+  color: rgba(255, 255, 255, 0.5);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.63rem;
   font-weight: 700;
@@ -6031,15 +6034,15 @@ body[data-dataset="sample"] .metric-item > strong {
   min-height: 34px;
   align-items: center;
   padding: 0 10px;
-  color: var(--muted-strong);
+  color: rgba(255, 255, 255, 0.78);
   border-radius: 8px;
   text-decoration: none;
   transition: color 160ms ease, background 160ms ease;
 }
 
 .nav-subgroup a:hover {
-  color: var(--ink);
-  background: var(--paper-soft);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .nav-subgroup a.active {
@@ -6049,27 +6052,32 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 @media (min-width: 1081px) {
+  /* The rail keeps its own vertical scrollbar; the expanded group never
+     widens the sidebar sideways. */
+  .sidebar .primary-nav {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
   .nav-group-panel {
-    position: fixed;
-    top: 88px;
-    left: 282px;
-    z-index: 60;
+    position: static;
     display: grid;
-    width: 320px;
-    max-height: calc(100vh - 160px);
+    min-width: 0;
+    max-width: 100%;
     gap: 2px;
-    padding: 10px;
-    overflow: auto;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    background: var(--paper);
-    box-shadow: var(--shadow);
+    margin: 3px 0 6px 8px;
+    padding: 4px 4px 8px 6px;
+    overflow: visible;
+    border-left: 2px solid rgba(255, 255, 255, 0.16);
+    border-radius: 0 10px 10px 0;
+    background: rgba(255, 255, 255, 0.04);
   }
 
   .nav-subgroup {
     display: grid;
     gap: 2px;
-    padding: 4px 0 8px;
+    min-width: 0;
+    padding: 4px 2px 8px;
     border-bottom: 1px solid var(--line);
   }
 
@@ -6077,24 +6085,39 @@ body[data-dataset="sample"] .metric-item > strong {
     border-bottom: 0;
     padding-bottom: 2px;
   }
+
+  .nav-subgroup a {
+    min-width: 0;
+  }
+
+  /* Active and focus states stay unmistakable inside the rail. */
+  .nav-subgroup a.active {
+    border-left: 2px solid var(--accent);
+    padding-left: 8px;
+  }
+
+  .nav-group-toggle:focus-visible,
+  .nav-subgroup a:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+  }
 }
 
 @media (max-width: 1080px) {
   .nav-group-panel {
-    position: absolute;
-    top: calc(100% + 8px);
-    left: 12px;
-    right: 12px;
-    z-index: 60;
+    position: static;
     display: grid;
+    min-width: 0;
+    width: 100%;
     gap: 2px;
-    max-height: min(62vh, 430px);
-    padding: 10px;
-    overflow: auto;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    background: var(--paper);
-    box-shadow: var(--shadow);
+    margin-top: 4px;
+    padding: 6px 4px 8px 7px;
+    overflow: visible;
+    border: 0;
+    border-left: 2px solid rgba(255, 255, 255, 0.16);
+    border-radius: 0 10px 10px 0;
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: none;
   }
 
   .nav-subgroup {
@@ -6115,6 +6138,10 @@ body[data-dataset="sample"] .metric-item > strong {
      order group in-flow as a true accordion instead of covering later links. */
   .sidebar {
     position: relative;
+  }
+
+  .nav-group {
+    flex: 0 0 calc(100vw - 32px);
   }
 
   .nav-group-panel {

@@ -3485,6 +3485,118 @@ function stageMetricNote(metric) {
    allow-listed row fields from the shared `order-management.json` contract and
    defensively drops address/contact/phone-looking keys from details. */
 
+/**
+ * Centralized Chinese business labels for the shared contract's allowlisted
+ * order fields.  metrics/facts/details entries are rendered with these labels
+ * only; the raw English internal field name is never shown to operators.
+ * Every page allowlist in `order-management-contract.mjs` must stay covered;
+ * unknown names degrade to ORDER_FIELD_UNKNOWN_LABEL instead of leaking the
+ * technical key.
+ */
+const ORDER_FIELD_LABELS = Object.freeze({
+  // delivery-notes / waybills shared fields
+  deliveryCode: '发货单号',
+  deliveryTypeCode: '送货方式代码',
+  deliveryTypeName: '送货方式',
+  expressCode: '快递单号',
+  expressCompanyCode: '承运商代码',
+  expressCompanyName: '承运商',
+  packageCount: '包裹数',
+  packageWeight: '包裹重量',
+  warehouseCode: '收货仓代码',
+  warehouseName: '收货仓',
+  reservedParcelAt: '预约取件时间',
+  takenAt: '取件时间',
+  expectedReceiptAt: '预计到货时间',
+  receivedAt: '收货时间',
+  platformCreatedAt: '平台创建时间',
+  sourceFetchedAt: '数据获取时间',
+  orderNo: '订单号',
+  skcName: 'SKC 名称',
+  skuCode: 'SKU',
+  deliveryQuantity: '发货件数',
+  orderTypeCode: '订单类型代码',
+  orderTypeName: '订单类型',
+  prepareTypeName: '备货类型',
+  lineCount: '明细行数',
+  skuCount: 'SKU 数',
+  orderCount: '订单数',
+  // waybills-only fields
+  trackingNumber: '物流跟踪号',
+  logisticsCompanyCode: '物流公司代码',
+  logisticsCompanyName: '物流公司',
+  waybillType: '运单类型',
+  waybillTypeSellerName: '卖家运单类型',
+  orderType: '订单类型代码',
+  serviceModeCode: '服务模式代码',
+  serviceModeCodeName: '服务模式',
+  addTime: '添加时间',
+  pickupTime: '揽收时间',
+  signTime: '签收时间',
+  packQuantity: '包裹数量',
+  sendGoodsQuantity: '发货数量',
+  actualWeight: '实际重量',
+  volumeWeight: '体积重量',
+  estimatedWeight: '预估重量',
+  finalSettlementWeight: '最终结算重量',
+  convertedFinalApportionment: '折算后最终分摊金额',
+  exemptionAmount: '豁免金额',
+  actualDeductionAmount: '实际扣款金额',
+  changedEstimatedApportionment: '变更后预估分摊金额',
+  differenceDeductedAmount: '差额扣款金额',
+  supplierCurrencyId: '供应商币种代码',
+  supplierCurrencyName: '供应商币种',
+  estimateCombineNo: '预估合并单号',
+  estimatedApportionmentBillNo: '预估分摊账单号',
+  combineNumber: '合并单号',
+  apportionmentBillNoOrHedgeBillNo: '分摊或对冲账单号',
+  supplierTitle: '供应商名称',
+  isFree: '是否免费',
+  isFreeName: '是否免费',
+  syStatus: '状态代码',
+  syStatusName: '状态名称',
+  rightsResultType: '权益结果类型代码',
+  rightsResultTypeName: '权益结果',
+  orderSystem: '订单系统',
+  collectBatchNo: '集单批次号',
+  appointmentPickupTime: '预约揽收时间',
+  apportionmentState: '分摊状态',
+  finalFormula: '结算公式',
+  // stock-records fields
+  supplierCode: '供应商代码',
+  skc: 'SKC',
+  orderMode: '订购模式',
+  orderModeValue: '订购模式值',
+  applyStatus: '申请状态',
+  stockType: '库存类型',
+  orderSign: '订单标识',
+  timezone: '时区',
+});
+
+/** Fields whose values must be shown with a fixed business unit. */
+const ORDER_FIELD_UNITS = Object.freeze({
+  packageWeight: 'kg',
+  actualWeight: 'kg',
+  volumeWeight: 'kg',
+  estimatedWeight: 'kg',
+  finalSettlementWeight: 'kg',
+});
+
+/** Safe degradation label for any field outside the shared allowlist. */
+const ORDER_FIELD_UNKNOWN_LABEL = '其他信息';
+
+function orderFieldLabel(name) {
+  const label = ORDER_FIELD_LABELS[String(name ?? '')];
+  return label || ORDER_FIELD_UNKNOWN_LABEL;
+}
+
+function orderFieldValue(name, value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  if (text === '') return text;
+  const unit = ORDER_FIELD_UNITS[String(name ?? '')];
+  return unit ? `${text} ${unit}` : text;
+}
+
 const ORDER_PAGE_META = Object.freeze({
   'delivery-notes': {
     title: '发货单列表',
@@ -3848,7 +3960,9 @@ function orderStatusControl(queryData, pageState) {
   return operationSelect('orderStatus', '状态', options, pageState.status);
 }
 
-/** Render allow-listed detail entries; sensitive-looking keys are dropped. */
+/** Render allow-listed detail entries; sensitive-looking keys are dropped and
+    every field is shown under its centralized Chinese business label with any
+    required unit, never under the raw English internal field name. */
 function orderFieldList(entries, label, fallbackLabel) {
   if (!Array.isArray(entries) || entries.length === 0) return '';
   const items = [];
@@ -3858,18 +3972,16 @@ function orderFieldList(entries, label, fallbackLabel) {
       // the index validator already allow-listed per page.
       if (typeof entry.name === 'string' && Object.prototype.hasOwnProperty.call(entry, 'value')) {
         if (orderSensitiveKey(entry.name)) continue;
-        const text = entry.value === null || entry.value === undefined
-          ? ''
-          : String(entry.value);
+        const text = orderFieldValue(entry.name, entry.value);
         if (text === '') continue;
-        items.push(`<li><span>${escapeHtml(entry.name)}</span><strong>${escapeHtml(text)}</strong></li>`);
+        items.push(`<li><span>${escapeHtml(orderFieldLabel(entry.name))}</span><strong>${escapeHtml(text)}</strong></li>`);
         continue;
       }
       for (const [key, value] of Object.entries(entry)) {
         if (orderSensitiveKey(key)) continue;
-        const text = value === null || value === undefined ? '' : String(value);
+        const text = orderFieldValue(key, value);
         if (text === '') continue;
-        items.push(`<li><span>${escapeHtml(String(key))}</span><strong>${escapeHtml(text)}</strong></li>`);
+        items.push(`<li><span>${escapeHtml(orderFieldLabel(String(key)))}</span><strong>${escapeHtml(text)}</strong></li>`);
       }
     } else {
       const text = entry === null || entry === undefined ? '' : String(entry);
@@ -3888,9 +4000,9 @@ function orderFieldList(entries, label, fallbackLabel) {
 function orderRowDetails(row) {
   const record = productRecord(row);
   return [
-    orderFieldList(record.metrics, '指标', '指标值'),
-    orderFieldList(record.facts, '事实', '事实值'),
-    orderFieldList(record.details, '详情', '详情值'),
+    orderFieldList(record.metrics, '数量概览', '数值'),
+    orderFieldList(record.facts, '履约信息', '信息'),
+    orderFieldList(record.details, '商品明细', '信息'),
   ].join('');
 }
 
@@ -11331,10 +11443,15 @@ function updateNavigation() {
     if (active) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   });
-  elements.orderGroupToggle?.classList.toggle(
-    'nav-group-active',
-    state.route === 'fulfilment' || URL_ORDER_PAGE_IDS.includes(state.route),
-  );
+  const orderRouteActive = state.route === 'fulfilment' || URL_ORDER_PAGE_IDS.includes(state.route);
+  elements.orderGroupToggle?.classList.toggle('nav-group-active', orderRouteActive);
+  // An active order child keeps its parent group expanded, matching the
+  // official backend's in-place navigation. Operators can still collapse it
+  // explicitly with the group toggle or Escape.
+  if (orderRouteActive && elements.orderGroupToggle && elements.orderGroupPanel) {
+    elements.orderGroupToggle.setAttribute('aria-expanded', 'true');
+    elements.orderGroupPanel.hidden = false;
+  }
   const route = ROUTES[state.route];
   elements.mobilePageTitle.textContent = route.title;
   document.title = `${route.title} · SHEIN 全托运营工作台`;
@@ -12846,12 +12963,6 @@ function toggleOrderNavPanel() {
 elements.orderGroupToggle?.addEventListener('click', (event) => {
   event.preventDefault();
   toggleOrderNavPanel();
-});
-
-document.addEventListener('click', (event) => {
-  if (!elements.orderGroupPanel || elements.orderGroupPanel.hidden) return;
-  if (event.target.closest?.('.nav-group')) return;
-  closeOrderNavPanel();
 });
 
 document.addEventListener('keydown', (event) => {

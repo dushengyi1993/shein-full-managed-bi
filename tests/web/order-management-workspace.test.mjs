@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import {
+  ORDER_MANAGEMENT_PAGE_IDS,
+  allowlistedFieldNames,
+} from '../../src/order-management/order-management-contract.mjs';
 
 const projectRoot = new URL('../../', import.meta.url);
 
@@ -331,6 +335,7 @@ test('order details render allow-listed sanitized fields and never write to the 
   const app = await read('src/web/app.js');
   const render = functionBody(app, 'renderOrderWorkspace');
   const row = functionBody(app, 'orderRow');
+  const rowDetails = functionBody(app, 'orderRowDetails');
   const fieldList = functionBody(app, 'orderFieldList');
   const sensitive = functionBody(app, 'orderSensitiveKey');
 
@@ -340,9 +345,18 @@ test('order details render allow-listed sanitized fields and never write to the 
     /const ORDER_SENSITIVE_KEY_PATTERN = \/\^?\((?:address|addr|contact|phone|mobile|tel|recipient|收件|电话|手机|地址|联系人|门牌|街道|区号)[^)]*\)\/i/,
   );
   assert.match(fieldList, /orderSensitiveKey\(key\)\) continue/);
-  assert.match(fieldList, /escapeHtml\(String\(key\)\)/);
+  // Every entry renders under its centralized Chinese business label with any
+  // required unit; the raw English internal field name is never shown.
+  assert.match(fieldList, /orderFieldLabel\(entry\.name\)/);
+  assert.match(fieldList, /orderFieldLabel\(String\(key\)\)/);
+  assert.match(fieldList, /orderFieldValue\(entry\.name, entry\.value\)/);
+  assert.doesNotMatch(fieldList, /escapeHtml\(entry\.name\)/);
+  assert.doesNotMatch(fieldList, /escapeHtml\(String\(key\)\)/);
   assert.match(fieldList, /escapeHtml\(text\)/);
   assert.match(row, /查看脱敏明细/);
+  assert.match(rowDetails, /orderFieldList\(record\.metrics, '数量概览', '数值'\)/);
+  assert.match(rowDetails, /orderFieldList\(record\.facts, '履约信息', '信息'\)/);
+  assert.match(rowDetails, /orderFieldList\(record\.details, '商品明细', '信息'\)/);
   assert.match(row, /order-detail-disclosure/);
   assert.match(row, /escapeHtml\(primary/);
   assert.match(row, /escapeHtml\(storeCode/);
@@ -361,6 +375,57 @@ test('order details render allow-listed sanitized fields and never write to the 
   }
   assert.match(render, /不提供任何平台写操作按钮/);
   assert.match(render, /筛选、排序与分页由服务端执行/);
+});
+
+test('order field labels are centralized and cover the full shared-contract allowlist', async () => {
+  const app = await read('src/web/app.js');
+  const labelsStart = app.indexOf('const ORDER_FIELD_LABELS = Object.freeze({');
+  assert.notEqual(labelsStart, -1, 'ORDER_FIELD_LABELS must exist');
+  const labelsEnd = app.indexOf('});', labelsStart);
+  const labelsBlock = app.slice(labelsStart, labelsEnd);
+  const unitsStart = app.indexOf('const ORDER_FIELD_UNITS = Object.freeze({');
+  assert.notEqual(unitsStart, -1, 'ORDER_FIELD_UNITS must exist');
+  const unitsEnd = app.indexOf('});', unitsStart);
+  const unitsBlock = app.slice(unitsStart, unitsEnd);
+
+  // Every page allowlist of the shared contract has a Chinese business label,
+  // so no allow-listed field can ever surface under its English internal name.
+  for (const pageId of ORDER_MANAGEMENT_PAGE_IDS) {
+    for (const name of allowlistedFieldNames(pageId)) {
+      assert.match(
+        labelsBlock,
+        new RegExp(`\\b${name}: '[^']+'`),
+        `${pageId}/${name} must have a Chinese business label`,
+      );
+    }
+  }
+
+  // The required shared-contract business labels are exact.
+  const required = {
+    packageCount: '包裹数',
+    packageWeight: '包裹重量',
+    lineCount: '明细行数',
+    skuCount: 'SKU 数',
+    orderCount: '订单数',
+    deliveryQuantity: '发货件数',
+    deliveryTypeName: '送货方式',
+    expressCompanyName: '承运商',
+    warehouseName: '收货仓',
+    orderTypeName: '订单类型',
+    skuCode: 'SKU',
+  };
+  for (const [name, label] of Object.entries(required)) {
+    assert.match(labelsBlock, new RegExp(`\\b${name}: '${label}'`), name);
+  }
+
+  // Weights carry the kg unit and unknown fields degrade to 其他信息 instead
+  // of leaking the technical key.
+  assert.match(unitsBlock, /packageWeight: 'kg'/);
+  assert.match(unitsBlock, /finalSettlementWeight: 'kg'/);
+  assert.match(app, /ORDER_FIELD_UNKNOWN_LABEL = '其他信息'/);
+  assert.match(app, /function orderFieldLabel\(name\)/);
+  assert.match(app, /return label \|\| ORDER_FIELD_UNKNOWN_LABEL/);
+  assert.match(app, /function orderFieldValue\(name, value\)/);
 });
 
 test('order paging and filter controls stay server-driven and URL-synced', async () => {
@@ -405,30 +470,56 @@ test('order paging and filter controls stay server-driven and URL-synced', async
   assert.match(app, /state\.orderPages\[pageId\]\.pageSize = URL_DEFAULT_ORDER_PAGE_SIZE/);
 });
 
-test('order-management group uses a desktop flyout and a mobile accordion', async () => {
-  const [html, styles] = await Promise.all([
+test('order-management group expands in place on desktop and stays an accordion on mobile', async () => {
+  const [html, styles, app] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/styles.css'),
+    read('src/web/app.js'),
   ]);
 
   assert.match(html, /class="nav-group-panel" id="order-nav-panel" hidden/);
   assert.match(html, /aria-controls="order-nav-panel"/);
-  // Desktop: the panel is an overlay beside the fixed sidebar.
+  assert.match(app, /const orderRouteActive = state\.route === 'fulfilment' \|\| URL_ORDER_PAGE_IDS\.includes\(state\.route\)/);
+  assert.match(app, /orderGroupPanel\.hidden = false/);
+  assert.doesNotMatch(app, /event\.target\.closest\?\.\('\.nav-group'\)/);
+  // Desktop: the panel expands in place inside the sidebar rail and pushes
+  // the following nav items down; it is no longer a fixed floating overlay.
+  const desktop = styles.slice(styles.indexOf('@media (min-width: 1081px)'));
+  assert.match(desktop, /\.nav-group-panel\s*\{\s*position: static;/);
+  assert.doesNotMatch(desktop, /position: fixed;/);
+  assert.match(desktop, /\.nav-group-panel\s*\{[^}]*min-width: 0[^}]*max-width: 100%/s);
+  // The rail keeps its own vertical scrollbar and clips horizontal overflow.
   assert.match(
-    styles,
-    /@media \(min-width: 1081px\)[\s\S]*?\.nav-group-panel\s*\{\s*position: fixed;/,
+    desktop,
+    /\.sidebar \.primary-nav\s*\{\s*overflow-x: hidden;\s*overflow-y: auto;/,
   );
-  // Mobile: the same panel becomes an accordion sheet under the top bar.
+  // Active and focus states are explicit for the toggle and subgroup links.
+  assert.match(styles, /\.nav-group-toggle\.nav-group-active/);
+  assert.match(desktop, /\.nav-subgroup a\.active\s*\{/);
+  assert.match(
+    desktop,
+    /\.nav-group-toggle:focus-visible,\s*\.nav-subgroup a:focus-visible/,
+  );
+  // Mobile and tablet: the same panel remains in document flow as a true
+  // accordion instead of becoming an overlay sheet.
   assert.match(
     styles,
-    /@media \(max-width: 1080px\)[\s\S]*?\.nav-group-panel\s*\{\s*position: absolute;/,
+    /@media \(max-width: 1080px\)[\s\S]*?\.nav-group-panel\s*\{\s*position: static;/,
+  );
+  // The narrow phone layout keeps the true in-place accordion.
+  assert.match(
+    styles,
+    /@media \(max-width: 620px\)[\s\S]*?\.sidebar\s*\{\s*position: relative;[\s\S]*?\.nav-group-panel\s*\{\s*position: static;/,
   );
   assert.match(
     styles,
     /@media \(max-width: 620px\)[\s\S]*?\.sidebar\s*\{\s*position: relative;/,
   );
+  assert.match(
+    styles,
+    /@media \(max-width: 620px\)[\s\S]*?\.nav-group\s*\{\s*flex: 0 0 calc\(100vw - 32px\);/,
+  );
   // The toggle is an accessible disclosure control.
-  const app = await read('src/web/app.js');
   assert.match(app, /function toggleOrderNavPanel\(\)/);
   assert.match(app, /function closeOrderNavPanel\(\)/);
   assert.match(app, /toggle\.setAttribute\('aria-expanded', String\(willOpen\)\)/);
