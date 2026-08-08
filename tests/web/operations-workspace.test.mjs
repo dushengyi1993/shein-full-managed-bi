@@ -315,7 +315,7 @@ test('filter and page controls update the URL and reset paging', async () => {
   assert.match(app, /state\.ops\.pageSize = pageSizeParam\(raw\)/);
   assert.match(
     app,
-    /syncUrlFromState\(\);\s*\n\s*if \(kind\.startsWith\('procurement'\)\) scheduleProcurementLoad\(\{ resetPage: true \}\);\s*\n\s*else if \(kind\.startsWith\('fulfilment'\)\) scheduleFulfilmentLoad\(\{ resetPage: true \}\);\s*\n\s*else if \(kind\.startsWith\('ops'\)\) scheduleOpsLoad\(\{ resetPage: true \}\);\s*\n\s*else schedulePlatformLoad\(\{ resetPage: true \}\)/,
+    /syncUrlFromState\(\);\s*\n\s*if \(kind\.startsWith\('order'\)\) scheduleOrderLoad\(\{ resetPage: true \}\);\s*\n\s*else if \(kind\.startsWith\('procurement'\)\) scheduleProcurementLoad\(\{ resetPage: true \}\);\s*\n\s*else if \(kind\.startsWith\('fulfilment'\)\) scheduleFulfilmentLoad\(\{ resetPage: true \}\);\s*\n\s*else if \(kind\.startsWith\('ops'\)\) scheduleOpsLoad\(\{ resetPage: true \}\);\s*\n\s*else schedulePlatformLoad\(\{ resetPage: true \}\)/,
   );
 
   // Paging syncs the URL before fetching, so a shared link matches the view.

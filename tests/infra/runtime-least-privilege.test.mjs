@@ -20,8 +20,17 @@ test('portal serves only the promoted dashboard JSON and has no warehouse or Ope
     portal,
     /FULL_BI_DATA_FILE=\/srv\/shein-fm\/runtime\/dashboard\/dashboard\.json/,
   );
+  assert.match(
+    portal,
+    /FULL_BI_ORDER_MANAGEMENT_FILE=\/srv\/shein-fm\/runtime\/dashboard\/order-management\.json/,
+  );
   assert.match(portal, /ConditionPathExists=\/srv\/shein-fm\/runtime\/portal\.enabled/);
+  assert.match(
+    portal,
+    /ConditionPathExists=\/srv\/shein-fm\/runtime\/dashboard\/order-management\.json/,
+  );
   assert.match(portal, /ReadOnlyPaths=.*dashboard\.json/);
+  assert.match(portal, /ReadOnlyPaths=.*order-management\.json/);
   assert.doesNotMatch(portal, /DATABASE_URL|database\.env|warehouse\.env/i);
   assert.doesNotMatch(portal, /OPENAPI|openapi\.json/i);
   assert.doesNotMatch(portal, /materialize_full_managed_dashboard|ExecStartPre/);

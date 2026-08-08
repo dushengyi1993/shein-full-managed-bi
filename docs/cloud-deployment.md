@@ -176,7 +176,9 @@ git diff --check
 5. 运行 `shein-fm-db-migrate.service`，确认全部 migration 与 verify 成功；
 6. 为五个组件写入独立 `database.env`，LOGIN 与能力组必须一一对应；
 7. 安装 systemd 单元，执行 `systemd-analyze verify` 和 `systemctl daemon-reload`；
-8. 手工运行一次 Dashboard 物化，检查 staging 原子替换、文件所有权和 JSON 契约；
+8. 手工运行一次 Dashboard 物化，检查 `dashboard*.json`、`shipping-orders.json` 与
+   `order-management.json` 的 staging 原子替换、文件所有权和 JSON 契约；订单管理索引
+   `coverage` 必须为 `COMPLETE` 且 `promotable=true`，否则禁止切换；
 9. 首次引入运行态投影时，先用目标 release 的绝对路径手工运行
    `materialize_full_managed_system_health.mjs`，确认脱敏快照已经原子生成且不含凭据；
 10. 切换 `/opt/shein-fm/current`；
@@ -185,7 +187,8 @@ git diff --check
     成功末端和 Webhook 合并 path 唤醒；Webhook 首页物化采用 5 分钟去重窗口，固定
     retry timer 保持停用，资源延期只由 pending/kick 事件 path 重试；
 12. 安装 Nginx 和 logrotate，执行 `nginx -t` 成功后只 reload；
-13. 从 loopback 和公网验证登录墙、Dashboard API、`/api/system`、12 个路由和退出登录；
+13. 从 loopback 和公网验证登录墙、Dashboard API、`/api/system`、`/api/orders`、
+    9 个一级入口、订单管理 10 个固定子页和退出登录；
 14. 再按下节逐域开启数据服务。
 
 共享 HAProxy 同时承载 443 SSH，严禁 restart；只允许在保留现有 SSH 会话时执行 `haproxy -c` 后 reload。
@@ -249,6 +252,8 @@ docker exec shein-fm-db pg_isready -U sheinfm -d shein_fm
 
 - 未登录 `/api/dashboard` 返回 `401`，登录后只读；
 - 未登录 `/api/system` 返回 `401`，登录后只返回脱敏运行态；
+- 未登录 `/api/orders` 返回 `401`；登录后只接受固定页、白名单筛选/排序/分页参数和
+  `GET/HEAD`。没有验证合同的页面必须返回可解释的不可用状态，不得发布猜测数据；
 - Portal 进程环境无数据库与平台凭据；
 - 首页显示真实今日/昨日/7日/30日、逐日趋势、店铺和标准商品排行；
 - 页面明确业务日期、25 店规范范围、实际覆盖和具体质量原因；

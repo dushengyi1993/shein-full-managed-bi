@@ -7,10 +7,10 @@
     <meta name="theme-color" content="#171814">
     <meta name="color-scheme" content="light">
     <title>SHEIN 全托运营驾驶舱</title>
-    <link rel="icon" href="/favicon.svg?v=20260808.6" type="image/svg+xml">
-    <link rel="stylesheet" href="/styles.css?v=20260808.6">
-    <link rel="stylesheet" href="/home-parity.css?v=20260808.6">
-    <script src="/app.js?v=20260808.6" defer></script>
+    <link rel="icon" href="/favicon.svg?v=20260808.7" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css?v=20260808.7">
+    <link rel="stylesheet" href="/home-parity.css?v=20260808.7">
+    <script src="/app.js?v=20260808.7" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#content">跳到主要内容</a>
@@ -19,7 +19,7 @@
       <aside class="sidebar" aria-label="全托运营工作台">
         <div class="brand">
           <div class="mark" aria-hidden="true">
-            <img src="/favicon.svg?v=20260808.6" alt="">
+            <img src="/favicon.svg?v=20260808.7" alt="">
           </div>
           <div>
             <h1>SHEIN BI</h1>
@@ -29,7 +29,39 @@
 
         <nav class="nav primary-nav" aria-label="主导航">
           <a href="#home" data-route="home"><span>总控驾驶舱</span><small>CONTROL</small></a>
-          <a href="#fulfilment" data-route="fulfilment"><span>发货订单</span><small>ORDER</small></a>
+          <div class="nav-group" data-nav-group="orders">
+            <button type="button" class="nav-group-toggle" id="order-nav-toggle"
+              aria-expanded="false" aria-controls="order-nav-panel">
+              <span>订单管理</span>
+              <span class="nav-group-tail">
+                <small>ORDER</small>
+                <svg class="nav-group-chevron" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                  <path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+            </button>
+            <div class="nav-group-panel" id="order-nav-panel" hidden>
+              <div class="nav-subgroup">
+                <p class="nav-subgroup-label">发货履约</p>
+                <a href="#fulfilment" data-route="fulfilment"><span>发货订单</span></a>
+                <a href="#delivery-notes" data-route="delivery-notes"><span>发货单列表</span></a>
+                <a href="#delivery-desk" data-route="delivery-desk"><span>发货台</span></a>
+                <a href="#stock-records" data-route="stock-records"><span>备货记录</span></a>
+                <a href="#waybills" data-route="waybills"><span>运单报表</span></a>
+              </div>
+              <div class="nav-subgroup">
+                <p class="nav-subgroup-label">退货异常</p>
+                <a href="#return-applications" data-route="return-applications"><span>退货申请</span></a>
+                <a href="#return-orders" data-route="return-orders"><span>退货列表</span></a>
+                <a href="#exceptions" data-route="exceptions"><span>收货/退货异常</span></a>
+              </div>
+              <div class="nav-subgroup">
+                <p class="nav-subgroup-label">服务质检</p>
+                <a href="#value-added-services" data-route="value-added-services"><span>增值服务列表</span></a>
+                <a href="#quality-reports" data-route="quality-reports"><span>质检报告</span></a>
+              </div>
+            </div>
+          </div>
           <a href="#sales" data-route="sales"><span>销量分析</span><small>SALES</small></a>
           <a href="#products" data-route="products"><span>商品分析</span><small>PRODUCT</small></a>
           <a href="#inventory" data-route="inventory"><span>库存与备货</span><small>SUPPLY</small></a>

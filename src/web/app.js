@@ -19,6 +19,15 @@ const ROUTES = Object.freeze({
   home: { title: '总控驾驶舱', code: 'CONTROL' },
   procurement: { title: '采购单', code: 'PO' },
   fulfilment: { title: '发货订单', code: 'ORDER' },
+  'delivery-notes': { title: '发货单列表', code: 'DELIVERY NOTES' },
+  'delivery-desk': { title: '发货台', code: 'DELIVERY DESK' },
+  'stock-records': { title: '备货记录', code: 'STOCK RECORDS' },
+  waybills: { title: '运单报表', code: 'WAYBILLS' },
+  'return-applications': { title: '退货申请', code: 'RETURN APPLICATIONS' },
+  'return-orders': { title: '退货列表', code: 'RETURN ORDERS' },
+  exceptions: { title: '收货/退货异常', code: 'EXCEPTIONS' },
+  'value-added-services': { title: '增值服务列表', code: 'VALUE-ADDED SERVICES' },
+  'quality-reports': { title: '质检报告', code: 'QUALITY REPORTS' },
   products: { title: '商品中心', code: 'MDM' },
   sales: { title: '销量洞察', code: 'SALES' },
   inventory: { title: '供给与备货', code: 'SUPPLY' },
@@ -92,8 +101,11 @@ const HOME_TREND_METRICS = Object.freeze({
    and nothing parsed here is ever treated as HTML. */
 
 const URL_ROUTE_KEYS = Object.freeze([
-  'home', 'fulfilment', 'procurement', 'products', 'sales', 'inventory',
-  'returns', 'compliance', 'finance', 'platform', 'ops', 'system',
+  'home', 'fulfilment', 'delivery-notes', 'delivery-desk', 'stock-records',
+  'waybills', 'return-applications', 'return-orders', 'exceptions',
+  'value-added-services', 'quality-reports', 'procurement', 'products',
+  'sales', 'inventory', 'returns', 'compliance', 'finance', 'platform', 'ops',
+  'system',
 ]);
 
 const URL_RANGE_KEYS = Object.freeze(['today', 'yesterday', 'last7Days', 'last30Days']);
@@ -184,6 +196,21 @@ const URL_FULFILMENT_TIME_FIELDS = Object.freeze([
 ]);
 const URL_FULFILMENT_DEFECTIVE = Object.freeze(['ALL', 'YES', 'NO']);
 const URL_DEFAULT_FULFILMENT_PAGE_SIZE = 50;
+/* Order-management workspace pages. They share one server query
+   (`/api/orders?page=<pageId>`) whose filtering, sorting and pagination are
+   performed on the server, so each page keeps its own bounded state. */
+const URL_ORDER_PAGE_IDS = Object.freeze([
+  'delivery-notes', 'delivery-desk', 'stock-records', 'waybills',
+  'return-applications', 'return-orders', 'exceptions',
+  'value-added-services', 'quality-reports',
+]);
+const URL_ORDER_SORTS = Object.freeze([
+  'LATEST',
+  'UPDATED_DESC',
+  'STATUS',
+  'STORE',
+]);
+const URL_DEFAULT_ORDER_PAGE_SIZE = 50;
 const URL_PLATFORM_VIEWS = Object.freeze(['URGENT', 'ATTENTION', 'BUSINESS', 'ALL']);
 const URL_PLATFORM_SEVERITIES = Object.freeze(['ALL', 'P0', 'P1', 'P2', 'P3']);
 const URL_PLATFORM_SORTS = Object.freeze(['PRIORITY', 'LATEST']);
@@ -309,6 +336,29 @@ function serializeFocusToken(focus) {
   return `${focus.domain}:${URL_STORE_PATTERN.test(storeCode) ? storeCode : ''}:${code}`;
 }
 
+/** Deterministic per-page state for the shared order-management query. */
+function orderPageDefaults(entry) {
+  const source = entry && typeof entry === 'object' ? entry : {};
+  return {
+    sort: allowListedToken(source.sort, URL_ORDER_SORTS, 'LATEST'),
+    status: operationCodeParam(source.status),
+    page: 1,
+    pageSize: URL_INVENTORY_PAGE_SIZES.includes(source.pageSize)
+      ? source.pageSize
+      : URL_DEFAULT_ORDER_PAGE_SIZE,
+  };
+}
+
+/** Every order-management page always has state, so a shared link can never
+    silently lose one page's filter while editing another. */
+function inheritedOrderPages(source) {
+  const entries = source && typeof source === 'object' ? source : {};
+  return Object.fromEntries(URL_ORDER_PAGE_IDS.map((pageId) => [
+    pageId,
+    orderPageDefaults(entries[pageId]),
+  ]));
+}
+
 /**
  * Parse a location hash into investigation state.
  *
@@ -431,6 +481,9 @@ function parseHashState(rawHash, inherited = {}) {
       opsPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.opsPageSize)
         ? inherited.opsPageSize
         : URL_DEFAULT_INVENTORY_PAGE_SIZE,
+      // A bare nav hash restarts every order-management page; each page keeps
+      // its own sort, status and page size.
+      orderPages: inheritedOrderPages(inherited.orderPages),
       // Navigating to another surface invalidates a focus that belonged to the
       // previous one.
       focus: null,
@@ -579,6 +632,21 @@ function parseHashState(rawHash, inherited = {}) {
     opsSort: allowListedToken(params.get('opsSort'), URL_OPS_SORTS, 'PRIORITY'),
     opsPage: pageParam('opsPage'),
     opsPageSize: routePageSize('ops', inherited.opsPageSize),
+    // `sort`, `status`, `page` and `size` bind to the active order-management
+    // route only; every other order page keeps its inherited state.
+    orderPages: Object.fromEntries(URL_ORDER_PAGE_IDS.map((pageId) => {
+      if (route !== pageId) return [pageId, orderPageDefaults(inherited.orderPages?.[pageId])];
+      return [pageId, {
+        sort: allowListedToken(params.get('sort'), URL_ORDER_SORTS, 'LATEST'),
+        status: operationCodeParam(params.get('status')),
+        page: pageParam('page'),
+        pageSize: routePageSize(
+          pageId,
+          inherited.orderPages?.[pageId]?.pageSize,
+          URL_DEFAULT_ORDER_PAGE_SIZE,
+        ),
+      }];
+    })),
     // A focus only applies on the surface that can prove it.
     focus: focus && FOCUS_DOMAINS[focus.domain].route === route ? focus : null,
     canonicalLink: true,
@@ -732,6 +800,22 @@ function serializeHashState(input = {}) {
       params.set('size', String(opsPageSize));
     }
   }
+  if (URL_ORDER_PAGE_IDS.includes(route)) {
+    const pageState = input.orderPages?.[route] || {};
+    const orderSort = allowListedToken(pageState.sort, URL_ORDER_SORTS, 'LATEST');
+    if (orderSort !== 'LATEST') params.set('sort', orderSort);
+    const status = operationCodeParam(pageState.status);
+    if (status !== 'ALL') params.set('status', status);
+    if (Number.isSafeInteger(pageState.page) && pageState.page > 1) {
+      params.set('page', String(Math.min(pageState.page, 9999)));
+    }
+    const orderPageSize = pageSizeParam(
+      pageState.pageSize ?? URL_DEFAULT_ORDER_PAGE_SIZE,
+    );
+    if (orderPageSize !== URL_DEFAULT_ORDER_PAGE_SIZE) {
+      params.set('size', String(orderPageSize));
+    }
+  }
   const focus = input.focus && FOCUS_DOMAINS[input.focus.domain]?.route === route
     ? serializeFocusToken(input.focus)
     : '';
@@ -854,6 +938,19 @@ const state = {
     page: initialHashState.fulfilmentPage || 1,
     pageSize: initialHashState.fulfilmentPageSize || URL_DEFAULT_FULFILMENT_PAGE_SIZE,
   },
+  // Shared order-management workspace. `page` names the active order page;
+  // each page's filter state lives in `orderPages` and round-trips through the
+  // canonical hash so a shared link matches the rendered view.
+  orderWorkspace: {
+    page: URL_ORDER_PAGE_IDS.includes(initialHashState.route)
+      ? initialHashState.route
+      : null,
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+  },
+  orderPages: initialHashState.orderPages,
   platform: {
     data: null,
     loading: false,
@@ -963,6 +1060,8 @@ const elements = {
   errorMessage: document.querySelector('#error-message'),
   retryButton: document.querySelector('#retry-button'),
   logoutButton: document.querySelector('#logout-button'),
+  orderGroupToggle: document.querySelector('#order-nav-toggle'),
+  orderGroupPanel: document.querySelector('#order-nav-panel'),
 };
 
 let procurementLoadTimer = null;
@@ -970,6 +1069,7 @@ let salesLoadTimer = null;
 let inventoryLoadTimer = null;
 let productLoadTimer = null;
 let fulfilmentLoadTimer = null;
+let orderLoadTimer = null;
 let platformLoadTimer = null;
 let opsLoadTimer = null;
 let systemLoadTimer = null;
@@ -3376,6 +3476,618 @@ function stageMetricNote(metric) {
   return `${numberFormatter.format(unknownCount)} / ${numberFormatter.format(rowCount)} 行未知，拒绝补零合计`;
 }
 /* --- fulfilment-query:end --- */
+
+/* --- order-management-query:start ---
+   The order-management workspace reads only `/api/orders?page=<pageId>`.
+   Filtering (owner/store/query/status), sorting and pagination happen on the
+   server; the browser never filters the whole snapshot and never presents a
+   partial slice as the platform universe. Every page renders only the
+   allow-listed row fields from the shared `order-management.json` contract and
+   defensively drops address/contact/phone-looking keys from details. */
+
+const ORDER_PAGE_META = Object.freeze({
+  'delivery-notes': {
+    title: '发货单列表',
+    code: 'DELIVERY NOTES',
+    group: '发货履约',
+    description: '平台发货单与包裹面单记录，展示单据状态与时间轨迹；页面只读，不创建、不打印面单。',
+    filterHint: '支持全局搜索（单号 / 货号 / SKC / SKU）与店铺筛选；状态码、排序与分页由服务端执行。',
+    readOnly: '不创建、不打印发货单或面单。',
+  },
+  'delivery-desk': {
+    title: '发货台',
+    code: 'DELIVERY DESK',
+    group: '发货履约',
+    description: '平台发货台作业项，用于查看待处理发货任务及其状态；页面只读，不执行发货、装箱或交运动作。',
+    filterHint: '支持按状态码筛选与排序；发货台状态以平台快照为准。',
+    readOnly: '不执行发货、装箱或交运动作。',
+  },
+  'stock-records': {
+    title: '备货记录',
+    code: 'STOCK RECORDS',
+    group: '发货履约',
+    description: '全托管仓库库存变动记录，展示出入库流水与剩余数量；页面只读，不做任何库存调整。',
+    filterHint: '支持按状态码、店铺与时间筛选；数量未知时显示“未知”，不补零。',
+    readOnly: '不进行任何库存调整。',
+  },
+  waybills: {
+    title: '运单报表',
+    code: 'WAYBILLS',
+    group: '发货履约',
+    description: '物流运单与轨迹状态记录，展示运单号、承运商与物流阶段；页面只读，不创建或取消运单。',
+    filterHint: '支持按运单状态筛选与排序；物流轨迹以平台返回为准。',
+    readOnly: '不创建或取消运单。',
+  },
+  'return-applications': {
+    title: '退货申请',
+    code: 'RETURN APPLICATIONS',
+    group: '退货异常',
+    description: '买家退货申请记录，展示申请状态与处理结果；页面只读，不审核、不通过、不驳回退货申请。',
+    filterHint: '支持按申请状态筛选；处理结果缺失时保持未知。',
+    readOnly: '不审核、不通过、不驳回退货申请。',
+  },
+  'return-orders': {
+    title: '退货列表',
+    code: 'RETURN ORDERS',
+    group: '退货异常',
+    description: '平台退货单与回收入库记录，展示退货单状态与数量；页面只读，不执行退货操作。',
+    filterHint: '支持按退货单状态筛选；数量未知不补零。',
+    readOnly: '不执行退货或回收入库操作。',
+  },
+  exceptions: {
+    title: '收货/退货异常',
+    code: 'EXCEPTIONS',
+    group: '退货异常',
+    description: '履约与订单异常记录，展示异常类型、状态与处理进展；页面只读，不提交申诉或修复动作。',
+    filterHint: '支持按异常状态筛选；异常原因缺失时保持未知。',
+    readOnly: '不提交申诉或修复动作。',
+  },
+  'value-added-services': {
+    title: '增值服务列表',
+    code: 'VALUE-ADDED SERVICES',
+    group: '服务质检',
+    description: '增值服务订购与使用记录，展示服务状态与生效范围；页面只读，不订购、不取消服务。',
+    filterHint: '支持按服务状态筛选；服务费用不在此页展示。',
+    readOnly: '不订购、不取消增值服务。',
+  },
+  'quality-reports': {
+    title: '质检报告',
+    code: 'QUALITY REPORTS',
+    group: '服务质检',
+    description: '平台质检结论与报告记录，展示质检状态与结果；页面只读，不发起复检或修改质检结果。',
+    filterHint: '支持按质检状态筛选；报告缺失字段保持未知。',
+    readOnly: '不发起复检或修改质检结果。',
+  },
+});
+
+const ORDER_SORT_OPTIONS = Object.freeze([
+  ['LATEST', '平台更新最新'],
+  ['UPDATED_DESC', '更新时间最新'],
+  ['STATUS', '按状态排序'],
+  ['STORE', '按店铺排序'],
+]);
+
+const ORDER_STATUSES = Object.freeze(['AVAILABLE', 'PARTIAL', 'UNAVAILABLE']);
+
+/** Detail keys that must never be rendered even if a source row carries them. */
+const ORDER_SENSITIVE_KEY_PATTERN = /(address|addr|contact|phone|mobile|tel|recipient|收件|电话|手机|地址|联系人|门牌|街道|区号)/i;
+
+function orderSensitiveKey(key) {
+  return ORDER_SENSITIVE_KEY_PATTERN.test(String(key || ''));
+}
+
+function orderQueryUrl(pageId) {
+  const pageState = state.orderPages[pageId];
+  const params = new URLSearchParams({
+    page: pageId,
+    store: state.store,
+    status: pageState.status,
+    q: state.query,
+    sort: pageState.sort,
+    pageNumber: String(pageState.page),
+    pageSize: String(pageSizeParam(pageState.pageSize)),
+  });
+  return `/api/orders?${params.toString()}`;
+}
+
+/** Like `fetchJson`, but keeps the server error code for fail-closed pages. */
+async function fetchOrderJson(path) {
+  const response = await fetch(path, {
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    let code = '';
+    let message = '';
+    try {
+      const payload = await response.json();
+      code = payload?.error?.code || '';
+      message = payload?.error?.message || '';
+    } catch {
+      // Keep the generic HTTP fallback below.
+    }
+    const error = new Error(message || `云端数据服务返回 HTTP ${response.status}`);
+    if (code) error.code = code;
+    throw error;
+  }
+  return response.json();
+}
+
+/**
+ * Normalize the shared `order-management.json` contract into the view state.
+ * Both the flattened page view and the index shape (`pages[pageId]`) are
+ * accepted; an unknown page status or a missing rows array is a structural
+ * error, never a silently empty table.
+ */
+function normalizeOrderPageResult(result, pageId) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    throw new Error('订单管理查询结构无效');
+  }
+  if (result.readOnly !== true) throw new Error('订单管理查询结构无效');
+  const pageMeta = result.page && result.pageId === pageId
+    ? { ...result.page, pageId: result.pageId }
+    : (result.pages && result.pages[pageId]) || null;
+  const status = pageMeta?.status || result.pageStatus || null;
+  if (!ORDER_STATUSES.includes(status)) {
+    throw new Error('订单页面状态缺失或未知');
+  }
+  const rows = Array.isArray(pageMeta?.rows)
+    ? pageMeta.rows
+    : Array.isArray(result.rows)
+      ? result.rows
+      : null;
+  if (rows === null) throw new Error('订单明细结构无效');
+  const sourcePagination = result.pagination || pageMeta?.pagination || null;
+  let pagination = null;
+  if (sourcePagination && typeof sourcePagination === 'object') {
+    pagination = {
+      page: Number.isSafeInteger(sourcePagination.page)
+        ? sourcePagination.page
+        : 1,
+      pageCount: Number.isSafeInteger(sourcePagination.pageCount)
+        ? sourcePagination.pageCount
+        : 0,
+      matchedRows: Number.isSafeInteger(sourcePagination.matchedRows)
+        ? sourcePagination.matchedRows
+        : null,
+      hasPrevious: sourcePagination.hasPrevious === true,
+      hasNext: sourcePagination.hasNext === true,
+    };
+  }
+  if (
+    status !== 'UNAVAILABLE'
+    && (!pagination || !Number.isSafeInteger(pagination.page) || pagination.page < 1)
+  ) {
+    throw new Error('订单分页信息缺失');
+  }
+  return {
+    pageId,
+    status,
+    source: pageMeta?.source || result.source || '',
+    latestSourceFetchedAt: pageMeta?.latestSourceFetchedAt
+      || result.latestSourceFetchedAt
+      || null,
+    reason: pageMeta?.reason || result.reason || null,
+    coverage: result.coverage && typeof result.coverage === 'object'
+      ? result.coverage
+      : null,
+    updatedAt: result.updatedAt || null,
+    schemaVersion: result.schemaVersion ?? null,
+    rows,
+    pagination,
+  };
+}
+
+async function loadOrder({ resetPage = false } = {}) {
+  const pageId = state.orderWorkspace.page;
+  if (!URL_ORDER_PAGE_IDS.includes(pageId)) return;
+  if (resetPage) state.orderPages[pageId].page = 1;
+  if (state.route !== pageId) return;
+  const requestSerial = state.orderWorkspace.requestSerial + 1;
+  state.orderWorkspace.requestSerial = requestSerial;
+  state.orderWorkspace.loading = true;
+  state.orderWorkspace.error = '';
+  render();
+  try {
+    const result = await fetchOrderJson(orderQueryUrl(pageId));
+    // A response that lost the race must never replace newer filter state.
+    if (requestSerial !== state.orderWorkspace.requestSerial) return;
+    state.orderWorkspace.data = normalizeOrderPageResult(result, pageId);
+  } catch (error) {
+    if (requestSerial !== state.orderWorkspace.requestSerial) return;
+    if (error?.code === 'ORDER_MANAGEMENT_PAGE_UNAVAILABLE') {
+      // The server fails closed for UNAVAILABLE pages. Surface the page state
+      // itself instead of a generic outage so operators see exactly why the
+      // table is absent and can retry after the platform data lands.
+      state.orderWorkspace.data = {
+        pageId,
+        status: 'UNAVAILABLE',
+        source: '',
+        latestSourceFetchedAt: null,
+        reason: error instanceof Error ? error.message : '页面数据暂不可用',
+        coverage: null,
+        rows: [],
+        pagination: null,
+      };
+      state.orderWorkspace.error = '';
+    } else {
+      state.orderWorkspace.data = null;
+      state.orderWorkspace.error = error instanceof Error
+        ? error.message
+        : '订单管理查询暂不可用';
+    }
+  } finally {
+    if (requestSerial === state.orderWorkspace.requestSerial) {
+      state.orderWorkspace.loading = false;
+      render();
+    }
+  }
+}
+
+function scheduleOrderLoad({ resetPage = false, delay = 0 } = {}) {
+  if (orderLoadTimer !== null) window.clearTimeout(orderLoadTimer);
+  // Invalidate any in-flight response now, not when the debounce fires, so an
+  // old scope can never paint under the new URL state.
+  state.orderWorkspace.requestSerial += 1;
+  const pageId = state.orderWorkspace.page;
+  if (resetPage && URL_ORDER_PAGE_IDS.includes(pageId)) {
+    state.orderPages[pageId].page = 1;
+    state.orderWorkspace.data = null;
+    state.orderWorkspace.error = '';
+    state.orderWorkspace.loading = true;
+  }
+  if (!URL_ORDER_PAGE_IDS.includes(state.route)) return;
+  if (resetPage) render();
+  orderLoadTimer = window.setTimeout(() => {
+    orderLoadTimer = null;
+    void loadOrder();
+  }, delay);
+}
+
+function orderStatusLabel(status) {
+  if (status === 'AVAILABLE') return '数据可用';
+  if (status === 'PARTIAL') return '部分覆盖';
+  return '数据不可用';
+}
+
+function orderStatusExplanation(status, reason) {
+  if (status === 'AVAILABLE') return '该页面数据可用，按当前条件展示。';
+  if (status === 'PARTIAL') {
+    return reason
+      ? `部分店铺数据未完成：${reason}`
+      : '部分店铺数据未完成，以下结果可能不完整。';
+  }
+  return reason
+    ? `页面数据暂不可用：${reason}`
+    : '页面数据暂不可用，不会用旧快照或补零结果冒充。';
+}
+
+function orderCoverageLine(coverage) {
+  if (!coverage || typeof coverage !== 'object') return '店铺覆盖未知';
+  const completed = isUnit(coverage.completedStoreCount)
+    ? coverage.completedStoreCount
+    : null;
+  const expected = isUnit(coverage.expectedStoreCount)
+    ? coverage.expectedStoreCount
+    : null;
+  const storeCodes = Array.isArray(coverage.storeCodes)
+    ? coverage.storeCodes.filter((code) => String(code || '').trim() !== '')
+    : [];
+  const parts = [];
+  if (completed === null && expected === null) {
+    parts.push('店铺覆盖未知');
+  } else if (expected === null) {
+    parts.push(`已完成 ${numberFormatter.format(completed)} 家店铺`);
+  } else {
+    parts.push(`店铺覆盖 ${numberFormatter.format(completed)} / ${numberFormatter.format(expected)} 家`);
+  }
+  if (storeCodes.length) {
+    const visible = storeCodes.slice(0, 12).join('、');
+    parts.push(`已完成 ${visible}${storeCodes.length > 12 ? ` 等 ${storeCodes.length} 家` : ''}`);
+  }
+  if (coverage.reason) parts.push(`说明：${String(coverage.reason)}`);
+  return parts.join(' · ');
+}
+
+function orderPaginationCaption(pagination, rows) {
+  if (!pagination || typeof pagination !== 'object') {
+    return rows.length ? `本页 ${rows.length} 条，分页信息未知` : '分页信息未知';
+  }
+  const matched = isUnit(pagination.matchedRows)
+    ? `${numberFormatter.format(pagination.matchedRows)} 条`
+    : '条数未知';
+  const pageCount = isUnit(pagination.pageCount) ? pagination.pageCount : 0;
+  const displayedPage = pageCount === 0 ? 0 : pagination.page;
+  return `已物化范围命中 ${matched} · 第 ${numberFormatter.format(displayedPage)} / ${numberFormatter.format(pageCount)} 页`;
+}
+
+function orderPagination(pagination, position = 'bottom') {
+  if (!pagination || typeof pagination !== 'object') return '';
+  const pageCount = isUnit(pagination.pageCount) ? pagination.pageCount : 0;
+  const currentPage = isUnit(pagination.page) ? pagination.page : 1;
+  const displayedPage = pageCount === 0 ? 0 : currentPage;
+  return `
+    <nav class="table-pagination ${position === 'top' ? 'pagination-top' : ''}" aria-label="订单管理页面分页（${position === 'top' ? '表格上方' : '表格下方'}）">
+      <p>${orderPaginationCaption(pagination, [])}</p>
+      <div>
+        <button type="button" data-order-page="${Math.max(1, currentPage - 1)}" ${pagination.hasPrevious ? '' : 'disabled'}>上一页</button>
+        <button type="button" data-order-page="${currentPage + 1}" ${pagination.hasNext ? '' : 'disabled'}>下一页</button>
+      </div>
+    </nav>`;
+}
+
+/** Status filter fed by the server facet vocabulary; a bounded free-text
+    input remains the fallback when the contract shape omits facets. */
+function orderStatusControl(queryData, pageState) {
+  const facets = productRecord(queryData?.facets);
+  const statuses = Array.isArray(facets.statuses) ? facets.statuses : [];
+  if (statuses.length === 0) {
+    return `
+      <label class="sales-sort-control" for="operation-order-status">
+        <span>状态码</span>
+        <input id="operation-order-status" type="text" data-order-status
+          value="${escapeHtml(pageState.status === 'ALL' ? '' : pageState.status)}"
+          placeholder="留空为全部，如 WAIT_SHIP" autocomplete="off" maxlength="80">
+      </label>`;
+  }
+  const options = [['ALL', '全部状态']];
+  for (const item of statuses) {
+    const code = String(item?.code ?? '').trim();
+    if (code === '') continue;
+    const count = isUnit(item?.count) ? numberFormatter.format(item.count) : '';
+    options.push([code, count ? `${code} · ${count}` : code]);
+  }
+  if (
+    pageState.status !== 'ALL'
+    && !options.some(([code]) => code === pageState.status)
+  ) {
+    // A stale shared link keeps its own value visible; the server still
+    // validates it and fails closed instead of silently widening the query.
+    options.push([pageState.status, `${pageState.status}（不在当前页面状态清单）`]);
+  }
+  return operationSelect('orderStatus', '状态', options, pageState.status);
+}
+
+/** Render allow-listed detail entries; sensitive-looking keys are dropped. */
+function orderFieldList(entries, label, fallbackLabel) {
+  if (!Array.isArray(entries) || entries.length === 0) return '';
+  const items = [];
+  for (const entry of entries) {
+    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      // Shared contract shape: every entry is {name, value} with a name that
+      // the index validator already allow-listed per page.
+      if (typeof entry.name === 'string' && Object.prototype.hasOwnProperty.call(entry, 'value')) {
+        if (orderSensitiveKey(entry.name)) continue;
+        const text = entry.value === null || entry.value === undefined
+          ? ''
+          : String(entry.value);
+        if (text === '') continue;
+        items.push(`<li><span>${escapeHtml(entry.name)}</span><strong>${escapeHtml(text)}</strong></li>`);
+        continue;
+      }
+      for (const [key, value] of Object.entries(entry)) {
+        if (orderSensitiveKey(key)) continue;
+        const text = value === null || value === undefined ? '' : String(value);
+        if (text === '') continue;
+        items.push(`<li><span>${escapeHtml(String(key))}</span><strong>${escapeHtml(text)}</strong></li>`);
+      }
+    } else {
+      const text = entry === null || entry === undefined ? '' : String(entry);
+      if (text === '') continue;
+      items.push(`<li><span>${escapeHtml(fallbackLabel)}</span><strong>${escapeHtml(text)}</strong></li>`);
+    }
+  }
+  if (items.length === 0) return '';
+  return `
+    <section class="order-detail-block">
+      <h3>${escapeHtml(label)}</h3>
+      <ul class="order-field-list">${items.join('')}</ul>
+    </section>`;
+}
+
+function orderRowDetails(row) {
+  const record = productRecord(row);
+  return [
+    orderFieldList(record.metrics, '指标', '指标值'),
+    orderFieldList(record.facts, '事实', '事实值'),
+    orderFieldList(record.details, '详情', '详情值'),
+  ].join('');
+}
+
+function hasOrderRowDetails(row) {
+  const record = productRecord(row);
+  return ['metrics', 'facts', 'details'].some((key) => (
+    Array.isArray(record[key]) && record[key].length > 0
+  ));
+}
+
+function orderRow(row) {
+  const record = productRecord(row);
+  const id = String(record.id ?? '');
+  const storeCode = String(record.storeCode ?? '');
+  const statusCode = String(record.statusCode ?? '');
+  const statusName = String(record.statusName ?? '');
+  const primary = String(record.primary ?? '');
+  const secondary = String(record.secondary ?? '');
+  const createdAt = sourceTime(record.createdAt);
+  const updatedAt = sourceTime(record.updatedAt);
+  const tags = Array.isArray(record.tags)
+    ? record.tags.map((tag) => String(tag ?? '').trim()).filter(Boolean)
+    : [];
+  const statusLabel = statusName || statusCode || '状态未知';
+  const details = hasOrderRowDetails(row) ? orderRowDetails(row) : '';
+  return `
+    <tr class="order-row">
+      <td>
+        <span class="order-status-chip">${escapeHtml(statusLabel)}</span>
+        ${statusCode && statusCode !== statusName ? `<small class="order-status-code">${escapeHtml(statusCode)}</small>` : ''}
+      </td>
+      <td class="order-id-cell">${escapeHtml(primary || id || '—')}</td>
+      <td>${escapeHtml(secondary || '—')}</td>
+      <td>${escapeHtml(storeCode || '—')}</td>
+      <td>${escapeHtml(createdAt)}</td>
+      <td>${escapeHtml(updatedAt)}</td>
+      <td>${tags.length
+        ? tags.map((tag) => `<span class="order-tag">${escapeHtml(tag)}</span>`).join('')
+        : '<span class="order-muted">—</span>'}</td>
+    </tr>
+    ${details ? `
+      <tr class="order-detail-row">
+        <td colspan="7">
+          <details class="order-detail-disclosure">
+            <summary>查看脱敏明细</summary>
+            <div class="order-detail-grid">${details}</div>
+          </details>
+        </td>
+      </tr>` : ''}`;
+}
+
+function orderRowTable(rows) {
+  return `
+    <div class="table-wrap">
+      <table class="order-table">
+        <thead>
+          <tr>
+            <th scope="col">状态</th>
+            <th scope="col">标识</th>
+            <th scope="col">摘要</th>
+            <th scope="col">店铺</th>
+            <th scope="col">创建时间</th>
+            <th scope="col">更新时间</th>
+            <th scope="col">标签</th>
+          </tr>
+        </thead>
+        <tbody>${rows.map(orderRow).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function orderEmptyState() {
+  return `
+    <div class="order-empty-state" role="status">
+      <strong>当前条件下没有可展示的记录</strong>
+      <p>空结果可能来自筛选条件过窄，或平台该范围确实没有记录；这不等同于加载失败，也不会被补成 0。</p>
+      <p class="order-empty-hint">可清空状态码、扩大店铺范围或更换排序后重试。</p>
+    </div>`;
+}
+
+function orderUnavailablePanel(reason) {
+  return `
+    <section class="order-unavailable-panel" role="alert">
+      <div>
+        <strong>数据未更新，本页面暂缓展示</strong>
+        <p>${escapeHtml(reason || '平台数据尚未就绪；不会沿用旧候选、旧快照或补零数字冒充结果。')}</p>
+      </div>
+      <button type="button" class="clear-button" data-order-retry="1">重新加载</button>
+    </section>`;
+}
+
+function orderWorkspaceQueryState(kind) {
+  const error = kind === 'error';
+  return `
+    <section class="order-query-state${error ? ' order-query-error' : ''}" role="${error ? 'alert' : 'status'}">
+      ${error ? `
+        <div>
+          <strong>订单管理页面加载失败</strong>
+          <p>${escapeHtml(state.orderWorkspace.error || '云端只读数据服务暂不可用。')}</p>
+          <p class="query-error-note">不会用旧数据冒充新结果；请重试或稍后再看。</p>
+        </div>
+        <button type="button" class="clear-button" data-order-retry="1">重新加载</button>` : `
+        <div class="query-skeleton" aria-hidden="true">
+          <span class="loading-line wide"></span>
+          <span class="loading-line"></span>
+          <div class="loading-grid"><span></span><span></span><span></span><span></span></div>
+        </div>
+        <p>正在读取订单管理页面…</p>`}
+    </section>`;
+}
+
+function renderOrderWorkspace() {
+  const pageId = state.route;
+  const meta = ORDER_PAGE_META[pageId] || {
+    title: '订单管理',
+    code: 'ORDER',
+    group: '订单管理',
+    description: '',
+    filterHint: '',
+    readOnly: '不提供任何平台写操作按钮。',
+  };
+  const pageState = state.orderPages[pageId];
+  const workspace = state.orderWorkspace;
+  if (workspace.loading && !workspace.data) {
+    return `${sampleNotice()}${orderWorkspaceQueryState('loading')}`;
+  }
+  if (workspace.error && !workspace.data) {
+    return `${sampleNotice()}${orderWorkspaceQueryState('error')}`;
+  }
+  const queryData = workspace.data && workspace.data.pageId === pageId
+    ? workspace.data
+    : null;
+  if (!queryData) return orderWorkspaceQueryState('loading');
+  const status = queryData.status;
+  const rows = Array.isArray(queryData.rows) ? queryData.rows : [];
+  const pagination = queryData.pagination;
+  const sourceLabel = queryData.source || '来源未知';
+  return `
+    ${sampleNotice()}
+    <section class="order-hero" aria-labelledby="order-page-title">
+      <header>
+        <div>
+          <span class="eyebrow">${escapeHtml(meta.group)} · ${escapeHtml(meta.code)}</span>
+          <h1 id="order-page-title">${escapeHtml(meta.title)}</h1>
+          <p>${escapeHtml(meta.description)}</p>
+        </div>
+        <div class="order-source-receipt">
+          <span>页面事实来源</span>
+          <strong>${escapeHtml(sourceLabel)}</strong>
+          <small>${escapeHtml(formatSourceUpdateTime(queryData.latestSourceFetchedAt) || '来源时间未知')}</small>
+        </div>
+      </header>
+      <div class="order-status-banner status-${String(status).toLowerCase()}" role="status">
+        <strong>${orderStatusLabel(status)}</strong>
+        <span>${escapeHtml(orderStatusExplanation(status, queryData.reason))}</span>
+      </div>
+      <p class="order-coverage-line">${escapeHtml(orderCoverageLine(queryData.coverage))}</p>
+    </section>
+
+    <section class="order-filter-toolbar" aria-label="${escapeHtml(meta.title)}筛选">
+      ${operationSelect('orderSort', '排序', ORDER_SORT_OPTIONS, pageState.sort)}
+      ${operationSelect('orderPageSize', '每页', [
+        [25, '25 条'], [50, '50 条'], [100, '100 条'],
+      ], pageSizeParam(pageState.pageSize))}
+      ${orderStatusControl(queryData, pageState)}
+      ${operationSearchControls('order')}
+      <p class="order-filter-hint">${escapeHtml(meta.filterHint)}</p>
+      ${state.owner !== 'ALL' && state.store === 'ALL' ? `
+        <p class="order-filter-hint">当前为负责人筛选（${escapeHtml(state.owner)}）；订单管理页面按店铺筛选，负责人范围不作用于本页，已按全部店铺查询。</p>` : ''}
+    </section>
+
+    ${status === 'UNAVAILABLE' ? orderUnavailablePanel(queryData.reason) : `
+      <section class="order-table-section" aria-label="${escapeHtml(meta.title)}明细">
+        <header class="order-list-head">
+          <div>
+            <h2>记录列表</h2>
+            <p>${escapeHtml(orderPaginationCaption(pagination, rows))}</p>
+          </div>
+          <button type="button" class="clear-button" data-order-retry="1">刷新当前结果</button>
+        </header>
+        ${pagination ? orderPagination(pagination, 'top') : ''}
+        ${rows.length ? orderRowTable(rows) : orderEmptyState()}
+        ${pagination ? orderPagination(pagination, 'bottom') : ''}
+        ${workspace.loading ? '<p class="query-refresh-note" role="status">正在刷新当前筛选结果…</p>' : ''}
+      </section>
+      <details class="order-readonly-note">
+        <summary>只读边界与数据口径</summary>
+        <div>
+          <span>本页只读：${escapeHtml(meta.readOnly)}</span>
+          <span>明细中的指标、事实与详情均为脱敏后的允许字段；地址、联系人与电话不会展示。</span>
+          <span>筛选、排序与分页由服务端执行；页面不提供任何平台写操作按钮。</span>
+          <span>页面状态（可用 / 部分覆盖 / 不可用）、覆盖店铺与原因以 ${escapeHtml(sourceLabel)} 快照为准。</span>
+        </div>
+      </details>`}
+  `;
+}
+/* --- order-management-query:end --- */
 
 function salesQueryUrl() {
   const quick = quickFilterValue('sales');
@@ -10573,6 +11285,15 @@ function renderRoute() {
     home: renderHome,
     procurement: renderProcurement,
     fulfilment: renderFulfilment,
+    'delivery-notes': renderOrderWorkspace,
+    'delivery-desk': renderOrderWorkspace,
+    'stock-records': renderOrderWorkspace,
+    waybills: renderOrderWorkspace,
+    'return-applications': renderOrderWorkspace,
+    'return-orders': renderOrderWorkspace,
+    exceptions: renderOrderWorkspace,
+    'value-added-services': renderOrderWorkspace,
+    'quality-reports': renderOrderWorkspace,
     products: renderProducts,
     sales: renderSales,
     inventory: renderInventory,
@@ -10610,6 +11331,10 @@ function updateNavigation() {
     if (active) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   });
+  elements.orderGroupToggle?.classList.toggle(
+    'nav-group-active',
+    state.route === 'fulfilment' || URL_ORDER_PAGE_IDS.includes(state.route),
+  );
   const route = ROUTES[state.route];
   elements.mobilePageTitle.textContent = route.title;
   document.title = `${route.title} · SHEIN 全托运营工作台`;
@@ -11077,6 +11802,9 @@ async function loadDashboard(options = {}) {
   if (state.data && state.route === 'fulfilment') {
     scheduleFulfilmentLoad();
   }
+  if (state.data && URL_ORDER_PAGE_IDS.includes(state.route)) {
+    scheduleOrderLoad();
+  }
   if (state.data && state.route === 'platform') {
     schedulePlatformLoad();
   }
@@ -11186,6 +11914,15 @@ function currentHashState() {
     opsSort: state.ops.sort,
     opsPage: state.ops.page,
     opsPageSize: state.ops.pageSize,
+    orderPages: Object.fromEntries(URL_ORDER_PAGE_IDS.map((pageId) => {
+      const entry = state.orderPages?.[pageId] || {};
+      return [pageId, {
+        sort: allowListedToken(entry.sort, URL_ORDER_SORTS, 'LATEST'),
+        status: operationCodeParam(entry.status),
+        page: Number.isSafeInteger(entry.page) ? entry.page : 1,
+        pageSize: pageSizeParam(entry.pageSize),
+      }];
+    })),
   };
 }
 
@@ -11270,6 +12007,18 @@ function applyHashState(parsed) {
   state.ops.sort = allowListedToken(parsed.opsSort, URL_OPS_SORTS, 'PRIORITY');
   state.ops.page = parsed.opsPage || 1;
   state.ops.pageSize = pageSizeParam(parsed.opsPageSize);
+  state.orderWorkspace.page = URL_ORDER_PAGE_IDS.includes(parsed.route)
+    ? parsed.route
+    : state.orderWorkspace.page;
+  for (const pageId of URL_ORDER_PAGE_IDS) {
+    const entry = parsed.orderPages?.[pageId] || {};
+    state.orderPages[pageId] = {
+      sort: allowListedToken(entry.sort, URL_ORDER_SORTS, 'LATEST'),
+      status: operationCodeParam(entry.status),
+      page: Number.isSafeInteger(entry.page) ? entry.page : 1,
+      pageSize: pageSizeParam(entry.pageSize),
+    };
+  }
   if (parsed.quick === 'ALL') delete state.quickFilters[parsed.route];
   else state.quickFilters[parsed.route] = parsed.quick;
 }
@@ -11318,6 +12067,13 @@ function syncRouteFromLocation() {
     state.fulfilment.requestSerial += 1;
     state.fulfilment.loading = false;
   }
+  if (URL_ORDER_PAGE_IDS.includes(state.route)) {
+    scheduleOrderLoad({ resetPage: routeChanged });
+  } else if (routeChanged) {
+    // Leaving the surface must also drop any in-flight order response.
+    state.orderWorkspace.requestSerial += 1;
+    state.orderWorkspace.loading = false;
+  }
   if (state.route === 'platform') {
     schedulePlatformLoad({ resetPage: routeChanged });
   } else if (routeChanged) {
@@ -11353,6 +12109,7 @@ elements.search.addEventListener('input', (event) => {
   scheduleInventoryLoad({ resetPages: true, delay: 220 });
   scheduleProductLoad({ resetPages: true, delay: 220 });
   scheduleFulfilmentLoad({ resetPage: true, delay: 220 });
+  scheduleOrderLoad({ resetPage: true, delay: 220 });
   schedulePlatformLoad({ resetPage: true, delay: 220 });
   scheduleOpsLoad({ resetPage: true, delay: 220 });
   scheduleSystemLoad({ reset: true, delay: 220 });
@@ -11370,6 +12127,7 @@ elements.scope.addEventListener('change', (event) => {
   scheduleInventoryLoad({ resetPages: true, delay: 120 });
   scheduleProductLoad({ resetPages: true, delay: 120 });
   scheduleFulfilmentLoad({ resetPage: true, delay: 120 });
+  scheduleOrderLoad({ resetPage: true, delay: 120 });
   schedulePlatformLoad({ resetPage: true, delay: 120 });
   scheduleOpsLoad({ resetPage: true, delay: 120 });
   scheduleSystemLoad({ reset: true, delay: 120 });
@@ -11518,6 +12276,29 @@ elements.view.addEventListener('click', (event) => {
     void loadFulfilment();
     return;
   }
+  const orderRetry = event.target.closest?.('[data-order-retry]');
+  if (orderRetry && elements.view.contains(orderRetry)) {
+    void loadOrder();
+    return;
+  }
+  const orderPage = event.target.closest?.('[data-order-page]');
+  if (orderPage && elements.view.contains(orderPage)) {
+    const nextPage = Number(orderPage.dataset.orderPage);
+    const pageId = state.orderWorkspace.page;
+    if (
+      Number.isSafeInteger(nextPage)
+      && nextPage >= 1
+      && !orderPage.disabled
+      && URL_ORDER_PAGE_IDS.includes(pageId)
+    ) {
+      state.orderPages[pageId].page = nextPage;
+      // Mirror the page into the URL before fetching so a shared link and the
+      // rendered page can never disagree.
+      syncUrlFromState();
+      void loadOrder();
+    }
+    return;
+  }
   const shippingOrderType = event.target.closest?.('[data-shipping-order-type]');
   if (shippingOrderType && elements.view.contains(shippingOrderType)) {
     const value = allowListedToken(
@@ -11634,6 +12415,7 @@ elements.view.addEventListener('click', (event) => {
     // just re-runs the active workspace from page 1.
     const kind = String(operationSearch.dataset.operationSearch || '');
     syncUrlFromState();
+    if (kind === 'order') scheduleOrderLoad({ resetPage: true });
     if (kind === 'procurement') scheduleProcurementLoad({ resetPage: true });
     if (kind === 'fulfilment') scheduleFulfilmentLoad({ resetPage: true });
     if (kind === 'platform') schedulePlatformLoad({ resetPage: true });
@@ -11666,6 +12448,16 @@ elements.view.addEventListener('click', (event) => {
       state.fulfilment.pageSize = URL_DEFAULT_FULFILMENT_PAGE_SIZE;
       syncUrlFromState();
       scheduleFulfilmentLoad({ resetPage: true });
+    }
+    if (kind === 'order') {
+      const pageId = state.orderWorkspace.page;
+      if (URL_ORDER_PAGE_IDS.includes(pageId)) {
+        state.orderPages[pageId].status = 'ALL';
+        state.orderPages[pageId].sort = 'LATEST';
+        state.orderPages[pageId].pageSize = URL_DEFAULT_ORDER_PAGE_SIZE;
+        syncUrlFromState();
+        scheduleOrderLoad({ resetPage: true });
+      }
     }
     if (kind === 'platform') {
       state.platform.view = 'URGENT';
@@ -11856,6 +12648,21 @@ elements.view.addEventListener('change', (event) => {
       state.fulfilment.sort = allowListedToken(raw, URL_FULFILMENT_SORTS, 'LATEST');
     } else if (kind === 'fulfilmentPageSize') {
       state.fulfilment.pageSize = pageSizeParam(raw);
+    } else if (kind === 'orderSort') {
+      const pageId = state.orderWorkspace.page;
+      if (URL_ORDER_PAGE_IDS.includes(pageId)) {
+        state.orderPages[pageId].sort = allowListedToken(raw, URL_ORDER_SORTS, 'LATEST');
+      }
+    } else if (kind === 'orderPageSize') {
+      const pageId = state.orderWorkspace.page;
+      if (URL_ORDER_PAGE_IDS.includes(pageId)) {
+        state.orderPages[pageId].pageSize = pageSizeParam(raw);
+      }
+    } else if (kind === 'orderStatus') {
+      const pageId = state.orderWorkspace.page;
+      if (URL_ORDER_PAGE_IDS.includes(pageId)) {
+        state.orderPages[pageId].status = operationCodeParam(raw);
+      }
     } else if (kind === 'platformView') {
       state.platform.view = allowListedToken(raw, URL_PLATFORM_VIEWS, 'URGENT');
     } else if (kind === 'platformSeverity') {
@@ -11888,7 +12695,8 @@ elements.view.addEventListener('change', (event) => {
     // Any filter change restarts paging so page 2 of an old filter can never be
     // requested against the new one.
     syncUrlFromState();
-    if (kind.startsWith('procurement')) scheduleProcurementLoad({ resetPage: true });
+    if (kind.startsWith('order')) scheduleOrderLoad({ resetPage: true });
+    else if (kind.startsWith('procurement')) scheduleProcurementLoad({ resetPage: true });
     else if (kind.startsWith('fulfilment')) scheduleFulfilmentLoad({ resetPage: true });
     else if (kind.startsWith('ops')) scheduleOpsLoad({ resetPage: true });
     else schedulePlatformLoad({ resetPage: true });
@@ -12018,11 +12826,60 @@ document.addEventListener('focusin', (event) => {
 });
 
 document.addEventListener('focusout', hideChartTooltip);
+function closeOrderNavPanel() {
+  const toggle = elements.orderGroupToggle;
+  const panel = elements.orderGroupPanel;
+  if (!toggle || !panel) return;
+  toggle.setAttribute('aria-expanded', 'false');
+  panel.hidden = true;
+}
+
+function toggleOrderNavPanel() {
+  const toggle = elements.orderGroupToggle;
+  const panel = elements.orderGroupPanel;
+  if (!toggle || !panel) return;
+  const willOpen = panel.hidden;
+  toggle.setAttribute('aria-expanded', String(willOpen));
+  panel.hidden = !willOpen;
+}
+
+elements.orderGroupToggle?.addEventListener('click', (event) => {
+  event.preventDefault();
+  toggleOrderNavPanel();
+});
+
+document.addEventListener('click', (event) => {
+  if (!elements.orderGroupPanel || elements.orderGroupPanel.hidden) return;
+  if (event.target.closest?.('.nav-group')) return;
+  closeOrderNavPanel();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeOrderNavPanel();
+});
+
+// The order-management status filter is a free-text code, so it is read on
+// change rather than click. It is re-validated by the same pattern the server
+// enforces and never reaches the endpoint in another form.
+elements.view.addEventListener('change', (event) => {
+  const orderStatus = event.target.closest?.('[data-order-status]');
+  if (!orderStatus || !elements.view.contains(orderStatus)) return;
+  const pageId = state.orderWorkspace.page;
+  if (!URL_ORDER_PAGE_IDS.includes(pageId)) return;
+  state.orderPages[pageId].status = operationCodeParam(orderStatus.value);
+  syncUrlFromState();
+  scheduleOrderLoad({ resetPage: true });
+});
+
 document.addEventListener('scroll', hideChartTooltip, true);
-window.addEventListener('hashchange', syncRouteFromLocation);
+window.addEventListener('hashchange', () => {
+  closeOrderNavPanel();
+  syncRouteFromLocation();
+});
 window.addEventListener('beforeunload', () => {
   if (procurementLoadTimer !== null) window.clearTimeout(procurementLoadTimer);
   if (salesLoadTimer !== null) window.clearTimeout(salesLoadTimer);
+  if (orderLoadTimer !== null) window.clearTimeout(orderLoadTimer);
   if (opsLoadTimer !== null) window.clearTimeout(opsLoadTimer);
   if (systemLoadTimer !== null) window.clearTimeout(systemLoadTimer);
   dashboardEventSource?.close();

@@ -16,7 +16,7 @@ function functionBody(source, functionName) {
   return source.slice(start, nextFunction === -1 ? source.length : nextFunction);
 }
 
-test('full-managed primary navigation places shipping orders first after home', async () => {
+test('full-managed primary navigation keeps home first and nests shipping orders inside the order-management group', async () => {
   const [html, app, styles] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
@@ -25,6 +25,15 @@ test('full-managed primary navigation places shipping orders first after home', 
   const routes = [
     'home',
     'fulfilment',
+    'delivery-notes',
+    'delivery-desk',
+    'stock-records',
+    'waybills',
+    'return-applications',
+    'return-orders',
+    'exceptions',
+    'value-added-services',
+    'quality-reports',
     'sales',
     'products',
     'inventory',
@@ -36,15 +45,47 @@ test('full-managed primary navigation places shipping orders first after home', 
 
   for (const route of routes) {
     assert.match(html, new RegExp(`data-route="${route}"`));
-    assert.match(app, new RegExp(`\\b${route}: \\{ title:`));
+    assert.match(app, new RegExp(`\\b['"]?${route}['"]?: \\{ title:`));
   }
-  assert.equal((html.match(/data-route=/g) || []).length, 9);
+  assert.equal((html.match(/data-route=/g) || []).length, 18);
   assert.deepEqual(
     [...html.matchAll(/data-route="([^"]+)"/g)].map((match) => match[1]),
     routes,
   );
   assert.doesNotMatch(html, /data-route="(?:returns|compliance|finance)"/);
   assert.match(html, /data-route="home"><span>总控驾驶舱<\/span>/);
+  // The expandable top-level group carries the confirmed ORDER code.
+  assert.match(html, /<button type="button" class="nav-group-toggle" id="order-nav-toggle"/);
+  assert.match(html, /aria-expanded="false" aria-controls="order-nav-panel"/);
+  assert.match(html, /<span>订单管理<\/span>/);
+  assert.match(html, /<small>ORDER<\/small>/);
+  // The group panel lists the three confirmed subgroups, with 发货订单
+  // (#fulfilment) as the first item.
+  const panelStart = html.indexOf('id="order-nav-panel"');
+  // The panel closes after its three subgroup divs, i.e. the fourth `</div>`.
+  let panelEnd = panelStart;
+  for (let depth = 0; depth < 4; depth += 1) {
+    panelEnd = html.indexOf('</div>', panelEnd + 1);
+  }
+  const panel = html.slice(panelStart, panelEnd);
+  assert.match(panel, /<p class="nav-subgroup-label">发货履约<\/p>/);
+  assert.match(panel, /<p class="nav-subgroup-label">退货异常<\/p>/);
+  assert.match(panel, /<p class="nav-subgroup-label">服务质检<\/p>/);
+  assert.deepEqual(
+    [...panel.matchAll(/data-route="([^"]+)"/g)].map((match) => match[1]),
+    [
+      'fulfilment',
+      'delivery-notes',
+      'delivery-desk',
+      'stock-records',
+      'waybills',
+      'return-applications',
+      'return-orders',
+      'exceptions',
+      'value-added-services',
+      'quality-reports',
+    ],
+  );
   assert.match(html, /data-route="sales"><span>销量分析<\/span>/);
   assert.match(html, /data-route="products"><span>商品分析<\/span>/);
   assert.match(html, /data-route="inventory"><span>库存与备货<\/span>/);
@@ -53,6 +94,9 @@ test('full-managed primary navigation places shipping orders first after home', 
   assert.match(html, /data-route="system"><span>系统管理<\/span>/);
   assert.match(html, /缺失值不补零；建议不等于已执行/);
   assert.match(styles, /\.table-wrap\s*\{[^}]*max-width:\s*100%[^}]*overflow:\s*auto/s);
+  assert.match(styles, /\.nav-group-panel\s*\{/);
+  assert.match(styles, /\.nav-group-toggle\s*\{/);
+  assert.match(styles, /\.nav-subgroup-label\s*\{/);
   assert.match(styles, /@media \(max-width: 620px\)/);
 });
 

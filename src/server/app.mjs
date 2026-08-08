@@ -25,6 +25,8 @@ import {
 } from './product-query.mjs';
 import { loadShippingOrdersData, ShippingOrdersDataError } from './shipping-orders-data.mjs';
 import { queryShippingOrders, ShippingOrdersQueryError } from './shipping-orders-query.mjs';
+import { loadOrderManagementData, OrderManagementDataError } from './order-management-data.mjs';
+import { queryOrderManagement, OrderManagementQueryError } from './order-management-query.mjs';
 import {
   PlatformQueryError,
   queryPlatformDashboard,
@@ -196,6 +198,7 @@ export function createRequestHandler(options = {}) {
   const dataFile = options.dataFile;
   const homeDataFile = options.homeDataFile;
   const shippingOrdersFile = options.shippingOrdersFile;
+  const orderManagementFile = options.orderManagementFile;
   const systemHealthFile = options.systemHealthFile;
   const webRoot = options.webRoot || DEFAULT_WEB_ROOT;
   const updateBroker = options.updateBroker || null;
@@ -689,6 +692,48 @@ export function createRequestHandler(options = {}) {
           error: {
             code: 'FULFILMENT_DATA_UNAVAILABLE',
             message: '发货订单查询暂不可用',
+          },
+        }, method);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/orders') {
+      if (method !== 'GET' && method !== 'HEAD') {
+        response.setHeader('Allow', 'GET, HEAD');
+        sendJson(response, 405, {
+          error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' },
+        }, method);
+        return;
+      }
+      try {
+        const orderManagement = await loadOrderManagementData(orderManagementFile, {
+          runtimeEnvironment,
+        });
+        sendJson(
+          response,
+          200,
+          queryOrderManagement(orderManagement, url.searchParams),
+          method,
+          request,
+        );
+      } catch (error) {
+        if (error instanceof OrderManagementQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        if (error instanceof OrderManagementDataError) {
+          sendJson(response, 503, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'ORDER_MANAGEMENT_DATA_UNAVAILABLE',
+            message: '订单管理查询暂不可用',
           },
         }, method);
       }

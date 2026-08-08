@@ -10,6 +10,7 @@ const DASHBOARD_FILES = Object.freeze([
   '/srv/shein-fm/runtime/dashboard/dashboard.json',
   '/srv/shein-fm/runtime/dashboard/dashboard.home.json',
   '/srv/shein-fm/runtime/dashboard/shipping-orders.json',
+  '/srv/shein-fm/runtime/dashboard/order-management.json',
 ]);
 
 async function fingerprint(file) {
@@ -56,7 +57,19 @@ export async function markReadyCoordinatorsPublished({
 } = {}) {
   const readyThroughMs = new Date(readyThrough).valueOf();
   if (!Number.isFinite(readyThroughMs)) throw new TypeError('MATERIALIZE_STARTED_AT_INVALID');
-  const manifest = await Promise.all(dashboardFiles.map(fingerprint));
+  const manifest = [];
+  for (const file of dashboardFiles) {
+    try {
+      manifest.push(await fingerprint(file));
+    } catch (error) {
+      if (error?.code !== 'ENOENT' || path.basename(file) !== 'order-management.json') {
+        throw error;
+      }
+      // Only the newly introduced order-management index is optional during
+      // the one-release compatibility window. Existing core artifacts remain
+      // mandatory; a missing core file must never mark a run as published.
+    }
+  }
   const publishedAt = now.toISOString();
   const marked = [];
   for (const file of await stateFiles(root)) {

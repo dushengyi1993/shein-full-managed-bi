@@ -8,6 +8,7 @@
 - 已建立 `/open-api/goods/query-sku-sales` 的可信销量链路：逐店权限探针、稳定 SKU 清单、每批最多 100 条、日期锚定、合法零销量、缺失 SKU 禁止补零、原始证据与幂等回读。
 - 已接入全托只读商品、库存（PI / VI / JI）、缺货建议、采购单、发货订单与 Webhook 接收/标准化链路；未知数量始终保留为未知。
 - 发货订单作为总控后的第一个业务页面，按官方后台“订单 → 发货订单”的信息层级展示急采/备货、状态、时效、订单、商品行、发货与收货进度；使用独立只读索引和服务端筛选、排序、分页。首版以 OpenAPI 采购单和发货事实为准，官方页面扩展字段未接入时明确显示未知，不用推测值补齐。
+- 订单管理只读索引（`order-management.json`）以 `fact.purchase_order / fact.delivery` 可靠物化“发货单”与“运单”核心；备货记录与运单明细在存在加密会话快照时按已验证的 `sso.geiwohuo.com` 固定 POST 查询合同补充。固定九页合同中，发货台、退货申请、退货列表、收货/退货异常、增值服务列表、质检报告在原始证据不足以安全冻结请求前一律为 `UNAVAILABLE` 并附原因，绝不猜路径；分页/总数/去重/25 店覆盖任一失败，整个新索引不提升。
 - 采购单页面使用独立只读查询 API 做服务端筛选、排序和分页，并明确
   区分“物化范围命中”与源明细全量；Dashboard 原子提升通过认证 SSE
   通知浏览器自动重取，不宣称直接连接 SHEIN 实时数据。
@@ -32,6 +33,7 @@
 - 店铺内 SKU、SKC、供应商货号及跨店标准商品归并状态
 - 采购单状态、交付里程碑、PI / VI / JI 库存与缺货建议
 - Webhook 队列、运行心跳、订阅回读和脱敏事件时间线
+- 发货单核心、运单核心、备货记录（会话快照就绪时）与固定九页的覆盖/可用性状态
 - 数据更新时间、业务日期、店铺覆盖、字段覆盖和具体质量原因
 
 `query-sku-sales` 返回的是 SKU 销量数量快照，不是订单事实。首版明确不展示销售额、成交价、消费者订单数、成本、利润、退款率或 COD。财务报账、消费者订单和消费者售后仍须作为独立事实域重新验证后接入。
@@ -69,6 +71,17 @@ $env:FULL_BI_SHIPPING_ORDERS_FILE='C:\path\to\shipping-orders.json'
 npm run dev
 ```
 
+订单管理索引先由数据库事实物化，再在会话快照存在时合并只读 Session HTTP 证据：
+
+```powershell
+npm run materialize:order-management -- --out .\outputs\order-management.next.json
+npm run sync:order-management-sessions -- `
+  --stores=CX4412,XL2801,... `   # 必须为完整 25 店清单
+  --execute --output .\outputs\order-management.sessions.json
+```
+
+会话同步只调用 `sso.geiwohuo.com` 上已验证的固定 POST 查询路径（`/idms/order-apply/list`、`/clms/waybill/page`、`/clms/waybill/statistics`），全程不落盘地址、联系人、电话等 PII；分页/总数/去重/25 店覆盖任一失败，物化结果保持不可提升。
+
 已有标准化销量快照和店铺权限 JSON 时，可生成门户输入：
 
 ```powershell
@@ -85,12 +98,21 @@ npm run build:dashboard -- `
 ```text
 http://127.0.0.1:3100/#home
 http://127.0.0.1:3100/#fulfilment
+http://127.0.0.1:3100/#delivery-notes
+http://127.0.0.1:3100/#delivery-desk
+http://127.0.0.1:3100/#stock-records
+http://127.0.0.1:3100/#waybills
+http://127.0.0.1:3100/#return-applications
+http://127.0.0.1:3100/#return-orders
+http://127.0.0.1:3100/#exceptions
+http://127.0.0.1:3100/#value-added-services
+http://127.0.0.1:3100/#quality-reports
 http://127.0.0.1:3100/#sales
 http://127.0.0.1:3100/#products
-http://127.0.0.1:3100/#purchase-orders
 http://127.0.0.1:3100/#inventory
+http://127.0.0.1:3100/#procurement
 http://127.0.0.1:3100/#platform
-http://127.0.0.1:3100/#automation
+http://127.0.0.1:3100/#ops
 http://127.0.0.1:3100/#system
 ```
 
@@ -112,6 +134,8 @@ tests/          脱敏 fixture 与自动测试
 `scripts/apply_full_managed_openapi_app.mjs` 和 `scripts/apply_full_managed_sales_permission.mjs` 会在带登录态的独立浏览器 Profile 上操作真实 SHEIN 开放平台。它们是人工授权的管理工具，不属于 BI 定时任务调用链；真实提交必须显式传入 `--submit`，提交后必须回读平台状态。
 
 浏览器 Profile、Cookie、token、密钥、`.local.json`、日志、输出数据和数据库文件均被排除在版本库外。
+
+`scripts/sync_full_managed_order_management_sessions.mjs` 只读使用加密会话（`webapi-session`）与固定查询合同，不执行打印、取消、发货、备货、确认退货、签收、复议、自动确认等任何写动作；生产定时链路（`materialize_and_promote_full_managed_dashboard.sh`）在订单管理索引通过提升门后才发布该文件，否则保留暂存文件供检查。
 
 ## 云端运行
 

@@ -5947,3 +5947,594 @@ body[data-dataset="sample"] .metric-item > strong {
     gap: 6px;
   }
 }
+
+/* --- order-management navigation group ---
+   Desktop: clicking 订单管理 opens a fixed flyout panel beside the sidebar.
+   Mobile (<=1080px): the same panel becomes an accordion sheet anchored under
+   the sticky top bar. Flat colors only; no gradients or shadows beyond the
+   shared --shadow token. */
+.nav-group {
+  position: relative;
+}
+
+.nav-group-toggle {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--muted-strong);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.nav-group-toggle:hover {
+  color: var(--ink);
+  background: var(--paper-soft);
+}
+
+.nav-group-toggle:active {
+  transform: scale(0.995);
+}
+
+.nav-group-toggle.nav-group-active {
+  color: var(--ink);
+  background: var(--paper-warm);
+  font-weight: 700;
+}
+
+.nav-group-tail {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nav-group-toggle small {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.63rem;
+  letter-spacing: 0.08em;
+}
+
+.nav-group-toggle.nav-group-active small {
+  color: var(--muted-strong);
+}
+
+.nav-group-chevron {
+  display: block;
+  color: var(--muted);
+  transition: transform 160ms ease;
+}
+
+.nav-group-toggle[aria-expanded="true"] .nav-group-chevron {
+  transform: rotate(180deg);
+}
+
+.nav-subgroup-label {
+  margin: 0 8px 4px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.nav-subgroup a {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 0 10px;
+  color: var(--muted-strong);
+  border-radius: 8px;
+  text-decoration: none;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.nav-subgroup a:hover {
+  color: var(--ink);
+  background: var(--paper-soft);
+}
+
+.nav-subgroup a.active {
+  color: var(--ink);
+  background: var(--paper-warm);
+  font-weight: 700;
+}
+
+@media (min-width: 1081px) {
+  .nav-group-panel {
+    position: fixed;
+    top: 88px;
+    left: 282px;
+    z-index: 60;
+    display: grid;
+    width: 320px;
+    max-height: calc(100vh - 160px);
+    gap: 2px;
+    padding: 10px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--paper);
+    box-shadow: var(--shadow);
+  }
+
+  .nav-subgroup {
+    display: grid;
+    gap: 2px;
+    padding: 4px 0 8px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .nav-subgroup:last-child {
+    border-bottom: 0;
+    padding-bottom: 2px;
+  }
+}
+
+@media (max-width: 1080px) {
+  .nav-group-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 12px;
+    right: 12px;
+    z-index: 60;
+    display: grid;
+    gap: 2px;
+    max-height: min(62vh, 430px);
+    padding: 10px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--paper);
+    box-shadow: var(--shadow);
+  }
+
+  .nav-subgroup {
+    display: grid;
+    gap: 2px;
+    padding: 4px 0 8px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .nav-subgroup:last-child {
+    border-bottom: 0;
+    padding-bottom: 2px;
+  }
+}
+
+@media (max-width: 620px) {
+  /* The sidebar becomes a normal document-flow block at this width. Keep the
+     order group in-flow as a true accordion instead of covering later links. */
+  .sidebar {
+    position: relative;
+  }
+
+  .nav-group-panel {
+    position: static;
+    width: 100%;
+    max-height: none;
+    margin-top: 4px;
+    box-shadow: none;
+  }
+
+  .nav-group-toggle {
+    min-height: 35px;
+    padding: 0 9px;
+    font-size: 0.74rem;
+  }
+}
+
+/* --- order-management workspace --- */
+.order-hero {
+  margin: 1rem 0 1.25rem;
+  padding: clamp(1rem, 2vw, 1.4rem);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.order-hero header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.order-hero h1 {
+  margin: 0.25rem 0 0.4rem;
+  font-size: clamp(1.35rem, 2vw, 1.8rem);
+  font-weight: 500;
+}
+
+.order-hero header p {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.order-source-receipt {
+  display: grid;
+  min-width: 190px;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper-soft);
+  font-size: 0.72rem;
+}
+
+.order-source-receipt span {
+  color: var(--muted);
+}
+
+.order-source-receipt strong {
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+
+.order-source-receipt small {
+  color: var(--muted);
+}
+
+.order-status-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 0.84rem;
+}
+
+.order-status-banner strong {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.order-status-banner span {
+  color: var(--muted-strong);
+}
+
+.order-status-banner.status-available {
+  border-color: var(--accent);
+  background: var(--success-soft);
+}
+
+.order-status-banner.status-available strong {
+  color: var(--success);
+}
+
+.order-status-banner.status-partial {
+  border-color: #d9b45b;
+  background: var(--warning-soft);
+}
+
+.order-status-banner.status-partial strong {
+  color: var(--warning);
+}
+
+.order-status-banner.status-unavailable {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.order-status-banner.status-unavailable strong {
+  color: var(--danger);
+}
+
+.order-coverage-line {
+  margin: 0.65rem 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.order-filter-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.4rem 1rem;
+  margin: 0 0 1.1rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.sales-sort-control input[data-order-status] {
+  min-width: 190px;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.75rem;
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--paper);
+}
+
+.sales-sort-control input[data-order-status]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.order-filter-hint {
+  flex: 1 0 100%;
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.order-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.1rem 0 0.6rem;
+}
+
+.order-list-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.order-list-head p {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.order-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.order-table th {
+  padding: 0.55rem 0.7rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line-strong);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.order-table td {
+  padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.order-table tbody tr:hover td {
+  background: var(--paper-soft);
+}
+
+.order-id-cell {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.order-status-chip {
+  display: inline-block;
+  padding: 0.18rem 0.5rem;
+  color: var(--accent-dark);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.order-status-code {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.66rem;
+}
+
+.order-tag {
+  display: inline-block;
+  margin: 0 0.25rem 0.2rem 0;
+  padding: 0.12rem 0.45rem;
+  color: var(--muted-strong);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper-soft);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.order-muted {
+  color: var(--muted);
+}
+
+.order-detail-row td {
+  padding: 0.35rem 0.7rem 0.75rem;
+  background: var(--paper-soft);
+}
+
+.order-detail-disclosure summary {
+  cursor: pointer;
+  color: var(--accent-dark);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.order-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.55rem;
+}
+
+.order-detail-block h3 {
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.order-field-list {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.order-field-list li {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: space-between;
+  font-size: 0.76rem;
+}
+
+.order-field-list li span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.order-field-list li strong {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.order-empty-state,
+.order-unavailable-panel,
+.order-query-state {
+  margin: 1rem 0;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.order-empty-state strong,
+.order-unavailable-panel strong,
+.order-query-state strong {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.order-empty-state p,
+.order-unavailable-panel p,
+.order-query-state p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.order-empty-hint {
+  margin-top: 0.5rem !important;
+  color: var(--muted) !important;
+  font-size: 0.76rem !important;
+}
+
+.order-unavailable-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.order-unavailable-panel strong {
+  color: var(--danger);
+}
+
+.order-query-error {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.order-query-error strong {
+  color: var(--danger);
+}
+
+.order-query-error .query-error-note {
+  margin-top: 0.45rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.order-query-state .query-skeleton {
+  margin-bottom: 0.7rem;
+}
+
+.order-readonly-note {
+  margin: 1.2rem 0 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper-soft);
+}
+
+.order-readonly-note summary {
+  padding: 0.6rem 0.8rem;
+  color: var(--muted-strong);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.order-readonly-note div {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0 0.8rem 0.75rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .order-hero header {
+    display: grid;
+  }
+
+  .order-source-receipt {
+    min-width: 0;
+  }
+
+  .order-status-banner {
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .order-filter-toolbar {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .order-filter-toolbar .sales-sort-control {
+    justify-content: flex-start;
+  }
+
+  .order-table {
+    min-width: 720px;
+  }
+
+  .order-unavailable-panel {
+    display: grid;
+  }
+}

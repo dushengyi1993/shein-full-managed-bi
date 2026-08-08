@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
 
@@ -700,4 +702,213 @@ test('unknown static files return a safe JSON 404', async () => {
   const response = await fetch(`${baseUrl}/does-not-exist.txt`);
   assert.equal(response.status, 404);
   assert.match(await response.text(), /NOT_FOUND/);
+});
+
+const ORDER_MANAGEMENT_INDEX = {
+  schemaVersion: 1,
+  updatedAt: '2026-08-08T08:00:00.000Z',
+  promotable: true,
+  coverage: {
+    status: 'COMPLETE',
+    expectedStoreCount: 2,
+    completedStoreCount: 2,
+    storeCodes: ['DL5477', 'MZ2406'],
+    reason: null,
+  },
+  pages: {
+    'delivery-notes': {
+      status: 'AVAILABLE',
+      source: 'OPENAPI_DELIVERY_NOTES',
+      latestSourceFetchedAt: '2026-08-08T07:59:00.000Z',
+      reason: null,
+      rows: [
+        {
+          id: 'DN-1001', storeCode: 'DL5477', statusCode: 'SHIPPED', statusName: '已发货',
+          createdAt: '2026-08-08T01:00:00.000Z', updatedAt: '2026-08-08T07:00:00.000Z',
+          primary: '送货单 1001', secondary: '顺丰', tags: ['华南仓'],
+          metrics: [
+            { name: 'packageCount', value: 2 },
+            { name: 'packageWeight', value: 12.5 },
+          ],
+          facts: [{ name: 'warehouseName', value: '华南仓' }],
+          details: [{ name: 'expressCompanyName', value: '顺丰' }],
+        },
+        {
+          id: 'DN-1002', storeCode: 'MZ2406', statusCode: 'PENDING', statusName: '待发货',
+          createdAt: '2026-08-07T02:00:00.000Z', updatedAt: '2026-08-08T06:00:00.000Z',
+          primary: '送货单 1002', secondary: '', tags: [], metrics: [],
+          facts: [{ name: 'warehouseName', value: '华南仓' }], details: [],
+        },
+      ],
+    },
+    exceptions: {
+      status: 'AVAILABLE',
+      source: 'OPENAPI_EXCEPTIONS',
+      latestSourceFetchedAt: '2026-08-08T07:50:00.000Z',
+      reason: null,
+      rows: [
+        {
+          id: 'EX-1001', storeCode: 'DL5477', statusCode: 'OPEN', statusName: '待处理',
+          createdAt: '2026-08-08T01:00:00.000Z', updatedAt: '2026-08-08T07:00:00.000Z',
+          primary: '异常单 1001', secondary: '', tags: [], metrics: [],
+          facts: [], details: [],
+        },
+      ],
+    },
+    'delivery-desk': {
+      status: 'PARTIAL',
+      source: 'OPENAPI_DELIVERY_DESK',
+      latestSourceFetchedAt: '2026-08-08T07:30:00.000Z',
+      reason: 'DELIVERY_DESK_PARTIAL_SYNC',
+      rows: [
+        {
+          id: 'DD-1001', storeCode: 'DL5477', statusCode: 'GROUPED', statusName: '已分组',
+          createdAt: '2026-08-08T01:00:00.000Z', updatedAt: '2026-08-08T07:00:00.000Z',
+          primary: '配货台 1001', secondary: '', tags: [], metrics: [],
+          facts: [], details: [],
+        },
+      ],
+    },
+    'stock-records': {
+      status: 'UNAVAILABLE',
+      source: 'OPENAPI_STOCK_RECORDS',
+      latestSourceFetchedAt: null,
+      reason: 'STOCK_RECORDS_FETCH_FAILED',
+      rows: [],
+    },
+    waybills: {
+      status: 'UNAVAILABLE',
+      source: 'OPENAPI_WAYBILLS',
+      latestSourceFetchedAt: null,
+      reason: 'WAYBILLS_FETCH_FAILED',
+      rows: [],
+    },
+    'return-applications': {
+      status: 'UNAVAILABLE',
+      source: 'OPENAPI_RETURN_APPLICATIONS',
+      latestSourceFetchedAt: null,
+      reason: 'RETURN_APPLICATIONS_FETCH_FAILED',
+      rows: [],
+    },
+    'return-orders': {
+      status: 'UNAVAILABLE',
+      source: 'OPENAPI_RETURN_ORDERS',
+      latestSourceFetchedAt: null,
+      reason: 'RETURN_ORDERS_FETCH_FAILED',
+      rows: [],
+    },
+    'value-added-services': {
+      status: 'UNAVAILABLE',
+      source: 'OPENAPI_VALUE_ADDED_SERVICES',
+      latestSourceFetchedAt: null,
+      reason: 'VALUE_ADDED_SERVICES_FETCH_FAILED',
+      rows: [],
+    },
+    'quality-reports': {
+      status: 'UNAVAILABLE',
+      source: 'OPENAPI_QUALITY_REPORTS',
+      latestSourceFetchedAt: null,
+      reason: 'QUALITY_REPORTS_FETCH_FAILED',
+      rows: [],
+    },
+  },
+};
+
+test('GET /api/orders is a bounded read-only order-management page surface', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'order-management-server-'));
+  const file = join(directory, 'order-management.json');
+  await writeFile(file, JSON.stringify(ORDER_MANAGEMENT_INDEX));
+  const ordersServer = createDashboardServer({ dataFile: fixture, orderManagementFile: file });
+  await new Promise((resolve, reject) => {
+    ordersServer.once('error', reject);
+    ordersServer.listen(0, '127.0.0.1', resolve);
+  });
+  const address = ordersServer.address();
+  const ordersBaseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const response = await fetch(`${ordersBaseUrl}/api/orders?page=delivery-notes`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.schemaVersion, 1);
+    assert.equal(payload.readOnly, true);
+    assert.equal(payload.pageId, 'delivery-notes');
+    assert.equal(payload.page.pageId, 'delivery-notes');
+    assert.equal(payload.page.status, 'AVAILABLE');
+    assert.equal(payload.updatedAt, '2026-08-08T08:00:00.000Z');
+    assert.equal(payload.complete, true);
+    assert.equal(payload.coverage.status, 'COMPLETE');
+    assert.equal(payload.query.page, 'delivery-notes');
+    assert.equal(payload.query.pageSize, 50);
+    assert.ok(Array.isArray(payload.facets.stores));
+    assert.ok(Array.isArray(payload.facets.statuses));
+    assert.deepEqual(payload.facets.pageSizes, [25, 50, 100]);
+    assert.equal(payload.pagination.matchedRows, 2);
+    assert.equal(payload.rows.length, 2);
+    assert.doesNotMatch(JSON.stringify(payload), /13800138000|科技园路|联系电话|联系人/);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+
+    const partial = await fetch(`${ordersBaseUrl}/api/orders?page=delivery-desk`);
+    assert.equal(partial.status, 200);
+    const partialPayload = await partial.json();
+    assert.equal(partialPayload.page.status, 'PARTIAL');
+    assert.equal(partialPayload.complete, false);
+    assert.equal(partialPayload.rows.length, 1);
+
+    const unavailable = await fetch(`${ordersBaseUrl}/api/orders?page=stock-records`);
+    assert.equal(unavailable.status, 503);
+    assert.match(await unavailable.text(), /ORDER_MANAGEMENT_PAGE_UNAVAILABLE/);
+
+    const head = await fetch(`${ordersBaseUrl}/api/orders?page=delivery-notes`, { method: 'HEAD' });
+    assert.equal(head.status, 200);
+    assert.equal(await head.text(), '');
+    assert.equal(head.headers.get('cache-control'), 'no-store');
+  } finally {
+    await new Promise((resolve) => ordersServer.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('orders query rejects unknown, duplicated and out-of-range parameters plus mutation methods', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'order-management-reject-'));
+  const file = join(directory, 'order-management.json');
+  await writeFile(file, JSON.stringify(ORDER_MANAGEMENT_INDEX));
+  const ordersServer = createDashboardServer({ dataFile: fixture, orderManagementFile: file });
+  await new Promise((resolve, reject) => {
+    ordersServer.once('error', reject);
+    ordersServer.listen(0, '127.0.0.1', resolve);
+  });
+  const address = ordersServer.address();
+  const ordersBaseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const unknown = await fetch(`${ordersBaseUrl}/api/orders?page=delivery-notes&raw=1`);
+    assert.equal(unknown.status, 400);
+    assert.match(await unknown.text(), /QUERY_PARAMETER_UNKNOWN/);
+
+    const duplicate = await fetch(`${ordersBaseUrl}/api/orders?page=delivery-notes&q=a&q=b`);
+    assert.equal(duplicate.status, 400);
+    assert.match(await duplicate.text(), /QUERY_PARAMETER_DUPLICATED/);
+
+    const badPageSize = await fetch(`${ordersBaseUrl}/api/orders?page=delivery-notes&pageSize=30`);
+    assert.equal(badPageSize.status, 400);
+    assert.match(await badPageSize.text(), /QUERY_PARAMETER_OUT_OF_RANGE/);
+
+    const missingPage = await fetch(`${ordersBaseUrl}/api/orders`);
+    assert.equal(missingPage.status, 400);
+    assert.match(await missingPage.text(), /QUERY_PARAMETER_MISSING/);
+
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const mutation = await fetch(`${ordersBaseUrl}/api/orders`, { method });
+      assert.equal(mutation.status, 405, method);
+      assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
+    }
+  } finally {
+    await new Promise((resolve) => ordersServer.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('/api/orders fails closed when no order-management file is configured', async () => {
+  const response = await fetch(`${baseUrl}/api/orders?page=delivery-notes`);
+  assert.equal(response.status, 503);
+  assert.match(await response.text(), /ORDER_MANAGEMENT_PAGE_UNAVAILABLE/);
 });
