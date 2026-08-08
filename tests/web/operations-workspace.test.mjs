@@ -38,7 +38,8 @@ test('each workspace consumes only its own independent endpoint', async () => {
     assert.match(procurementUrl, new RegExp(`${parameter}:`), parameter);
   }
   for (const parameter of [
-    'owner', 'store', 'q', 'milestone', 'quick', 'sort', 'page', 'pageSize',
+    'owner', 'store', 'q', 'orderType', 'status', 'quick', 'timeField', 'start', 'end',
+    'warehouse', 'defective', 'sort', 'page', 'pageSize',
   ]) {
     assert.match(fulfilmentUrl, new RegExp(`${parameter}:`), parameter);
   }
@@ -56,7 +57,7 @@ test('each workspace consumes only its own independent endpoint', async () => {
   assert.match(procurementUrl, /allowListedToken\(state\.procurement\.sort, URL_PROCUREMENT_SORTS, 'PRIORITY'\)/);
   assert.match(procurementUrl, /operationCodeParam\(state\.procurement\.status\)/);
   assert.match(procurementUrl, /pageSizeParam\(state\.procurement\.pageSize\)/);
-  assert.match(fulfilmentUrl, /allowListedToken\(state\.fulfilment\.sort, URL_FULFILMENT_SORTS, 'PRIORITY'\)/);
+  assert.match(fulfilmentUrl, /allowListedToken\(state\.fulfilment\.sort, URL_FULFILMENT_SORTS, 'LATEST'\)/);
   assert.match(fulfilmentUrl, /operationCodeParam\(state\.fulfilment\.milestone\)/);
   assert.match(fulfilmentUrl, /pageSizeParam\(state\.fulfilment\.pageSize\)/);
   assert.match(platformUrl, /allowListedToken\(state\.platform\.view, URL_PLATFORM_VIEWS, 'URGENT'\)/);
@@ -89,10 +90,10 @@ test('each workspace consumes only its own independent endpoint', async () => {
   assert.match(procurement, /procurementEvidenceDisclosure\(queryData\)/);
   assert.match(functionBody(app, 'procurementEvidenceDisclosure'), /statusOverview/);
   assert.doesNotMatch(procurement, /queryData\.statusRows/);
-  assert.match(fulfilment, /fulfilmentDecisionOverview\(queryData\)/);
-  assert.match(fulfilment, /fulfilmentStoreRankings\(queryData\)/);
-  assert.match(fulfilment, /fulfilmentEvidenceDisclosure\(queryData\)/);
-  assert.match(functionBody(app, 'fulfilmentEvidenceDisclosure'), /milestoneOverview/);
+  assert.match(fulfilment, /shippingOrdersList\(rows, sourceCapabilities\)/);
+  assert.match(fulfilment, /shippingOrdersPagination\(page\)/);
+  assert.match(fulfilment, /shipping-summary-strip/);
+  assert.match(fulfilment, /sourceCapabilities\.portalExtensions/);
   assert.match(platform, /platformDecisionOverview\(queryData\)/);
   assert.doesNotMatch(platform, /platformRankings\(queryData\)/);
   assert.match(platform, /platformEvidenceDisclosure\(queryData\)/);
@@ -114,7 +115,7 @@ test('quick filter tokens are narrowed to each endpoint vocabulary', async () =>
   assert.match(procurementQuick, /: 'ALL'/);
   assert.match(
     fulfilmentQuick,
-    /\['HIGH', 'CREATED', 'PICKUP_RESERVED', 'IN_TRANSIT', 'PENDING_RECEIPT'\]/,
+    /\['PENDING_OR_RETURNED', 'DUE_TODAY', 'OVERDUE', 'DEFECTIVE', 'PENDING_RECEIPT'\]/,
   );
   assert.match(fulfilmentQuick, /: 'ALL'/);
   assert.match(opsQuick, /\['HIGH', 'OVERDUE', 'SHORTAGE', 'URGENT', 'SYNC'\]/);
@@ -130,7 +131,7 @@ test('quick filter tokens are narrowed to each endpoint vocabulary', async () =>
   }
   const fulfilment = functionBody(app, 'renderFulfilment');
   for (const value of [
-    'ALL', 'HIGH', 'CREATED', 'PICKUP_RESERVED', 'IN_TRANSIT', 'PENDING_RECEIPT',
+    'ALL', 'PENDING_OR_RETURNED', 'DUE_TODAY', 'OVERDUE', 'DEFECTIVE', 'PENDING_RECEIPT',
   ]) {
     assert.match(fulfilment, new RegExp(`\\['${value}',`), value);
   }
@@ -153,11 +154,11 @@ test('fulfilment guards stale responses and exposes loading, error and retry', a
   assert.match(load, /if \(requestSerial === state\.fulfilment\.requestSerial\)/);
   assert.match(load, /state\.fulfilment\.loading = true/);
   // A structurally invalid payload is an error, not a silently empty table.
-  assert.match(load, /交付入仓查询结构无效/);
+  assert.match(load, /发货订单查询结构无效/);
   assert.match(load, /result\.readOnly !== true/);
-  assert.match(load, /Array\.isArray\(result\.attention\?\.rows\)/);
-  assert.match(load, /Array\.isArray\(result\.milestoneOverview\)/);
-  assert.match(load, /Array\.isArray\(result\.summary\.attentionByStore\)/);
+  assert.match(load, /Array\.isArray\(result\.orders\?\.rows\)/);
+  assert.match(load, /result\.orders\?\.pagination/);
+  assert.match(load, /Array\.isArray\(result\.filters\?\.statuses\)/);
 
   // The debounce invalidates in-flight work immediately, not when it fires.
   assert.match(schedule, /window\.clearTimeout\(fulfilmentLoadTimer\)/);
@@ -249,7 +250,7 @@ test('workspace URL state round-trips through allow-listed hash parameters', asy
   );
   assert.match(
     app,
-    /const URL_FULFILMENT_SORTS = Object\.freeze\(\[\s*'PRIORITY',\s*'LATEST',\s*'EXPECTED_RECEIPT',\s*\]\)/,
+    /const URL_FULFILMENT_SORTS = Object\.freeze\(\[\s*'LATEST',\s*'ORDERED_DESC',\s*'DELIVERY_DEADLINE',\s*\]\)/,
   );
   // A platform code is an open vocabulary, so it is pattern-bounded, not listed.
   // It must validate the RAW trimmed token: sanitizing first would strip the
@@ -265,9 +266,10 @@ test('workspace URL state round-trips through allow-listed hash parameters', asy
   assert.match(parse, /fulfilmentPage: pageParam\('dnPage'\)/);
   // `size` is a shared parameter name, so it must bind to the active route only.
   assert.match(parse, /procurementPageSize: routePageSize\('procurement', inherited\.procurementPageSize\)/);
-  assert.match(parse, /fulfilmentPageSize: routePageSize\('fulfilment', inherited\.fulfilmentPageSize\)/);
-  assert.match(parse, /const routePageSize = \(routeKey, inheritedValue\) => \{/);
-  assert.match(parse, /if \(route === routeKey\) return pageSizeParam\(params\.get\('size'\)\)/);
+  assert.match(parse, /fulfilmentPageSize: routePageSize\([\s\S]*?'fulfilment',[\s\S]*?inherited\.fulfilmentPageSize,[\s\S]*?URL_DEFAULT_FULFILMENT_PAGE_SIZE/);
+  assert.match(parse, /const routePageSize = \([\s\S]*?routeKey,[\s\S]*?inheritedValue,[\s\S]*?defaultValue = URL_DEFAULT_INVENTORY_PAGE_SIZE/);
+  assert.match(parse, /if \(!params\.has\('size'\)\) return defaultValue/);
+  assert.match(parse, /URL_INVENTORY_PAGE_SIZES\.includes\(requested\) \? requested : defaultValue/);
 
   // Serialization omits defaults, bounds pages and is route scoped.
   assert.match(serialize, /if \(route === 'procurement'\) \{/);
@@ -276,12 +278,13 @@ test('workspace URL state round-trips through allow-listed hash parameters', asy
   assert.match(serialize, /params\.set\('poPage', String\(Math\.min\(input\.procurementPage, 9999\)\)\)/);
   assert.match(serialize, /if \(route === 'fulfilment'\) \{/);
   assert.match(serialize, /if \(milestone !== 'ALL'\) params\.set\('milestone', milestone\)/);
-  assert.match(serialize, /if \(dnSort !== 'PRIORITY'\) params\.set\('dnSort', dnSort\)/);
+  assert.match(serialize, /if \(dnSort !== 'LATEST'\) params\.set\('dnSort', dnSort\)/);
   assert.match(serialize, /params\.set\('dnPage', String\(Math\.min\(input\.fulfilmentPage, 9999\)\)\)/);
 
   for (const key of [
     'procurementStatus', 'procurementSort', 'procurementPage', 'procurementPageSize',
-    'fulfilmentMilestone', 'fulfilmentSort', 'fulfilmentPage', 'fulfilmentPageSize',
+    'fulfilmentMilestone', 'fulfilmentSort', 'fulfilmentOrderType', 'fulfilmentTimeField',
+    'fulfilmentWarehouse', 'fulfilmentDefective', 'fulfilmentPage', 'fulfilmentPageSize',
     'platformView', 'platformSeverity', 'platformFamily', 'platformStatus',
     'platformSort', 'platformPage', 'platformPageSize',
     'opsView', 'opsSeverity', 'opsDomain', 'opsSort', 'opsPage', 'opsPageSize',
@@ -346,27 +349,29 @@ test('filter and page controls update the URL and reset paging', async () => {
   assert.match(app, /if \(route === 'ops'\) scheduleOpsLoad\(\{ resetPage: true \}\)/);
 });
 
-test('all independent worklists page above and below the table', async () => {
+test('independent worklists expose bounded server-side pagination', async () => {
   const app = await read('src/web/app.js');
   const procurement = functionBody(app, 'renderProcurement');
   const fulfilment = functionBody(app, 'renderFulfilment');
   const procurementPagination = functionBody(app, 'procurementPagination');
-  const fulfilmentPagination = functionBody(app, 'fulfilmentPagination');
+  const fulfilmentPagination = functionBody(app, 'shippingOrdersPagination');
   const ops = functionBody(app, 'renderOps');
   const opsPagination = functionBody(app, 'opsPagination');
 
   assert.match(procurement, /procurementPagination\(queryData, 'top'\)/);
   assert.match(procurement, /procurementPagination\(queryData, 'bottom'\)/);
-  assert.match(fulfilment, /fulfilmentPagination\(queryData\.attention\.pagination, 'top'\)/);
-  assert.match(fulfilment, /fulfilmentPagination\(queryData\.attention\.pagination, 'bottom'\)/);
+  assert.match(fulfilment, /shippingOrdersPagination\(page\)/);
   assert.match(ops, /opsPagination\(pagination, 'top'\)/);
   assert.match(ops, /opsPagination\(pagination, 'bottom'\)/);
-  for (const body of [procurementPagination, fulfilmentPagination]) {
+  for (const body of [procurementPagination]) {
     assert.match(body, /pagination\.hasPrevious \? '' : 'disabled'/);
     assert.match(body, /pagination\.hasNext \? '' : 'disabled'/);
     assert.match(body, /已物化范围命中/);
     assert.match(body, /pagination-top/);
   }
+  assert.match(fulfilmentPagination, /pagination\.hasPrevious \? '' : 'disabled'/);
+  assert.match(fulfilmentPagination, /pagination\.hasNext \? '' : 'disabled'/);
+  assert.match(fulfilmentPagination, /共 \$\{numberFormatter\.format\(pagination\.matchedRows \|\| 0\)\} 单/);
   assert.match(opsPagination, /pagination\.hasPrevious \? '' : 'disabled'/);
   assert.match(opsPagination, /pagination\.hasNext \? '' : 'disabled'/);
   assert.match(opsPagination, /当前条件命中/);
@@ -398,20 +403,18 @@ test('coverage, truncation and quantity wording stay honest', async () => {
   assert.match(metricNote, /拒绝补零合计/);
   assert.match(metricNote, /不代表业务数量为 0/);
 
-  // Neither workspace derives a funnel, completion rate or percentage.
+  // Procurement preserves the former snapshot disclosure; the shipping-order
+  // workspace instead labels OpenAPI facts and unknown portal-only fields.
   const procurementEvidence = functionBody(app, 'procurementEvidenceDisclosure');
   assert.match(procurementEvidence, /不是转化漏斗/);
   assert.match(procurementEvidence, /不构成转化漏斗，也不据此推导完成率或百分比/);
-  const fulfilmentEvidence = functionBody(app, 'fulfilmentEvidenceDisclosure');
-  assert.match(fulfilmentEvidence, /不据此推导履约率或准时率/);
-  // Counts and quantities are labelled as different units.
-  assert.match(fulfilmentEvidence, /交付单数与交付数量单位不同，不可相加/);
+  assert.match(fulfilment, /订单数/);
+  assert.match(fulfilment, /下单件数/);
+  assert.match(fulfilment, /缺失时不编造/);
   assert.match(functionBody(app, 'procurementDecisionOverview'), /来自当前平台状态快照，不等于关注队列/);
   // A missing expectedReceiptAt stays unknown and is never fabricated.
-  const deliveryTable = functionBody(app, 'deliveryAttentionTable');
-  assert.match(deliveryTable, /expectedReceiptAt/);
-  assert.match(deliveryTable, /预计收货时间缺失时保持未知，不用其他时间冒充/);
-  assert.match(functionBody(app, 'fulfilmentEvidenceDisclosure'), /来源缺失时保持未知，不用预约或揽收时间冒充/);
+  const deliveryTable = functionBody(app, 'shippingOrderLineTable');
+  assert.match(deliveryTable, /OpenAPI 未返回金额/);
 
   // Read-only: no SHEIN write control on either surface. Assert on markup and
   // request verbs, not on prose, since the boundary copy legitimately says
@@ -423,13 +426,13 @@ test('coverage, truncation and quantity wording stay honest', async () => {
     for (const [button] of body.matchAll(/<button[^>]*>/g)) {
       assert.match(
         button,
-        /data-procurement-retry|data-fulfilment-retry|data-procurement-page|data-fulfilment-page|data-quick-route|data-operation-search|data-operation-reset/,
+        /data-procurement-retry|data-fulfilment-retry|data-procurement-page|data-fulfilment-page|data-quick-route|data-operation-search|data-operation-reset|data-shipping-order-type|data-shipping-status|data-shipping-advanced/,
         button,
       );
     }
   }
   assert.match(functionBody(app, 'procurementEvidenceDisclosure'), /不提交任何采购单动作/);
-  assert.match(functionBody(app, 'fulfilmentEvidenceDisclosure'), /不提交任何交付动作/);
+  assert.match(fulfilment, /所有写操作保持关闭/);
 });
 
 test('operational styles keep dense filters inside the viewport', async () => {
@@ -489,10 +492,10 @@ test('every route-specific quick filter survives a serialize and parse round tri
     ['procurement', 'PENDING_RECEIPT'],
     ['procurement', 'PENDING_STORAGE'],
     ['procurement', 'DEFECTIVE'],
-    ['fulfilment', 'HIGH'],
-    ['fulfilment', 'CREATED'],
-    ['fulfilment', 'PICKUP_RESERVED'],
-    ['fulfilment', 'IN_TRANSIT'],
+    ['fulfilment', 'PENDING_OR_RETURNED'],
+    ['fulfilment', 'DUE_TODAY'],
+    ['fulfilment', 'OVERDUE'],
+    ['fulfilment', 'DEFECTIVE'],
     ['fulfilment', 'PENDING_RECEIPT'],
   ];
   for (const [route, quick] of cases) {
@@ -535,16 +538,24 @@ test('procurement and fulfilment filter state survives a full round trip', async
   const fulfilment = serializeHashState({
     route: 'fulfilment',
     store: 'MZ2406',
-    quick: 'IN_TRANSIT',
-    fulfilmentMilestone: 'IN_TRANSIT',
-    fulfilmentSort: 'EXPECTED_RECEIPT',
+    quick: 'PENDING_OR_RETURNED',
+    fulfilmentMilestone: 'PENDING_SHIPMENT',
+    fulfilmentSort: 'DELIVERY_DEADLINE',
+    fulfilmentOrderType: 'URGENT',
+    fulfilmentTimeField: 'REQUESTED_DELIVERY',
+    fulfilmentWarehouse: '华南仓',
+    fulfilmentDefective: 'YES',
     fulfilmentPage: 2,
     fulfilmentPageSize: 50,
   });
   const parsedFulfilment = parseHashState(fulfilment);
-  assert.equal(parsedFulfilment.quick, 'IN_TRANSIT');
-  assert.equal(parsedFulfilment.fulfilmentMilestone, 'IN_TRANSIT');
-  assert.equal(parsedFulfilment.fulfilmentSort, 'EXPECTED_RECEIPT');
+  assert.equal(parsedFulfilment.quick, 'PENDING_OR_RETURNED');
+  assert.equal(parsedFulfilment.fulfilmentMilestone, 'PENDING_SHIPMENT');
+  assert.equal(parsedFulfilment.fulfilmentSort, 'DELIVERY_DEADLINE');
+  assert.equal(parsedFulfilment.fulfilmentOrderType, 'URGENT');
+  assert.equal(parsedFulfilment.fulfilmentTimeField, 'REQUESTED_DELIVERY');
+  assert.equal(parsedFulfilment.fulfilmentWarehouse, '华南仓');
+  assert.equal(parsedFulfilment.fulfilmentDefective, 'YES');
   assert.equal(parsedFulfilment.fulfilmentPage, 2);
   assert.equal(parsedFulfilment.fulfilmentPageSize, 50);
   assert.equal(parsedFulfilment.store, 'MZ2406');
@@ -553,8 +564,8 @@ test('procurement and fulfilment filter state survives a full round trip', async
   // An unknown sort or an off-list page size degrades to the default rather than
   // reaching the endpoint.
   const hostile = parseHashState('#fulfilment?dnSort=DROP&size=30&milestone=%3Cscript%3E');
-  assert.equal(hostile.fulfilmentSort, 'PRIORITY');
-  assert.equal(hostile.fulfilmentPageSize, 25);
+  assert.equal(hostile.fulfilmentSort, 'LATEST');
+  assert.equal(hostile.fulfilmentPageSize, 50);
   assert.equal(hostile.fulfilmentMilestone, 'ALL');
 });
 
@@ -607,7 +618,7 @@ test('the shared size parameter binds only to the active route', async () => {
   // An off-list size still degrades to the default on its own route.
   assert.equal(parseHashState('#procurement?size=30', inherited).procurementPageSize, 25);
   // With no inherited value the default applies to the inactive routes.
-  assert.equal(parseHashState('#procurement?size=50').fulfilmentPageSize, 25);
+  assert.equal(parseHashState('#procurement?size=50').fulfilmentPageSize, 50);
 });
 
 test('the shared view parameter binds only to the active route', async () => {

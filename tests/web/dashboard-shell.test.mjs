@@ -16,7 +16,7 @@ function functionBody(source, functionName) {
   return source.slice(start, nextFunction === -1 ? source.length : nextFunction);
 }
 
-test('full-managed primary navigation follows the sales-first semi-managed interaction order', async () => {
+test('full-managed primary navigation places shipping orders first after home', async () => {
   const [html, app, styles] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
@@ -24,11 +24,11 @@ test('full-managed primary navigation follows the sales-first semi-managed inter
   ]);
   const routes = [
     'home',
+    'fulfilment',
     'sales',
     'products',
     'inventory',
     'procurement',
-    'fulfilment',
     'platform',
     'ops',
     'system',

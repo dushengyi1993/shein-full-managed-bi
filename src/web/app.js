@@ -18,7 +18,7 @@ const sourceUpdateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
 const ROUTES = Object.freeze({
   home: { title: '总控驾驶舱', code: 'CONTROL' },
   procurement: { title: '采购单', code: 'PO' },
-  fulfilment: { title: '交付入仓', code: 'INBOUND' },
+  fulfilment: { title: '发货订单', code: 'ORDER' },
   products: { title: '商品中心', code: 'MDM' },
   sales: { title: '销量洞察', code: 'SALES' },
   inventory: { title: '供给与备货', code: 'SUPPLY' },
@@ -92,7 +92,7 @@ const HOME_TREND_METRICS = Object.freeze({
    and nothing parsed here is ever treated as HTML. */
 
 const URL_ROUTE_KEYS = Object.freeze([
-  'home', 'procurement', 'fulfilment', 'products', 'sales', 'inventory',
+  'home', 'fulfilment', 'procurement', 'products', 'sales', 'inventory',
   'returns', 'compliance', 'finance', 'platform', 'ops', 'system',
 ]);
 
@@ -113,7 +113,7 @@ const FOCUS_DOMAINS = Object.freeze({
   inventory: { route: 'inventory', label: '库存风险' },
   advice: { route: 'inventory', label: '备货建议' },
   procurement: { route: 'procurement', label: '采购单' },
-  fulfilment: { route: 'fulfilment', label: '交付单' },
+  fulfilment: { route: 'fulfilment', label: '发货订单' },
   product: { route: 'products', label: '商品身份' },
   ops: { route: 'ops', label: '运营提醒' },
 });
@@ -127,7 +127,7 @@ const QUICK_FILTER_VALUES = Object.freeze([
   // Procurement attention semantics.
   'DEFECTIVE',
   // Fulfilment milestone semantics.
-  'CREATED', 'PICKUP_RESERVED', 'IN_TRANSIT',
+  'CREATED', 'PICKUP_RESERVED', 'IN_TRANSIT', 'PENDING_OR_RETURNED', 'DUE_TODAY',
   'GROWING', 'DECLINING', 'UNCOMPARABLE', 'CANONICAL', 'UNMAPPED',
   'WITH_SALES', 'MISSING_SPU',
 ]);
@@ -174,10 +174,16 @@ const URL_PROCUREMENT_SORTS = Object.freeze([
   'DELIVERY_DEADLINE',
 ]);
 const URL_FULFILMENT_SORTS = Object.freeze([
-  'PRIORITY',
   'LATEST',
-  'EXPECTED_RECEIPT',
+  'ORDERED_DESC',
+  'DELIVERY_DEADLINE',
 ]);
+const URL_FULFILMENT_ORDER_TYPES = Object.freeze(['ALL', 'URGENT', 'STOCK_UP']);
+const URL_FULFILMENT_TIME_FIELDS = Object.freeze([
+  'CREATED', 'REQUESTED_DELIVERY', 'DELIVERED', 'RECEIVED', 'STORED', 'UPDATED',
+]);
+const URL_FULFILMENT_DEFECTIVE = Object.freeze(['ALL', 'YES', 'NO']);
+const URL_DEFAULT_FULFILMENT_PAGE_SIZE = 50;
 const URL_PLATFORM_VIEWS = Object.freeze(['URGENT', 'ATTENTION', 'BUSINESS', 'ALL']);
 const URL_PLATFORM_SEVERITIES = Object.freeze(['ALL', 'P0', 'P1', 'P2', 'P3']);
 const URL_PLATFORM_SORTS = Object.freeze(['PRIORITY', 'LATEST']);
@@ -375,11 +381,21 @@ function parseHashState(rawHash, inherited = {}) {
       ) ? inherited.fulfilmentMilestone : 'ALL',
       fulfilmentSort: URL_FULFILMENT_SORTS.includes(inherited.fulfilmentSort)
         ? inherited.fulfilmentSort
-        : 'PRIORITY',
+        : 'LATEST',
+      fulfilmentOrderType: URL_FULFILMENT_ORDER_TYPES.includes(inherited.fulfilmentOrderType)
+        ? inherited.fulfilmentOrderType
+        : 'STOCK_UP',
+      fulfilmentTimeField: URL_FULFILMENT_TIME_FIELDS.includes(inherited.fulfilmentTimeField)
+        ? inherited.fulfilmentTimeField
+        : 'CREATED',
+      fulfilmentWarehouse: urlSafeText(inherited.fulfilmentWarehouse, 120) || 'ALL',
+      fulfilmentDefective: URL_FULFILMENT_DEFECTIVE.includes(inherited.fulfilmentDefective)
+        ? inherited.fulfilmentDefective
+        : 'ALL',
       fulfilmentPage: 1,
       fulfilmentPageSize: URL_INVENTORY_PAGE_SIZES.includes(inherited.fulfilmentPageSize)
         ? inherited.fulfilmentPageSize
-        : URL_DEFAULT_INVENTORY_PAGE_SIZE,
+        : URL_DEFAULT_FULFILMENT_PAGE_SIZE,
       platformView: URL_PLATFORM_VIEWS.includes(inherited.platformView)
         ? inherited.platformView
         : 'URGENT',
@@ -438,11 +454,19 @@ function parseHashState(rawHash, inherited = {}) {
      inherited fulfilment page size, which then survived a later bare
      `#fulfilment` navigation. Each shared parameter now binds to its own route
      and every other route keeps its inherited or default value. */
-  const routePageSize = (routeKey, inheritedValue) => {
-    if (route === routeKey) return pageSizeParam(params.get('size'));
+  const routePageSize = (
+    routeKey,
+    inheritedValue,
+    defaultValue = URL_DEFAULT_INVENTORY_PAGE_SIZE,
+  ) => {
+    if (route === routeKey) {
+      if (!params.has('size')) return defaultValue;
+      const requested = Number(urlSafeText(params.get('size'), 8));
+      return URL_INVENTORY_PAGE_SIZES.includes(requested) ? requested : defaultValue;
+    }
     return URL_INVENTORY_PAGE_SIZES.includes(inheritedValue)
       ? inheritedValue
-      : URL_DEFAULT_INVENTORY_PAGE_SIZE;
+      : defaultValue;
   };
   const routeView = (routeKey, allowed, fallback, inheritedValue) => {
     if (route === routeKey) return allowListedToken(params.get('view'), allowed, fallback);
@@ -501,10 +525,30 @@ function parseHashState(rawHash, inherited = {}) {
     fulfilmentSort: allowListedToken(
       params.get('dnSort'),
       URL_FULFILMENT_SORTS,
-      'PRIORITY',
+      'LATEST',
+    ),
+    fulfilmentOrderType: allowListedToken(
+      params.get('orderType'),
+      URL_FULFILMENT_ORDER_TYPES,
+      'STOCK_UP',
+    ),
+    fulfilmentTimeField: allowListedToken(
+      params.get('timeField'),
+      URL_FULFILMENT_TIME_FIELDS,
+      'CREATED',
+    ),
+    fulfilmentWarehouse: urlSafeText(params.get('warehouse'), 120) || 'ALL',
+    fulfilmentDefective: allowListedToken(
+      params.get('defective'),
+      URL_FULFILMENT_DEFECTIVE,
+      'ALL',
     ),
     fulfilmentPage: pageParam('dnPage'),
-    fulfilmentPageSize: routePageSize('fulfilment', inherited.fulfilmentPageSize),
+    fulfilmentPageSize: routePageSize(
+      'fulfilment',
+      inherited.fulfilmentPageSize,
+      URL_DEFAULT_FULFILMENT_PAGE_SIZE,
+    ),
     platformView: routeView(
       'platform',
       URL_PLATFORM_VIEWS,
@@ -618,13 +662,35 @@ function serializeHashState(input = {}) {
   if (route === 'fulfilment') {
     const milestone = operationCodeParam(input.fulfilmentMilestone);
     if (milestone !== 'ALL') params.set('milestone', milestone);
-    const dnSort = allowListedToken(input.fulfilmentSort, URL_FULFILMENT_SORTS, 'PRIORITY');
-    if (dnSort !== 'PRIORITY') params.set('dnSort', dnSort);
+    const dnSort = allowListedToken(input.fulfilmentSort, URL_FULFILMENT_SORTS, 'LATEST');
+    if (dnSort !== 'LATEST') params.set('dnSort', dnSort);
+    const orderType = allowListedToken(
+      input.fulfilmentOrderType,
+      URL_FULFILMENT_ORDER_TYPES,
+      'STOCK_UP',
+    );
+    if (orderType !== 'STOCK_UP') params.set('orderType', orderType);
+    const timeField = allowListedToken(
+      input.fulfilmentTimeField,
+      URL_FULFILMENT_TIME_FIELDS,
+      'CREATED',
+    );
+    if (timeField !== 'CREATED') params.set('timeField', timeField);
+    const warehouse = urlSafeText(input.fulfilmentWarehouse, 120) || 'ALL';
+    if (warehouse !== 'ALL') params.set('warehouse', warehouse);
+    const defective = allowListedToken(
+      input.fulfilmentDefective,
+      URL_FULFILMENT_DEFECTIVE,
+      'ALL',
+    );
+    if (defective !== 'ALL') params.set('defective', defective);
     if (Number.isSafeInteger(input.fulfilmentPage) && input.fulfilmentPage > 1) {
       params.set('dnPage', String(Math.min(input.fulfilmentPage, 9999)));
     }
-    const dnPageSize = pageSizeParam(input.fulfilmentPageSize);
-    if (dnPageSize !== URL_DEFAULT_INVENTORY_PAGE_SIZE) params.set('size', String(dnPageSize));
+    const dnPageSize = pageSizeParam(
+      input.fulfilmentPageSize ?? URL_DEFAULT_FULFILMENT_PAGE_SIZE,
+    );
+    if (dnPageSize !== URL_DEFAULT_FULFILMENT_PAGE_SIZE) params.set('size', String(dnPageSize));
   }
   if (route === 'platform') {
     const view = allowListedToken(input.platformView, URL_PLATFORM_VIEWS, 'URGENT');
@@ -692,7 +758,7 @@ function canonicalHref({ route, storeCode = '', range, query = '', quick = 'ALL'
 
 const GROUP_LABELS = Object.freeze({
   procurement: '采购单',
-  fulfilment: '交付入仓',
+  fulfilment: '发货订单',
   inventory: '库存与缺货',
   supply: '备货建议',
   products: '商品身份',
@@ -779,9 +845,14 @@ const state = {
     error: '',
     requestSerial: 0,
     milestone: initialHashState.fulfilmentMilestone || 'ALL',
-    sort: initialHashState.fulfilmentSort || 'PRIORITY',
+    sort: initialHashState.fulfilmentSort || 'LATEST',
+    orderType: initialHashState.fulfilmentOrderType || 'STOCK_UP',
+    timeField: initialHashState.fulfilmentTimeField || 'CREATED',
+    warehouse: initialHashState.fulfilmentWarehouse || 'ALL',
+    defective: initialHashState.fulfilmentDefective || 'ALL',
+    advancedOpen: false,
     page: initialHashState.fulfilmentPage || 1,
-    pageSize: initialHashState.fulfilmentPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
+    pageSize: initialHashState.fulfilmentPageSize || URL_DEFAULT_FULFILMENT_PAGE_SIZE,
   },
   platform: {
     data: null,
@@ -2838,18 +2909,37 @@ function procurementPagination(queryData, position = 'bottom') {
 
 function fulfilmentQuickValue() {
   const active = quickFilterValue('fulfilment');
-  return ['HIGH', 'CREATED', 'PICKUP_RESERVED', 'IN_TRANSIT', 'PENDING_RECEIPT']
+  return ['PENDING_OR_RETURNED', 'DUE_TODAY', 'OVERDUE', 'DEFECTIVE', 'PENDING_RECEIPT']
     .includes(active) ? active : 'ALL';
 }
 
 function fulfilmentQueryUrl() {
+  const range = selectedHomeDateRange();
   const params = new URLSearchParams({
     owner: state.owner,
     store: state.store,
     q: state.query,
-    milestone: operationCodeParam(state.fulfilment.milestone),
+    orderType: allowListedToken(
+      state.fulfilment.orderType,
+      URL_FULFILMENT_ORDER_TYPES,
+      'STOCK_UP',
+    ),
+    status: operationCodeParam(state.fulfilment.milestone),
     quick: fulfilmentQuickValue(),
-    sort: allowListedToken(state.fulfilment.sort, URL_FULFILMENT_SORTS, 'PRIORITY'),
+    timeField: allowListedToken(
+      state.fulfilment.timeField,
+      URL_FULFILMENT_TIME_FIELDS,
+      'CREATED',
+    ),
+    start: range.start,
+    end: range.end,
+    warehouse: urlSafeText(state.fulfilment.warehouse, 120) || 'ALL',
+    defective: allowListedToken(
+      state.fulfilment.defective,
+      URL_FULFILMENT_DEFECTIVE,
+      'ALL',
+    ),
+    sort: allowListedToken(state.fulfilment.sort, URL_FULFILMENT_SORTS, 'LATEST'),
     page: String(state.fulfilment.page),
     pageSize: String(pageSizeParam(state.fulfilment.pageSize)),
   });
@@ -2871,13 +2961,13 @@ async function loadFulfilment({ resetPage = false } = {}) {
     if (
       !result
       || result.readOnly !== true
-      || !Array.isArray(result.attention?.rows)
-      || !Array.isArray(result.milestoneOverview)
+      || !Array.isArray(result.orders?.rows)
+      || !result.orders?.pagination
       || !result.summary
-      || !Array.isArray(result.summary.attentionByStore)
+      || !Array.isArray(result.filters?.statuses)
       || !result.source
     ) {
-      throw new Error('交付入仓查询结构无效');
+      throw new Error('发货订单查询结构无效');
     }
     state.fulfilment.data = result;
   } catch (error) {
@@ -2885,7 +2975,7 @@ async function loadFulfilment({ resetPage = false } = {}) {
     state.fulfilment.data = null;
     state.fulfilment.error = error instanceof Error
       ? error.message
-      : '交付入仓查询暂不可用';
+      : '发货订单查询暂不可用';
   } finally {
     if (requestSerial === state.fulfilment.requestSerial) {
       state.fulfilment.loading = false;
@@ -3195,7 +3285,7 @@ function fulfilmentQueryState(kind) {
   return `
     <section class="panel procurement-query-state${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}">
       <span class="eyebrow">FULFILMENT QUERY</span>
-      <h2>${error ? '交付入仓查询暂不可用' : '正在按当前条件查询交付单'}</h2>
+      <h2>${error ? '发货订单查询暂不可用' : '正在按当前条件查询发货订单'}</h2>
       <p>${error
         ? escapeHtml(state.fulfilment.error || '请稍后重试。')
         : '筛选、排序和分页在服务端执行；旧筛选结果不会冒充新结果。'}</p>
@@ -8961,6 +9051,158 @@ function fulfilmentEvidenceDisclosure(queryData) {
     </details>`;
 }
 
+function shippingSummaryMetric(label, value, unit, tone = '') {
+  const known = isUnit(value);
+  return `
+    <article class="shipping-summary-metric ${tone}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${known ? numberFormatter.format(value) : '—'}${known ? `<small>${escapeHtml(unit)}</small>` : ''}</strong>
+    </article>`;
+}
+
+function shippingStatusLabel(order) {
+  const raw = String(order?.statusName || order?.statusCode || '状态待确认');
+  if (raw.includes('作废')) return { label: '已作废', tone: 'voided' };
+  if (raw.includes('上架')) return { label: '已上架', tone: 'complete' };
+  if (raw.includes('完成')) return { label: '已完成', tone: 'complete' };
+  if (raw.includes('退货')) return { label: '已退货', tone: 'returned' };
+  if (raw.includes('收货')) return { label: '已收货', tone: 'received' };
+  if (raw.includes('送货') || raw.includes('发货')) return { label: '已送货', tone: 'shipped' };
+  if (raw.includes('下单')) return { label: '待发货', tone: 'pending' };
+  return { label: raw, tone: 'unknown' };
+}
+
+function shippingQuantity(value, unit = '') {
+  return isUnit(value)
+    ? `<strong>${numberFormatter.format(value)}</strong>${unit ? `<span>${escapeHtml(unit)}</span>` : ''}`
+    : '<strong>—</strong>';
+}
+
+function shippingOrderLineTable(order) {
+  const lines = Array.isArray(order.lines) ? order.lines : [];
+  if (!lines.length) {
+    return '<div class="shipping-line-empty">平台未返回当前订单的商品明细。</div>';
+  }
+  return `
+    <div class="shipping-lines-wrap">
+      <table class="shipping-lines-table">
+        <thead><tr>
+          <th scope="col">商品信息</th>
+          <th scope="col">下单 / 需求</th>
+          <th scope="col">发货 / 正品 / 次品 / 上架</th>
+          <th scope="col">下单金额</th>
+        </tr></thead>
+        <tbody>${lines.map((line) => {
+          const title = line.standardGoodsCode || line.standardGoodsName
+            || line.supplierCode || line.skc || line.skuCode || '商品待确认';
+          const rawIdentifiers = [
+            line.standardGoodsCode && line.supplierCode ? `原货号 ${line.supplierCode}` : null,
+            line.skc ? `SKC ${line.skc}` : null,
+            line.skuCode ? `SKU ${line.skuCode}` : null,
+            line.supplierSku ? `商家SKU ${line.supplierSku}` : null,
+          ].filter(Boolean);
+          return `
+            <tr>
+              <td class="shipping-product-cell">
+                <strong>${escapeHtml(title)}</strong>
+                ${line.standardGoodsName && line.standardGoodsName !== title ? `<span>${escapeHtml(line.standardGoodsName)}</span>` : ''}
+                <small>${escapeHtml(rawIdentifiers.join(' · ') || '商品标识待补充')}</small>
+                ${line.variantName ? `<em>${escapeHtml(line.variantName)}</em>` : ''}
+              </td>
+              <td><div class="shipping-quantity-pair"><span>下单 ${shippingQuantity(line.orderQuantity, '件')}</span><span>需求 ${shippingQuantity(line.needQuantity, '件')}</span></div></td>
+              <td><div class="shipping-quantity-grid">
+                <span><small>发货</small>${shippingQuantity(line.deliveryQuantity)}</span>
+                <span><small>正品</small>${shippingQuantity(line.receiptQuantity)}</span>
+                <span><small>次品</small>${shippingQuantity(line.defectiveQuantity)}</span>
+                <span><small>上架</small>${shippingQuantity(line.storageQuantity)}</span>
+              </div></td>
+              <td class="shipping-money-cell"><strong>—</strong><span>OpenAPI 未返回金额</span></td>
+            </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function shippingDeliverySummary(order) {
+  const deliveries = Array.isArray(order.deliveries) ? order.deliveries : [];
+  if (!deliveries.length) return '<span>尚未关联发货单</span>';
+  const codes = [...new Set(deliveries.map((row) => row.deliveryCode).filter(Boolean))];
+  const carriers = [...new Set(deliveries.map((row) => row.expressCompanyName).filter(Boolean))];
+  const latest = deliveries
+    .map((row) => row.receivedAt || row.takenAt || row.reservedParcelAt)
+    .filter(Boolean)
+    .sort().at(-1);
+  return `
+    <strong>${escapeHtml(codes.slice(0, 2).join('、') || '发货单待确认')}${codes.length > 2 ? ` 等 ${codes.length} 单` : ''}</strong>
+    <span>${escapeHtml(carriers.join('、') || '物流待确认')} · 最新节点 ${escapeHtml(sourceTime(latest))}</span>`;
+}
+
+function shippingOrdersList(orders, capabilities) {
+  if (!orders.length) {
+    return emptyEvidence(
+      '当前筛选没有发货订单',
+      '可以扩大日期范围、切换急采/备货类型，或清除状态与快速筛选。',
+    );
+  }
+  return `<div class="shipping-order-list">${orders.map((order) => {
+    const status = shippingStatusLabel(order);
+    const requestedAt = order.requestedDeliveryAt || order.requestedReceiptAt;
+    const overdue = requestedAt
+      && !['complete', 'voided'].includes(status.tone)
+      && new Date(requestedAt).valueOf() < Date.now();
+    const typeLabel = String(order.orderTypeName || '').includes('急采') ? '急采' : '备货';
+    return `
+      <article class="shipping-order-card" data-order-no="${escapeHtml(order.orderNo)}">
+        <header class="shipping-order-head">
+          <div class="shipping-order-identity">
+            <div><span class="shipping-order-type">${escapeHtml(typeLabel)}</span><strong>${escapeHtml(order.orderNo)}</strong></div>
+            <p>${escapeHtml(order.storeCode || '店铺待确认')} · ${escapeHtml(order.storeName || '店铺名称待确认')}</p>
+          </div>
+          <div class="shipping-order-state">
+            <span class="shipping-status-badge ${status.tone}">${escapeHtml(status.label)}</span>
+            ${overdue ? '<strong class="shipping-overdue-label">已超过要求取件时间</strong>' : ''}
+          </div>
+          <div class="shipping-order-time">
+            <span>下单时间</span><strong>${escapeHtml(sourceTime(order.createdAt))}</strong>
+            <small>要求取件 ${escapeHtml(sourceTime(order.requestedDeliveryAt))}</small>
+          </div>
+          <div class="shipping-order-warehouse">
+            <span>平台收货仓</span><strong>${escapeHtml(order.warehouseName || order.warehouseCode || '待确认')}</strong>
+            <small>要求收货 ${escapeHtml(sourceTime(order.requestedReceiptAt))}</small>
+          </div>
+          <div class="shipping-order-delivery">${shippingDeliverySummary(order)}</div>
+        </header>
+        <div class="shipping-order-tags">
+          ${order.prepareTypeName ? `<span>${escapeHtml(order.prepareTypeName)}</span>` : ''}
+          ${order.categoryName ? `<span>${escapeHtml(order.categoryName)}</span>` : ''}
+          ${order.jitRoleCode ? `<span>JIT ${escapeHtml(order.jitRoleCode)}</span>` : ''}
+          <small>平台更新 ${escapeHtml(sourceTime(order.latestSourceFetchedAt))}</small>
+        </div>
+        ${shippingOrderLineTable(order)}
+        <footer class="shipping-order-foot">
+          <span>发货 ${escapeHtml(sourceTime(order.deliveredAt))}</span>
+          <span>收货 ${escapeHtml(sourceTime(order.receivedAt))}</span>
+          <span>完成 / 上架 ${escapeHtml(sourceTime(order.storedAt))}</span>
+          ${capabilities.portalExtensions === true ? '<span>页面扩展字段已接入</span>' : '<span>页面扩展字段待补充</span>'}
+        </footer>
+      </article>`;
+  }).join('')}</div>`;
+}
+
+function shippingOrdersPagination(pagination) {
+  if (!pagination) return '';
+  const pageCount = isUnit(pagination.pageCount) ? pagination.pageCount : 0;
+  const displayedPage = pageCount === 0 ? 0 : pagination.page;
+  return `
+    <nav class="shipping-pagination" aria-label="发货订单分页">
+      <p>共 ${numberFormatter.format(pagination.matchedRows || 0)} 单 · 第 ${numberFormatter.format(displayedPage)} / ${numberFormatter.format(pageCount)} 页</p>
+      <div>
+        <button type="button" data-fulfilment-page="${Math.max(1, pagination.page - 1)}" ${pagination.hasPrevious ? '' : 'disabled'}>上一页</button>
+        <button type="button" data-fulfilment-page="${pagination.page + 1}" ${pagination.hasNext ? '' : 'disabled'}>下一页</button>
+      </div>
+    </nav>`;
+}
+
 function renderFulfilment() {
   if (state.fulfilment.loading && !state.fulfilment.data) {
     return `${sampleNotice()}${focusEvidencePanel()}${fulfilmentQueryState('loading')}`;
@@ -8970,55 +9212,128 @@ function renderFulfilment() {
   }
   const queryData = state.fulfilment.data;
   if (!queryData) return fulfilmentQueryState('loading');
-  const attention = queryData.attention.rows;
-  const sourceMeta = productRecord(queryData.attention.source);
-  const attentionAvailable = sourceMeta.available === true
-    || attention.length > 0
-    || sourceMeta.truncated === true;
-  const coverageLine = operationCoverageLine(queryData.source);
-  const milestoneOptions = [
-    ['ALL', '全部里程碑'],
-    ...(Array.isArray(queryData.filters?.milestones) ? queryData.filters.milestones : [])
-      .map((row) => [row.code, row.name || row.code]),
+  const rows = Array.isArray(queryData.orders?.rows) ? queryData.orders.rows : [];
+  const statusTabs = Array.isArray(queryData.filters?.statuses)
+    ? queryData.filters.statuses
+    : [];
+  const quickCounts = new Map(
+    (Array.isArray(queryData.filters?.quick) ? queryData.filters.quick : [])
+      .map((item) => [item.code, item.count]),
+  );
+  const sourceCapabilities = productRecord(queryData.source?.capabilities);
+  const timeOptions = [
+    ['CREATED', '下单时间'],
+    ['REQUESTED_DELIVERY', '要求取件时间'],
+    ['DELIVERED', '发货时间'],
+    ['RECEIVED', '收货时间'],
+    ['STORED', '完成 / 上架时间'],
+    ['UPDATED', '平台更新时间'],
   ];
+  const warehouseOptions = [
+    ['ALL', '全部收货仓'],
+    ...(Array.isArray(queryData.filters?.warehouses) ? queryData.filters.warehouses : [])
+      .map((name) => [name, name]),
+  ];
+  const summary = productRecord(queryData.summary);
+  const typeTab = (value, label, note) => `
+    <button type="button" class="shipping-type-tab${state.fulfilment.orderType === value ? ' active' : ''}"
+      data-shipping-order-type="${value}" aria-pressed="${state.fulfilment.orderType === value}">
+      <strong>${label}</strong><span>${note}</span>
+    </button>`;
+  const statusLabel = (row) => `
+    <button type="button" class="shipping-status-tab${state.fulfilment.milestone === row.code ? ' active' : ''}"
+      data-shipping-status="${escapeHtml(row.code)}" aria-pressed="${state.fulfilment.milestone === row.code}">
+      <span>${escapeHtml(row.label)}</span><strong>${numberFormatter.format(row.count || 0)}</strong>
+    </button>`;
+  const page = queryData.orders.pagination;
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
-    ${fulfilmentDecisionOverview(queryData)}
-    ${fulfilmentStoreRankings(queryData)}
-    <section class="table-section inventory-workspace">
-      ${panelHeading(
-        'DELIVERY ATTENTION',
-        '交付入仓关注队列',
-        attentionAvailable ? `${coverageLine} · 单据级事实优先` : '单据级事实待接入',
-      )}
-      ${quickFilterBar('fulfilment', '快速筛查', [
-        ['ALL', '全部关注'],
-        ['HIGH', '高优先'],
-        ['CREATED', '已创建待预约'],
-        ['PICKUP_RESERVED', '已预约待揽收'],
-        ['IN_TRANSIT', '运输中'],
-        ['PENDING_RECEIPT', '全部待收货'],
-      ])}
-      <div class="operation-controls">
-        ${operationSelect('fulfilmentMilestone', '履约里程碑', milestoneOptions, state.fulfilment.milestone)}
+    <section class="shipping-orders-hero" aria-labelledby="shipping-orders-title">
+      <header>
+        <div>
+          <span class="eyebrow">SHIPPING ORDER WORKSPACE</span>
+          <h1 id="shipping-orders-title">发货订单</h1>
+          <p>按订单、商品和履约节点定位急采与备货任务；所有写操作保持关闭。</p>
+        </div>
+        <div class="shipping-source-receipt">
+          <span>订单事实更新</span>
+          <strong>${escapeHtml(sourceTime(queryData.source?.latestSourceFetchedAt))}</strong>
+          <small>${nullableUnits(queryData.source?.storeCount, '未知')} / 25 家 · 源订单 ${nullableUnits(queryData.source?.orderCount, '未知')}</small>
+        </div>
+      </header>
+      <div class="shipping-type-tabs" role="group" aria-label="订单类型">
+        ${typeTab('URGENT', '急采订单', 'JIT / 紧急供给')}
+        ${typeTab('STOCK_UP', '备货订单', '常规备货与入仓')}
+        ${typeTab('ALL', '全部订单', '跨类型统一检索')}
+      </div>
+      <nav class="shipping-status-tabs" aria-label="订单状态">
+        ${statusTabs.map(statusLabel).join('')}
+      </nav>
+    </section>
+
+    <section class="shipping-filter-shell" aria-label="发货订单筛选">
+      <div class="shipping-quick-row">
+        <span>快速筛选</span>
+        ${quickFilterBar('fulfilment', '', [
+          ['ALL', `全部 ${numberFormatter.format(quickCounts.get('ALL') || 0)}`],
+          ['PENDING_OR_RETURNED', `待发货＋已退货 ${numberFormatter.format(quickCounts.get('PENDING_OR_RETURNED') || 0)}`],
+          ['DUE_TODAY', `要求今日取件 ${numberFormatter.format(quickCounts.get('DUE_TODAY') || 0)}`],
+          ['OVERDUE', `已超期 ${numberFormatter.format(quickCounts.get('OVERDUE') || 0)}`],
+          ['PENDING_RECEIPT', `已发货待收货 ${numberFormatter.format(quickCounts.get('PENDING_RECEIPT') || 0)}`],
+          ['DEFECTIVE', `存在次品 ${numberFormatter.format(quickCounts.get('DEFECTIVE') || 0)}`],
+        ])}
+        <button type="button" class="shipping-advanced-toggle" data-shipping-advanced="1"
+          aria-expanded="${state.fulfilment.advancedOpen}">
+          ${state.fulfilment.advancedOpen ? '收起筛选' : '更多筛选'}
+        </button>
+      </div>
+      <div class="shipping-filter-grid${state.fulfilment.advancedOpen ? ' expanded' : ''}">
+        ${operationSelect('fulfilmentTimeField', '时间口径', timeOptions, state.fulfilment.timeField)}
+        ${operationSelect('fulfilmentWarehouse', '平台收货仓', warehouseOptions, state.fulfilment.warehouse)}
+        ${operationSelect('fulfilmentDefective', '次品情况', [
+          ['ALL', '全部'], ['YES', '存在次品'], ['NO', '无次品记录'],
+        ], state.fulfilment.defective)}
         ${operationSelect('fulfilmentSort', '排序', [
-          ['PRIORITY', '优先级'],
-          ['LATEST', '证据最新'],
-          ['EXPECTED_RECEIPT', '预计收货时间'],
+          ['LATEST', '平台更新最新'],
+          ['ORDERED_DESC', '下单时间最新'],
+          ['DELIVERY_DEADLINE', '要求取件时间最早'],
         ], state.fulfilment.sort)}
         ${operationSelect('fulfilmentPageSize', '每页', [
           [25, '25 条'], [50, '50 条'], [100, '100 条'],
         ], pageSizeParam(state.fulfilment.pageSize))}
         ${operationSearchControls('fulfilment')}
       </div>
-      ${fulfilmentPagination(queryData.attention.pagination, 'top')}
-      ${deliveryAttentionTable(attention, attentionAvailable)}
-      ${fulfilmentPagination(queryData.attention.pagination, 'bottom')}
-      ${state.fulfilment.loading ? '<p class="query-refresh-note" role="status">正在刷新当前交付筛选结果…</p>' : ''}
-      ${sourceMeta.truncated === true ? '<p class="table-note warning-note">当前接口只筛选物化到页面的单据级关注记录；源明细已截断，因此筛选结果不是仓库全量交付单数量。</p>' : ''}
+      <p class="shipping-range-note">当前按${escapeHtml(timeOptions.find(([key]) => key === state.fulfilment.timeField)?.[1] || '下单时间')}筛选：${escapeHtml(selectedHomeDateRange().start)} → ${escapeHtml(selectedHomeDateRange().end)}</p>
     </section>
-    ${fulfilmentEvidenceDisclosure(queryData)}`;
+
+    <section class="shipping-summary-strip" aria-label="订单汇总">
+      ${shippingSummaryMetric('订单数', summary.orderCount, '单')}
+      ${shippingSummaryMetric('下单件数', summary.orderQuantity, '件')}
+      ${shippingSummaryMetric('SKC 数量', summary.skcCount, '个')}
+      ${shippingSummaryMetric('已发货件数', summary.deliveryQuantity, '件')}
+      ${shippingSummaryMetric('今日要求取件', summary.dueTodayCount, '单')}
+      ${shippingSummaryMetric('已超期', summary.overdueCount, '单', 'danger')}
+    </section>
+
+    <section class="shipping-orders-section">
+      <header class="shipping-list-head">
+        <div>
+          <span class="eyebrow">ORDER LIST</span>
+          <h2>订单列表</h2>
+          <p>命中 ${numberFormatter.format(page.matchedRows || 0)} 单 · 第 ${page.pageCount ? page.page : 0} / ${page.pageCount || 0} 页</p>
+        </div>
+        <button type="button" class="clear-button" data-fulfilment-retry="1">刷新当前结果</button>
+      </header>
+      ${shippingOrdersList(rows, sourceCapabilities)}
+      ${shippingOrdersPagination(page)}
+      ${state.fulfilment.loading ? '<p class="query-refresh-note" role="status">正在刷新当前筛选结果…</p>' : ''}
+    </section>
+    <aside class="shipping-source-note">
+      <strong>数据口径</strong>
+      <span>订单、数量、仓库与履约时间来自 OpenAPI；标准货号来自已确认归并。</span>
+      <span>${sourceCapabilities.portalExtensions === true ? '官方页面扩展字段已接入。' : '订单标签、发货台、复议和售前异常等页面扩展字段正在通过 Session HTTP 补充，缺失时不编造。'}</span>
+    </aside>`;
 }
 
 function renderInventory() {
@@ -10809,6 +11124,10 @@ function currentHashState() {
     procurementPageSize: state.procurement.pageSize,
     fulfilmentMilestone: state.fulfilment.milestone,
     fulfilmentSort: state.fulfilment.sort,
+    fulfilmentOrderType: state.fulfilment.orderType,
+    fulfilmentTimeField: state.fulfilment.timeField,
+    fulfilmentWarehouse: state.fulfilment.warehouse,
+    fulfilmentDefective: state.fulfilment.defective,
     fulfilmentPage: state.fulfilment.page,
     fulfilmentPageSize: state.fulfilment.pageSize,
     platformView: state.platform.view,
@@ -10876,7 +11195,11 @@ function applyHashState(parsed) {
   state.procurement.page = parsed.procurementPage || 1;
   state.procurement.pageSize = pageSizeParam(parsed.procurementPageSize);
   state.fulfilment.milestone = operationCodeParam(parsed.fulfilmentMilestone);
-  state.fulfilment.sort = parsed.fulfilmentSort || 'PRIORITY';
+  state.fulfilment.sort = parsed.fulfilmentSort || 'LATEST';
+  state.fulfilment.orderType = parsed.fulfilmentOrderType || 'STOCK_UP';
+  state.fulfilment.timeField = parsed.fulfilmentTimeField || 'CREATED';
+  state.fulfilment.warehouse = parsed.fulfilmentWarehouse || 'ALL';
+  state.fulfilment.defective = parsed.fulfilmentDefective || 'ALL';
   state.fulfilment.page = parsed.fulfilmentPage || 1;
   state.fulfilment.pageSize = pageSizeParam(parsed.fulfilmentPageSize);
   state.platform.view = allowListedToken(
@@ -11024,6 +11347,7 @@ elements.rangeButtons.forEach((button) => {
     render();
     scheduleHomeLoad();
     scheduleSalesLoad({ resetPages: true });
+    scheduleFulfilmentLoad({ resetPage: true });
     // The product query ranks and filters by the selected range on the server.
     scheduleProductLoad({ resetPages: true });
   });
@@ -11064,6 +11388,7 @@ elements.rangePopover?.addEventListener('click', (event) => {
   render();
   scheduleHomeLoad({ delay: 120 });
   scheduleSalesLoad({ resetPages: true, delay: 120 });
+  scheduleFulfilmentLoad({ resetPage: true, delay: 120 });
 });
 
 for (const element of [elements.homeDateStart, elements.homeDateEnd]) {
@@ -11079,6 +11404,7 @@ for (const element of [elements.homeDateStart, elements.homeDateEnd]) {
     render();
     scheduleHomeLoad();
     scheduleSalesLoad({ resetPages: true });
+    scheduleFulfilmentLoad({ resetPage: true });
   });
 }
 
@@ -11095,6 +11421,7 @@ elements.view.addEventListener('click', (event) => {
       syncUrlFromState();
       render();
       scheduleHomeLoad();
+      scheduleFulfilmentLoad({ resetPage: true });
     }
     return;
   }
@@ -11146,6 +11473,36 @@ elements.view.addEventListener('click', (event) => {
   const fulfilmentRetry = event.target.closest?.('[data-fulfilment-retry]');
   if (fulfilmentRetry && elements.view.contains(fulfilmentRetry)) {
     void loadFulfilment();
+    return;
+  }
+  const shippingOrderType = event.target.closest?.('[data-shipping-order-type]');
+  if (shippingOrderType && elements.view.contains(shippingOrderType)) {
+    const value = allowListedToken(
+      shippingOrderType.dataset.shippingOrderType,
+      URL_FULFILMENT_ORDER_TYPES,
+      'STOCK_UP',
+    );
+    if (value !== state.fulfilment.orderType) {
+      state.fulfilment.orderType = value;
+      state.fulfilment.milestone = 'ALL';
+      delete state.quickFilters.fulfilment;
+      syncUrlFromState();
+      scheduleFulfilmentLoad({ resetPage: true });
+    }
+    return;
+  }
+  const shippingStatus = event.target.closest?.('[data-shipping-status]');
+  if (shippingStatus && elements.view.contains(shippingStatus)) {
+    state.fulfilment.milestone = operationCodeParam(shippingStatus.dataset.shippingStatus);
+    delete state.quickFilters.fulfilment;
+    syncUrlFromState();
+    scheduleFulfilmentLoad({ resetPage: true });
+    return;
+  }
+  const shippingAdvanced = event.target.closest?.('[data-shipping-advanced]');
+  if (shippingAdvanced && elements.view.contains(shippingAdvanced)) {
+    state.fulfilment.advancedOpen = !state.fulfilment.advancedOpen;
+    render();
     return;
   }
   const platformRetry = event.target.closest?.('[data-platform-retry]');
@@ -11250,8 +11607,13 @@ elements.view.addEventListener('click', (event) => {
     }
     if (kind === 'fulfilment') {
       state.fulfilment.milestone = 'ALL';
-      state.fulfilment.sort = 'PRIORITY';
-      state.fulfilment.pageSize = URL_DEFAULT_INVENTORY_PAGE_SIZE;
+      state.fulfilment.sort = 'LATEST';
+      state.fulfilment.orderType = 'STOCK_UP';
+      state.fulfilment.timeField = 'CREATED';
+      state.fulfilment.warehouse = 'ALL';
+      state.fulfilment.defective = 'ALL';
+      state.fulfilment.advancedOpen = false;
+      state.fulfilment.pageSize = URL_DEFAULT_FULFILMENT_PAGE_SIZE;
       syncUrlFromState();
       scheduleFulfilmentLoad({ resetPage: true });
     }
@@ -11434,8 +11796,14 @@ elements.view.addEventListener('change', (event) => {
       state.procurement.pageSize = pageSizeParam(raw);
     } else if (kind === 'fulfilmentMilestone') {
       state.fulfilment.milestone = operationCodeParam(raw);
+    } else if (kind === 'fulfilmentTimeField') {
+      state.fulfilment.timeField = allowListedToken(raw, URL_FULFILMENT_TIME_FIELDS, 'CREATED');
+    } else if (kind === 'fulfilmentWarehouse') {
+      state.fulfilment.warehouse = urlSafeText(raw, 120) || 'ALL';
+    } else if (kind === 'fulfilmentDefective') {
+      state.fulfilment.defective = allowListedToken(raw, URL_FULFILMENT_DEFECTIVE, 'ALL');
     } else if (kind === 'fulfilmentSort') {
-      state.fulfilment.sort = allowListedToken(raw, URL_FULFILMENT_SORTS, 'PRIORITY');
+      state.fulfilment.sort = allowListedToken(raw, URL_FULFILMENT_SORTS, 'LATEST');
     } else if (kind === 'fulfilmentPageSize') {
       state.fulfilment.pageSize = pageSizeParam(raw);
     } else if (kind === 'platformView') {

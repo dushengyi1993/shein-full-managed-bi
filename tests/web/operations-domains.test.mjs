@@ -15,29 +15,29 @@ function functionBody(source, functionName) {
   return source.slice(start, nextFunction === -1 ? source.length : nextFunction);
 }
 
-test('supply pages consume real purchase, delivery, inventory and stock-advice contracts', async () => {
+test('supply pages consume real purchase, shipping-order, inventory and stock-advice contracts', async () => {
   const app = await read('src/web/app.js');
   const procurement = await read('src/server/procurement-query.mjs');
-  const fulfilment = await read('src/server/fulfilment-query.mjs');
+  const fulfilment = await read('src/server/shipping-orders-query.mjs');
   const inventory = await read('src/server/inventory-query.mjs');
 
   assert.match(procurement, /purchaseOrderStatus/);
   assert.match(procurement, /purchaseOrderAttention/);
-  assert.match(fulfilment, /deliveryMilestones/);
-  assert.match(fulfilment, /deliveryAttention/);
+  assert.match(fulfilment, /queryShippingOrders/);
+  assert.match(fulfilment, /PENDING_SHIPMENT/);
   assert.match(inventory, /inventoryRisks/);
   assert.match(inventory, /stockAdviceRisks/);
   assert.match(app, /\/api\/procurement/);
   assert.match(app, /\/api\/fulfilment/);
   assert.match(app, /\/api\/inventory/);
   assert.match(app, /采购单关注队列/);
-  assert.match(app, /交付入仓关注队列/);
+  assert.match(app, /发货订单/);
   assert.match(app, /SKU 风险与备货筛查/);
   assert.match(app, /店铺 × 库存类型汇总/);
   // Procurement and fulfilment no longer render an unbounded per-store table.
   // Both now aggregate the scoped snapshot into a compact overview instead.
   assert.match(app, /采购单状态紧凑总览/);
-  assert.match(app, /交付里程碑紧凑总览/);
+  assert.match(app, /shipping-orders-hero/);
   assert.doesNotMatch(app, /店铺×采购单状态汇总/);
   assert.doesNotMatch(app, /店铺×交付里程碑汇总/);
 });
@@ -66,14 +66,13 @@ test('nullable operational quantities stay unknown and expose field coverage', a
   // dead client-side helper and its coverage pair are gone for good.
   assert.doesNotMatch(app, /deliveryQuantityCoverage/);
   assert.doesNotMatch(app, /knownLineCount', 'totalLineCount'/);
-  const fulfilment = functionBody(app, 'fulfilmentDecisionOverview');
-  assert.match(fulfilment, /productRecord\(summary\.snapshotDeliveryCount\)/);
-  assert.match(fulfilment, /productRecord\(summary\.attentionDeliveryQuantity\)/);
-  assert.match(fulfilment, /stageMetricValue\(total, '单'\)/);
-  assert.match(fulfilment, /stageMetricValue\(attentionQuantity, '件'\)/);
-  assert.match(fulfilment, /stageMetricNote\(attentionQuantity\)/);
-  // Unknown stays unknown on the rendered path.
-  assert.doesNotMatch(fulfilment, /\|\| 0\b|\?\? 0\b/);
+  const fulfilment = functionBody(app, 'renderFulfilment');
+  assert.match(fulfilment, /shippingSummaryMetric\('订单数', summary\.orderCount, '单'\)/);
+  assert.match(fulfilment, /shippingSummaryMetric\('下单件数', summary\.orderQuantity, '件'\)/);
+  // Summary values flow through the nullable formatter; explicit zero defaults
+  // are used only for tab counts returned by the server.
+  assert.match(functionBody(app, 'shippingSummaryMetric'), /const known = isUnit\(value\)/);
+  assert.match(functionBody(app, 'shippingSummaryMetric'), /known \? numberFormatter\.format\(value\) : '—'/);
   const metricValue = functionBody(app, 'stageMetricValue');
   const metricNote = functionBody(app, 'stageMetricNote');
   assert.match(metricValue, /isUnit\(source\.total\)/);
@@ -82,19 +81,19 @@ test('nullable operational quantities stay unknown and expose field coverage', a
   assert.match(metricNote, /拒绝补零合计/);
 
   // The independent server query owns the nullable aggregation instead.
-  const fulfilmentQuery = await read('src/server/fulfilment-query.mjs');
+  const fulfilmentQuery = await read('src/server/shipping-orders-query.mjs');
   const nullable = functionBody(fulfilmentQuery, 'nullableSum');
-  assert.match(nullable, /known\.length === 0 \? null : knownSum/);
-  assert.match(nullable, /known\.length === inputRows\.length \? knownSum : null/);
-  assert.match(fulfilmentQuery, /nullableSum\(scopedMilestoneRows, 'deliveryQuantity'\)/);
-  assert.match(fulfilmentQuery, /nullableSum\(scopedMilestoneRows, 'deliveryCount'\)/);
+  assert.match(nullable, /values\.some\(\(value\) => !Number\.isSafeInteger\(value\)\)/);
+  assert.match(nullable, /return null/);
+  assert.match(fulfilmentQuery, /nullableSum\(matched, \(order\) => order\.totals\?\.orderQuantity\)/);
+  assert.match(fulfilmentQuery, /nullableSum\(matched, \(order\) => order\.totals\?\.deliveryQuantity\)/);
 });
 
 test('owner, store and text filters scope all store-keyed operational rows', async () => {
   const app = await read('src/web/app.js');
   const queryFiles = await Promise.all([
     'procurement-query.mjs',
-    'fulfilment-query.mjs',
+    'shipping-orders-query.mjs',
     'inventory-query.mjs',
     'platform-query.mjs',
     'ops-query.mjs',

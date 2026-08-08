@@ -16,6 +16,7 @@ WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
 Environment=NODE_OPTIONS=--max-old-space-size=1152
 Environment=FULL_BI_DATA_FILE=/srv/shein-fm/runtime/dashboard/dashboard.next.json
+Environment=FULL_BI_SHIPPING_ORDERS_FILE=/srv/shein-fm/runtime/dashboard/shipping-orders.next.json
 EnvironmentFile=/srv/shein-fm/secrets/materializer/database.env
 ExecStart=/usr/bin/bash scripts/run_full_managed_dashboard_materializer.sh --only-pending
 SuccessExitStatus=75

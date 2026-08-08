@@ -613,7 +613,7 @@ test('operating alerts expose source, scope, severity, freshness and a read-only
   const sourceLabel = functionBody(app, 'itemSourceLabel');
 
   assert.match(app, /const GROUP_LABELS = Object\.freeze\(\{/);
-  for (const label of ['采购单', '交付入仓', '库存与缺货', '备货建议', '商品身份', 'Webhook 事件', '数据质量与同步']) {
+  for (const label of ['采购单', '发货订单', '库存与缺货', '备货建议', '商品身份', 'Webhook 事件', '数据质量与同步']) {
     assert.match(app, new RegExp(`: '${label}',`));
   }
   assert.match(sourceLabel, /item\?\.sourceLabel \|\| GROUP_LABELS\[item\?\.group\]/);

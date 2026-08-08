@@ -13,6 +13,7 @@ const sessionSecret = 'fulfilment-route-session-secret-longer-than-32-bytes';
 let temporaryDirectory;
 let server;
 let baseUrl;
+let shippingOrdersFile;
 
 function sha256(value) {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -25,6 +26,7 @@ function cookiePair(setCookie) {
 before(async () => {
   temporaryDirectory = await mkdtemp(join(tmpdir(), 'full-bi-fulfilment-route-'));
   const usersFile = join(temporaryDirectory, 'users.json');
+  shippingOrdersFile = join(temporaryDirectory, 'shipping-orders.json');
   await writeFile(
     usersFile,
     `${JSON.stringify({
@@ -39,8 +41,32 @@ before(async () => {
     })}\n`,
     { encoding: 'utf8', mode: 0o600 },
   );
+  await writeFile(shippingOrdersFile, `${JSON.stringify({
+    schemaVersion: 1,
+    updatedAt: '2026-08-08T02:00:00.000Z',
+    source: {
+      basis: 'OPENAPI_PURCHASE_ORDER_AND_DELIVERY',
+      storeCount: 1,
+      orderCount: 1,
+      lineCount: 1,
+    },
+    capabilities: { coreOrderFacts: true, deliveryFacts: true },
+    orders: [{
+      storeCode: 'DL5477',
+      storeName: 'DL5477',
+      orderNo: 'PO-1',
+      orderTypeName: '备货',
+      statusName: '已下单',
+      createdAt: '2026-08-08T01:00:00.000Z',
+      latestSourceFetchedAt: '2026-08-08T02:00:00.000Z',
+      totals: { orderQuantity: 3, deliveryQuantity: 0, defectiveQuantity: 0 },
+      lines: [{ lineKey: '1', skc: 'SKC-1', orderQuantity: 3, deliveryQuantity: 0 }],
+      deliveries: [],
+    }],
+  })}\n`, { encoding: 'utf8', mode: 0o600 });
   server = createDashboardServer({
     dataFile: fixture,
+    shippingOrdersFile,
     host: '127.0.0.1',
     runtimeEnvironment: 'production',
     // Production refuses insecure session cookies; the cookie is replayed by
@@ -91,15 +117,16 @@ test('an authenticated session reads the fulfilment query surface read-only', as
   const cookie = cookiePair(login.headers.get('set-cookie'));
 
   const authorized = await fetch(
-    `${baseUrl}/api/fulfilment?pageSize=25&page=1&milestone=ALL&quick=ALL`,
+    `${baseUrl}/api/fulfilment?pageSize=25&page=1&status=ALL&quick=ALL&orderType=STOCK_UP`,
     { headers: { Cookie: cookie } },
   );
   assert.equal(authorized.status, 200);
   const payload = await authorized.json();
   assert.equal(payload.readOnly, true);
   assert.equal(payload.query.pageSize, 25);
-  assert.ok(Array.isArray(payload.attention.rows));
-  assert.ok(Array.isArray(payload.milestoneOverview));
+  assert.ok(Array.isArray(payload.orders.rows));
+  assert.equal(payload.orders.rows[0].orderNo, 'PO-1');
+  assert.ok(Array.isArray(payload.filters.statuses));
   assert.equal(authorized.headers.get('cache-control'), 'no-store');
 
   const head = await fetch(`${baseUrl}/api/fulfilment`, {
@@ -116,7 +143,7 @@ test('an authenticated session reads the fulfilment query surface read-only', as
   assert.equal(invalid.status, 400);
   assert.match(await invalid.text(), /QUERY_PARAMETER_INVALID/);
 
-  const duplicate = await fetch(`${baseUrl}/api/fulfilment?milestone=A&milestone=B`, {
+  const duplicate = await fetch(`${baseUrl}/api/fulfilment?status=A&status=B`, {
     headers: { Cookie: cookie },
   });
   assert.equal(duplicate.status, 400);

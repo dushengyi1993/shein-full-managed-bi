@@ -23,10 +23,8 @@ import {
   ProductQueryError,
   queryProductDashboard,
 } from './product-query.mjs';
-import {
-  FulfilmentQueryError,
-  queryFulfilmentDashboard,
-} from './fulfilment-query.mjs';
+import { loadShippingOrdersData, ShippingOrdersDataError } from './shipping-orders-data.mjs';
+import { queryShippingOrders, ShippingOrdersQueryError } from './shipping-orders-query.mjs';
 import {
   PlatformQueryError,
   queryPlatformDashboard,
@@ -197,6 +195,7 @@ function staticFilePath(pathname, webRoot) {
 export function createRequestHandler(options = {}) {
   const dataFile = options.dataFile;
   const homeDataFile = options.homeDataFile;
+  const shippingOrdersFile = options.shippingOrdersFile;
   const systemHealthFile = options.systemHealthFile;
   const webRoot = options.webRoot || DEFAULT_WEB_ROOT;
   const updateBroker = options.updateBroker || null;
@@ -660,17 +659,28 @@ export function createRequestHandler(options = {}) {
 
     if (url.pathname === '/api/fulfilment') {
       try {
-        const dashboard = await loadDashboardData(dataFile);
+        const forceRefresh = url.searchParams.get('refresh') === '1';
+        const [dashboard, shippingOrders] = await Promise.all([
+          loadDashboardData(dataFile, { runtimeEnvironment, forceRefresh }),
+          loadShippingOrdersData(shippingOrdersFile, { runtimeEnvironment, forceRefresh }),
+        ]);
         const projected = projectDashboardForUser(dashboard, signedInUser);
         sendJson(
           response,
           200,
-          queryFulfilmentDashboard(projected, url.searchParams),
+          queryShippingOrders(projected, shippingOrders, url.searchParams),
           method,
+          request,
         );
       } catch (error) {
-        if (error instanceof FulfilmentQueryError) {
+        if (error instanceof ShippingOrdersQueryError) {
           sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        if (error instanceof ShippingOrdersDataError) {
+          sendJson(response, 503, {
             error: { code: error.code, message: error.message },
           }, method);
           return;
@@ -678,7 +688,7 @@ export function createRequestHandler(options = {}) {
         sendJson(response, 503, {
           error: {
             code: 'FULFILMENT_DATA_UNAVAILABLE',
-            message: '交付入仓查询暂不可用',
+            message: '发货订单查询暂不可用',
           },
         }, method);
       }

@@ -36,6 +36,9 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
   const promotion = await text(
     'scripts/materialize_and_promote_full_managed_dashboard.sh',
   );
+  const shippingMaterializer = await text(
+    'scripts/materialize_full_managed_shipping_orders.mjs',
+  );
   const wrapper = await text(
     'scripts/run_full_managed_dashboard_materializer.sh',
   );
@@ -58,6 +61,9 @@ test('materializer is a separate gated read-only runtime with atomic promotion',
   assert.match(wrapper, /materialize_and_promote_full_managed_dashboard\.sh/);
   assert.doesNotMatch(service, /ExecStartPost=/);
   assert.match(promotion, /dashboard\.next\.json/);
+  assert.match(promotion, /materialize_full_managed_shipping_orders\.mjs/);
+  assert.match(shippingMaterializer, /materializeShippingOrdersFromDatabase/);
+  assert.doesNotMatch(shippingMaterializer, /OPENAPI|openapi\.json/i);
   assert.match(promotion, /chgrp sheinfm-dashboard/);
   assert.match(promotion, /chmod 0640/);
   assert.match(promotion, /mv -f "\$\{core_staging\}" "\$\{core_current\}"/);

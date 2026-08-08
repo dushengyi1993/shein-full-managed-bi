@@ -9,6 +9,7 @@ const ROOT = process.env.FULL_BI_COORDINATOR_ROOT
 const DASHBOARD_FILES = Object.freeze([
   '/srv/shein-fm/runtime/dashboard/dashboard.json',
   '/srv/shein-fm/runtime/dashboard/dashboard.home.json',
+  '/srv/shein-fm/runtime/dashboard/shipping-orders.json',
 ]);
 
 async function fingerprint(file) {

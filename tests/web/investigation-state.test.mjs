@@ -413,10 +413,8 @@ test('the focused-evidence panel is read-only, honest and clearable', async () =
     source,
     /\$\{focusEvidencePanel\(\)\}\s*\n\s*\$\{procurementDecisionOverview\(queryData\)\}/,
   );
-  assert.match(
-    source,
-    /\$\{focusEvidencePanel\(\)\}\s*\n\s*\$\{fulfilmentDecisionOverview\(queryData\)\}/,
-  );
+  assert.match(source, /function renderFulfilment\([\s\S]*\$\{focusEvidencePanel\(\)\}/);
+  assert.match(source, /shippingOrdersList\(rows, sourceCapabilities\)/);
 });
 
 test('focused rows are ordered first, marked, and reachable by keyboard', async () => {
@@ -428,7 +426,7 @@ test('focused rows are ordered first, marked, and reachable by keyboard', async 
   // passes the server-ordered page straight through, so focus-first ordering is
   // the only reordering applied; the old `[...rows].sort(...)` copy would have
   // overridden the operator's chosen server sort.
-  for (const domain of ['inventory', 'advice', 'procurement', 'fulfilment']) {
+  for (const domain of ['inventory', 'advice', 'procurement']) {
     assert.ok(
       source.includes(`orderRowsForFocus(rows, '${domain}')`),
       domain,

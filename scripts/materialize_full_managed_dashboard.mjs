@@ -33,7 +33,7 @@ async function main() {
   const config = args.config || process.env.FULL_BI_OPENAPI_CONFIG || process.env.FULL_BI_OPENAPI_CONFIG_FILE
     ? await loadFullManagedConfig(args.config)
     : null;
-  const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   try {
     const dashboard = await materializeDashboardFromDatabase(pool, {
       storeCatalog: config?.stores ?? [],

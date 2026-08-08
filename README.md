@@ -6,7 +6,8 @@
 
 - 当前规范店铺清单为 25 家；原有 24 店的 DL 授权保留作回滚，新增 `NM7418` 归属 NM 主体并等待独立登录、授权和探针。内部店铺代码统一使用“公司简称 + 店铺账号后四位”，例如 `CX4412`。
 - 已建立 `/open-api/goods/query-sku-sales` 的可信销量链路：逐店权限探针、稳定 SKU 清单、每批最多 100 条、日期锚定、合法零销量、缺失 SKU 禁止补零、原始证据与幂等回读。
-- 已接入全托只读商品、库存（PI / VI / JI）、缺货建议、采购单、交付入仓与 Webhook 接收/标准化链路；未知数量始终保留为未知。
+- 已接入全托只读商品、库存（PI / VI / JI）、缺货建议、采购单、发货订单与 Webhook 接收/标准化链路；未知数量始终保留为未知。
+- 发货订单作为总控后的第一个业务页面，按官方后台“订单 → 发货订单”的信息层级展示急采/备货、状态、时效、订单、商品行、发货与收货进度；使用独立只读索引和服务端筛选、排序、分页。首版以 OpenAPI 采购单和发货事实为准，官方页面扩展字段未接入时明确显示未知，不用推测值补齐。
 - 采购单页面使用独立只读查询 API 做服务端筛选、排序和分页，并明确
   区分“物化范围命中”与源明细全量；Dashboard 原子提升通过认证 SSE
   通知浏览器自动重取，不宣称直接连接 SHEIN 实时数据。
@@ -60,10 +61,11 @@ npm run dev
 
 默认访问：<http://127.0.0.1:3100>
 
-未配置真实数据文件时，页面使用 `tests/fixtures/dashboard.json`，并明确标记为“本地示例数据”。可通过环境变量指定本地生成的 Dashboard JSON：
+未配置真实数据文件时，页面使用 `tests/fixtures/dashboard.json`，并明确标记为“本地示例数据”。可通过环境变量指定本地生成的 Dashboard JSON；发货订单页另读取 `FULL_BI_SHIPPING_ORDERS_FILE` 指向的订单索引：
 
 ```powershell
 $env:FULL_BI_DATA_FILE='C:\path\to\dashboard.json'
+$env:FULL_BI_SHIPPING_ORDERS_FILE='C:\path\to\shipping-orders.json'
 npm run dev
 ```
 
@@ -82,6 +84,7 @@ npm run build:dashboard -- `
 
 ```text
 http://127.0.0.1:3100/#home
+http://127.0.0.1:3100/#fulfilment
 http://127.0.0.1:3100/#sales
 http://127.0.0.1:3100/#products
 http://127.0.0.1:3100/#purchase-orders

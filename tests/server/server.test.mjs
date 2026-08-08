@@ -284,26 +284,26 @@ test('product query rejects duplicates, bad bounds and mutation methods', async 
   }
 });
 
-test('GET /api/fulfilment is a bounded read-only delivery query surface', async () => {
+test('GET /api/fulfilment is a bounded read-only shipping-order query surface', async () => {
   const response = await fetch(
-    `${baseUrl}/api/fulfilment?owner=ALL&store=ALL&milestone=ALL&quick=ALL`
-    + '&sort=PRIORITY&page=1&pageSize=50',
+    `${baseUrl}/api/fulfilment?owner=ALL&store=ALL&status=ALL&quick=ALL&orderType=STOCK_UP`
+    + '&timeField=CREATED&sort=LATEST&page=1&pageSize=50',
   );
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.schemaVersion, 1);
   assert.equal(payload.readOnly, true);
   assert.equal(payload.query.pageSize, 50);
-  assert.equal(payload.query.milestone, 'ALL');
-  assert.equal(payload.query.sort, 'PRIORITY');
-  assert.ok(Array.isArray(payload.attention.rows));
-  assert.ok(Array.isArray(payload.milestoneOverview));
-  assert.equal(payload.attention.pagination.pageSize, 50);
-  assert.equal(typeof payload.attention.source.truncated, 'boolean');
-  // Delivery count and delivery quantity stay separate units.
-  assert.ok(Object.hasOwn(payload.summary.snapshotDeliveryCount, 'unknownCount'));
-  assert.ok(Object.hasOwn(payload.summary.snapshotDeliveryQuantity, 'unknownCount'));
-  assert.ok(Object.hasOwn(payload.summary, 'expectedReceiptKnownCount'));
+  assert.equal(payload.query.status, 'ALL');
+  assert.equal(payload.query.sort, 'LATEST');
+  assert.ok(Array.isArray(payload.orders.rows));
+  assert.ok(Array.isArray(payload.filters.statuses));
+  assert.equal(payload.orders.pagination.pageSize, 50);
+  // Order count and quantities stay separate units and unknown quantities are
+  // never derived from another field.
+  assert.ok(Object.hasOwn(payload.summary, 'orderCount'));
+  assert.ok(Object.hasOwn(payload.summary, 'orderQuantity'));
+  assert.ok(Object.hasOwn(payload.summary, 'deliveryQuantity'));
   // No funnel or completion rate is ever derived.
   assert.doesNotMatch(JSON.stringify(payload.summary), /rate|percent|conversion|funnel/i);
   assert.equal(response.headers.get('cache-control'), 'no-store');
