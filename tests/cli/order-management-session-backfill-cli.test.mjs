@@ -994,7 +994,7 @@ test('a page whose rows are all dropped by the allowlist fails the content gate'
   assert.equal(existsSync(output), false);
 });
 
-function productionCompleteSnapshot() {
+function productionCompleteSnapshot({ windows: windowsOverride = null } = {}) {
   const stockRow = {
     id: 'PB-PROD-1',
     storeCode: 'CX4412',
@@ -1029,7 +1029,10 @@ function productionCompleteSnapshot() {
     },
     rows,
   });
-  const windows = buildBackfillWindows({ startDate: '2022-01-01', endDate: '2026-08-08' })
+  const windows = (windowsOverride ?? buildBackfillWindows({
+    startDate: '2022-01-01',
+    endDate: '2026-08-08',
+  }))
     .map((window, index) => ({
       index: index + 1,
       startDate: window.startDate,
@@ -1101,6 +1104,89 @@ test('backfill merges the five new pages over the production snapshot without to
   assert.equal(merged.backfill.once.length, 1);
   assert.equal(merged.pages['quality-reports'].rows.length, ROSTER.length);
   assert.ok(!JSON.stringify(merged).includes('reportUrl'));
+});
+
+test('backfill merges over a production snapshot split at year boundaries', async () => {
+  const DAY_MS = 86_400_000;
+  const epochDays = (value) => Math.round(Date.parse(`${value}T00:00:00.000Z`) / DAY_MS);
+  const isoFromDays = (days) => new Date(days * DAY_MS).toISOString().slice(0, 10);
+  // The production snapshot segments every calendar year separately, so its
+  // windows truncate at year boundaries (2023-12-22..2023-12-31 then
+  // 2024-01-01..2024-01-30) while the new run splits from the start
+  // (2023-12-22..2024-01-20).  Both are legal for the same scope.
+  const yearTruncated = [];
+  for (let year = 2022; year <= 2026; year += 1) {
+    const yearStart = Math.max(epochDays('2022-01-01'), epochDays(`${year}-01-01`));
+    const yearEnd = Math.min(epochDays('2026-08-08'), epochDays(`${year}-12-31`));
+    let cursor = yearStart;
+    while (cursor <= yearEnd) {
+      const candidateEnd = Math.min(cursor + 29, yearEnd);
+      yearTruncated.push({ startDate: isoFromDays(cursor), endDate: isoFromDays(candidateEnd) });
+      cursor = candidateEnd + 1;
+    }
+  }
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'om-backfill-merge-year-'));
+  const production = path.join(directory, 'production.json');
+  const output = path.join(directory, 'combined.json');
+  await writeFile(production, JSON.stringify(productionCompleteSnapshot({ windows: yearTruncated })));
+  const endpointCalls = [];
+  const scope = [
+    'return-applications',
+    'return-orders',
+    'exceptions',
+    'value-added-services',
+    'quality-reports',
+  ];
+  const result = await runOrderManagementSessionBackfill({
+    storeCodes: ROSTER,
+    startDate: '2022-01-01',
+    endDate: '2026-08-08',
+    output,
+    execute: true,
+    pageIds: scope,
+    mergeWith: production,
+    sessionStore: {
+      read: async () => { throw new Error('UNUSED'); },
+      write: async () => { throw new Error('UNUSED'); },
+    },
+    now: NOW,
+    openSession: fakeOrderManagementSession(endpointCalls),
+  });
+  assert.equal(result.mergedFrom, production);
+  const existing = JSON.parse(await readFile(production, 'utf8'));
+  const merged = JSON.parse(await readFile(output, 'utf8'));
+  assert.deepEqual(merged.pages['stock-records'], existing.pages['stock-records']);
+  assert.deepEqual(merged.pages.waybills, existing.pages.waybills);
+  assert.equal(merged.scope.startDate, '2022-01-01');
+  assert.equal(merged.scope.endDate, '2026-08-08');
+  // Different legal segmentations must merge, and the common refinement is
+  // strictly finer than either input.
+  assert.notEqual(merged.scope.windowCount, existing.backfill.windows.length);
+  assert.ok(merged.scope.windowCount > existing.backfill.windows.length);
+  assert.equal(merged.backfill.windows.length, merged.scope.windowCount);
+  const producedWindows = buildBackfillWindows({ startDate: '2022-01-01', endDate: '2026-08-08' });
+  const overlapCount = yearTruncated
+    .flatMap((existingWindow) => producedWindows.filter((producedWindow) => (
+      epochDays(producedWindow.startDate) <= epochDays(existingWindow.endDate)
+      && epochDays(producedWindow.endDate) >= epochDays(existingWindow.startDate)
+    )))
+    .length;
+  assert.equal(merged.backfill.windows.length, overlapCount);
+  for (let index = 1; index < merged.backfill.windows.length; index += 1) {
+    assert.equal(
+      epochDays(merged.backfill.windows[index].startDate),
+      epochDays(merged.backfill.windows[index - 1].endDate) + 1,
+    );
+  }
+  // Every merged window keeps the part file of one existing and one produced
+  // window, so no audit evidence is dropped.
+  for (const window of merged.backfill.windows) {
+    assert.equal(window.partFiles.length, 2);
+    assert.ok(window.sources.some((source) => source.snapshot === 'existing'));
+    assert.ok(window.sources.some((source) => source.snapshot === 'produced'));
+  }
+  assert.equal(merged.backfill.once.length, 1);
+  assert.equal(merged.pages['quality-reports'].rows.length, ROSTER.length);
 });
 
 test('the additive merge refuses a conflicting overlap on an existing page', async () => {

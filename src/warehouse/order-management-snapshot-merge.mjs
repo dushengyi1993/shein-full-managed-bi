@@ -144,10 +144,21 @@ function auditPartFiles(entry) {
 }
 
 /**
- * Existing and additive backfills cover the same calendar windows but carry
- * disjoint page evidence.  Merge evidence inside each matching window; never
- * concatenate two copies of the calendar because that would turn 57
- * contiguous windows into an invalid 114-window audit.
+ * Existing and additive backfills cover the same scope but may legitimately
+ * carry different segmentations (e.g. the production split truncated at
+ * year boundaries vs. a from-start 30-day split).  Both audits were already
+ * validated as legal before this point, so merge them into the deterministic
+ * common refinement: every boundary date of either input becomes a
+ * merged-window boundary, which yields contiguous, non-overlapping windows
+ * each contained in exactly one window of each input.  Merging by index or
+ * concatenating the two calendars would either fail on the differing split
+ * or fabricate overlapping/duplicated windows, so neither is used.
+ *
+ * Each merged window keeps the deduplicated partFile/partFiles, the latest
+ * fetchedAt, the union of the two source windows' page audits (identical
+ * overlapping page audits merge, conflicting ones fail closed) and an
+ * explicit `sources` attribution naming the exact original window of each
+ * input that contributed the evidence.
  */
 function mergeWindowAudits(existing, produced) {
   const left = existing?.backfill?.windows;
@@ -157,30 +168,68 @@ function mergeWindowAudits(existing, produced) {
   }
   if (right.length === 0 && isOnceOnlySnapshot(produced)) return Object.freeze([...left]);
   if (left.length === 0 && isOnceOnlySnapshot(existing)) return Object.freeze([...right]);
-  if (left.length !== right.length) throw new TypeError('ORDER_MANAGEMENT_MERGE_WINDOW_SCOPE_MISMATCH');
-  return Object.freeze(left.map((entry, index) => {
-    const additive = right[index];
-    if (entry?.startDate !== additive?.startDate || entry?.endDate !== additive?.endDate) {
-      throw new TypeError(`ORDER_MANAGEMENT_MERGE_WINDOW_SCOPE_MISMATCH: ${index + 1}`);
+  if (left.length === 0 || right.length === 0) {
+    throw new TypeError('ORDER_MANAGEMENT_MERGE_WINDOW_SCOPE_MISMATCH');
+  }
+  const boundaries = new Set();
+  for (const entry of [...left, ...right]) {
+    const start = epochDays(entry?.startDate);
+    const end = epochDays(entry?.endDate);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+      throw new TypeError('ORDER_MANAGEMENT_MERGE_WINDOW_SCOPE_MISMATCH');
+    }
+    boundaries.add(start);
+    boundaries.add(end + 1);
+  }
+  const sorted = [...boundaries].sort((a, b) => a - b);
+  const merged = [];
+  for (let index = 0; index + 1 < sorted.length; index += 1) {
+    const segmentStart = sorted[index];
+    const segmentEnd = sorted[index + 1] - 1;
+    const startDate = isoFromDays(segmentStart);
+    const endDate = isoFromDays(segmentEnd);
+    const covers = (entry) => epochDays(entry.startDate) <= segmentStart
+      && epochDays(entry.endDate) >= segmentEnd;
+    const leftSource = left.find(covers);
+    const rightSource = right.find(covers);
+    if (!leftSource || !rightSource) {
+      throw new TypeError('ORDER_MANAGEMENT_MERGE_WINDOW_SCOPE_MISMATCH');
     }
     const partFiles = [...new Set([
-      ...auditPartFiles(entry),
-      ...auditPartFiles(additive),
-    ])];
-    const fetchedAt = [entry?.fetchedAt, additive?.fetchedAt]
+      ...auditPartFiles(leftSource),
+      ...auditPartFiles(rightSource),
+    ])].sort();
+    const fetchedAt = [leftSource?.fetchedAt, rightSource?.fetchedAt]
       .filter((value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)))
       .sort()
       .at(-1) ?? null;
-    return Object.freeze({
-      index: index + 1,
-      startDate: entry.startDate,
-      endDate: entry.endDate,
+    merged.push(Object.freeze({
+      index: merged.length + 1,
+      startDate,
+      endDate,
       partFile: partFiles[0] ?? null,
       partFiles: Object.freeze(partFiles),
       fetchedAt,
-      pages: mergeAuditPages(entry.pages, additive.pages, `window-${index + 1}`),
-    });
-  }));
+      pages: mergeAuditPages(
+        leftSource.pages,
+        rightSource.pages,
+        `window-${merged.length + 1}`,
+      ),
+      sources: Object.freeze([
+        Object.freeze({
+          snapshot: 'existing',
+          startDate: leftSource.startDate,
+          endDate: leftSource.endDate,
+        }),
+        Object.freeze({
+          snapshot: 'produced',
+          startDate: rightSource.startDate,
+          endDate: rightSource.endDate,
+        }),
+      ]),
+    }));
+  }
+  return Object.freeze(merged);
 }
 
 function mergeOnceAudits(existing, produced) {
@@ -201,12 +250,21 @@ function mergeOnceAudits(existing, produced) {
 }
 
 /**
- * Verify one snapshot's window audit against its declared scope: the windows
- * must be exactly the deterministic contiguous split of the scope range with
- * the recorded maximum window size.  Returns a list of human-readable errors
- * (empty when the snapshot carries no audit and no scope to check).
+ * Verify one snapshot's window audit against its declared scope.  A legal
+ * audit is any segmentation that covers the scope exactly: the first window
+ * starts at scope.startDate, the last window ends at scope.endDate, windows
+ * are sorted, contiguous, non-overlapping and gap-free, and each window spans
+ * at most scope.maximumDays inclusive days.  The exact boundary choice is not
+ * constrained: different backfill runs may legitimately segment the same
+ * scope differently (e.g. a year-boundary-truncated split in production vs.
+ * a from-start 30-day split in a later run).
+ *
+ * Returns a list of human-readable errors (empty when the snapshot carries
+ * no audit and no scope to check).  `options` is accepted for caller
+ * compatibility; the recorded scope.maximumDays is authoritative because the
+ * audit must be judged against the maximum the backfill actually used.
  */
-export function validateWindowContinuity(snapshot, { maximumDays = 30 } = {}) {
+export function validateWindowContinuity(snapshot, options = {}) {
   const errors = [];
   const scope = snapshot?.scope;
   const windows = auditWindows(snapshot);
@@ -220,25 +278,47 @@ export function validateWindowContinuity(snapshot, { maximumDays = 30 } = {}) {
     errors.push('scope must carry startDate/endDate/maximumDays');
     return errors;
   }
-  let expected;
-  try {
-    expected = expectedWindows({
-      startDate: scope.startDate,
-      endDate: scope.endDate,
-      maximumDays: scope.maximumDays,
-    });
-  } catch {
+  const maxDays = scope.maximumDays;
+  if (!Number.isSafeInteger(maxDays) || maxDays < 1 || maxDays > 30) {
+    errors.push(`scope maximumDays ${maxDays} is invalid (must be an integer between 1 and 30)`);
+    return errors;
+  }
+  const first = epochDays(scope.startDate);
+  const last = epochDays(scope.endDate);
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first > last) {
     errors.push('scope range is invalid');
     return errors;
   }
-  if (windows.length !== expected.length) {
-    errors.push(`window audit length ${windows.length} does not match expected ${expected.length}`);
+  if (windows.length === 0) {
+    errors.push('window audit is empty but the scope requires coverage');
     return errors;
   }
-  for (let index = 0; index < expected.length; index += 1) {
-    if (windows[index].startDate !== expected[index].startDate
-      || windows[index].endDate !== expected[index].endDate) {
-      errors.push(`window audit [${index}] ${windows[index].startDate}..${windows[index].endDate} does not match ${expected[index].startDate}..${expected[index].endDate}`);
+  const ranges = windows.map((window) => ({
+    start: epochDays(window.startDate),
+    end: epochDays(window.endDate),
+  }));
+  for (let index = 0; index < ranges.length; index += 1) {
+    const { start, end } = ranges[index];
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
+      errors.push(`window audit [${index}] ${windows[index].startDate}..${windows[index].endDate} is not a valid date range`);
+      return errors;
+    }
+    if (end - start + 1 > maxDays) {
+      errors.push(`window audit [${index}] ${windows[index].startDate}..${windows[index].endDate} exceeds the ${maxDays}-day maximum`);
+      return errors;
+    }
+  }
+  if (ranges[0].start !== first) {
+    errors.push(`window audit starts at ${windows[0].startDate} but the scope starts at ${scope.startDate}`);
+    return errors;
+  }
+  if (ranges[ranges.length - 1].end !== last) {
+    errors.push(`window audit ends at ${windows[ranges.length - 1].endDate} but the scope ends at ${scope.endDate}`);
+    return errors;
+  }
+  for (let index = 1; index < ranges.length; index += 1) {
+    if (ranges[index].start !== ranges[index - 1].end + 1) {
+      errors.push(`window audit has a gap or overlap between [${index - 1}] ${windows[index - 1].startDate}..${windows[index - 1].endDate} and [${index}] ${windows[index].startDate}..${windows[index].endDate}`);
       return errors;
     }
   }
@@ -252,8 +332,10 @@ export function validateWindowContinuity(snapshot, { maximumDays = 30 } = {}) {
  *   and the full store roster (a half-set must never merge into production).
  * - The roster must be the canonical 25-store roster.
  * - Every row must pass the shared row contract.
- * - When a backfill audit is present it must be a deterministic contiguous
- *   split of the declared scope.
+ * - When a backfill audit is present it must be a legal segmentation of the
+ *   declared scope: contiguous, non-overlapping and gap-free, covering the
+ *   scope exactly with windows of at most scope.maximumDays inclusive days
+ *   (the exact boundary choice is free).
  * - Two rows with the same pageId + storeCode + row.id must carry identical
  *   content (the raw id namespaces of different pages stay independent).
  */
@@ -306,12 +388,20 @@ export function validateSnapshotForMerge(snapshot, {
  * - a page present in both must be byte-identical (nothing may be silently
  *   overwritten, and the existing stock-records/waybills history is kept
  *   untouched);
- * - the produced window audit must be contiguous over its scope;
+ * - the produced window audit must be a legal segmentation of its scope:
+ *   contiguous, non-overlapping and gap-free, covering the scope exactly
+ *   with windows of at most scope.maximumDays inclusive days (the exact
+ *   boundary choice is free, so a from-start 30-day split may merge over a
+ *   production audit split at year boundaries);
  * - every produced page must pass the total/paging/dedupe/content/25-store
  *   gates;
  * - two rows with the same pageId + storeCode + row.id must be identical.
  *
  * The returned snapshot is frozen and pure; the caller writes it atomically.
+ * The merged window audit is the deterministic common refinement of the two
+ * inputs' legal segmentations, so every part file and page audit from both
+ * inputs survives with an explicit `sources` attribution and no window is
+ * duplicated or overlapped.
  */
 export function mergeOrderManagementSessionSnapshots({
   existing,

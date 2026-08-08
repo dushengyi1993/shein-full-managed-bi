@@ -12,6 +12,15 @@ import {
 
 const NOW = new Date('2026-08-08T06:00:00.000Z');
 const ROSTER = [...FULL_MANAGED_STORE_CODES];
+const DAY_MS = 86_400_000;
+
+function epochDays(value) {
+  return Math.round(Date.parse(`${value}T00:00:00.000Z`) / DAY_MS);
+}
+
+function isoFromDays(days) {
+  return new Date(days * DAY_MS).toISOString().slice(0, 10);
+}
 
 function row(id, storeCode = 'CX4412') {
   return Object.freeze({
@@ -80,6 +89,48 @@ function snapshot({
     }),
     backfill: Object.freeze({ windows: Object.freeze(windowsList), once: Object.freeze([]) }),
     pages: Object.freeze(pages),
+  });
+}
+
+/**
+ * Split a range per calendar year: every year starts a fresh 30-day run that
+ * is truncated at the year boundary.  This is the segmentation shape of the
+ * existing production snapshot (e.g. 2023-12-22..2023-12-31 followed by
+ * 2024-01-01..2024-01-30).
+ */
+function yearTruncatedWindows(startDate, endDate, maximumDays = 30) {
+  const windows = [];
+  const last = epochDays(endDate);
+  const startYear = Number(startDate.slice(0, 4));
+  const endYear = Number(endDate.slice(0, 4));
+  for (let year = startYear; year <= endYear; year += 1) {
+    const yearStart = Math.max(epochDays(startDate), epochDays(`${year}-01-01`));
+    const yearEnd = Math.min(last, epochDays(`${year}-12-31`));
+    let cursor = yearStart;
+    while (cursor <= yearEnd) {
+      const candidateEnd = Math.min(cursor + maximumDays - 1, yearEnd);
+      windows.push(Object.freeze({
+        startDate: isoFromDays(cursor),
+        endDate: isoFromDays(candidateEnd),
+      }));
+      cursor = candidateEnd + 1;
+    }
+  }
+  return Object.freeze(windows);
+}
+
+function pageAudit({ rowCount, gates = null } = {}) {
+  return Object.freeze({
+    status: 'AVAILABLE',
+    rowCount,
+    latestSourceFetchedAt: '2026-08-08T06:00:00.000Z',
+    gates: Object.freeze(gates ?? {
+      totalVerified: true,
+      pagingVerified: true,
+      dedupeVerified: true,
+      contentVerified: true,
+      storeCount: ROSTER.length,
+    }),
   });
 }
 
@@ -248,7 +299,7 @@ test('the same raw id in different pages is legal and only same-triple conflicts
   assert.ok(validateSnapshotForMerge(identicalDuplicate).some((error) => error.includes('row conflict')));
 });
 
-test('merge rejects a window audit that is not the deterministic contiguous split', () => {
+test('merge rejects a window audit that does not cover the scope contiguously', () => {
   const existing = snapshot({
     startDate: '2026-08-01',
     endDate: '2026-08-08',
@@ -270,6 +321,226 @@ test('merge rejects a window audit that is not the deterministic contiguous spli
   assert.ok(validateWindowContinuity(discontinuous).length > 0);
   assert.throws(
     () => mergeOrderManagementSessionSnapshots({ existing, produced: discontinuous, now: NOW }),
+    /ORDER_MANAGEMENT_MERGE_SNAPSHOT_INVALID/,
+  );
+});
+
+test('merge accepts different legal segmentations of the same scope and keeps every part and page audit', () => {
+  const startDate = '2022-01-01';
+  const endDate = '2026-08-08';
+  // Production snapshot: every calendar year segmented separately and
+  // truncated at the year boundary (e.g. 2023-12-22..2023-12-31 followed by
+  // 2024-01-01..2024-01-30).
+  const existingWindows = yearTruncatedWindows(startDate, endDate).map((window, index) => Object.freeze({
+    index: index + 1,
+    startDate: window.startDate,
+    endDate: window.endDate,
+    partFile: `/tmp/production.part.${String(index + 1).padStart(2, '0')}.json`,
+    fetchedAt: '2026-08-08T06:00:00.000Z',
+    pages: Object.freeze({ 'stock-records': pageAudit({ rowCount: 3 }) }),
+  }));
+  // New backfill run: from-start deterministic 30-day split (e.g.
+  // 2023-12-22..2024-01-20 crossing the year boundary).
+  const producedWindows = expectedWindows({ startDate, endDate }).map((window, index) => Object.freeze({
+    index: index + 1,
+    startDate: window.startDate,
+    endDate: window.endDate,
+    partFile: `/tmp/backfill.part.${String(index + 1).padStart(2, '0')}.json`,
+    fetchedAt: '2026-08-09T06:00:00.000Z',
+    pages: Object.freeze({ 'quality-reports': pageAudit({ rowCount: 5 }) }),
+  }));
+  assert.notDeepEqual(
+    existingWindows.map((window) => [window.startDate, window.endDate]),
+    producedWindows.map((window) => [window.startDate, window.endDate]),
+  );
+  const existing = snapshot({
+    startDate,
+    endDate,
+    windows: existingWindows,
+    pages: { 'stock-records': page([row('PB-1')]) },
+  });
+  const produced = snapshot({
+    startDate,
+    endDate,
+    windows: producedWindows,
+    pages: { 'quality-reports': page([row('QC-1')]) },
+  });
+  const merged = mergeOrderManagementSessionSnapshots({ existing, produced, now: NOW }).snapshot;
+  const mergedWindows = merged.backfill.windows;
+
+  // The merged audit is the common refinement of the two legal splits: one
+  // merged window per overlapping input-window pair.
+  const overlaps = [];
+  for (const existingWindow of existingWindows) {
+    for (const producedWindow of producedWindows) {
+      const start = Math.max(
+        epochDays(existingWindow.startDate),
+        epochDays(producedWindow.startDate),
+      );
+      const end = Math.min(
+        epochDays(existingWindow.endDate),
+        epochDays(producedWindow.endDate),
+      );
+      if (start <= end) {
+        overlaps.push({
+          startDate: isoFromDays(start),
+          endDate: isoFromDays(end),
+          existingWindow,
+          producedWindow,
+        });
+      }
+    }
+  }
+  assert.equal(mergedWindows.length, overlaps.length);
+  assert.equal(merged.scope.windowCount, mergedWindows.length);
+
+  // The merged audit itself covers the scope contiguously with legal widths.
+  assert.equal(mergedWindows[0].startDate, startDate);
+  assert.equal(mergedWindows.at(-1).endDate, endDate);
+  for (let index = 1; index < mergedWindows.length; index += 1) {
+    assert.equal(
+      epochDays(mergedWindows[index].startDate),
+      epochDays(mergedWindows[index - 1].endDate) + 1,
+    );
+    assert.ok(
+      epochDays(mergedWindows[index].endDate) - epochDays(mergedWindows[index].startDate) + 1 <= 30,
+    );
+  }
+
+  // Every overlap segment exists exactly once and carries the evidence of
+  // both contributing windows: part files, page audits and source attribution.
+  for (const overlap of overlaps) {
+    const entry = mergedWindows.find(
+      (window) => window.startDate === overlap.startDate && window.endDate === overlap.endDate,
+    );
+    assert.ok(entry, `missing merged window ${overlap.startDate}..${overlap.endDate}`);
+    assert.ok(entry.partFiles.includes(overlap.existingWindow.partFile));
+    assert.ok(entry.partFiles.includes(overlap.producedWindow.partFile));
+    assert.equal(entry.pages['stock-records'].rowCount, 3);
+    assert.equal(entry.pages['quality-reports'].rowCount, 5);
+    assert.deepEqual(entry.sources, [
+      {
+        snapshot: 'existing',
+        startDate: overlap.existingWindow.startDate,
+        endDate: overlap.existingWindow.endDate,
+      },
+      {
+        snapshot: 'produced',
+        startDate: overlap.producedWindow.startDate,
+        endDate: overlap.producedWindow.endDate,
+      },
+    ]);
+  }
+
+  // The produced window crossing 2023-12-31 contributes to both the
+  // pre-year and post-year merged windows; the merged audit never overlaps.
+  const yearEnd = existingWindows.find((window) => window.endDate === '2023-12-31');
+  const crossing = producedWindows.find(
+    (window) => epochDays(window.startDate) < epochDays('2023-12-31')
+      && epochDays(window.endDate) > epochDays('2023-12-31'),
+  );
+  assert.ok(yearEnd);
+  assert.ok(crossing);
+  const tail = mergedWindows.find((window) => window.endDate === '2023-12-31');
+  const head = mergedWindows.find((window) => window.startDate === '2024-01-01');
+  assert.ok(tail && head);
+  assert.ok(tail.partFiles.includes(crossing.partFile));
+  assert.ok(head.partFiles.includes(crossing.partFile));
+
+  // Deterministic: a second merge produces a byte-identical audit.
+  const again = mergeOrderManagementSessionSnapshots({ existing, produced, now: NOW }).snapshot;
+  assert.deepEqual(merged.backfill.windows, again.backfill.windows);
+  assert.deepEqual(merged.scope, again.scope);
+});
+
+test('merge still rejects a window audit with an over-long window', () => {
+  const existing = snapshot({
+    startDate: '2026-01-01',
+    endDate: '2026-02-10',
+    pages: { 'stock-records': page([row('PB-1')]) },
+  });
+  const overlong = snapshot({
+    startDate: '2026-01-01',
+    endDate: '2026-02-10',
+    windows: [{
+      index: 1,
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+      partFile: '/tmp/part.01.json',
+      fetchedAt: '2026-08-08T06:00:00.000Z',
+      pages: {},
+    }, {
+      index: 2,
+      startDate: '2026-02-01',
+      endDate: '2026-02-10',
+      partFile: '/tmp/part.02.json',
+      fetchedAt: '2026-08-08T06:00:00.000Z',
+      pages: {},
+    }],
+    pages: { 'quality-reports': page([row('QC-1')]) },
+  });
+  assert.ok(validateWindowContinuity(overlong).some((error) => error.includes('exceeds')));
+  assert.throws(
+    () => mergeOrderManagementSessionSnapshots({ existing, produced: overlong, now: NOW }),
+    /ORDER_MANAGEMENT_MERGE_SNAPSHOT_INVALID/,
+  );
+});
+
+test('merge still rejects window audits with gaps or overlaps', () => {
+  const existing = snapshot({
+    startDate: '2026-01-01',
+    endDate: '2026-01-10',
+    pages: { 'stock-records': page([row('PB-1')]) },
+  });
+  const gapped = snapshot({
+    startDate: '2026-01-01',
+    endDate: '2026-01-10',
+    windows: [{
+      index: 1,
+      startDate: '2026-01-01',
+      endDate: '2026-01-04',
+      partFile: '/tmp/part.01.json',
+      fetchedAt: '2026-08-08T06:00:00.000Z',
+      pages: {},
+    }, {
+      index: 2,
+      startDate: '2026-01-06',
+      endDate: '2026-01-10',
+      partFile: '/tmp/part.02.json',
+      fetchedAt: '2026-08-08T06:00:00.000Z',
+      pages: {},
+    }],
+    pages: { 'quality-reports': page([row('QC-1')]) },
+  });
+  assert.ok(validateWindowContinuity(gapped).some((error) => error.includes('gap or overlap')));
+  assert.throws(
+    () => mergeOrderManagementSessionSnapshots({ existing, produced: gapped, now: NOW }),
+    /ORDER_MANAGEMENT_MERGE_SNAPSHOT_INVALID/,
+  );
+
+  const overlapped = snapshot({
+    startDate: '2026-01-01',
+    endDate: '2026-01-10',
+    windows: [{
+      index: 1,
+      startDate: '2026-01-01',
+      endDate: '2026-01-04',
+      partFile: '/tmp/part.01.json',
+      fetchedAt: '2026-08-08T06:00:00.000Z',
+      pages: {},
+    }, {
+      index: 2,
+      startDate: '2026-01-04',
+      endDate: '2026-01-10',
+      partFile: '/tmp/part.02.json',
+      fetchedAt: '2026-08-08T06:00:00.000Z',
+      pages: {},
+    }],
+    pages: { 'quality-reports': page([row('QC-1')]) },
+  });
+  assert.ok(validateWindowContinuity(overlapped).some((error) => error.includes('gap or overlap')));
+  assert.throws(
+    () => mergeOrderManagementSessionSnapshots({ existing, produced: overlapped, now: NOW }),
     /ORDER_MANAGEMENT_MERGE_SNAPSHOT_INVALID/,
   );
 });
