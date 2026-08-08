@@ -5066,9 +5066,9 @@ body[data-dataset="sample"] .metric-item > strong {
 .shipping-orders-section,
 .shipping-source-note {
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--paper);
-  box-shadow: var(--shadow);
+  box-shadow: 0 8px 24px rgb(30 27 22 / 4%);
 }
 
 .shipping-orders-hero {
@@ -5077,10 +5077,10 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .shipping-orders-hero > header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 28px;
-  padding: 24px 26px 20px;
+  gap: 24px;
+  padding: 15px 18px 13px;
 }
 
 .shipping-orders-hero h1,
@@ -5090,7 +5090,12 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .shipping-orders-hero h1 {
-  font-size: clamp(1.65rem, 2.4vw, 2.35rem);
+  font-size: clamp(1.35rem, 2vw, 1.8rem);
+}
+
+.shipping-orders-hero > header p {
+  margin: 2px 0 0;
+  font-size: 0.72rem;
 }
 
 .shipping-orders-hero p,
@@ -5105,62 +5110,58 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .shipping-source-receipt {
   display: grid;
-  min-width: 225px;
-  gap: 4px;
-  padding: 12px 14px;
-  border-left: 3px solid var(--accent);
-  background: var(--accent-soft);
+  min-width: 250px;
+  grid-template-columns: auto auto;
+  gap: 2px 12px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-soft);
 }
 
 .shipping-source-receipt strong {
-  font-size: 0.9rem;
+  font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .shipping-source-receipt span,
 .shipping-source-receipt small {
-  font-size: 0.72rem;
+  font-size: 0.64rem;
+}
+
+.shipping-source-receipt small {
+  grid-column: 1 / -1;
+  text-align: right;
 }
 
 .shipping-type-tabs {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  padding: 0 14px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   background: var(--paper-soft);
 }
 
 .shipping-type-tab {
-  display: grid;
-  min-height: 68px;
-  padding: 13px 18px;
-  gap: 3px;
-  text-align: left;
+  min-height: 44px;
+  padding: 0 17px;
   border: 0;
-  border-right: 1px solid var(--line);
+  border-bottom: 2px solid transparent;
   color: var(--ink-soft);
   background: transparent;
-}
-
-.shipping-type-tab:last-child {
-  border-right: 0;
-}
-
-.shipping-type-tab span {
-  color: var(--muted);
-  font-size: 0.7rem;
 }
 
 .shipping-type-tab.active {
   color: var(--accent-dark);
   background: var(--paper);
-  box-shadow: inset 0 -3px 0 var(--accent);
+  border-bottom-color: var(--accent);
 }
 
 .shipping-status-tabs {
   display: flex;
   max-width: 100%;
-  padding: 0 16px;
+  padding: 0 14px;
   overflow-x: auto;
   scrollbar-width: thin;
 }
@@ -5168,8 +5169,8 @@ body[data-dataset="sample"] .metric-item > strong {
 .shipping-status-tab {
   display: flex;
   min-width: max-content;
-  min-height: 52px;
-  padding: 0 12px;
+  min-height: 43px;
+  padding: 0 10px;
   align-items: center;
   gap: 7px;
   border: 0;
@@ -5202,13 +5203,21 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .shipping-filter-shell {
   margin-top: 12px;
-  padding: 14px 16px 12px;
+  padding: 12px 14px 10px;
+}
+
+.shipping-filter-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
 }
 
 .shipping-quick-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  min-width: 0;
+  gap: 9px;
 }
 
 .shipping-quick-row > span {
@@ -5223,25 +5232,101 @@ body[data-dataset="sample"] .metric-item > strong {
   margin: 0;
 }
 
+.shipping-quick-row .range-filter > span:empty {
+  display: none;
+}
+
+.shipping-quick-row .range-filter > div {
+  gap: 5px;
+}
+
+.shipping-quick-row .range-filter button,
+.shipping-warehouse-lane button {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  font-size: 0.68rem;
+}
+
+.shipping-inline-filter-tools {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.shipping-inline-filter-tools .sales-sort-control {
+  min-width: 142px;
+}
+
+.shipping-inline-filter-tools .sales-sort-control span {
+  display: none;
+}
+
+.shipping-inline-filter-tools select {
+  min-height: 32px;
+}
+
 .shipping-advanced-toggle {
-  min-height: 34px;
+  min-height: 32px;
   flex: 0 0 auto;
   padding: 0 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 7px;
   color: var(--ink-soft);
   background: var(--paper);
   font-size: 0.76rem;
 }
 
+.shipping-advanced-toggle[aria-expanded="true"] {
+  color: var(--accent-dark);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.shipping-warehouse-lane {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  margin-top: 8px;
+}
+
+.shipping-warehouse-lane > span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.shipping-warehouse-lane > div {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.shipping-warehouse-lane button {
+  border: 1px solid var(--line);
+  color: var(--muted-strong);
+  background: var(--paper);
+}
+
+.shipping-warehouse-lane button.active {
+  color: var(--accent-dark);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 700;
+}
+
 .shipping-filter-grid {
   display: none;
-  grid-template-columns: repeat(5, minmax(130px, 1fr)) auto;
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(145px, 1fr)) auto;
+  gap: 9px;
   align-items: end;
-  margin-top: 13px;
-  padding-top: 13px;
-  border-top: 1px solid var(--line);
+  margin-top: 10px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper-soft);
 }
 
 .shipping-filter-grid.expanded {
@@ -5258,8 +5343,8 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .shipping-range-note {
-  margin: 10px 0 0;
-  font-size: 0.7rem;
+  margin: 8px 0 0 85px;
+  font-size: 0.66rem;
 }
 
 .shipping-summary-strip {
@@ -5274,10 +5359,10 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .shipping-summary-metric {
   display: grid;
-  min-height: 78px;
+  min-height: 66px;
   align-content: center;
   gap: 4px;
-  padding: 12px 16px;
+  padding: 10px 14px;
   border-right: 1px solid var(--line);
 }
 
@@ -5291,7 +5376,7 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .shipping-summary-metric strong {
-  font-size: 1.2rem;
+  font-size: 1.08rem;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
   white-space: nowrap;
@@ -5303,7 +5388,7 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .shipping-orders-section {
   margin-top: 12px;
-  padding: 18px;
+  padding: 14px;
 }
 
 .shipping-list-head,
@@ -5317,7 +5402,13 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .shipping-list-head {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
+  padding: 0 2px;
+}
+
+.shipping-list-head h2 {
+  margin: 0 0 2px;
+  font-size: 1.05rem;
 }
 
 .shipping-list-head p {
@@ -5327,34 +5418,61 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .shipping-order-list {
   display: grid;
-  gap: 10px;
+  gap: 9px;
 }
 
 .shipping-order-card {
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: 9px;
   background: var(--paper);
 }
 
 .shipping-order-head {
   display: grid;
-  grid-template-columns: minmax(240px, 1.35fr) minmax(120px, 0.65fr) minmax(165px, 0.9fr) minmax(170px, 0.95fr) minmax(145px, 0.7fr);
-  padding: 13px 15px;
-  background: var(--paper-soft);
+  grid-template-columns: minmax(220px, 1.3fr) minmax(115px, 0.65fr) minmax(175px, 0.95fr) minmax(170px, 0.9fr) minmax(185px, 1fr);
+  align-items: start;
+  gap: 0;
+  padding: 0;
+  background: var(--paper);
 }
 
 .shipping-order-head > div {
   min-width: 0;
+  min-height: 86px;
+  padding: 12px 13px;
+  border-right: 1px solid var(--line);
+}
+
+.shipping-order-head > div:last-child {
+  border-right: 0;
 }
 
 .shipping-order-identity > div,
 .shipping-order-state,
-.shipping-order-tags,
-.shipping-delivery-line {
+.shipping-order-tags {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.shipping-order-state {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.shipping-cell-label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.shipping-order-identity p {
+  margin: 7px 0 0;
+  color: var(--muted-strong);
+  font-size: 0.68rem;
 }
 
 .shipping-order-identity > div strong,
@@ -5366,15 +5484,22 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .shipping-order-identity > small,
-.shipping-order-time span,
+.shipping-order-time > span:not(.shipping-cell-label),
 .shipping-order-time small,
-.shipping-order-warehouse span,
+.shipping-order-warehouse > span:not(.shipping-cell-label),
 .shipping-order-warehouse small,
+.shipping-order-delivery span,
 .shipping-order-delivery small {
   display: block;
   margin-top: 3px;
   color: var(--muted);
   font-size: 0.66rem;
+}
+
+.shipping-order-delivery strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 0.76rem;
 }
 
 .shipping-order-type,
@@ -5418,15 +5543,27 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .shipping-order-tags {
-  min-height: 36px;
-  padding: 7px 15px;
+  min-height: 34px;
+  padding: 6px 13px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
+  background: var(--paper-soft);
+}
+
+.shipping-order-tags > strong {
+  color: var(--muted);
+  font-size: 0.62rem;
 }
 
 .shipping-order-tags span {
   color: var(--muted-strong);
   background: var(--paper-warm);
+}
+
+.shipping-order-tags span.muted {
+  color: var(--muted);
+  background: transparent;
+  font-weight: 500;
 }
 
 .shipping-order-tags small {
@@ -5448,7 +5585,7 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .shipping-lines-table th,
 .shipping-lines-table td {
-  padding: 11px 13px;
+  padding: 10px 13px;
   vertical-align: top;
   border-bottom: 1px solid var(--line);
   text-align: left;
@@ -5457,7 +5594,7 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .shipping-lines-table th {
   color: var(--muted);
-  background: #fcfcfb;
+  background: var(--paper);
   font-size: 0.66rem;
   font-weight: 700;
 }
@@ -5484,11 +5621,35 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .shipping-order-foot {
-  justify-content: flex-start;
-  padding: 9px 15px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  justify-content: stretch;
+  padding: 0;
   color: var(--muted);
-  background: #fcfcfb;
+  background: var(--paper-soft);
   font-size: 0.66rem;
+}
+
+.shipping-order-foot > span {
+  display: grid;
+  gap: 2px;
+  padding: 8px 13px;
+  border-right: 1px solid var(--line);
+}
+
+.shipping-order-foot > span:last-child {
+  border-right: 0;
+}
+
+.shipping-order-foot small {
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+
+.shipping-order-foot strong {
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .shipping-line-empty {
@@ -5526,17 +5687,22 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .shipping-source-note {
-  display: flex;
   margin-top: 12px;
-  padding: 11px 14px;
-  gap: 18px;
+  padding: 9px 12px;
   color: var(--muted);
   font-size: 0.69rem;
 }
 
-.shipping-source-note strong {
+.shipping-source-note summary {
+  cursor: pointer;
   color: var(--ink-soft);
-  white-space: nowrap;
+  font-weight: 700;
+}
+
+.shipping-source-note div {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
 }
 
 @media (max-width: 1240px) {
@@ -5562,8 +5728,11 @@ body[data-dataset="sample"] .metric-item > strong {
 
   .shipping-order-warehouse,
   .shipping-order-delivery {
-    padding-top: 9px;
     border-top: 1px solid var(--line);
+  }
+
+  .shipping-order-delivery {
+    grid-column: span 2;
   }
 }
 
@@ -5582,21 +5751,22 @@ body[data-dataset="sample"] .metric-item > strong {
 
   .shipping-source-receipt {
     min-width: 0;
+    width: 100%;
   }
 
   .shipping-type-tabs {
-    grid-template-columns: 1fr;
+    padding-inline: 8px;
+    overflow-x: auto;
   }
 
-  .shipping-type-tab,
-  .shipping-type-tab:last-child {
-    min-height: 54px;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+  .shipping-type-tab {
+    min-width: max-content;
+    min-height: 42px;
+    padding-inline: 12px;
   }
 
   .shipping-type-tab.active {
-    box-shadow: inset 3px 0 0 var(--accent);
+    box-shadow: none;
   }
 
   .shipping-status-tabs {
@@ -5606,6 +5776,11 @@ body[data-dataset="sample"] .metric-item > strong {
   .shipping-filter-shell,
   .shipping-orders-section {
     padding: 12px;
+  }
+
+  .shipping-filter-toolbar {
+    grid-template-columns: 1fr;
+    gap: 9px;
   }
 
   .shipping-quick-row {
@@ -5618,7 +5793,24 @@ body[data-dataset="sample"] .metric-item > strong {
   }
 
   .shipping-advanced-toggle {
+    flex: 1 1 auto;
+  }
+
+  .shipping-inline-filter-tools,
+  .shipping-inline-filter-tools .sales-sort-control {
     width: 100%;
+  }
+
+  .shipping-inline-filter-tools .sales-sort-control {
+    flex: 1 1 auto;
+  }
+
+  .shipping-warehouse-lane {
+    grid-template-columns: 1fr;
+  }
+
+  .shipping-range-note {
+    margin-left: 0;
   }
 
   .shipping-filter-grid,
@@ -5652,18 +5844,22 @@ body[data-dataset="sample"] .metric-item > strong {
 
   .shipping-order-head {
     grid-template-columns: 1fr 1fr;
-    padding: 12px;
   }
 
-  .shipping-order-identity,
-  .shipping-order-state {
-    grid-column: span 1;
+  .shipping-order-head > div {
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
 
   .shipping-order-time,
   .shipping-order-warehouse,
   .shipping-order-delivery {
     grid-column: 1 / -1;
+  }
+
+  .shipping-order-delivery {
+    border-bottom: 0;
   }
 
   .shipping-order-tags {
@@ -5731,10 +5927,15 @@ body[data-dataset="sample"] .metric-item > strong {
   }
 
   .shipping-order-foot {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 5px;
-    padding-inline: 12px;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .shipping-order-foot > span:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .shipping-order-foot > span:nth-child(n + 3) {
+    border-top: 1px solid var(--line);
   }
 
   .shipping-pagination div,

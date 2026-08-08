@@ -426,13 +426,26 @@ test('coverage, truncation and quantity wording stay honest', async () => {
     for (const [button] of body.matchAll(/<button[^>]*>/g)) {
       assert.match(
         button,
-        /data-procurement-retry|data-fulfilment-retry|data-procurement-page|data-fulfilment-page|data-quick-route|data-operation-search|data-operation-reset|data-shipping-order-type|data-shipping-status|data-shipping-advanced/,
+        /data-procurement-retry|data-fulfilment-retry|data-procurement-page|data-fulfilment-page|data-quick-route|data-operation-search|data-operation-reset|data-shipping-order-type|data-shipping-status|data-shipping-warehouse|data-shipping-advanced/,
         button,
       );
     }
   }
   assert.match(functionBody(app, 'procurementEvidenceDisclosure'), /不提交任何采购单动作/);
   assert.match(fulfilment, /所有写操作保持关闭/);
+});
+
+test('shipping filters follow the official order-type hierarchy', async () => {
+  const app = await read('src/web/app.js');
+  const fulfilment = functionBody(app, 'renderFulfilment');
+
+  assert.match(fulfilment, /state\.fulfilment\.orderType === 'URGENT'/);
+  assert.match(fulfilment, /const showWarehouseLane = state\.fulfilment\.orderType !== 'URGENT'/);
+  assert.match(fulfilment, /shipping-filter-toolbar/);
+  assert.match(fulfilment, /shipping-inline-filter-tools/);
+  assert.match(fulfilment, /shipping-warehouse-lane/);
+  assert.match(fulfilment, /data-shipping-warehouse/);
+  assert.match(fulfilment, /shipping-filter-grid\$\{state\.fulfilment\.advancedOpen \? ' expanded' : ''\}/);
 });
 
 test('operational styles keep dense filters inside the viewport', async () => {

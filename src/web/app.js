@@ -9125,7 +9125,7 @@ function shippingOrderLineTable(order) {
 
 function shippingDeliverySummary(order) {
   const deliveries = Array.isArray(order.deliveries) ? order.deliveries : [];
-  if (!deliveries.length) return '<span>尚未关联发货单</span>';
+  if (!deliveries.length) return '<strong>尚未关联发货单</strong><span>发货信息尚未回传</span>';
   const codes = [...new Set(deliveries.map((row) => row.deliveryCode).filter(Boolean))];
   const carriers = [...new Set(deliveries.map((row) => row.expressCompanyName).filter(Boolean))];
   const latest = deliveries
@@ -9156,39 +9156,52 @@ function shippingOrdersList(orders, capabilities) {
     const storeLabel = storeName && storeName !== storeCode
       ? `${storeCode || '店铺待确认'} · ${storeName}`
       : (storeCode || storeName || '店铺待确认');
+    const orderAttributes = [
+      order.prepareTypeName,
+      order.categoryName,
+      order.jitRoleCode ? `JIT ${order.jitRoleCode}` : null,
+    ].filter(Boolean);
     return `
       <article class="shipping-order-card" data-order-no="${escapeHtml(order.orderNo)}">
         <header class="shipping-order-head">
           <div class="shipping-order-identity">
+            <span class="shipping-cell-label">订单信息</span>
             <div><span class="shipping-order-type">${escapeHtml(typeLabel)}</span><strong>${escapeHtml(order.orderNo)}</strong></div>
             <p>${escapeHtml(storeLabel)}</p>
           </div>
           <div class="shipping-order-state">
+            <span class="shipping-cell-label">订单状态</span>
             <span class="shipping-status-badge ${status.tone}">${escapeHtml(status.label)}</span>
             ${overdue ? '<strong class="shipping-overdue-label">已超过要求取件时间</strong>' : ''}
           </div>
           <div class="shipping-order-time">
-            <span>下单时间</span><strong>${escapeHtml(sourceTime(order.createdAt))}</strong>
-            <small>要求取件 ${escapeHtml(sourceTime(order.requestedDeliveryAt))}</small>
+            <span class="shipping-cell-label">下单与取件</span>
+            <strong>${escapeHtml(sourceTime(order.createdAt))}</strong>
+            <small>要求取件：${escapeHtml(sourceTime(order.requestedDeliveryAt))}</small>
           </div>
           <div class="shipping-order-warehouse">
-            <span>平台收货仓</span><strong>${escapeHtml(order.warehouseName || order.warehouseCode || '待确认')}</strong>
-            <small>要求收货 ${escapeHtml(sourceTime(order.requestedReceiptAt))}</small>
+            <span class="shipping-cell-label">收货仓信息</span>
+            <strong>${escapeHtml(order.warehouseName || order.warehouseCode || '待确认')}</strong>
+            <small>要求收货：${escapeHtml(sourceTime(order.requestedReceiptAt))}</small>
           </div>
-          <div class="shipping-order-delivery">${shippingDeliverySummary(order)}</div>
+          <div class="shipping-order-delivery">
+            <span class="shipping-cell-label">发货信息</span>
+            ${shippingDeliverySummary(order)}
+          </div>
         </header>
         <div class="shipping-order-tags">
-          ${order.prepareTypeName ? `<span>${escapeHtml(order.prepareTypeName)}</span>` : ''}
-          ${order.categoryName ? `<span>${escapeHtml(order.categoryName)}</span>` : ''}
-          ${order.jitRoleCode ? `<span>JIT ${escapeHtml(order.jitRoleCode)}</span>` : ''}
-          <small>平台更新 ${escapeHtml(sourceTime(order.latestSourceFetchedAt))}</small>
+          <strong>订单属性</strong>
+          ${orderAttributes.length
+            ? orderAttributes.map((label) => `<span>${escapeHtml(label)}</span>`).join('')
+            : '<span class="muted">暂无扩展标签</span>'}
+          <small>最后同步：${escapeHtml(sourceTime(order.latestSourceFetchedAt))}</small>
         </div>
         ${shippingOrderLineTable(order)}
         <footer class="shipping-order-foot">
-          <span>发货 ${escapeHtml(sourceTime(order.deliveredAt))}</span>
-          <span>收货 ${escapeHtml(sourceTime(order.receivedAt))}</span>
-          <span>完成 / 上架 ${escapeHtml(sourceTime(order.storedAt))}</span>
-          ${capabilities.portalExtensions === true ? '<span>页面扩展字段已接入</span>' : '<span>页面扩展字段待补充</span>'}
+          <span><small>发货</small><strong>${escapeHtml(sourceTime(order.deliveredAt))}</strong></span>
+          <span><small>收货</small><strong>${escapeHtml(sourceTime(order.receivedAt))}</strong></span>
+          <span><small>完成 / 上架</small><strong>${escapeHtml(sourceTime(order.storedAt))}</strong></span>
+          <span><small>扩展字段</small><strong>${capabilities.portalExtensions === true ? '已接入' : '待补充'}</strong></span>
         </footer>
       </article>`;
   }).join('')}</div>`;
@@ -9240,10 +9253,10 @@ function renderFulfilment() {
       .map((name) => [name, name]),
   ];
   const summary = productRecord(queryData.summary);
-  const typeTab = (value, label, note) => `
+  const typeTab = (value, label) => `
     <button type="button" class="shipping-type-tab${state.fulfilment.orderType === value ? ' active' : ''}"
       data-shipping-order-type="${value}" aria-pressed="${state.fulfilment.orderType === value}">
-      <strong>${label}</strong><span>${note}</span>
+      <strong>${label}</strong>
     </button>`;
   const statusLabel = (row) => `
     <button type="button" class="shipping-status-tab${state.fulfilment.milestone === row.code ? ' active' : ''}"
@@ -9251,15 +9264,31 @@ function renderFulfilment() {
       <span>${escapeHtml(row.label)}</span><strong>${numberFormatter.format(row.count || 0)}</strong>
     </button>`;
   const page = queryData.orders.pagination;
+  const quickOptions = state.fulfilment.orderType === 'URGENT'
+    ? [
+        ['ALL', `全部 ${numberFormatter.format(quickCounts.get('ALL') || 0)}`],
+        ['PENDING_OR_RETURNED', `待发货＋已退货 ${numberFormatter.format(quickCounts.get('PENDING_OR_RETURNED') || 0)}`],
+        ['DUE_TODAY', `要求今日取件 ${numberFormatter.format(quickCounts.get('DUE_TODAY') || 0)}`],
+        ['OVERDUE', `已超期 ${numberFormatter.format(quickCounts.get('OVERDUE') || 0)}`],
+      ]
+    : [
+        ['ALL', `全部 ${numberFormatter.format(quickCounts.get('ALL') || 0)}`],
+        ['PENDING_OR_RETURNED', `待发货＋已退货 ${numberFormatter.format(quickCounts.get('PENDING_OR_RETURNED') || 0)}`],
+        ['DUE_TODAY', `要求今日取件 ${numberFormatter.format(quickCounts.get('DUE_TODAY') || 0)}`],
+        ['OVERDUE', `已超期 ${numberFormatter.format(quickCounts.get('OVERDUE') || 0)}`],
+        ['PENDING_RECEIPT', `已发货待收货 ${numberFormatter.format(quickCounts.get('PENDING_RECEIPT') || 0)}`],
+        ['DEFECTIVE', `存在次品 ${numberFormatter.format(quickCounts.get('DEFECTIVE') || 0)}`],
+      ];
+  const showWarehouseLane = state.fulfilment.orderType !== 'URGENT'
+    && warehouseOptions.length > 1;
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
     <section class="shipping-orders-hero" aria-labelledby="shipping-orders-title">
       <header>
         <div>
-          <span class="eyebrow">SHIPPING ORDER WORKSPACE</span>
           <h1 id="shipping-orders-title">发货订单</h1>
-          <p>按订单、商品和履约节点定位急采与备货任务；所有写操作保持关闭。</p>
+          <p>按订单、商品与履约节点查询；当前仅读。</p>
         </div>
         <div class="shipping-source-receipt">
           <span>订单事实更新</span>
@@ -9268,9 +9297,9 @@ function renderFulfilment() {
         </div>
       </header>
       <div class="shipping-type-tabs" role="group" aria-label="订单类型">
-        ${typeTab('URGENT', '急采订单', 'JIT / 紧急供给')}
-        ${typeTab('STOCK_UP', '备货订单', '常规备货与入仓')}
-        ${typeTab('ALL', '全部订单', '跨类型统一检索')}
+        ${typeTab('URGENT', '急采订单')}
+        ${typeTab('STOCK_UP', '备货订单')}
+        ${typeTab('ALL', '全部订单')}
       </div>
       <nav class="shipping-status-tabs" aria-label="订单状态">
         ${statusTabs.map(statusLabel).join('')}
@@ -9278,23 +9307,30 @@ function renderFulfilment() {
     </section>
 
     <section class="shipping-filter-shell" aria-label="发货订单筛选">
-      <div class="shipping-quick-row">
-        <span>快速筛选</span>
-        ${quickFilterBar('fulfilment', '', [
-          ['ALL', `全部 ${numberFormatter.format(quickCounts.get('ALL') || 0)}`],
-          ['PENDING_OR_RETURNED', `待发货＋已退货 ${numberFormatter.format(quickCounts.get('PENDING_OR_RETURNED') || 0)}`],
-          ['DUE_TODAY', `要求今日取件 ${numberFormatter.format(quickCounts.get('DUE_TODAY') || 0)}`],
-          ['OVERDUE', `已超期 ${numberFormatter.format(quickCounts.get('OVERDUE') || 0)}`],
-          ['PENDING_RECEIPT', `已发货待收货 ${numberFormatter.format(quickCounts.get('PENDING_RECEIPT') || 0)}`],
-          ['DEFECTIVE', `存在次品 ${numberFormatter.format(quickCounts.get('DEFECTIVE') || 0)}`],
-        ])}
-        <button type="button" class="shipping-advanced-toggle" data-shipping-advanced="1"
-          aria-expanded="${state.fulfilment.advancedOpen}">
-          ${state.fulfilment.advancedOpen ? '收起筛选' : '更多筛选'}
-        </button>
+      <div class="shipping-filter-toolbar">
+        <div class="shipping-quick-row">
+          <span>快捷筛选</span>
+          ${quickFilterBar('fulfilment', '', quickOptions)}
+        </div>
+        <div class="shipping-inline-filter-tools">
+          ${operationSelect('fulfilmentTimeField', '时间口径', timeOptions, state.fulfilment.timeField)}
+          <button type="button" class="shipping-advanced-toggle" data-shipping-advanced="1"
+            aria-expanded="${state.fulfilment.advancedOpen}">
+            ${state.fulfilment.advancedOpen ? '收起' : '更多筛选'}
+          </button>
+        </div>
       </div>
+      ${showWarehouseLane ? `
+        <div class="shipping-warehouse-lane">
+          <span>预估收货仓</span>
+          <div role="group" aria-label="预估收货仓快捷筛选">
+            ${warehouseOptions.slice(0, 7).map(([value, label]) => `
+              <button type="button" data-shipping-warehouse="${escapeHtml(value)}"
+                class="${state.fulfilment.warehouse === value ? 'active' : ''}"
+                aria-pressed="${state.fulfilment.warehouse === value}">${escapeHtml(label)}</button>`).join('')}
+          </div>
+        </div>` : ''}
       <div class="shipping-filter-grid${state.fulfilment.advancedOpen ? ' expanded' : ''}">
-        ${operationSelect('fulfilmentTimeField', '时间口径', timeOptions, state.fulfilment.timeField)}
         ${operationSelect('fulfilmentWarehouse', '平台收货仓', warehouseOptions, state.fulfilment.warehouse)}
         ${operationSelect('fulfilmentDefective', '次品情况', [
           ['ALL', '全部'], ['YES', '存在次品'], ['NO', '无次品记录'],
@@ -9324,7 +9360,6 @@ function renderFulfilment() {
     <section class="shipping-orders-section">
       <header class="shipping-list-head">
         <div>
-          <span class="eyebrow">ORDER LIST</span>
           <h2>订单列表</h2>
           <p>命中 ${numberFormatter.format(page.matchedRows || 0)} 单 · 第 ${page.pageCount ? page.page : 0} / ${page.pageCount || 0} 页</p>
         </div>
@@ -9334,11 +9369,14 @@ function renderFulfilment() {
       ${shippingOrdersPagination(page)}
       ${state.fulfilment.loading ? '<p class="query-refresh-note" role="status">正在刷新当前筛选结果…</p>' : ''}
     </section>
-    <aside class="shipping-source-note">
-      <strong>数据口径</strong>
-      <span>订单、数量、仓库与履约时间来自 OpenAPI；标准货号来自已确认归并。</span>
-      <span>${sourceCapabilities.portalExtensions === true ? '官方页面扩展字段已接入。' : '订单标签、发货台、复议和售前异常等页面扩展字段正在通过 Session HTTP 补充，缺失时不编造。'}</span>
-    </aside>`;
+    <details class="shipping-source-note">
+      <summary>数据口径与缺失字段</summary>
+      <div>
+        <span>订单、数量、仓库与履约时间来自 OpenAPI；标准货号来自已确认归并。</span>
+        <span>${sourceCapabilities.portalExtensions === true ? '官方页面扩展字段已接入。' : '订单标签、发货台、复议和售前异常等扩展字段正在通过 Session HTTP 补充，缺失时不编造。'}</span>
+        <span>当前页面仅读，所有写操作保持关闭。</span>
+      </div>
+    </details>`;
 }
 
 function renderInventory() {
@@ -11500,6 +11538,13 @@ elements.view.addEventListener('click', (event) => {
   if (shippingStatus && elements.view.contains(shippingStatus)) {
     state.fulfilment.milestone = operationCodeParam(shippingStatus.dataset.shippingStatus);
     delete state.quickFilters.fulfilment;
+    syncUrlFromState();
+    scheduleFulfilmentLoad({ resetPage: true });
+    return;
+  }
+  const shippingWarehouse = event.target.closest?.('[data-shipping-warehouse]');
+  if (shippingWarehouse && elements.view.contains(shippingWarehouse)) {
+    state.fulfilment.warehouse = urlSafeText(shippingWarehouse.dataset.shippingWarehouse, 120) || 'ALL';
     syncUrlFromState();
     scheduleFulfilmentLoad({ resetPage: true });
     return;
