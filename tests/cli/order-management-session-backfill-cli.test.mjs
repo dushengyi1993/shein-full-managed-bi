@@ -239,6 +239,8 @@ test('backfill execute reuses one session store across contiguous windows', asyn
   assert.equal(calls[1].sessionStore, sessionStore);
   assert.equal(calls[0].includeStatistics, false);
   assert.equal(calls[1].includeStatistics, false);
+  assert.equal(calls[0].storeConcurrency, 5);
+  assert.equal(calls[1].storeConcurrency, 5);
   assert.equal(result.written, output);
   const snapshot = JSON.parse(await readFile(output, 'utf8'));
   assert.equal(snapshot.schemaVersion, 1);
@@ -434,6 +436,24 @@ test('session sync can skip statistics with includeStatistics false', async () =
   assert.deepEqual(result.snapshot.evidence.perStore[0].statistics, []);
   assert.equal(result.snapshot.pages['stock-records'].status, 'AVAILABLE');
   assert.equal(result.snapshot.pages.waybills.status, 'AVAILABLE');
+});
+
+test('session sync rejects unsafe store concurrency before opening a session', async () => {
+  let opens = 0;
+  await assert.rejects(
+    () => runOrderManagementSessionSync({
+      storeCodes: ROSTER,
+      output: 'unused.json',
+      storeConcurrency: 6,
+      openSession: async () => {
+        opens += 1;
+        throw new Error('MUST_NOT_OPEN');
+      },
+      now: NOW,
+    }),
+    /ORDER_MANAGEMENT_SYNC_CONCURRENCY_INVALID/,
+  );
+  assert.equal(opens, 0);
 });
 
 test('backfill execute merges gated windows without calling the statistics endpoint', async () => {

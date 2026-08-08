@@ -358,11 +358,15 @@ export async function runOrderManagementSessionSync({
   windowDays = ORDER_MANAGEMENT_WINDOW_MAX_DAYS,
   window = null,
   includeStatistics = true,
+  storeConcurrency = 1,
   sessionStore,
   openSession = ({ storeCode }) => openOrderManagementHttpSession({ storeCode, sessionStore }),
   now = new Date(),
   maxPages = ORDER_MANAGEMENT_MAX_PAGES,
 } = {}) {
+  if (!Number.isSafeInteger(storeConcurrency) || storeConcurrency < 1 || storeConcurrency > 5) {
+    throw new TypeError('ORDER_MANAGEMENT_SYNC_CONCURRENCY_INVALID');
+  }
   const roster = [...FULL_MANAGED_STORE_CODES];
   const boundedWindow = window
     ? orderManagementWindow({
@@ -379,7 +383,7 @@ export async function runOrderManagementSessionSync({
     'stock-records': new Map(),
     waybills: new Map(),
   };
-  for (const storeCode of storeCodes) {
+  async function syncStore(storeCode) {
     const session = await openSession({ storeCode });
     const transport = createOrderManagementHttpTransport({ session });
     try {
@@ -388,6 +392,20 @@ export async function runOrderManagementSessionSync({
         maxPages,
         includeStatistics,
       });
+      return Object.freeze({
+        storeCode,
+        result,
+      });
+    } finally {
+      await transport.close();
+    }
+  }
+  for (let offset = 0; offset < storeCodes.length; offset += storeConcurrency) {
+    const batch = storeCodes.slice(offset, offset + storeConcurrency);
+    const completed = await Promise.all(batch.map(syncStore));
+    // Promise.all preserves the input order, so evidence stays deterministic
+    // even though stores inside a bounded batch run concurrently.
+    for (const { storeCode, result } of completed) {
       rawByStore['stock-records'].set(storeCode, result.stock.rows);
       rawByStore.waybills.set(storeCode, result.waybills.rows);
       perStore.push(Object.freeze({
@@ -399,8 +417,6 @@ export async function runOrderManagementSessionSync({
         }),
         statistics: result.statistics,
       }));
-    } finally {
-      await transport.close();
     }
   }
 

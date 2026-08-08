@@ -264,6 +264,7 @@ export async function runOrderManagementSessionBackfill({
   const runOptions = {
     storeCodes: stores,
     includeStatistics: false,
+    storeConcurrency: 5,
     sessionStore,
     now,
     ...(openSession ? { openSession } : {}),
