@@ -36,6 +36,9 @@ test('portal serves only the promoted dashboard JSON and has no warehouse or Ope
   assert.doesNotMatch(portal, /materialize_full_managed_dashboard|ExecStartPre/);
   assert.doesNotMatch(portal, /ReadWritePaths/);
   assert.doesNotMatch(portal, /shein-fm-db(?:-migrate)?\.service/);
+  assert.match(portal, /NODE_OPTIONS=--max-old-space-size=1536/);
+  assert.match(portal, /^MemoryHigh=1792M$/m);
+  assert.match(portal, /^MemoryMax=2G$/m);
 });
 
 test('materializer is a separate gated read-only runtime with atomic promotion', async () => {
