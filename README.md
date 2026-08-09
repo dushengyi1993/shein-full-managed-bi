@@ -50,6 +50,7 @@ Webhook Worker 当前只做验签后密文入仓、异步解密、标准化事�
 - [数据库迁移](db/README.md)
 - [权限申请状态](docs/permission-application-status.md)
 - [远程店铺授权流程](docs/remote-authorization.md)
+- [版本与分支管理](docs/version-management.md)
 
 ## 本地运行
 
@@ -162,3 +163,7 @@ tests/          脱敏 fixture 与自动测试
 现有 24 店继续使用已经通过的权限和对账门禁；新增店只有在自身授权、真实权限探针和首轮对账通过后才加入日常同步。供应链定时任务还需要历史回填与增量回读门禁；Webhook 服务需要独立心跳和回调验收，但创建平台订阅仍保持关闭。生产空库或合法零销量使用真实空数据契约，不会回退到测试 fixture。
 
 部署、回滚、服务名和验收命令见 [云端部署手册](docs/cloud-deployment.md)。
+
+本地 clone 首次参与开发时运行 `npm run hooks:install`。所有 release 必须先进入
+`main`，再创建不可变 tag；完整分支、worktree 与归档规则见
+[版本与分支管理](docs/version-management.md)。

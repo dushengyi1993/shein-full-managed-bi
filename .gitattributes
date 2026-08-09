@@ -1,4 +1,5 @@
 * text=auto
+.gitattributes text eol=lf
 *.mjs text eol=lf
 *.js text eol=lf
 *.json text eol=lf
@@ -9,6 +10,7 @@
 *.timer text eol=lf
 *.conf text eol=lf
 infra/logrotate/* text eol=lf
+.githooks/* text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 *.ps1 text eol=crlf

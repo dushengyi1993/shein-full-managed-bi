@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+root="$(git rev-parse --show-toplevel)"
+exec node "$root/scripts/git_pre_push_guard.mjs" "$@"
