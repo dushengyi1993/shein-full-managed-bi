@@ -44,6 +44,11 @@ function indexWithDeliveryRows(rows, overrides = {}) {
         rows,
       },
     },
+    evidence: {
+      pages: {
+        'delivery-notes': { storeCodes: ['DL5477', 'MZ2406'] },
+      },
+    },
     ...overrides,
   };
 }
@@ -85,6 +90,9 @@ test('loads and caches a contract-valid order-management index', async (t) => {
   assert.equal(first.schemaVersion, 1);
   assert.equal(first.coverage.status, 'COMPLETE');
   assert.equal(first.coverage.completedStoreCount, 2);
+  assert.equal(first.pageCoverage['delivery-notes'].status, 'COMPLETE');
+  assert.equal(first.pageCoverage['delivery-notes'].completedStoreCount, 2);
+  assert.deepEqual(first.pageCoverage['delivery-notes'].storeCodes, ['DL5477', 'MZ2406']);
   assert.equal(first.promotable, true);
   assert.deepEqual(Object.keys(first.pages), ORDER_MANAGEMENT_PAGE_IDS);
   assert.deepEqual(first.pages['delivery-notes'].rows.map((row) => row.id), ['DN-1001']);

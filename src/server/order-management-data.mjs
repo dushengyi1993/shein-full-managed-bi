@@ -10,6 +10,7 @@ import {
 export { ORDER_MANAGEMENT_PAGE_IDS } from '../order-management/order-management-contract.mjs';
 
 const CACHE = new Map();
+const STORE_CODE_PATTERN = /^[A-Z0-9]{2,12}$/;
 
 export class OrderManagementDataError extends Error {
   constructor(code, message) {
@@ -36,6 +37,29 @@ function normalizeCoverage(value) {
     completedStoreCount: source.completedStoreCount ?? 0,
     storeCodes,
     reason: source.reason ?? null,
+  });
+}
+
+function normalizePageCoverage(source, pageId, page, globalCoverage) {
+  const evidence = record(record(record(source.evidence).pages)[pageId]);
+  const storeCodes = Object.freeze([...new Set(rows(evidence.storeCodes)
+    .map((value) => String(value ?? '').trim().toUpperCase())
+    .filter((value) => STORE_CODE_PATTERN.test(value)))].sort());
+  const expectedStoreCount = globalCoverage.expectedStoreCount;
+  const completedStoreCount = storeCodes.length;
+  const status = page.status === 'UNAVAILABLE'
+    ? 'UNAVAILABLE'
+    : page.status === 'AVAILABLE'
+      && Number.isSafeInteger(expectedStoreCount)
+      && completedStoreCount === expectedStoreCount
+      ? 'COMPLETE'
+      : 'PARTIAL';
+  return Object.freeze({
+    status,
+    expectedStoreCount,
+    completedStoreCount,
+    storeCodes,
+    reason: page.reason ?? null,
   });
 }
 
@@ -87,11 +111,17 @@ function normalizeOrderManagementIndex(value) {
   for (const pageId of ORDER_MANAGEMENT_PAGE_IDS) {
     pages[pageId] = normalizePage(pageId, source.pages[pageId]);
   }
+  const coverage = normalizeCoverage(source.coverage);
+  const pageCoverage = {};
+  for (const pageId of ORDER_MANAGEMENT_PAGE_IDS) {
+    pageCoverage[pageId] = normalizePageCoverage(source, pageId, pages[pageId], coverage);
+  }
   return Object.freeze({
     schemaVersion: 1,
     updatedAt: source.updatedAt,
     promotable: source.promotable,
-    coverage: normalizeCoverage(source.coverage),
+    coverage,
+    pageCoverage: Object.freeze(pageCoverage),
     pages: Object.freeze(pages),
   });
 }
@@ -120,6 +150,7 @@ export async function loadOrderManagementData(
         storeCodes: Object.freeze([]),
         reason: 'ORDER_MANAGEMENT_FILE_NOT_CONFIGURED',
       }),
+      pageCoverage: Object.freeze({}),
       pages: Object.freeze({}),
     });
   }

@@ -58,18 +58,12 @@ test('full-managed primary navigation keeps home first and nests shipping orders
   assert.match(html, /aria-expanded="false" aria-controls="order-nav-panel"/);
   assert.match(html, /<span>订单管理<\/span>/);
   assert.match(html, /<small>ORDER<\/small>/);
-  // The group panel lists the three confirmed subgroups, with 发货订单
-  // (#fulfilment) as the first item.
+  // The group panel is one flat nine-item list, with 发货订单 (#fulfilment)
+  // first and no secondary category headings.
   const panelStart = html.indexOf('id="order-nav-panel"');
-  // The panel closes after its three subgroup divs, i.e. the fourth `</div>`.
-  let panelEnd = panelStart;
-  for (let depth = 0; depth < 4; depth += 1) {
-    panelEnd = html.indexOf('</div>', panelEnd + 1);
-  }
+  const panelEnd = html.indexOf('</div>', panelStart + 1);
   const panel = html.slice(panelStart, panelEnd);
-  assert.match(panel, /<p class="nav-subgroup-label">发货履约<\/p>/);
-  assert.match(panel, /<p class="nav-subgroup-label">退货异常<\/p>/);
-  assert.match(panel, /<p class="nav-subgroup-label">服务质检<\/p>/);
+  assert.doesNotMatch(panel, /nav-subgroup|<p[^>]*>发货履约<\/p>|<p[^>]*>退货异常<\/p>|<p[^>]*>服务质检<\/p>/);
   assert.deepEqual(
     [...panel.matchAll(/data-route="([^"]+)"/g)].map((match) => match[1]),
     [
@@ -94,7 +88,7 @@ test('full-managed primary navigation keeps home first and nests shipping orders
   assert.match(styles, /\.table-wrap\s*\{[^}]*max-width:\s*100%[^}]*overflow:\s*auto/s);
   assert.match(styles, /\.nav-group-panel\s*\{/);
   assert.match(styles, /\.nav-group-toggle\s*\{/);
-  assert.match(styles, /\.nav-subgroup-label\s*\{/);
+  assert.doesNotMatch(styles, /\.nav-subgroup-label\s*\{/);
   assert.match(styles, /@media \(max-width: 620px\)/);
 });
 

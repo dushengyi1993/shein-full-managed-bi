@@ -3689,11 +3689,28 @@ const ORDER_FIELD_LABELS = Object.freeze({
 
 /** Fields whose values must be shown with a fixed business unit. */
 const ORDER_FIELD_UNITS = Object.freeze({
+  packageCount: '个',
   packageWeight: 'kg',
+  lineCount: '行',
+  skuCount: '个',
+  orderCount: '单',
+  deliveryQuantity: '件',
+  packQuantity: '个',
+  sendGoodsQuantity: '件',
   actualWeight: 'kg',
   volumeWeight: 'kg',
   estimatedWeight: 'kg',
   finalSettlementWeight: 'kg',
+  returnQuantity: '件',
+  returnGenerateQuantity: '件',
+  returnScrappedQuantity: '件',
+  returnVssQuantity: '件',
+  waitReturnQuantity: '件',
+  returnBoxNum: '箱',
+  skcNum: '个',
+  defectiveQuantity: '件',
+  defectiveTotalQty: '件',
+  orderDefectiveTotalQty: '件',
 });
 
 /** Safe degradation label for any field outside the shared allowlist. */
@@ -3714,64 +3731,48 @@ function orderFieldValue(name, value) {
 const ORDER_PAGE_META = Object.freeze({
   'delivery-notes': {
     title: '发货单列表',
-    code: 'DELIVERY NOTES',
-    group: '发货履约',
     description: '平台发货单与包裹面单记录，展示单据状态与时间轨迹；页面只读，不创建、不打印面单。',
     filterHint: '支持全局搜索（单号 / 货号 / SKC / SKU）与店铺筛选；状态码、排序与分页由服务端执行。',
     readOnly: '不创建、不打印发货单或面单。',
   },
   'stock-records': {
     title: '备货记录',
-    code: 'STOCK RECORDS',
-    group: '发货履约',
-    description: '全托管仓库库存变动记录，展示出入库流水与剩余数量；页面只读，不做任何库存调整。',
-    filterHint: '支持按状态码、店铺与时间筛选；数量未知时显示“未知”，不补零。',
+    description: '平台备货申请记录，展示备货单号、订购模式、申请状态与时间；页面只读，不做任何库存调整。',
+    filterHint: '支持按申请状态、店铺与时间筛选；平台未返回的字段保持未知。',
     readOnly: '不进行任何库存调整。',
   },
   waybills: {
     title: '运单报表',
-    code: 'WAYBILLS',
-    group: '发货履约',
     description: '物流运单与轨迹状态记录，展示运单号、承运商与物流阶段；页面只读，不创建或取消运单。',
     filterHint: '支持按运单状态筛选与排序；物流轨迹以平台返回为准。',
     readOnly: '不创建或取消运单。',
   },
   'return-applications': {
     title: '退货申请',
-    code: 'RETURN APPLICATIONS',
-    group: '退货异常',
-    description: '买家退货申请记录，展示申请状态与处理结果；页面只读，不审核、不通过、不驳回退货申请。',
-    filterHint: '支持按申请状态筛选；处理结果缺失时保持未知。',
+    description: '平台退货申请记录，展示退货原因、处理方式、数量金额与时间节点；页面只读，不审核、不通过、不驳回。',
+    filterHint: '支持按申请状态筛选；仓库、关联单据或处理结果缺失时保持未知。',
     readOnly: '不审核、不通过、不驳回退货申请。',
   },
   'return-orders': {
     title: '退货列表',
-    code: 'RETURN ORDERS',
-    group: '退货异常',
     description: '平台退货单与回收入库记录，展示退货单状态与数量；页面只读，不执行退货操作。',
     filterHint: '支持按退货单状态筛选；数量未知不补零。',
     readOnly: '不执行退货或回收入库操作。',
   },
   exceptions: {
     title: '收货/退货异常',
-    code: 'EXCEPTIONS',
-    group: '退货异常',
     description: '履约与订单异常记录，展示异常类型、状态与处理进展；页面只读，不提交申诉或修复动作。',
     filterHint: '支持按异常状态筛选；异常原因缺失时保持未知。',
     readOnly: '不提交申诉或修复动作。',
   },
   'value-added-services': {
     title: '增值服务列表',
-    code: 'VALUE-ADDED SERVICES',
-    group: '服务质检',
     description: '增值服务订购与使用记录，展示服务状态与生效范围；页面只读，不订购、不取消服务。',
-    filterHint: '支持按服务状态筛选；服务费用不在此页展示。',
+    filterHint: '支持按服务状态筛选；服务金额以平台返回为准，未知时不补零。',
     readOnly: '不订购、不取消增值服务。',
   },
   'quality-reports': {
     title: '质检报告',
-    code: 'QUALITY REPORTS',
-    group: '服务质检',
     description: '平台质检结论与报告记录，展示质检状态与结果；页面只读，不发起复检或修改质检结果。',
     filterHint: '支持按质检状态筛选；报告缺失字段保持未知。',
     readOnly: '不发起复检或修改质检结果。',
@@ -3889,6 +3890,9 @@ function normalizeOrderPageResult(result, pageId) {
     coverage: result.coverage && typeof result.coverage === 'object'
       ? result.coverage
       : null,
+    facets: result.facets && typeof result.facets === 'object'
+      ? result.facets
+      : null,
     updatedAt: result.updatedAt || null,
     schemaVersion: result.schemaVersion ?? null,
     rows,
@@ -3968,43 +3972,51 @@ function orderStatusLabel(status) {
   return '数据不可用';
 }
 
-function orderStatusExplanation(status, reason) {
-  if (status === 'AVAILABLE') return '该页面数据可用，按当前条件展示。';
-  if (status === 'PARTIAL') {
-    return reason
-      ? `部分店铺数据未完成：${reason}`
-      : '部分店铺数据未完成，以下结果可能不完整。';
-  }
-  return reason
-    ? `页面数据暂不可用：${reason}`
-    : '页面数据暂不可用，不会用旧快照或补零结果冒充。';
-}
-
-function orderCoverageLine(coverage) {
-  if (!coverage || typeof coverage !== 'object') return '店铺覆盖未知';
-  const completed = isUnit(coverage.completedStoreCount)
+/** Per-page operational coverage returned by the authenticated page query.
+ * The server derives it from this page's gate evidence, including successful
+ * stores with zero rows; it is never the index-wide intersection or a row
+ * facet count.
+ */
+function orderPageCoverage(queryData) {
+  const coverage = productRecord(queryData?.coverage);
+  const completed = Number.isSafeInteger(coverage.completedStoreCount)
     ? coverage.completedStoreCount
     : null;
-  const expected = isUnit(coverage.expectedStoreCount)
+  const expected = Number.isSafeInteger(coverage.expectedStoreCount)
     ? coverage.expectedStoreCount
     : null;
-  const storeCodes = Array.isArray(coverage.storeCodes)
-    ? coverage.storeCodes.filter((code) => String(code || '').trim() !== '')
-    : [];
-  const parts = [];
-  if (completed === null && expected === null) {
-    parts.push('店铺覆盖未知');
-  } else if (expected === null) {
-    parts.push(`已完成 ${numberFormatter.format(completed)} 家店铺`);
-  } else {
-    parts.push(`店铺覆盖 ${numberFormatter.format(completed)} / ${numberFormatter.format(expected)} 家`);
+  return { completed, expected };
+}
+
+function orderCoverageLine(queryData) {
+  const { completed, expected } = orderPageCoverage(queryData);
+  if (completed === null || expected === null) {
+    return '部分店铺数据未完成，覆盖按本页实际数据计算。';
   }
-  if (storeCodes.length) {
-    const visible = storeCodes.slice(0, 12).join('、');
-    parts.push(`已完成 ${visible}${storeCodes.length > 12 ? ` 等 ${storeCodes.length} 家` : ''}`);
-  }
-  if (coverage.reason) parts.push(`说明：${String(coverage.reason)}`);
-  return parts.join(' · ');
+  const missing = Math.max(0, expected - completed);
+  return `当前展示 ${numberFormatter.format(completed)}/${numberFormatter.format(expected)} 家，${numberFormatter.format(missing)} 家暂无数据`;
+}
+
+function orderSourceLabel(source) {
+  const value = String(source ?? '').trim();
+  if (value === 'SESSION_HTTP') return '平台订单页只读数据';
+  if (value === 'OPENAPI_FACT_DATABASE') return '官方接口事实库';
+  if (value === 'OPENAPI_FACT_DATABASE_SESSION_MERGED') return '官方接口与平台订单页';
+  return '来源待确认';
+}
+
+/** PARTIAL pages get one operational line and a small low-interference entry;
+    gate codes, raw reasons and store lists stay in backend logs/audit. */
+function orderPartialNote(queryData) {
+  return `
+    <div class="order-partial-note" role="status">
+      <strong>${orderStatusLabel(queryData.status)}</strong>
+      <span class="order-partial-line">${escapeHtml(orderCoverageLine(queryData))}</span>
+      <details>
+        <summary>查看说明</summary>
+        <div>覆盖按本页实际数据计算；暂无数据的店铺不会补零，也不会沿用旧快照或旧候选。平台侧缺口的完整原因保留在后台审计与日志。</div>
+      </details>
+    </div>`;
 }
 
 function orderPaginationCaption(pagination, rows) {
@@ -4189,12 +4201,12 @@ function orderEmptyState() {
     </div>`;
 }
 
-function orderUnavailablePanel(reason) {
+function orderUnavailablePanel() {
   return `
     <section class="order-unavailable-panel" role="alert">
       <div>
         <strong>数据未更新，本页面暂缓展示</strong>
-        <p>${escapeHtml(reason || '平台数据尚未就绪；不会沿用旧候选、旧快照或补零数字冒充结果。')}</p>
+        <p>平台数据尚未就绪；不会沿用旧候选、旧快照或补零数字冒充结果。完整原因保留在后台审计与日志。</p>
       </div>
       <button type="button" class="clear-button" data-order-retry="1">重新加载</button>
     </section>`;
@@ -4224,8 +4236,6 @@ function renderOrderWorkspace() {
   const pageId = state.route;
   const meta = ORDER_PAGE_META[pageId] || {
     title: '订单管理',
-    code: 'ORDER',
-    group: '订单管理',
     description: '',
     filterHint: '',
     readOnly: '不提供任何平台写操作按钮。',
@@ -4245,13 +4255,12 @@ function renderOrderWorkspace() {
   const status = queryData.status;
   const rows = Array.isArray(queryData.rows) ? queryData.rows : [];
   const pagination = queryData.pagination;
-  const sourceLabel = queryData.source || '来源未知';
+  const sourceLabel = orderSourceLabel(queryData.source);
   return `
     ${sampleNotice()}
     <section class="order-hero" aria-labelledby="order-page-title">
       <header>
         <div>
-          <span class="eyebrow">${escapeHtml(meta.group)} · ${escapeHtml(meta.code)}</span>
           <h1 id="order-page-title">${escapeHtml(meta.title)}</h1>
           <p>${escapeHtml(meta.description)}</p>
         </div>
@@ -4261,11 +4270,7 @@ function renderOrderWorkspace() {
           <small>${escapeHtml(formatSourceUpdateTime(queryData.latestSourceFetchedAt) || '来源时间未知')}</small>
         </div>
       </header>
-      <div class="order-status-banner status-${String(status).toLowerCase()}" role="status">
-        <strong>${orderStatusLabel(status)}</strong>
-        <span>${escapeHtml(orderStatusExplanation(status, queryData.reason))}</span>
-      </div>
-      <p class="order-coverage-line">${escapeHtml(orderCoverageLine(queryData.coverage))}</p>
+      ${status === 'PARTIAL' ? orderPartialNote(queryData) : ''}
     </section>
 
     <section class="order-filter-toolbar" aria-label="${escapeHtml(meta.title)}筛选">
@@ -4280,7 +4285,7 @@ function renderOrderWorkspace() {
         <p class="order-filter-hint">当前为负责人筛选（${escapeHtml(state.owner)}）；订单管理页面按店铺筛选，负责人范围不作用于本页，已按全部店铺查询。</p>` : ''}
     </section>
 
-    ${status === 'UNAVAILABLE' ? orderUnavailablePanel(queryData.reason) : `
+    ${status === 'UNAVAILABLE' ? orderUnavailablePanel() : `
       <section class="order-table-section" aria-label="${escapeHtml(meta.title)}明细">
         <header class="order-list-head">
           <div>
@@ -4300,7 +4305,7 @@ function renderOrderWorkspace() {
           <span>本页只读：${escapeHtml(meta.readOnly)}</span>
           <span>明细中的指标、事实与详情均为脱敏后的允许字段；地址、联系人与电话不会展示。</span>
           <span>筛选、排序与分页由服务端执行；页面不提供任何平台写操作按钮。</span>
-          <span>页面状态（可用 / 部分覆盖 / 不可用）、覆盖店铺与原因以 ${escapeHtml(sourceLabel)} 快照为准。</span>
+          <span>页面状态与覆盖按本页数据计算；缺失店铺不补零、不沿用旧快照，完整诊断保留在后台审计与日志。</span>
         </div>
       </details>`}
   `;

@@ -798,6 +798,12 @@ const ORDER_MANAGEMENT_INDEX = {
       rows: [],
     },
   },
+  evidence: {
+    pages: {
+      'delivery-notes': { storeCodes: ['DL5477', 'MZ2406'] },
+      exceptions: { storeCodes: ['DL5477'] },
+    },
+  },
 };
 
 test('GET /api/orders is a bounded read-only order-management page surface', async () => {
@@ -838,6 +844,8 @@ test('GET /api/orders is a bounded read-only order-management page surface', asy
     const partialPayload = await partial.json();
     assert.equal(partialPayload.page.status, 'PARTIAL');
     assert.equal(partialPayload.complete, false);
+    assert.equal(partialPayload.coverage.status, 'PARTIAL');
+    assert.equal(partialPayload.coverage.completedStoreCount, 1);
     assert.equal(partialPayload.rows.length, 1);
 
     const unavailable = await fetch(`${ordersBaseUrl}/api/orders?page=stock-records`);

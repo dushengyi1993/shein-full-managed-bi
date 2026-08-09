@@ -5952,10 +5952,12 @@ body[data-dataset="sample"] .metric-item > strong {
    Desktop (>=1081px): clicking 订单管理 expands the group in place inside the
    sidebar rail and pushes the following nav items down, like the official
    backend group navigation; it never floats over the workspace.
-   Mobile (<=1080px): the same panel stays an accordion sheet anchored under
-   the sticky top bar, and becomes a true in-place accordion at <=620px.
-   Flat colors only; no gradients or shadows beyond the shared --shadow
-   token. */
+   Mobile (<=1080px): the same flat list stays an accordion sheet anchored
+   under the sticky top bar, and becomes a true in-place accordion at <=620px.
+   The group is one flat 9-item list (发货订单 first); no secondary category
+   labels. The toggle keeps four readable states on the final dark rail: default,
+   hover, expanded, and active-child. Flat colors only; no gradients or
+   shadows beyond the shared --shadow token. */
 .nav-group {
   position: relative;
 }
@@ -5968,28 +5970,41 @@ body[data-dataset="sample"] .metric-item > strong {
   justify-content: space-between;
   gap: 8px;
   padding: 0 10px;
-  color: var(--muted-strong);
+  color: #d8d0c5;
   background: transparent;
   border: 0;
+  border-bottom: 2px solid transparent;
   border-radius: 8px;
   font: inherit;
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
   transition: color 160ms ease, background 160ms ease;
 }
 
 .nav-group-toggle:hover {
-  color: var(--ink);
-  background: var(--paper-soft);
+  color: #ffffff;
+  background: #292a26;
+}
+
+.nav-group-toggle[aria-expanded="true"] {
+  color: #ffffff;
+  background: #292a26;
+  border-bottom-color: var(--accent);
+  border-radius: 8px 8px 0 0;
 }
 
 .nav-group-toggle:active {
   transform: scale(0.995);
 }
 
+/* Active child: an order page is open, so the group reads as the current
+   section. This state wins over hover/expanded because the panel is
+   auto-expanded while an order route is active. */
 .nav-group-toggle.nav-group-active {
-  color: var(--ink);
-  background: var(--paper-warm);
+  color: #15130f;
+  background: #f8f4eb;
+  border-bottom-color: transparent;
   font-weight: 700;
 }
 
@@ -6000,53 +6015,58 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .nav-group-toggle small {
-  color: var(--muted);
+  color: #aaa299;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.63rem;
   letter-spacing: 0.08em;
 }
 
+.nav-group-toggle:hover small,
+.nav-group-toggle[aria-expanded="true"] small {
+  color: #d8d0c5;
+}
+
 .nav-group-toggle.nav-group-active small {
-  color: var(--muted-strong);
+  color: #575651;
 }
 
 .nav-group-chevron {
   display: block;
-  color: var(--muted);
-  transition: transform 160ms ease;
+  color: #bdb5aa;
+  transition: transform 160ms ease, color 160ms ease;
+}
+
+.nav-group-toggle:hover .nav-group-chevron,
+.nav-group-toggle[aria-expanded="true"] .nav-group-chevron {
+  color: #ffffff;
+}
+
+.nav-group-toggle.nav-group-active .nav-group-chevron {
+  color: #575651;
 }
 
 .nav-group-toggle[aria-expanded="true"] .nav-group-chevron {
   transform: rotate(180deg);
 }
 
-.nav-subgroup-label {
-  margin: 0 8px 4px;
-  color: rgba(255, 255, 255, 0.5);
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 0.63rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-}
-
-.nav-subgroup a {
+.nav-group-panel a {
   display: flex;
   min-height: 34px;
   align-items: center;
   padding: 0 10px;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--muted-strong);
   border-radius: 8px;
   text-decoration: none;
   transition: color 160ms ease, background 160ms ease;
 }
 
-.nav-subgroup a:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+.nav-group-panel a:hover {
+  color: var(--ink);
+  background: var(--paper-soft);
 }
 
-.nav-subgroup a.active {
-  color: var(--ink);
+.nav-group-panel a.active {
+  color: var(--accent-dark);
   background: var(--paper-warm);
   font-weight: 700;
 }
@@ -6066,38 +6086,25 @@ body[data-dataset="sample"] .metric-item > strong {
     max-width: 100%;
     gap: 2px;
     margin: 3px 0 6px 8px;
-    padding: 4px 4px 8px 6px;
+    padding: 6px 4px 8px 6px;
     overflow: visible;
-    border-left: 2px solid rgba(255, 255, 255, 0.16);
+    border-left: 2px solid var(--line-strong);
     border-radius: 0 10px 10px 0;
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--paper-soft);
   }
 
-  .nav-subgroup {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-    padding: 4px 2px 8px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .nav-subgroup:last-child {
-    border-bottom: 0;
-    padding-bottom: 2px;
-  }
-
-  .nav-subgroup a {
+  .nav-group-panel a {
     min-width: 0;
   }
 
   /* Active and focus states stay unmistakable inside the rail. */
-  .nav-subgroup a.active {
+  .nav-group-panel a.active {
     border-left: 2px solid var(--accent);
     padding-left: 8px;
   }
 
   .nav-group-toggle:focus-visible,
-  .nav-subgroup a:focus-visible {
+  .nav-group-panel a:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: -2px;
   }
@@ -6114,22 +6121,10 @@ body[data-dataset="sample"] .metric-item > strong {
     padding: 6px 4px 8px 7px;
     overflow: visible;
     border: 0;
-    border-left: 2px solid rgba(255, 255, 255, 0.16);
+    border-left: 2px solid var(--line-strong);
     border-radius: 0 10px 10px 0;
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--paper-soft);
     box-shadow: none;
-  }
-
-  .nav-subgroup {
-    display: grid;
-    gap: 2px;
-    padding: 4px 0 8px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .nav-subgroup:last-child {
-    border-bottom: 0;
-    padding-bottom: 2px;
   }
 }
 
@@ -6159,111 +6154,126 @@ body[data-dataset="sample"] .metric-item > strong {
   }
 }
 
-/* --- order-management workspace --- */
-.order-hero {
-  margin: 1rem 0 1.25rem;
-  padding: clamp(1rem, 2vw, 1.4rem);
+/* --- order-management workspace ---
+   Visual baseline: the confirmed 发货订单 page. Cards share its border,
+   radius, background and shadow tokens; the hero, source receipt, filter
+   shell, list head, table and source note follow the shipping rhythm so all
+   nine order pages read as one family. Technical gate diagnostics are never
+   shown here; PARTIAL pages get one operational coverage line with a small
+   low-interference entry. */
+.order-hero,
+.order-filter-toolbar,
+.order-table-section,
+.order-readonly-note {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--paper);
+  box-shadow: 0 8px 24px rgb(30 27 22 / 4%);
 }
 
-.order-hero header {
+.order-hero {
+  overflow: hidden;
+}
+
+.order-hero > header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 24px;
+  padding: 15px 18px 13px;
+}
+
+.order-hero h1,
+.order-list-head h2 {
+  margin: 5px 0 4px;
+  letter-spacing: -0.035em;
 }
 
 .order-hero h1 {
-  margin: 0.25rem 0 0.4rem;
   font-size: clamp(1.35rem, 2vw, 1.8rem);
-  font-weight: 500;
 }
 
-.order-hero header p {
+.order-hero > header p {
   max-width: 62ch;
-  margin: 0;
-  color: var(--muted-strong);
-  font-size: 0.88rem;
-  line-height: 1.55;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
 }
 
 .order-source-receipt {
   display: grid;
-  min-width: 190px;
-  gap: 3px;
-  padding: 8px 10px;
+  min-width: 250px;
+  grid-template-columns: auto auto;
+  gap: 2px 12px;
+  padding: 8px 11px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--paper-soft);
-  font-size: 0.72rem;
-}
-
-.order-source-receipt span {
-  color: var(--muted);
 }
 
 .order-source-receipt strong {
   overflow-wrap: anywhere;
   font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.order-source-receipt span,
+.order-source-receipt small {
+  color: var(--muted);
+  font-size: 0.64rem;
 }
 
 .order-source-receipt small {
-  color: var(--muted);
+  grid-column: 1 / -1;
+  text-align: right;
 }
 
-.order-status-banner {
+/* PARTIAL pages: one operational line plus a small, low-interference entry.
+   Gate codes, raw reasons and store lists stay in backend logs and audit. */
+.order-partial-note {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.6rem;
-  margin-top: 0.9rem;
-  padding: 0.65rem 0.8rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  font-size: 0.84rem;
+  gap: 4px 10px;
+  padding: 9px 18px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--warning-soft);
+  font-size: 0.76rem;
 }
 
-.order-status-banner strong {
+.order-partial-note > strong {
   flex: 0 0 auto;
+  color: var(--warning);
   font-weight: 700;
 }
 
-.order-status-banner span {
-  color: var(--muted-strong);
+.order-partial-line {
+  color: var(--ink-soft);
 }
 
-.order-status-banner.status-available {
-  border-color: var(--accent);
-  background: var(--success-soft);
+.order-partial-note details {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
-.order-status-banner.status-available strong {
-  color: var(--success);
+.order-partial-note details[open] {
+  flex: 1 0 100%;
+  margin-left: 0;
 }
 
-.order-status-banner.status-partial {
-  border-color: #d9b45b;
-  background: var(--warning-soft);
-}
-
-.order-status-banner.status-partial strong {
+.order-partial-note summary {
+  cursor: pointer;
   color: var(--warning);
+  font-size: 0.7rem;
+  font-weight: 600;
 }
 
-.order-status-banner.status-unavailable {
-  border-color: var(--danger);
-  background: var(--danger-soft);
-}
-
-.order-status-banner.status-unavailable strong {
-  color: var(--danger);
-}
-
-.order-coverage-line {
-  margin: 0.65rem 0 0;
-  color: var(--muted);
-  font-size: 0.76rem;
+.order-partial-note details div {
+  margin-top: 3px;
+  color: var(--muted-strong);
+  font-size: 0.7rem;
   line-height: 1.5;
 }
 
@@ -6271,12 +6281,14 @@ body[data-dataset="sample"] .metric-item > strong {
   display: flex;
   flex-wrap: wrap;
   align-items: end;
-  gap: 0.4rem 1rem;
-  margin: 0 0 1.1rem;
-  padding: 0.7rem 0.9rem;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--paper);
+  gap: 0.5rem 1rem;
+  margin-top: 12px;
+  padding: 12px 14px 10px;
+}
+
+.order-filter-toolbar .sales-sort-control {
+  margin: 0;
+  justify-content: flex-start;
 }
 
 .sales-sort-control input[data-order-status] {
@@ -6296,55 +6308,59 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .order-filter-hint {
   flex: 1 0 100%;
-  margin: 0.25rem 0 0;
+  margin: 0.3rem 0 0;
   color: var(--muted);
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   line-height: 1.5;
+}
+
+.order-table-section {
+  margin-top: 12px;
+  padding: 14px;
 }
 
 .order-list-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  margin: 1.1rem 0 0.6rem;
+  gap: 14px;
+  margin-bottom: 10px;
+  padding: 0 2px;
 }
 
 .order-list-head h2 {
-  margin: 0;
   font-size: 1.05rem;
-  font-weight: 600;
 }
 
 .order-list-head p {
-  margin: 0.2rem 0 0;
+  margin: 0;
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.73rem;
 }
 
 .order-table {
   width: 100%;
-  min-width: 860px;
+  min-width: 940px;
   border-collapse: collapse;
-  font-size: 0.8rem;
+  table-layout: fixed;
+  font-size: 0.72rem;
+}
+
+.order-table th,
+.order-table td {
+  padding: 10px 13px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
 }
 
 .order-table th {
-  padding: 0.55rem 0.7rem;
   color: var(--muted);
-  border-bottom: 1px solid var(--line-strong);
-  font-size: 0.68rem;
+  background: var(--paper);
+  font-size: 0.66rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-align: left;
-  text-transform: uppercase;
+  letter-spacing: 0.03em;
   white-space: nowrap;
-}
-
-.order-table td {
-  padding: 0.6rem 0.7rem;
-  border-bottom: 1px solid var(--line);
-  vertical-align: top;
 }
 
 .order-table tbody tr:hover td {
@@ -6353,39 +6369,41 @@ body[data-dataset="sample"] .metric-item > strong {
 
 .order-id-cell {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 0.76rem;
+  font-size: 0.7rem;
   overflow-wrap: anywhere;
 }
 
 .order-status-chip {
-  display: inline-block;
-  padding: 0.18rem 0.5rem;
-  color: var(--accent-dark);
-  border: 1px solid var(--line-strong);
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  padding: 2px 7px;
   border-radius: 999px;
+  color: var(--accent-dark);
   background: var(--accent-soft);
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-size: 0.65rem;
+  font-weight: 750;
   white-space: nowrap;
 }
 
 .order-status-code {
   display: block;
-  margin-top: 0.2rem;
+  margin-top: 3px;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 0.66rem;
+  font-size: 0.62rem;
 }
 
 .order-tag {
-  display: inline-block;
-  margin: 0 0.25rem 0.2rem 0;
-  padding: 0.12rem 0.45rem;
-  color: var(--muted-strong);
-  border: 1px solid var(--line);
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  margin: 0 4px 3px 0;
+  padding: 2px 7px;
   border-radius: 999px;
-  background: var(--paper-soft);
-  font-size: 0.68rem;
+  color: var(--muted-strong);
+  background: var(--paper-warm);
+  font-size: 0.65rem;
   white-space: nowrap;
 }
 
@@ -6394,46 +6412,49 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .order-detail-row td {
-  padding: 0.35rem 0.7rem 0.75rem;
+  padding: 0.4rem 0.7rem 0.8rem;
   background: var(--paper-soft);
 }
 
 .order-detail-disclosure summary {
   cursor: pointer;
-  color: var(--accent-dark);
-  font-size: 0.76rem;
-  font-weight: 600;
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  font-weight: 700;
 }
 
 .order-detail-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0.7rem;
-  margin-top: 0.55rem;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.8rem 1.1rem;
+  margin-top: 0.6rem;
 }
 
 .order-detail-block h3 {
-  margin: 0 0 0.35rem;
+  margin: 0 0 0.4rem;
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 0.64rem;
   font-weight: 700;
   letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .order-field-list {
   display: grid;
-  gap: 0.25rem;
+  gap: 0.35rem;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* Compact, scannable detail grid: each label sits next to its value in
+   adjacent columns. Long IDs wrap in place and never widen the page. */
 .order-field-list li {
-  display: flex;
-  gap: 0.6rem;
-  justify-content: space-between;
-  font-size: 0.76rem;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.5rem 0.7rem;
+  font-size: 0.74rem;
 }
 
 .order-field-list li span {
@@ -6442,40 +6463,42 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .order-field-list li strong {
+  color: var(--ink);
   overflow-wrap: anywhere;
-  text-align: right;
 }
 
 .order-empty-state,
 .order-unavailable-panel,
 .order-query-state {
-  margin: 1rem 0;
-  padding: 1.1rem 1.2rem;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--paper);
+  margin: 14px 0 4px;
+  padding: 22px 15px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: var(--paper-soft);
+  text-align: center;
 }
 
 .order-empty-state strong,
 .order-unavailable-panel strong,
 .order-query-state strong {
   display: block;
-  margin-bottom: 0.35rem;
+  margin-bottom: 6px;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
 }
 
 .order-empty-state p,
 .order-unavailable-panel p,
 .order-query-state p {
   margin: 0;
-  color: var(--muted-strong);
-  font-size: 0.84rem;
+  color: var(--muted);
+  font-size: 0.74rem;
   line-height: 1.55;
 }
 
 .order-empty-hint {
-  margin-top: 0.5rem !important;
-  color: var(--muted) !important;
-  font-size: 0.76rem !important;
+  margin-top: 6px !important;
+  font-size: 0.72rem !important;
 }
 
 .order-unavailable-panel {
@@ -6511,43 +6534,27 @@ body[data-dataset="sample"] .metric-item > strong {
 }
 
 .order-readonly-note {
-  margin: 1.2rem 0 0.4rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--paper-soft);
+  margin-top: 12px;
+  padding: 9px 12px;
+  color: var(--muted);
+  font-size: 0.69rem;
 }
 
 .order-readonly-note summary {
-  padding: 0.6rem 0.8rem;
-  color: var(--muted-strong);
   cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 600;
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  font-weight: 700;
 }
 
 .order-readonly-note div {
   display: grid;
-  gap: 0.35rem;
-  padding: 0 0.8rem 0.75rem;
-  color: var(--muted);
-  font-size: 0.74rem;
+  gap: 5px;
+  margin-top: 8px;
   line-height: 1.5;
 }
 
 @media (max-width: 720px) {
-  .order-hero header {
-    display: grid;
-  }
-
-  .order-source-receipt {
-    min-width: 0;
-  }
-
-  .order-status-banner {
-    display: grid;
-    gap: 0.25rem;
-  }
-
   .order-filter-toolbar {
     display: grid;
     grid-template-columns: 1fr;
@@ -6563,5 +6570,98 @@ body[data-dataset="sample"] .metric-item > strong {
 
   .order-unavailable-panel {
     display: grid;
+    text-align: left;
+  }
+}
+
+@media (max-width: 640px) {
+  /* The same mobile rhythm as 发货订单: hero header stacks and the source
+     receipt stretches full width. */
+  .order-hero > header,
+  .order-list-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .order-hero > header {
+    padding: 18px 15px 15px;
+  }
+
+  .order-source-receipt {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .order-partial-note {
+    padding-inline: 15px;
+  }
+
+  .order-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Phone layout: each record becomes a two-column information card. This
+     keeps the full row and its expanded detail readable without asking the
+     operator to pan a 720px table inside a 390px screen. */
+  .order-table {
+    display: block;
+    min-width: 0;
+    table-layout: auto;
+  }
+
+  .order-table thead {
+    display: none;
+  }
+
+  .order-table tbody,
+  .order-table .order-detail-row,
+  .order-table .order-detail-row td {
+    display: block;
+    width: 100%;
+  }
+
+  .order-table .order-row {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-top: 1px solid var(--line);
+  }
+
+  .order-table .order-row td {
+    display: block;
+    min-width: 0;
+    padding: 8px 9px;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .order-table .order-row td::before {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--muted);
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+
+  .order-table .order-row td:nth-child(1)::before { content: "状态"; }
+  .order-table .order-row td:nth-child(2)::before { content: "标识"; }
+  .order-table .order-row td:nth-child(3)::before { content: "摘要"; }
+  .order-table .order-row td:nth-child(4)::before { content: "店铺"; }
+  .order-table .order-row td:nth-child(5)::before { content: "创建时间"; }
+  .order-table .order-row td:nth-child(6)::before { content: "更新时间"; }
+  .order-table .order-row td:nth-child(7)::before { content: "标签"; }
+
+  .order-table .order-row td:nth-child(7) {
+    grid-column: 1 / -1;
+  }
+
+  .order-detail-row td {
+    padding: 9px 10px 13px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .order-tag {
+    white-space: normal;
   }
 }

@@ -146,7 +146,7 @@ export function queryOrderManagement(data, paramsValue = new URLSearchParams()) 
   const pageSize = pageSizeParam(params);
 
   const index = record(data);
-  const coverage = record(index.coverage);
+  const globalCoverage = record(index.coverage);
   const pages = record(index.pages);
   const page = record(pages[pageId]);
   if (!pages[pageId] || page.status === 'UNAVAILABLE') {
@@ -159,6 +159,17 @@ export function queryOrderManagement(data, paramsValue = new URLSearchParams()) 
     );
   }
   const pageRows = rows(page.rows);
+  const pageCoverage = record(record(index.pageCoverage)[pageId]);
+  const expectedStoreCount = Number.isSafeInteger(pageCoverage.expectedStoreCount)
+    ? pageCoverage.expectedStoreCount
+    : Number.isSafeInteger(globalCoverage.expectedStoreCount)
+      ? globalCoverage.expectedStoreCount
+      : null;
+  const completedStoreCount = Number.isSafeInteger(pageCoverage.completedStoreCount)
+    ? pageCoverage.completedStoreCount
+    : 0;
+  const pageCoverageStatus = pageCoverage.status
+    ?? (page.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'PARTIAL');
   const universeStores = [...new Set(pageRows.map((row) => String(row.storeCode)))];
   if (store !== 'ALL' && !universeStores.some((code) => code.toUpperCase() === store)) {
     fail('QUERY_STORE_UNKNOWN', '店铺不在当前数据范围内');
@@ -201,19 +212,19 @@ export function queryOrderManagement(data, paramsValue = new URLSearchParams()) 
       reason: page.reason ?? null,
     }),
     updatedAt: index.updatedAt ?? null,
-    complete: page.status === 'AVAILABLE' && coverage.status === 'COMPLETE',
+    complete: page.status === 'AVAILABLE' && pageCoverageStatus === 'COMPLETE',
     coverage: Object.freeze({
-      status: coverage.status ?? 'UNAVAILABLE',
-      expectedStoreCount: coverage.expectedStoreCount ?? null,
-      completedStoreCount: coverage.completedStoreCount ?? 0,
-      storeCodes: Object.freeze(rows(coverage.storeCodes)),
-      reason: coverage.reason ?? null,
+      status: pageCoverageStatus,
+      expectedStoreCount,
+      completedStoreCount,
+      storeCodes: Object.freeze(rows(pageCoverage.storeCodes)),
+      reason: pageCoverage.reason ?? page.reason ?? null,
     }),
     source: Object.freeze({
       updatedAt: index.updatedAt ?? null,
       latestSourceFetchedAt: page.latestSourceFetchedAt ?? null,
-      storeCount: Number.isSafeInteger(coverage.completedStoreCount) ? coverage.completedStoreCount : null,
-      expectedStoreCount: coverage.expectedStoreCount ?? null,
+      storeCount: completedStoreCount,
+      expectedStoreCount,
     }),
     query: Object.freeze({
       page: pageId,

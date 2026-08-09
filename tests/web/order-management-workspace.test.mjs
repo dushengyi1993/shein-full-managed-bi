@@ -82,16 +82,20 @@ test('the eight order-management pages are registered routes with researched cop
   }
 
   // Research-based per-page title, description, filter hint and read-only
-  // boundary all exist and are rendered.
+  // boundary all exist and are rendered. Secondary category metadata is gone.
   for (const page of ORDER_PAGES) {
     assert.match(
       app,
-      new RegExp(`['"]?${page}['"]?: \\{\\s*title: '[^']+',\\s*code: '[^']+',\\s*group: '[^']+',\\s*description:`),
-      `${page} must carry title/code/group/description`,
+      new RegExp(`['"]?${page}['"]?: \\{\\s*title: '[^']+',\\s*description:`),
+      `${page} must carry title and description`,
     );
     assert.match(app, /filterHint:/);
     assert.match(app, /readOnly:/);
   }
+  const orderMetaStart = app.indexOf('const ORDER_PAGE_META = Object.freeze({');
+  const orderMetaEnd = app.indexOf('\n});', orderMetaStart);
+  const orderMeta = app.slice(orderMetaStart, orderMetaEnd);
+  assert.doesNotMatch(orderMeta, /group:|code:|'发货履约'|'退货异常'|'服务质检'/);
   const render = functionBody(app, 'renderOrderWorkspace');
   assert.match(render, /ORDER_PAGE_META\[pageId\]/);
   assert.match(render, /meta\.filterHint/);
@@ -282,25 +286,41 @@ test('order workspace distinguishes AVAILABLE, PARTIAL, UNAVAILABLE, empty and f
   const app = await read('src/web/app.js');
   const render = functionBody(app, 'renderOrderWorkspace');
   const label = functionBody(app, 'orderStatusLabel');
-  const explanation = functionBody(app, 'orderStatusExplanation');
   const empty = functionBody(app, 'orderEmptyState');
   const unavailable = functionBody(app, 'orderUnavailablePanel');
   const queryState = functionBody(app, 'orderWorkspaceQueryState');
 
-  // Three visually and textually distinct page states.
-  assert.match(render, /order-status-banner status-\$\{String\(status\)\.toLowerCase\(\)\}/);
-  assert.match(render, /status === 'UNAVAILABLE' \? orderUnavailablePanel/);
+  // The hero follows 发货订单; PARTIAL renders one operational line, full
+  // pages render none, and UNAVAILABLE keeps its fail-closed panel.
+  assert.match(render, /status === 'PARTIAL' \? orderPartialNote\(queryData\)/);
+  assert.match(render, /status === 'UNAVAILABLE' \? orderUnavailablePanel\(\)/);
   assert.match(render, /rows\.length \? orderRowTable\(rows\) : orderEmptyState\(\)/);
   assert.match(label, /'数据可用'/);
   assert.match(label, /'部分覆盖'/);
   assert.match(label, /'数据不可用'/);
-  assert.match(explanation, /部分店铺数据未完成/);
-  assert.match(explanation, /不会用旧快照或补零结果冒充/);
-  assert.match(render, /orderCoverageLine\(queryData\.coverage\)/);
-  assert.match(render, /queryData\.reason/);
   assert.match(render, /orderStatusControl\(queryData, pageState\)/);
   assert.match(render, /负责人筛选（/);
   assert.match(render, /负责人范围不作用于本页/);
+
+  // No technical diagnostics reach the business UI: no gate codes, no raw
+  // reason strings, no store lists and no global coverage banner.
+  assert.doesNotMatch(
+    render,
+    /PAGE_GATE_FAILED|SESSION_GATE_FAILED|STORE_COVERAGE_INCOMPLETE|DATABASE_STORE_COVERAGE_INCOMPLETE/,
+  );
+  assert.doesNotMatch(render, /queryData\.reason/);
+  assert.doesNotMatch(render, /order-status-banner/);
+  assert.doesNotMatch(render, /orderCoverageLine\(queryData\.coverage\)/);
+
+  // PARTIAL shows exactly one operational line plus a small, low-interference
+  // entry; the explanation stays operational and never names gate codes.
+  const partial = functionBody(app, 'orderPartialNote');
+  assert.match(partial, /orderCoverageLine\(queryData\)/);
+  assert.match(functionBody(app, 'orderCoverageLine'), /当前展示 /);
+  assert.match(partial, /查看说明/);
+  assert.match(partial, /不会补零/);
+  assert.match(partial, /后台审计与日志/);
+  assert.doesNotMatch(partial, /PAGE_GATE_FAILED|SESSION_GATE_FAILED/);
 
   // A real empty result is neither an error nor "数据不可用".
   assert.match(empty, /当前条件下没有可展示的记录/);
@@ -311,6 +331,7 @@ test('order workspace distinguishes AVAILABLE, PARTIAL, UNAVAILABLE, empty and f
   assert.match(unavailable, /数据未更新，本页面暂缓展示/);
   assert.match(unavailable, /不会沿用旧候选、旧快照或补零数字冒充结果/);
   assert.match(unavailable, /data-order-retry="1"/);
+  assert.doesNotMatch(unavailable, /PAGE_GATE_FAILED|SESSION_GATE_FAILED/);
 
   // A load failure is a separate state with retry and honest copy.
   assert.match(queryState, /role="\$\{error \? 'alert' : 'status'\}"/);
@@ -320,14 +341,59 @@ test('order workspace distinguishes AVAILABLE, PARTIAL, UNAVAILABLE, empty and f
   assert.match(queryState, /query-skeleton/);
   assert.match(queryState, /order-query-error/);
 
-  // The coverage line never invents store counts.
+  // Coverage comes from the page-specific server gate, including successful
+  // zero-row stores; it is never inferred from row facets or a global gate.
+  const pageCoverage = functionBody(app, 'orderPageCoverage');
+  assert.match(pageCoverage, /coverage\.completedStoreCount/);
+  assert.match(pageCoverage, /expectedStoreCount/);
+  assert.doesNotMatch(pageCoverage, /facets\.stores|coverage\.storeCodes/);
   const coverage = functionBody(app, 'orderCoverageLine');
-  assert.match(coverage, /店铺覆盖未知/);
-  assert.match(coverage, /completedStoreCount/);
-  assert.match(coverage, /expectedStoreCount/);
-  assert.match(coverage, /storeCodes/);
-  assert.match(coverage, /说明：/);
-  assert.match(coverage, /isUnit\(coverage\.completedStoreCount\)/);
+  assert.match(coverage, /当前展示 /);
+  assert.match(coverage, /家暂无数据/);
+  assert.match(coverage, /numberFormatter\.format\(expected\)/);
+  assert.match(coverage, /部分店铺数据未完成/);
+});
+
+test('order page coverage is per-page and never the global 25/25 intersection', async () => {
+  const source = await read('src/web/app.js');
+  const numberFormatterStart = source.indexOf('const numberFormatter = ');
+  const numberFormatterEnd = source.indexOf(';', numberFormatterStart) + 1;
+  const productRecordStart = source.indexOf('function productRecord(');
+  const productRecordEnd = source.indexOf('\nfunction ', productRecordStart);
+  const pageCoverage = functionBody(source, 'orderPageCoverage');
+  const coverageLine = functionBody(source, 'orderCoverageLine');
+  // eslint-disable-next-line no-new-func
+  const { orderPageCoverage, orderCoverageLine } = new Function(`
+    ${source.slice(numberFormatterStart, numberFormatterEnd)}
+    ${source.slice(productRecordStart, productRecordEnd === -1 ? source.length : productRecordEnd)}
+    ${pageCoverage}
+    ${coverageLine}
+    return { orderPageCoverage, orderCoverageLine };
+  `)();
+
+  // A PARTIAL page reports its own gate evidence, including successful stores
+  // that returned zero rows.
+  const partialQuery = {
+    facets: { stores: Array.from({ length: 4 }, (_, index) => ({ code: `S${index}` })) },
+    coverage: { expectedStoreCount: 25, completedStoreCount: 16 },
+  };
+  assert.deepEqual(orderPageCoverage(partialQuery), { completed: 16, expected: 25 });
+  assert.equal(orderCoverageLine(partialQuery), '当前展示 16/25 家，9 家暂无数据');
+
+  // A full page reports 25/25 with zero missing.
+  assert.equal(
+    orderCoverageLine({
+      facets: { stores: Array.from({ length: 8 }, (_, index) => ({ code: `S${index}` })) },
+      coverage: { expectedStoreCount: 25, completedStoreCount: 25 },
+    }),
+    '当前展示 25/25 家，0 家暂无数据',
+  );
+
+  // An unknown expected count fails closed instead of inventing numbers.
+  assert.equal(
+    orderCoverageLine({ facets: { stores: [] }, coverage: { expectedStoreCount: null, completedStoreCount: null } }),
+    '部分店铺数据未完成，覆盖按本页实际数据计算。',
+  );
 });
 
 test('order details render allow-listed sanitized fields and never write to the platform', async () => {
@@ -417,14 +483,21 @@ test('order field labels are centralized and cover the full shared-contract allo
     assert.match(labelsBlock, new RegExp(`\\b${name}: '${label}'`), name);
   }
 
-  // Weights carry the kg unit and unknown fields degrade to 其他信息 instead
-  // of leaking the technical key.
+  // Weights and business counts carry explicit units; unknown fields degrade
+  // to 其他信息 instead of leaking the technical key.
   assert.match(unitsBlock, /packageWeight: 'kg'/);
   assert.match(unitsBlock, /finalSettlementWeight: 'kg'/);
+  assert.match(unitsBlock, /deliveryQuantity: '件'/);
+  assert.match(unitsBlock, /returnQuantity: '件'/);
+  assert.match(unitsBlock, /returnBoxNum: '箱'/);
   assert.match(app, /ORDER_FIELD_UNKNOWN_LABEL = '其他信息'/);
   assert.match(app, /function orderFieldLabel\(name\)/);
   assert.match(app, /return label \|\| ORDER_FIELD_UNKNOWN_LABEL/);
   assert.match(app, /function orderFieldValue\(name, value\)/);
+  const sourceLabel = functionBody(app, 'orderSourceLabel');
+  assert.match(sourceLabel, /SESSION_HTTP.*平台订单页只读数据/);
+  assert.match(sourceLabel, /OPENAPI_FACT_DATABASE.*官方接口事实库/);
+  assert.doesNotMatch(sourceLabel, /return value;/);
 });
 
 test('order paging and filter controls stay server-driven and URL-synced', async () => {
@@ -478,6 +551,30 @@ test('order-management group expands in place on desktop and stays an accordion 
 
   assert.match(html, /class="nav-group-panel" id="order-nav-panel" hidden/);
   assert.match(html, /aria-controls="order-nav-panel"/);
+  // The panel is one flat 9-item list; no secondary category labels remain.
+  const panelStart = html.indexOf('id="order-nav-panel"');
+  const panelEnd = html.indexOf('</div>', panelStart + 1);
+  const panel = html.slice(panelStart, panelEnd);
+  assert.doesNotMatch(panel, /nav-subgroup/);
+  assert.deepEqual(
+    [...panel.matchAll(/data-route="([^"]+)"/g)].map((match) => match[1]),
+    [
+      'fulfilment',
+      'delivery-notes',
+      'stock-records',
+      'waybills',
+      'return-applications',
+      'return-orders',
+      'exceptions',
+      'value-added-services',
+      'quality-reports',
+    ],
+  );
+  assert.ok(
+    panel.indexOf('<a href="#fulfilment" data-route="fulfilment">')
+      < panel.indexOf('<a href="#delivery-notes"'),
+    '发货订单 stays the first item',
+  );
   assert.match(app, /const orderRouteActive = state\.route === 'fulfilment' \|\| URL_ORDER_PAGE_IDS\.includes\(state\.route\)/);
   assert.match(app, /orderGroupPanel\.hidden = false/);
   assert.doesNotMatch(app, /event\.target\.closest\?\.\('\.nav-group'\)/);
@@ -492,12 +589,20 @@ test('order-management group expands in place on desktop and stays an accordion 
     desktop,
     /\.sidebar \.primary-nav\s*\{\s*overflow-x: hidden;\s*overflow-y: auto;/,
   );
-  // Active and focus states are explicit for the toggle and subgroup links.
+  // The unselected toggle is readable on the final dark rail and every state
+  // (default, hover, expanded, active-child) is distinct.
+  assert.match(styles, /\.nav-group-toggle\s*\{[^}]*color: #d8d0c5/s);
+  assert.match(styles, /\.nav-group-toggle:hover\s*\{/);
+  assert.match(styles, /\.nav-group-toggle\[aria-expanded="true"\]\s*\{/);
+  assert.match(styles, /\.nav-group-toggle\.nav-group-active\s*\{[^}]*color: #15130f[^}]*background: #f8f4eb/s);
+  assert.match(styles, /\.nav-group-toggle small\s*\{[^}]*color: #aaa299/s);
+  assert.match(styles, /\.nav-group-chevron\s*\{[^}]*color: #bdb5aa/s);
+  // Active and focus states are explicit for the toggle and flat panel links.
   assert.match(styles, /\.nav-group-toggle\.nav-group-active/);
-  assert.match(desktop, /\.nav-subgroup a\.active\s*\{/);
+  assert.match(desktop, /\.nav-group-panel a\.active\s*\{/);
   assert.match(
     desktop,
-    /\.nav-group-toggle:focus-visible,\s*\.nav-subgroup a:focus-visible/,
+    /\.nav-group-toggle:focus-visible,\s*\.nav-group-panel a:focus-visible/,
   );
   // Mobile and tablet: the same panel remains in document flow as a true
   // accordion instead of becoming an overlay sheet.
@@ -526,15 +631,32 @@ test('order-management group expands in place on desktop and stays an accordion 
   assert.match(app, /if \(event\.key === 'Escape'\) closeOrderNavPanel\(\)/);
   assert.match(app, /window\.addEventListener\('hashchange', \(\) => \{\s*\n\s*closeOrderNavPanel\(\);/);
 
-  // The three page states are visually distinct and tables never widen the
-  // 390px document.
-  assert.match(styles, /\.order-status-banner\.status-available/);
-  assert.match(styles, /\.order-status-banner\.status-partial/);
-  assert.match(styles, /\.order-status-banner\.status-unavailable/);
+  // PARTIAL, empty and unavailable states are visually distinct, and tables
+  // never widen the 390px document.
+  assert.match(styles, /\.order-partial-note\s*[,{]/);
+  assert.match(styles, /\.order-partial-line\s*[,{]/);
   assert.match(styles, /\.order-empty-state\s*[,{]/);
   assert.match(styles, /\.order-unavailable-panel\s*[,{]/);
+  assert.match(styles, /\.order-unavailable-panel\s*\{[^}]*border-color: var\(--danger\)/s);
   assert.match(styles, /\.table-wrap\s*\{[^}]*max-width:\s*100%[^}]*overflow:\s*auto/s);
-  assert.match(styles, /\.order-table\s*\{[^}]*min-width: 720px/s);
+  assert.match(styles, /\.order-table\s*\{[^}]*min-width: 940px/s);
+  // The detail grid is compact and single-column on mobile.
+  assert.match(
+    styles,
+    /\.order-field-list li\s*\{[^}]*grid-template-columns: minmax\(0, auto\) minmax\(0, 1fr\)/s,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 640px\)[\s\S]*?\.order-detail-grid\s*\{\s*grid-template-columns: 1fr;/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 640px\)[\s\S]*?\.order-table\s*\{[^}]*min-width: 0;[^}]*table-layout: auto;/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 640px\)[\s\S]*?\.order-table \.order-row\s*\{[^}]*display: grid;[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/,
+  );
   assert.match(
     styles,
     /@media \(max-width: 720px\)[\s\S]*?\.order-filter-toolbar\s*\{\s*display: grid;/,

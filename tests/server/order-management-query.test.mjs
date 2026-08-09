@@ -33,6 +33,26 @@ const INDEX = Object.freeze({
     storeCodes: Object.freeze(['DL5477', 'MZ2406']),
     reason: null,
   }),
+  pageCoverage: Object.freeze({
+    'delivery-notes': Object.freeze({
+      status: 'COMPLETE', expectedStoreCount: 2, completedStoreCount: 2,
+      storeCodes: Object.freeze(['DL5477', 'MZ2406']), reason: null,
+    }),
+    exceptions: Object.freeze({
+      status: 'PARTIAL', expectedStoreCount: 2, completedStoreCount: 1,
+      storeCodes: Object.freeze(['DL5477']), reason: 'ROWS_REJECTED_SCHEMA:1',
+    }),
+    'stock-records': Object.freeze({
+      status: 'UNAVAILABLE', expectedStoreCount: 2, completedStoreCount: 0,
+      storeCodes: Object.freeze([]), reason: 'STOCK_RECORDS_FETCH_FAILED',
+    }),
+    ...Object.fromEntries([
+      'return-applications', 'return-orders', 'value-added-services', 'quality-reports',
+    ].map((pageId) => [pageId, Object.freeze({
+      status: 'COMPLETE', expectedStoreCount: 2, completedStoreCount: 2,
+      storeCodes: Object.freeze(['DL5477', 'MZ2406']), reason: null,
+    })])),
+  }),
   pages: Object.freeze({
     'delivery-notes': Object.freeze({
       status: 'AVAILABLE',
@@ -268,12 +288,13 @@ test('treats null status fields as filterable but never invents facet labels', (
   assert.deepEqual(filtered.rows.map((entry) => entry.id), ['DN-1001', 'DN-1003']);
 });
 
-test('discloses PARTIAL page and coverage states without claiming COMPLETE', () => {
+test('discloses each page coverage without borrowing the global intersection', () => {
   const partialPage = queryOrderManagement(INDEX, new URLSearchParams('page=exceptions'));
   assert.equal(partialPage.page.status, 'PARTIAL');
   assert.equal(partialPage.page.reason, 'ROWS_REJECTED_SCHEMA:1');
   assert.equal(partialPage.complete, false);
-  assert.equal(partialPage.coverage.status, 'COMPLETE');
+  assert.equal(partialPage.coverage.status, 'PARTIAL');
+  assert.equal(partialPage.coverage.completedStoreCount, 1);
   assert.equal(partialPage.rows.length, 1);
 
   const partialCoverage = queryOrderManagement(
@@ -281,8 +302,9 @@ test('discloses PARTIAL page and coverage states without claiming COMPLETE', () 
     new URLSearchParams('page=delivery-notes'),
   );
   assert.equal(partialCoverage.page.status, 'AVAILABLE');
-  assert.equal(partialCoverage.coverage.status, 'PARTIAL');
-  assert.equal(partialCoverage.complete, false);
+  assert.equal(partialCoverage.coverage.status, 'COMPLETE');
+  assert.equal(partialCoverage.coverage.completedStoreCount, 2);
+  assert.equal(partialCoverage.complete, true);
 });
 
 test('fails closed for missing or UNAVAILABLE pages', () => {
@@ -313,6 +335,12 @@ test('serves the five session-backed pages when their snapshot is available', ()
     queryOrderManagement(INDEX, new URLSearchParams('page=quality-reports')).rows[0].id,
     'QC-1001',
   );
+  const returnApplications = queryOrderManagement(
+    INDEX,
+    new URLSearchParams('page=return-applications'),
+  );
+  assert.equal(returnApplications.coverage.completedStoreCount, 2);
+  assert.deepEqual(returnApplications.facets.stores, [{ code: 'DL5477', count: 1 }]);
 });
 
 test('rejects the retired delivery-desk page id', () => {
