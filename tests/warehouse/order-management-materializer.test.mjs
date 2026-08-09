@@ -116,6 +116,15 @@ test('materializes delivery-note and waybill cores from fact.delivery with the s
   assert.ok(first.metrics.some((entry) => entry.name === 'deliveryQuantity' && entry.value === 100));
   assert.ok(first.facts.some((entry) => entry.name === 'expressCompanyName' && entry.value === '顺丰'));
   assert.ok(first.facts.some((entry) => entry.name === 'orderTypeName' && entry.value === '备货'));
+  assert.ok(first.facts.some((entry) => (
+    entry.name === 'reservedParcelAt' && entry.value === '2026-08-08T02:00:00.000Z'
+  )));
+  assert.ok(first.facts.some((entry) => (
+    entry.name === 'takenAt' && entry.value === '2026-08-08T03:00:00.000Z'
+  )));
+  assert.ok(first.facts.some((entry) => (
+    entry.name === 'receivedAt' && entry.value === '2026-08-08T04:00:00.000Z'
+  )));
   assert.ok(first.details.some((entry) => entry.name === 'orderNo' && entry.value === 'PB-1'));
   assert.ok(first.tags.includes('发货单'));
   assert.equal(notes.rows[1].statusCode, 'TAKEN');
@@ -125,6 +134,15 @@ test('materializes delivery-note and waybill cores from fact.delivery with the s
   assert.equal(waybills.rows.length, 2);
   assert.equal(waybills.rows[0].id, 'SF-1001');
   assert.equal(waybills.rows[0].statusCode, 'SIGNED');
+  assert.ok(waybills.rows[0].facts.some((entry) => (
+    entry.name === 'reservedParcelAt' && entry.value === '2026-08-08T02:00:00.000Z'
+  )));
+  assert.ok(waybills.rows[0].facts.some((entry) => (
+    entry.name === 'takenAt' && entry.value === '2026-08-08T03:00:00.000Z'
+  )));
+  assert.ok(waybills.rows[0].facts.some((entry) => (
+    entry.name === 'receivedAt' && entry.value === '2026-08-08T04:00:00.000Z'
+  )));
   assert.equal(waybills.rows[1].id, 'SF-1003');
   assert.equal(waybills.rows[1].statusCode, 'RESERVED');
   assert.ok(waybills.rows.every((row) => !row.id.includes('FH-2')));

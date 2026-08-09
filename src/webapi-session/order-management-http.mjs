@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 import {
   ORDER_MANAGEMENT_ENDPOINTS,
   ORDER_MANAGEMENT_TRANSPORT_LIMITS,
@@ -5,6 +7,10 @@ import {
   assertOrderManagementTransportRequest,
   orderManagementEndpointUrl,
 } from '../webapi-history/order-management-contracts.mjs';
+import {
+  containsNumericPii,
+  containsSensitiveText,
+} from '../order-management/order-management-contract.mjs';
 import {
   cookieHeaderForUrl,
   mergeSetCookieHeaders,
@@ -14,12 +20,59 @@ import {
 import { normalizeWebApiSessionBundle } from './encrypted-session-store.mjs';
 
 const ORDER_MANAGEMENT_REFERER = `${ORDER_MANAGEMENT_WEBAPI_ORIGIN}/#/pfmp/order-management/delivery/order/list`;
+const ORDER_MANAGEMENT_PLATFORM_CODE_MAX_LENGTH = 32;
+const ORDER_MANAGEMENT_PLATFORM_MESSAGE_MAX_LENGTH = 200;
+
+/**
+ * Audit-safe platform business code.  Only a short printable code is kept;
+ * anything else (URL fragments, HTML, whitespace tricks) is stripped.
+ */
+export function sanitizePlatformCode(value) {
+  const text = String(value ?? '').trim();
+  if (!new RegExp(`^[A-Za-z0-9._-]{1,${ORDER_MANAGEMENT_PLATFORM_CODE_MAX_LENGTH}}$`).test(text)) {
+    return null;
+  }
+  return text.toUpperCase();
+}
+
+/**
+ * Strictly scrubbed platform message for audit evidence.  Any message that
+ * resembles a phone number, email, address/contact text or a long digit run
+ * is dropped entirely (fail closed) instead of being truncated.  The result
+ * is capped and control characters are removed so it never reaches the
+ * business UI.
+ */
+export function sanitizePlatformMessage(value) {
+  const text = String(value ?? '')
+    .trim()
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return null;
+  if (containsNumericPii(text) || containsSensitiveText(text)) return null;
+  return text.slice(0, ORDER_MANAGEMENT_PLATFORM_MESSAGE_MAX_LENGTH);
+}
+
+/**
+ * Deterministic short digest of a scrubbed platform message.  Evidence may
+ * carry this digest instead of any raw message text.
+ */
+export function platformMessageDigest(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  return crypto.createHash('sha256')
+    .update(`order-management.v1.platform-message:${text}`)
+    .digest('hex')
+    .slice(0, 16);
+}
 
 export class OrderManagementTransportError extends Error {
-  constructor(code) {
+  constructor(code, { platformCode = null, platformMessage = null } = {}) {
     super(`order-management session HTTP refused: ${code}`);
     this.name = 'OrderManagementTransportError';
     this.code = code;
+    this.platformCode = sanitizePlatformCode(platformCode);
+    this.platformMessage = sanitizePlatformMessage(platformMessage);
   }
 }
 
@@ -50,6 +103,19 @@ function authExpired(body) {
     || businessCode(body) === '20302';
 }
 
+function platformFailureFields(body) {
+  const messages = [
+    body?.msg,
+    body?.message,
+    body?.error?.msg,
+    body?.error?.message,
+  ].filter((value) => typeof value === 'string' && value.trim());
+  return {
+    platformCode: businessCode(body),
+    platformMessage: [...new Set(messages)].join(' '),
+  };
+}
+
 function parseBodyText(bodyText) {
   let parsed;
   try {
@@ -57,9 +123,17 @@ function parseBodyText(bodyText) {
   } catch {
     throw new OrderManagementTransportError('ORDER_MANAGEMENT_RESPONSE_NOT_JSON');
   }
-  if (authExpired(parsed)) throw new OrderManagementTransportError('ORDER_MANAGEMENT_AUTH_EXPIRED');
+  if (authExpired(parsed)) {
+    throw new OrderManagementTransportError(
+      'ORDER_MANAGEMENT_AUTH_EXPIRED',
+      platformFailureFields(parsed),
+    );
+  }
   if (!businessSuccess(parsed)) {
-    throw new OrderManagementTransportError('ORDER_MANAGEMENT_BUSINESS_STATUS_FAILED');
+    throw new OrderManagementTransportError(
+      'ORDER_MANAGEMENT_BUSINESS_STATUS_FAILED',
+      platformFailureFields(parsed),
+    );
   }
   return parsed;
 }
@@ -147,7 +221,19 @@ export async function openOrderManagementHttpSession({
       ));
     }
     if ([301, 302, 303, 307, 308, 401, 403].includes(response.status)) {
-      throw new OrderManagementTransportError('ORDER_MANAGEMENT_AUTH_EXPIRED');
+      let failureFields = {};
+      try {
+        const responseText = await response.text();
+        if (Buffer.byteLength(responseText, 'utf8') <= resolvedLimits.maxResponseBytes) {
+          failureFields = platformFailureFields(JSON.parse(responseText));
+        }
+      } catch {
+        // Redirect/login HTML and unreadable bodies carry no audit fields.
+      }
+      throw new OrderManagementTransportError(
+        'ORDER_MANAGEMENT_AUTH_EXPIRED',
+        failureFields,
+      );
     }
     if (response.status < 200 || response.status >= 300) {
       throw new OrderManagementTransportError('ORDER_MANAGEMENT_HTTP_STATUS_FAILED');

@@ -17,8 +17,10 @@ import {
   runOrderManagementSessionBackfill,
 } from '../../scripts/backfill_full_managed_order_management_sessions.mjs';
 import {
+  parseArgs as parseSyncArgs,
   runOrderManagementSessionSync,
 } from '../../scripts/sync_full_managed_order_management_sessions.mjs';
+import { OrderManagementTransportError } from '../../src/webapi-session/order-management-http.mjs';
 import { mergeOrderManagementSessionSnapshots } from '../../src/warehouse/order-management-snapshot-merge.mjs';
 
 const NOW = new Date('2026-08-08T06:00:00.000Z');
@@ -553,8 +555,13 @@ const GOOD_RESPONSES = {
         waybillTypeSellerName: '发货运单',
         orderSystem: 'PFMP',
         isFreeName: '正常',
+        appointmentPickupTime: '2026-07-20 07:30:00',
         signTime: '2026-07-20 09:00:00',
-        pickupTime: null,
+        pickupTime: '2026-07-20 08:00:00',
+        estimateCombineNo: 'EC-SYNC-9',
+        estimatedApportionmentBillNo: 'EAB-SYNC-9',
+        apportionmentBillNoOrHedgeBillNo: 'AB-SYNC-9',
+        finalFormula: '按最终结算重量计费',
         packQuantity: 1,
         sendGoodsQuantity: 20,
       }],
@@ -724,6 +731,16 @@ test('session sync can skip statistics with includeStatistics false', async () =
   assert.deepEqual(result.snapshot.evidence.perStore[0].statistics, []);
   assert.equal(result.snapshot.pages['stock-records'].status, 'AVAILABLE');
   assert.equal(result.snapshot.pages.waybills.status, 'AVAILABLE');
+  const waybillFacts = Object.fromEntries(
+    result.snapshot.pages.waybills.rows[0].facts.map((entry) => [entry.name, entry.value]),
+  );
+  assert.equal(waybillFacts.appointmentPickupTime, '2026-07-20 07:30:00');
+  assert.equal(waybillFacts.pickupTime, '2026-07-20 08:00:00');
+  assert.equal(waybillFacts.signTime, '2026-07-20 09:00:00');
+  assert.equal(waybillFacts.estimateCombineNo, 'EC-SYNC-9');
+  assert.equal(waybillFacts.estimatedApportionmentBillNo, 'EAB-SYNC-9');
+  assert.equal(waybillFacts.apportionmentBillNoOrHedgeBillNo, 'AB-SYNC-9');
+  assert.equal(waybillFacts.finalFormula, '按最终结算重量计费');
 });
 
 test('session sync rejects unsafe store concurrency before opening a session', async () => {
@@ -742,6 +759,205 @@ test('session sync rejects unsafe store concurrency before opening a session', a
     /ORDER_MANAGEMENT_SYNC_CONCURRENCY_INVALID/,
   );
   assert.equal(opens, 0);
+});
+
+test('sync CLI page-id scope is strict: unknown, duplicate and empty scopes fail closed', () => {
+  const stores = FULL_MANAGED_STORE_CODES.join(',');
+  const args = parseSyncArgs([
+    `--stores=${stores}`,
+    '--page-ids=return-applications,waybills',
+    '--output=/tmp/sync.json',
+  ]);
+  assert.deepEqual(args.pageIds, ['return-applications', 'waybills']);
+  assert.equal(args.storeConcurrency, 1);
+  assert.throws(
+    () => parseSyncArgs([`--stores=${stores}`, '--page-ids=delivery-desk']),
+    /ORDER_MANAGEMENT_SYNC_PAGE_UNKNOWN/,
+  );
+  assert.throws(
+    () => parseSyncArgs([`--stores=${stores}`, '--page-ids=waybills,waybills']),
+    /ORDER_MANAGEMENT_SYNC_PAGE_DUPLICATE/,
+  );
+  assert.throws(
+    () => parseSyncArgs([`--stores=${stores}`, '--page-ids=']),
+    /ORDER_MANAGEMENT_SYNC_ARGUMENT_INVALID/,
+  );
+  assert.throws(
+    () => parseSyncArgs([`--stores=${stores}`, '--page-ids=,,']),
+    /ORDER_MANAGEMENT_SYNC_PAGE_SCOPE_REQUIRED/,
+  );
+});
+
+test('sync CLI bounds store concurrency to 1..5', () => {
+  const stores = FULL_MANAGED_STORE_CODES.join(',');
+  assert.equal(
+    parseSyncArgs([`--stores=${stores}`, '--store-concurrency=5']).storeConcurrency,
+    5,
+  );
+  for (const invalid of ['0', '6', 'abc', '']) {
+    assert.throws(
+      () => parseSyncArgs([`--stores=${stores}`, `--store-concurrency=${invalid}`]),
+      /ORDER_MANAGEMENT_SYNC_ARGUMENT_INVALID/,
+    );
+  }
+});
+
+test('sync CLI page scope and concurrency are passed into the executed run', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'om-sync-scope-execute-'));
+  const output = path.join(directory, 'sync.json');
+  const endpointCalls = [];
+  const args = parseSyncArgs([
+    `--stores=${FULL_MANAGED_STORE_CODES.join(',')}`,
+    '--page-ids=return-applications,waybills',
+    '--store-concurrency=2',
+    '--output=/tmp/sync.json',
+  ]);
+  const result = await runOrderManagementSessionSync({
+    storeCodes: args.stores,
+    output,
+    pageIds: args.pageIds,
+    storeConcurrency: args.storeConcurrency,
+    includeStatistics: false,
+    openSession: fakeOrderManagementSession(endpointCalls),
+    now: NOW,
+  });
+  const calledEndpoints = endpointCalls.map((call) => call.endpointCode);
+  assert.ok(calledEndpoints.includes('RETURN_APPLICATIONS_LIST'));
+  assert.ok(calledEndpoints.includes('WAYBILLS_PAGE'));
+  assert.ok(!calledEndpoints.includes('STOCK_RECORDS_LIST'));
+  assert.ok(!calledEndpoints.includes('WAYBILLS_STATISTICS'));
+  assert.deepEqual(Object.keys(result.snapshot.pages).sort(), [
+    'return-applications',
+    'waybills',
+  ]);
+  assert.equal(result.snapshot.pages.waybills.status, 'AVAILABLE');
+  const firstStoreEvidence = result.snapshot.evidence.perStore[0].pages.waybills;
+  assert.deepEqual(firstStoreEvidence.fetched.failures, []);
+  assert.ok(firstStoreEvidence.fetched.pagesFetched >= 1);
+  assert.equal(typeof firstStoreEvidence.fetched.total, 'number');
+});
+
+test('sync evidence keeps per-store per-page failures with safe codes only', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'om-sync-evidence-'));
+  const output = path.join(directory, 'sync.json');
+  const openSession = async ({ storeCode }) => ({
+    request: async () => {
+      throw new OrderManagementTransportError(
+        'ORDER_MANAGEMENT_BUSINESS_STATUS_FAILED',
+        { platformCode: '10005', platformMessage: '单据数据异常，请联系 13912345678' },
+      );
+    },
+    close: async () => ({ closed: true }),
+    expiry: () => ({}),
+  });
+  const result = await runOrderManagementSessionSync({
+    storeCodes: ROSTER,
+    output,
+    pageIds: ['waybills'],
+    windowDays: 30,
+    includeStatistics: false,
+    openSession,
+    now: NOW,
+  });
+  const evidenceJson = JSON.stringify(result.snapshot.evidence);
+  assert.ok(!evidenceJson.includes('13912345678'));
+  assert.ok(!evidenceJson.includes('单据数据异常'));
+  assert.ok(!evidenceJson.includes('private-value-not-on-disk'));
+  const failures = result.snapshot.evidence.perStore[0].pages.waybills.fetched.failures;
+  // The PII message is dropped before evidence: only the generic code and the
+  // safe platform code remain, and the missing-message digest part is absent.
+  assert.ok(failures.some((entry) => entry === 'PAGE_1_FETCH_FAILED:ORDER_MANAGEMENT_BUSINESS_STATUS_FAILED:PLATFORM_10005'));
+  assert.ok(!failures.some((entry) => entry.includes('MSG_')));
+  assert.equal(result.snapshot.pages.waybills.status, 'UNAVAILABLE');
+  assert.match(result.snapshot.pages.waybills.reason, /SESSION_GATE_FAILED/);
+  assert.equal(result.snapshot.evidence.perStore[0].pages.waybills.gates.ok, false);
+});
+
+test('partial page reason lists only stores whose page gate failed', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'om-sync-partial-reason-'));
+  const output = path.join(directory, 'sync.json');
+  const successfulStore = ROSTER[0];
+  const result = await runOrderManagementSessionSync({
+    storeCodes: ROSTER,
+    output,
+    pageIds: ['quality-reports'],
+    windowDays: 30,
+    includeStatistics: false,
+    openSession: async ({ storeCode }) => ({
+      request: async (endpointCode) => {
+        if (storeCode !== successfulStore) {
+          throw new OrderManagementTransportError('ORDER_MANAGEMENT_AUTH_EXPIRED');
+        }
+        return { httpStatus: 200, byteLength: 1, body: GOOD_RESPONSES[endpointCode] };
+      },
+      close: async () => ({ closed: true }),
+      expiry: () => ({}),
+    }),
+    now: NOW,
+  });
+  const page = result.snapshot.pages['quality-reports'];
+  assert.equal(page.status, 'PARTIAL');
+  assert.equal(page.gates.storeCount, 1);
+  assert.ok(!page.reason.includes(`${successfulStore}:GATE_FAILED`));
+  for (const storeCode of ROSTER.slice(1)) {
+    assert.ok(page.reason.includes(`${storeCode}:GATE_FAILED`));
+  }
+});
+
+test('sync evidence carries only a digest of a safe platform message', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'om-sync-evidence-digest-'));
+  const output = path.join(directory, 'sync.json');
+  const openSession = async ({ storeCode }) => ({
+    request: async () => {
+      throw new OrderManagementTransportError(
+        'ORDER_MANAGEMENT_BUSINESS_STATUS_FAILED',
+        { platformCode: '10005', platformMessage: '单据数据异常' },
+      );
+    },
+    close: async () => ({ closed: true }),
+    expiry: () => ({}),
+  });
+  const result = await runOrderManagementSessionSync({
+    storeCodes: ROSTER,
+    output,
+    pageIds: ['waybills'],
+    windowDays: 30,
+    includeStatistics: false,
+    openSession,
+    now: NOW,
+  });
+  const evidenceJson = JSON.stringify(result.snapshot.evidence);
+  assert.ok(!evidenceJson.includes('单据数据异常'));
+  const failures = result.snapshot.evidence.perStore[0].pages.waybills.fetched.failures;
+  assert.ok(failures.some((entry) => /^PAGE_1_FETCH_FAILED:ORDER_MANAGEMENT_BUSINESS_STATUS_FAILED:PLATFORM_10005:MSG_[0-9a-f]{16}$/.test(entry)));
+});
+
+test('sync evidence never embeds raw messages from untyped transport errors', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'om-sync-raw-error-'));
+  const output = path.join(directory, 'sync.json');
+  const openSession = async ({ storeCode }) => ({
+    request: async () => {
+      throw new Error('请联系 13800138000 处理该异常');
+    },
+    close: async () => ({ closed: true }),
+    expiry: () => ({}),
+  });
+  const result = await runOrderManagementSessionSync({
+    storeCodes: ROSTER,
+    output,
+    pageIds: ['waybills'],
+    windowDays: 30,
+    includeStatistics: false,
+    openSession,
+    now: NOW,
+  });
+  const evidenceJson = JSON.stringify(result.snapshot.evidence);
+  assert.ok(!evidenceJson.includes('13800138000'));
+  assert.ok(!evidenceJson.includes('请联系'));
+  assert.deepEqual(
+    result.snapshot.evidence.perStore[0].pages.waybills.fetched.failures,
+    ['PAGE_1_FETCH_FAILED:UNKNOWN', 'PAGING_INCOMPLETE'],
+  );
 });
 
 test('backfill execute merges gated windows without calling the statistics endpoint', async () => {

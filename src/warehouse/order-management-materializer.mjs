@@ -170,6 +170,10 @@ function buildDeliveryNoteRow(delivery, lines, orderLookup) {
       fact('delivery-notes', 'expressCode', delivery.express_code),
       fact('delivery-notes', 'warehouseName', delivery.warehouse_name),
       fact('delivery-notes', 'orderTypeName', joinLimited(orderTypeNames)),
+      fact('delivery-notes', 'reservedParcelAt', isoInstant(delivery.reserved_parcel_at)),
+      fact('delivery-notes', 'takenAt', isoInstant(delivery.taken_at)),
+      fact('delivery-notes', 'expectedReceiptAt', isoInstant(delivery.expected_receipt_at)),
+      fact('delivery-notes', 'receivedAt', isoInstant(delivery.received_at)),
     ].filter(Boolean)),
     details: Object.freeze(details),
   });
@@ -218,6 +222,10 @@ function buildWaybillCoreRow(delivery, lines) {
       fact('waybills', 'expressCompanyName', delivery.express_company_name),
       fact('waybills', 'orderNo', joinLimited(orderNos)),
       fact('waybills', 'skcName', joinLimited(lines.map((line) => line.skc_name))),
+      fact('waybills', 'reservedParcelAt', isoInstant(delivery.reserved_parcel_at)),
+      fact('waybills', 'takenAt', isoInstant(delivery.taken_at)),
+      fact('waybills', 'expectedReceiptAt', isoInstant(delivery.expected_receipt_at)),
+      fact('waybills', 'receivedAt', isoInstant(delivery.received_at)),
     ].filter(Boolean)),
     details: Object.freeze(details),
   });

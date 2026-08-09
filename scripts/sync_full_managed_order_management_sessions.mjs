@@ -27,6 +27,7 @@ import {
   createOrderManagementHttpTransport,
   openOrderManagementHttpSession,
   orderManagementResponseReader,
+  platformMessageDigest,
 } from '../src/webapi-session/order-management-http.mjs';
 import { atomicWriteJson } from '../src/warehouse/dashboard-materializer.mjs';
 
@@ -63,6 +64,8 @@ export function parseArgs(argv, { now = new Date() } = {}) {
     startDate: null,
     endDate: null,
     execute: false,
+    pageIds: null,
+    storeConcurrency: 1,
   };
   let windowDaysProvided = false;
   for (const token of argv) {
@@ -72,6 +75,12 @@ export function parseArgs(argv, { now = new Date() } = {}) {
     if (name === 'execute' && value === undefined) result.execute = true;
     else if (name === 'stores' && value) {
       result.stores = [...new Set(value.split(',').map((item) => item.trim().toUpperCase()))];
+    } else if (name === 'page-ids' && value) {
+      result.pageIds = normalizeSessionPageScope(
+        value.split(',').map((item) => item.trim()),
+      );
+    } else if (name === 'store-concurrency' && /^[1-5]$/.test(value ?? '')) {
+      result.storeConcurrency = Number(value);
     } else if (name === 'output' && value) result.output = value;
     else if (name === 'start-date' && value) result.startDate = value;
     else if (name === 'end-date' && value) result.endDate = value;
@@ -258,6 +267,13 @@ function buildWaybillRow(record, storeCode, fetchedAt) {
       factEntry('waybills', 'supplierTitle', record.supplierTitle),
       factEntry('waybills', 'rightsResultTypeName', record.rightsResultTypeName),
       factEntry('waybills', 'syStatusName', record.syStatusName),
+      factEntry('waybills', 'appointmentPickupTime', record.appointmentPickupTime),
+      factEntry('waybills', 'pickupTime', record.pickupTime),
+      factEntry('waybills', 'signTime', record.signTime),
+      factEntry('waybills', 'estimateCombineNo', record.estimateCombineNo),
+      factEntry('waybills', 'estimatedApportionmentBillNo', record.estimatedApportionmentBillNo),
+      factEntry('waybills', 'apportionmentBillNoOrHedgeBillNo', record.apportionmentBillNoOrHedgeBillNo),
+      factEntry('waybills', 'finalFormula', record.finalFormula),
     ].filter(Boolean)),
     details: Object.freeze([]),
   });
@@ -521,7 +537,7 @@ async function fetchPageRows(transport, endpointCode, { window, maxPages }) {
     try {
       response = await transport.fetch(endpointCode, body);
     } catch (error) {
-      failures.push(`PAGE_${page}_FETCH_FAILED:${String(error?.code ?? error?.message ?? 'UNKNOWN')}`);
+      failures.push(safeFetchFailure(page, error));
       break;
     }
     const reader = orderManagementResponseReader(endpointCode, response);
@@ -562,6 +578,23 @@ async function fetchPageRows(transport, endpointCode, { window, maxPages }) {
     pagesFetched,
     failures: Object.freeze(failures),
   });
+}
+
+/**
+ * Fail-closed failure evidence for one page fetch attempt.  Only the generic
+ * error code plus the already-scrubbed platform code and a digest of the
+ * scrubbed platform message are kept.  Raw messages, response bodies,
+ * cookies, URL parameters and PII never reach the evidence.
+ */
+function safeFetchFailure(page, error) {
+  const parts = [`PAGE_${page}_FETCH_FAILED:${String(error?.code ?? 'UNKNOWN')}`];
+  const platformCode = error?.platformCode;
+  if (typeof platformCode === 'string' && platformCode) parts.push(`PLATFORM_${platformCode}`);
+  const platformMessage = error?.platformMessage;
+  if (typeof platformMessage === 'string' && platformMessage) {
+    parts.push(`MSG_${platformMessageDigest(platformMessage)}`);
+  }
+  return parts.join(':');
 }
 
 function storePageGates(fetched, built) {
@@ -651,7 +684,7 @@ async function syncOneStore(transport, storeCode, {
         statistics.push(Object.freeze({
           statisticsType,
           value: null,
-          errorCode: String(error?.code ?? error?.message ?? 'STATISTICS_FETCH_FAILED'),
+          errorCode: String(error?.code ?? 'STATISTICS_FETCH_FAILED'),
         }));
       }
     }
@@ -675,10 +708,14 @@ function endpointAllowlistFor(pageId) {
  */
 export function normalizeSessionPageScope(pageIds) {
   const input = Array.isArray(pageIds) ? pageIds : [pageIds];
-  if (input.length === 0) throw new TypeError('ORDER_MANAGEMENT_SYNC_PAGE_SCOPE_REQUIRED');
+  const supplied = input.map((value) => String(value ?? '').trim()).filter(Boolean);
+  if (supplied.length === 0) throw new TypeError('ORDER_MANAGEMENT_SYNC_PAGE_SCOPE_REQUIRED');
   const known = new Set(Object.keys(ORDER_MANAGEMENT_SESSION_PAGES));
-  const deduped = [...new Set(input.map((value) => String(value ?? '').trim()).filter(Boolean))];
-  if (deduped.length === 0 || deduped.some((pageId) => !known.has(pageId))) {
+  const deduped = [...new Set(supplied)];
+  if (deduped.length !== supplied.length) {
+    throw new TypeError('ORDER_MANAGEMENT_SYNC_PAGE_DUPLICATE');
+  }
+  if (deduped.some((pageId) => !known.has(pageId))) {
     throw new TypeError('ORDER_MANAGEMENT_SYNC_PAGE_UNKNOWN');
   }
   return Object.freeze(deduped);
@@ -751,7 +788,14 @@ export async function runOrderManagementSessionSync({
         storeCode,
         ok: scopedPageIds.every((pageId) => result.pages[pageId].gates.ok),
         pages: Object.freeze(Object.fromEntries(
-          scopedPageIds.map((pageId) => [pageId, result.pages[pageId].gates]),
+          scopedPageIds.map((pageId) => [pageId, Object.freeze({
+            gates: result.pages[pageId].gates,
+            fetched: Object.freeze({
+              failures: result.pages[pageId].failures,
+              pagesFetched: result.pages[pageId].pagesFetched,
+              total: result.pages[pageId].total,
+            }),
+          })]),
         )),
         statistics: result.statistics,
       }));
@@ -763,22 +807,30 @@ export async function runOrderManagementSessionSync({
   for (const pageId of scopedPageIds) {
     const endpointCode = ORDER_MANAGEMENT_SESSION_PAGES[pageId];
     const okStores = perStore
-      .filter((entry) => entry.pages[pageId].ok)
+      .filter((entry) => entry.pages[pageId].gates.ok)
       .map((entry) => entry.storeCode)
       .sort();
     const gates = {
       totalVerified: okStores.length === roster.length
-        && okStores.every((store) => perStore.find((entry) => entry.storeCode === store).pages[pageId].totalVerified),
+        && okStores.every((store) => (
+          perStore.find((entry) => entry.storeCode === store).pages[pageId].gates.totalVerified
+        )),
       pagingVerified: okStores.length === roster.length
-        && okStores.every((store) => perStore.find((entry) => entry.storeCode === store).pages[pageId].pagingVerified),
+        && okStores.every((store) => (
+          perStore.find((entry) => entry.storeCode === store).pages[pageId].gates.pagingVerified
+        )),
       dedupeVerified: okStores.length === roster.length
-        && okStores.every((store) => perStore.find((entry) => entry.storeCode === store).pages[pageId].dedupeVerified),
+        && okStores.every((store) => (
+          perStore.find((entry) => entry.storeCode === store).pages[pageId].gates.dedupeVerified
+        )),
       contentVerified: okStores.length === roster.length
-        && okStores.every((store) => perStore.find((entry) => entry.storeCode === store).pages[pageId].contentVerified),
+        && okStores.every((store) => (
+          perStore.find((entry) => entry.storeCode === store).pages[pageId].gates.contentVerified
+        )),
       storeCount: okStores.length,
     };
     const failedStores = perStore
-      .filter((entry) => !entry.pages[pageId].ok)
+      .filter((entry) => !entry.pages[pageId].gates.ok)
       .map((entry) => `${entry.storeCode}:GATE_FAILED`);
     const rows = okStores.flatMap((storeCode) => rawByStore.get(storeCode)[pageId].rows);
     const status = okStores.length === roster.length
@@ -826,7 +878,8 @@ async function main() {
         ? { startDate: args.startDate, endDate: args.endDate }
         : buildWindow({ days: args.windowDays }),
       maxPages: ORDER_MANAGEMENT_MAX_PAGES,
-      pageIds: Object.keys(ORDER_MANAGEMENT_SESSION_PAGES),
+      pageIds: args.pageIds ?? Object.keys(ORDER_MANAGEMENT_SESSION_PAGES),
+      storeConcurrency: args.storeConcurrency,
       endpoints: Object.keys(ORDER_MANAGEMENT_ENDPOINTS),
       output: args.output,
     }, null, 2));
@@ -839,6 +892,8 @@ async function main() {
     output: args.output,
     windowDays: args.windowDays,
     window: args.startDate ? { startDate: args.startDate, endDate: args.endDate } : undefined,
+    pageIds: args.pageIds ?? Object.keys(ORDER_MANAGEMENT_SESSION_PAGES),
+    storeConcurrency: args.storeConcurrency,
     sessionStore,
   });
   console.log(JSON.stringify({
