@@ -1,6 +1,6 @@
 # 全托 BI 云端部署手册
 
-最后更新：2026-07-26
+最后更新：2026-08-09
 
 ## 1. 生产拓扑与边界
 
@@ -188,7 +188,7 @@ git diff --check
     retry timer 保持停用，资源延期只由 pending/kick 事件 path 重试；
 12. 安装 Nginx 和 logrotate，执行 `nginx -t` 成功后只 reload；
 13. 从 loopback 和公网验证登录墙、Dashboard API、`/api/system`、`/api/orders`、
-    9 个一级入口、订单管理 10 个固定子页和退出登录；
+    9 个一级入口、订单管理 9 个固定子页和退出登录；
 14. 再按下节逐域开启数据服务。
 
 共享 HAProxy 同时承载 443 SSH，严禁 restart；只允许在保留现有 SSH 会话时执行 `haproxy -c` 后 reload。
