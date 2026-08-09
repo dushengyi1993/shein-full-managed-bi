@@ -20,3 +20,26 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run check
       - run: npm test
+
+  version-lineage:
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/20'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Verify immutable release lineage
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            node scripts/check_version_lineage.mjs --main-ref=HEAD --all-release-tags
+          else
+            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+            node scripts/check_version_lineage.mjs --main-ref=origin/main --release-ref=HEAD
+          fi

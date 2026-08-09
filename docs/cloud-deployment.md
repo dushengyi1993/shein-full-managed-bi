@@ -143,13 +143,16 @@ npm test
 npm run check
 npm audit --omit=dev
 git diff --check
+git fetch origin main --tags
+npm run check:version-lineage -- --release-ref=HEAD --main-ref=origin/main
 ```
 
 必须满足：
 
 - 测试 0 失败；平台相关跳过项要在 Linux/云端补跑；
 - 仓库秘密扫描无数据库密码、OpenAPI secret、token、cookie 或签名；
-- 当前提交已推送到 GitHub，发布包来源于该精确提交；
+- 当前提交已经合并到远端 `main`，版本血缘门禁返回 `ok: true`；
+- release tag、发布包和生产 release 目录必须使用该精确提交；禁止从尚未合并的功能分支打 tag 或部署；
 - Nginx 和所有 systemd 单元先做静态验证。
 
 ## 6. PostgreSQL 临时库演练

@@ -57,6 +57,8 @@
     "maintenance:prune-profile-caches": "node scripts/prune_full_managed_profile_caches.mjs",
     "maintenance:disk-guard": "node scripts/guard_full_managed_disk.mjs",
     "maintenance:history": "node scripts/maintain_full_managed_history.mjs",
+    "check:version-lineage": "node scripts/check_version_lineage.mjs",
+    "hooks:install": "node scripts/install_git_hooks.mjs",
     "test": "node --test",
     "test:maintenance": "node --test tests/infra/*.test.mjs",
     "test:domain": "node --test tests/domain/*.test.mjs",
