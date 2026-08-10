@@ -171,6 +171,11 @@ npm run check:version-lineage -- --release-ref=HEAD --main-ref=origin/main
 
 ## 7. 生产发布顺序
 
+V4 的一次性 25 店、13 work-item 采集不属于调度部署。完整的 plan hash、串行执行、
+终态回读与 candidate 提升合同见
+[V4 一次性全量采集运行手册](runbooks/v4-one-off-collection.md)；本轮不得为它新增或
+修改 timer/path/cron。
+
 1. 仅当本次包含数据库迁移、高风险数据变更或用户明确要求时，创建一份 deploy 备份并
    校验；普通代码、前端和 systemd 发布不创建数据库备份，周备份仍按独立定时器执行；
 2. 将目标 Git 提交安装到新的 `/opt/shein-fm/releases/<commit>`，执行 `npm ci --omit=dev --ignore-scripts`；
@@ -180,8 +185,13 @@ npm run check:version-lineage -- --release-ref=HEAD --main-ref=origin/main
 6. 为五个组件写入独立 `database.env`，LOGIN 与能力组必须一一对应；
 7. 安装 systemd 单元，执行 `systemd-analyze verify` 和 `systemctl daemon-reload`；
 8. 手工运行一次 Dashboard 物化，检查 `dashboard*.json`、`shipping-orders.json` 与
-   `order-management.json` 的 staging 原子替换、文件所有权和 JSON 契约；订单管理索引
-   `coverage` 必须为 `COMPLETE` 且 `promotable=true`，否则禁止切换；
+   订单管理 candidate 的 staging 文件、文件所有权和 JSON 契约。代码 release 切换与
+   订单读模型数据提升是两个独立门禁：只有 candidate 的 `coverage=COMPLETE` 且
+   `promotable=true` 时，才允许原子替换 active `order-management.json`；`PARTIAL`、
+   `UNKNOWN` 或 `promotable=false` 的 candidate 只保留为审计证据，不得覆盖 active。
+   代码 release 只有在继续读取既有 active 文件、通过向后兼容回读且不依赖该 candidate
+   的前提下才可继续切换；若新代码必须依赖未提升 candidate，则仍禁止切换整个 release。
+   回滚时分别恢复代码 `current` 与订单 active 数据指针，不用一项成功掩盖另一项失败；
 9. 首次引入运行态投影时，先用目标 release 的绝对路径手工运行
    `materialize_full_managed_system_health.mjs`，确认脱敏快照已经原子生成且不含凭据；
 10. 切换 `/opt/shein-fm/current`；

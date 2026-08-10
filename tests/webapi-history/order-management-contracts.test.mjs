@@ -213,7 +213,7 @@ test('the transport seal rejects arbitrary filters and widened pagination', () =
   );
 });
 
-test('free-text PII is scrubbed and cannot hide in status, secondary or tags', () => {
+test('free-text PII is scrubbed and cannot hide in status, primary, secondary or tags', () => {
   assert.equal(containsSensitiveText('联系人张三，邮箱 test@example.com，电话 021-12345678'), true);
   assert.equal(scrubPiiText('联系人张三，邮箱 test@example.com，电话 021-12345678'), null);
   const baseRow = {
@@ -233,6 +233,52 @@ test('free-text PII is scrubbed and cannot hide in status, secondary or tags', (
   const verdict = validateOrderManagementRow(baseRow, { pageId: 'exceptions' });
   assert.equal(verdict.ok, false);
   assert.match(verdict.errors.join(' | '), /sensitive text/);
+  for (const [field, value] of [
+    ['statusName', '联系人张三'],
+    ['primary', '联系人张三'],
+    ['secondary', 'test@example.com'],
+  ]) {
+    const isolated = validateOrderManagementRow({
+      ...baseRow,
+      statusName: '待处理',
+      primary: 'WO-1',
+      secondary: null,
+      tags: [],
+      [field]: value,
+    }, { pageId: 'exceptions' });
+    assert.equal(isolated.ok, false, `${field} must reject sensitive text`);
+    assert.match(isolated.errors.join(' | '), new RegExp(`row\\.${field}.*sensitive text`));
+  }
+});
+
+test('row and entry shapes are closed so unknown properties cannot carry hidden data', () => {
+  const baseRow = {
+    id: 'WO-1',
+    storeCode: 'CX4412',
+    statusCode: '1',
+    statusName: '待处理',
+    createdAt: null,
+    updatedAt: '2026-08-08T06:00:00.000Z',
+    primary: 'WO-1',
+    secondary: null,
+    tags: [],
+    metrics: [],
+    facts: [],
+    details: [],
+  };
+  const topLevel = validateOrderManagementRow({
+    ...baseRow,
+    recipientPhone: 'synthetic-sensitive-value',
+  }, { pageId: 'exceptions' });
+  assert.equal(topLevel.ok, false);
+  assert.match(topLevel.errors.join(' | '), /unsupported keys/);
+
+  const nested = validateOrderManagementRow({
+    ...baseRow,
+    facts: [{ name: 'categoryName', value: '异常类目', hiddenContact: 'synthetic' }],
+  }, { pageId: 'exceptions' });
+  assert.equal(nested.ok, false);
+  assert.match(nested.errors.join(' | '), /unsupported keys/);
 });
 
 test('the five verified order-management pages fix their request windows and page keys', () => {

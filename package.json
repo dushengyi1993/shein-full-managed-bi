@@ -42,6 +42,7 @@
     "materialize:dashboard": "node scripts/materialize_full_managed_dashboard.mjs",
     "materialize:order-management": "node scripts/materialize_full_managed_order_management.mjs",
     "sync:order-management-sessions": "node scripts/sync_full_managed_order_management_sessions.mjs",
+    "webapi:v4-collection": "node scripts/run_full_managed_v4_collection.mjs",
     "backfill:order-management-sessions": "node scripts/backfill_full_managed_order_management_sessions.mjs",
     "backfill:plan": "node scripts/plan_full_managed_backfill.mjs",
     "backfill:run": "node scripts/run_full_managed_backfill.mjs",

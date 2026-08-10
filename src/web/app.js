@@ -205,6 +205,22 @@ const URL_ORDER_PAGE_IDS = Object.freeze([
   'value-added-services', 'quality-reports',
 ]);
 
+/* The unified reverse-supply workspace composes four already materialized,
+   independently covered order domains. It never treats a missing page as an
+   empty business result and never mixes the legacy value-added-service page
+   into return / quality counts. */
+const RETURNS_CASE_PAGE_IDS = Object.freeze([
+  'return-applications',
+  'return-orders',
+  'exceptions',
+  'quality-reports',
+]);
+
+/* These three decision surfaces share the same bounded `/api/home` history
+   contract. The homepage keeps its locked composition; finance and marketing
+   reuse only the data contract, not the homepage layout. */
+const HISTORY_DECISION_ROUTES = Object.freeze(['home', 'finance', 'marketing']);
+
 /* Old URLs remain valid for bookmarks and audit links, while the primary
    navigation exposes only the nine decision-oriented workspaces. */
 const NAV_ROUTE_ALIASES = Object.freeze({
@@ -973,6 +989,12 @@ const state = {
     requestSerial: 0,
   },
   orderPages: initialHashState.orderPages,
+  returns: {
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+  },
   platform: {
     data: null,
     loading: false,
@@ -1083,6 +1105,7 @@ let inventoryLoadTimer = null;
 let productLoadTimer = null;
 let fulfilmentLoadTimer = null;
 let orderLoadTimer = null;
+let returnsLoadTimer = null;
 let platformLoadTimer = null;
 let opsLoadTimer = null;
 let systemLoadTimer = null;
@@ -4023,6 +4046,72 @@ function scheduleOrderLoad({ resetPage = false, delay = 0 } = {}) {
   }, delay);
 }
 
+function returnsQueryUrl() {
+  const params = new URLSearchParams({
+    owner: state.owner,
+    store: state.store,
+  });
+  if (state.query.trim()) params.set('q', state.query.trim());
+  return `/api/returns?${params.toString()}`;
+}
+
+async function loadReturns() {
+  if (!state.data || state.route !== 'returns') return;
+  const requestSerial = state.returns.requestSerial + 1;
+  state.returns.requestSerial = requestSerial;
+  state.returns.loading = true;
+  state.returns.error = '';
+  render();
+  try {
+    const result = await fetchJson(returnsQueryUrl());
+    if (requestSerial !== state.returns.requestSerial) return;
+    if (
+      !result
+      || result.readOnly !== true
+      || !result.domains
+      || !RETURNS_CASE_PAGE_IDS.every((pageId) => result.domains[pageId])
+    ) {
+      throw new Error('退货与质量查询结构无效');
+    }
+    state.returns.data = result;
+  } catch (error) {
+    if (requestSerial !== state.returns.requestSerial) return;
+    state.returns.data = null;
+    state.returns.error = error instanceof Error
+      ? error.message
+      : '退货与质量查询暂不可用';
+  } finally {
+    if (requestSerial === state.returns.requestSerial) {
+      state.returns.loading = false;
+      render();
+    }
+  }
+}
+
+function invalidateReturnsScope() {
+  state.returns.requestSerial += 1;
+  state.returns.data = null;
+  state.returns.loading = state.route === 'returns' && Boolean(state.data);
+  state.returns.error = '';
+}
+
+function scheduleReturnsLoad({ delay = 0 } = {}) {
+  if (returnsLoadTimer !== null) window.clearTimeout(returnsLoadTimer);
+  invalidateReturnsScope();
+  if (state.route !== 'returns' || !state.data) {
+    state.returns.loading = false;
+    return;
+  }
+  // A filter change updates the visible scope before the debounced request is
+  // issued. Drop the old response immediately so rows from the previous owner,
+  // store or query can never render under the new scope label.
+  render();
+  returnsLoadTimer = window.setTimeout(() => {
+    returnsLoadTimer = null;
+    void loadReturns();
+  }, delay);
+}
+
 function orderStatusLabel(status) {
   if (status === 'AVAILABLE') return '数据可用';
   if (status === 'PARTIAL') return '部分覆盖';
@@ -5251,8 +5340,8 @@ function productDecisionSummary(queryData) {
       <header class="sales-workspace-head">
         <div>
           <span class="eyebrow">PRODUCT ANALYSIS</span>
-          <h1>商品分析</h1>
-          <p>先按销量影响处理待归并货号，再查看标准商品的跨店覆盖；店内身份不会被裸 SKU 误合并。</p>
+          <h1>商品经营</h1>
+          <p>先把商品身份做实，再沿审核、价格、经营、质量五个阶段判断证据是否足够；未物化能力不会伪装成业务值。</p>
         </div>
         <div class="sales-range-receipt">
           <span>身份盘点 / 销量影响窗口</span>
@@ -5272,6 +5361,72 @@ function productDecisionSummary(queryData) {
         <span><i></i>证据覆盖（最新密封 run）</span>
         <p>${escapeHtml(`${nullableUnits(evidence.sealedSetCount, '未知')} 组 / ${nullableUnits(evidence.observedStoreCount, '未知')} 店 · 标识符成员 ${nullableUnits(evidence.identifierMemberCount, '未知')} 条 · 最新密封 ${sourceTime(evidence.latestSealedAt)} · 源物化 ${nullableUnits(pendingSource.returned, '未知')} / ${nullableUnits(pendingSource.total, '未知')}${pendingSource.truncated === true ? '，已截断' : ''}`)}</p>
       </div>
+    </section>`;
+}
+
+function productLifecycleBand(queryData) {
+  const catalog = productRecord(queryData.source?.activeCatalogCoverage);
+  const identityKnown = isUnit(catalog.totalSkus) && isUnit(catalog.confirmedSkus);
+  const inventoryReady = Boolean(
+    state.data?.supply?.coverage?.domains?.inventory
+    || state.data?.supply?.inventorySummary,
+  );
+  const stages = [
+    {
+      key: 'identity',
+      index: '01',
+      label: '资料与身份',
+      status: identityKnown ? 'LIVE' : 'UNKNOWN',
+      value: identityKnown
+        ? `${numberFormatter.format(catalog.confirmedSkus)} / ${numberFormatter.format(catalog.totalSkus)} SKU`
+        : '事实未知',
+      note: '当前商品页主事实',
+      href: serializeHashState({ ...currentHashState(), route: 'products', quick: 'ALL' }),
+    },
+    {
+      key: 'listing',
+      index: '02',
+      label: '审核与上架',
+      status: 'AUDITED',
+      value: '能力已审',
+      note: '逐店事实尚未物化',
+    },
+    {
+      key: 'price',
+      index: '03',
+      label: '价格与议价',
+      status: 'AUDITED',
+      value: '能力已审',
+      note: 'RRP / 议价不从销量推导',
+    },
+    {
+      key: 'operate',
+      index: '04',
+      label: '经营与库存',
+      status: inventoryReady ? 'CROSS_PAGE' : 'UNKNOWN',
+      value: inventoryReady ? '跨页可查' : '事实未知',
+      note: '库存与备货保持独立口径',
+      href: serializeHashState({ ...currentHashState(), route: 'inventory', quick: 'ALL' }),
+    },
+    {
+      key: 'quality',
+      index: '05',
+      label: '质量与合规',
+      status: 'AUDITED',
+      value: '能力已审',
+      note: '商品绑定与逐店覆盖待物化',
+    },
+  ];
+  return `
+    <section class="product-lifecycle-band" aria-label="商品经营五阶段证据">
+      <header><div><span>PRODUCT LIFECYCLE</span><h2>五阶段经营证据</h2></div><p>“能力已审”只表示接口合同已确认，不表示当前 25 店有完整业务事实。</p></header>
+      <ol>${stages.map((stage) => `
+        <li class="${escapeHtml(stage.status.toLowerCase())}">
+          <span>${stage.index}</span>
+          <div><strong>${escapeHtml(stage.label)}</strong><small>${escapeHtml(stage.note)}</small></div>
+          <b>${escapeHtml(stage.value)}</b>
+          ${stage.href ? `<a href="${escapeHtml(stage.href)}">查看 →</a>` : '<em>待事实包络</em>'}
+        </li>`).join('')}</ol>
     </section>`;
 }
 
@@ -7328,6 +7483,10 @@ function resolvedHomeDaily(bundle) {
       earliestEstimatedPayDate: pendingPosition?.earliestEstimatedPayDate ?? null,
       latestEstimatedPayDate: pendingPosition?.latestEstimatedPayDate ?? null,
       billReconciliationStatus: confirmedBill?.reconciliationStatus ?? null,
+      billCurrency: confirmedBill?.currency ?? null,
+      ledgerCurrency: confirmedLedger?.currency ?? null,
+      financeCurrency: confirmedFinance?.currency ?? null,
+      pendingCurrency: pendingPosition?.currency ?? null,
       ledgerBeginCount: confirmedLedger?.beginBalanceCount ?? null,
       ledgerInboundCount: confirmedLedger?.inboundCount ?? null,
       ledgerOutboundCount: confirmedLedger?.outboundCount ?? null,
@@ -9438,6 +9597,7 @@ function renderProducts() {
     ${sampleNotice()}
     ${focusEvidencePanel()}
     ${productDecisionSummary(queryData)}
+    ${productLifecycleBand(queryData)}
     <section class="product-decision-workbench">
       ${productPendingStoreRanking(queryData)}
       ${productPipelineFlow(queryData)}
@@ -9797,27 +9957,81 @@ function procurementLifecycle(queryData) {
   const statuses = Array.isArray(fulfilment.filters?.statuses)
     ? fulfilment.filters.statuses
     : [];
-  const quick = Array.isArray(fulfilment.filters?.quick)
-    ? fulfilment.filters.quick
-    : [];
-  const count = (rows, code) => procurementFulfilmentAvailable(queryData)
-    ? procurementFacetCount(rows, code)
+  const fulfilmentAvailable = procurementFulfilmentAvailable(queryData);
+  const received = fulfilmentAvailable
+    ? procurementFacetCount(statuses, 'RECEIVED')
+    : null;
+  const shelved = fulfilmentAvailable
+    ? procurementFacetCount(statuses, 'SHELVED')
+    : null;
+  const receivingCount = isUnit(received) && isUnit(shelved)
+    ? received + shelved
     : null;
   return [
-    { code: 'ALL', label: '下单', count: count(statuses, 'ALL') },
-    { code: 'PENDING_SHIPMENT', label: '备货', count: count(statuses, 'PENDING_SHIPMENT') },
-    { code: 'SHIPPED', label: '发货', count: count(statuses, 'SHIPPED'), tone: 'attention' },
-    { code: 'PENDING_RECEIPT', label: '在途', count: count(quick, 'PENDING_RECEIPT'), tone: 'attention' },
-    { code: 'RECEIVED', label: '收货', count: count(statuses, 'RECEIVED'), tone: 'risk' },
-    { code: 'SHELVED', label: '上架', count: count(statuses, 'SHELVED'), tone: 'complete' },
+    {
+      code: 'purchase_order',
+      label: '采购单',
+      count: isUnit(queryData.summary?.orderCount) ? queryData.summary.orderCount : null,
+      complete: queryData.summary?.coverageComplete === true,
+      note: '采购快照',
+      href: serializeHashState({ ...currentHashState(), route: 'procurement', quick: 'ALL' }),
+    },
+    {
+      code: 'stock_record',
+      label: '备货记录',
+      count: null,
+      note: '独立明细',
+      href: serializeHashState({ ...currentHashState(), route: 'stock-records', quick: 'ALL' }),
+    },
+    {
+      code: 'shipping_order',
+      label: '发货订单',
+      count: fulfilmentAvailable && isUnit(fulfilment.source?.orderCount)
+        ? fulfilment.source.orderCount
+        : null,
+      complete: false,
+      note: '已物化下限',
+      href: serializeHashState({ ...currentHashState(), route: 'fulfilment', quick: 'ALL' }),
+      tone: 'attention',
+    },
+    {
+      code: 'delivery_note',
+      label: '送货单',
+      count: null,
+      note: '独立明细',
+      href: serializeHashState({ ...currentHashState(), route: 'delivery-notes', quick: 'ALL' }),
+    },
+    {
+      code: 'waybill',
+      label: '运单',
+      count: null,
+      note: '独立报表',
+      href: serializeHashState({ ...currentHashState(), route: 'waybills', quick: 'ALL' }),
+      tone: 'attention',
+    },
+    {
+      code: 'receiving',
+      label: '收货 / 入库',
+      count: receivingCount,
+      complete: false,
+      note: '已物化下限',
+      href: serializeHashState({ ...currentHashState(), route: 'fulfilment', quick: 'ALL' }),
+      tone: 'complete',
+    },
   ];
 }
 
-function procurementKpi(label, value, note, tone = '') {
+function procurementEvidenceValue(value, complete) {
+  if (!isUnit(value)) return '—';
+  if (complete === true) return numberFormatter.format(value);
+  return value > 0 ? `≥ ${numberFormatter.format(value)}` : '—';
+}
+
+function procurementKpi(label, value, note, tone = '', complete = false) {
   return `
     <article class="procurement-kpi ${escapeHtml(tone)}">
       <span>${escapeHtml(label)}</span>
-      <strong>${isUnit(value) ? numberFormatter.format(value) : '—'}</strong>
+      <strong>${escapeHtml(procurementEvidenceValue(value, complete))}</strong>
       <small>${escapeHtml(note)}</small>
     </article>`;
 }
@@ -10009,6 +10223,8 @@ function renderProcurement() {
     && isUnit(receiptDifferenceFact?.count)
     ? receiptDifferenceFact.count
     : null;
+  const receiptDifferenceComplete = queryData.summary?.coverageComplete === true
+    && sourceMeta.truncated !== true;
   const statusOptions = [
     ['ALL', '全部状态'],
     ...(Array.isArray(queryData.filters?.statuses) ? queryData.filters.statuses : [])
@@ -10038,19 +10254,21 @@ function renderProcurement() {
       </section>
 
       <section class="procurement-kpi-strip" aria-label="采购履约关键指标">
-        ${procurementKpi('待发货', fulfilmentAvailable ? procurementFacetCount(shippingStatuses, 'PENDING_SHIPMENT') : null, '发货快照口径', 'primary')}
-        ${procurementKpi('已超期', fulfilmentAvailable ? procurementFacetCount(shippingQuick, 'OVERDUE') : null, '发货快照 · 要求交付已过', 'warning')}
-        ${procurementKpi('在途待收', fulfilmentAvailable ? procurementFacetCount(shippingQuick, 'PENDING_RECEIPT') : null, '发货快照 · 已发货未收货')}
-        ${procurementKpi('收货差异', receiptDifference, '采购关注事实 · 未单列不作 0', receiptDifference > 0 ? 'danger' : '')}
+        ${procurementKpi('待发货', fulfilmentAvailable ? procurementFacetCount(shippingStatuses, 'PENDING_SHIPMENT') : null, '发货已物化下限', 'primary')}
+        ${procurementKpi('已超期', fulfilmentAvailable ? procurementFacetCount(shippingQuick, 'OVERDUE') : null, '发货已物化下限 · 要求交付已过', 'warning')}
+        ${procurementKpi('在途待收', fulfilmentAvailable ? procurementFacetCount(shippingQuick, 'PENDING_RECEIPT') : null, '发货已物化下限 · 已发货未收货')}
+        ${procurementKpi('收货差异', receiptDifference, '采购关注事实 · 未单列不作 0', receiptDifference > 0 ? 'danger' : '', receiptDifferenceComplete)}
       </section>
 
       <section class="procurement-lifecycle" aria-label="采购履约链路">
-        <header><div><span>履约链路</span><h2>当前节点快照</h2></div><p>节点存在包含关系，不作为转化漏斗。</p></header>
+        <header><div><span>ENTITY LEDGER</span><h2>六类实体快照</h2></div><p>原“当前节点快照”仅作定位；每列独立取数、独立覆盖，不连线、不相减，不作为转化漏斗。</p></header>
         <ol>${lifecycle.map((node) => `
           <li class="${escapeHtml(node.tone || '')}">
             <i aria-hidden="true"></i>
             <span>${escapeHtml(node.label)}</span>
-            <strong>${isUnit(node.count) ? numberFormatter.format(node.count) : '—'}</strong>
+            <strong>${escapeHtml(procurementEvidenceValue(node.count, node.complete))}</strong>
+            <small>${escapeHtml(node.note || '口径独立')}</small>
+            <a href="${escapeHtml(node.href)}">查看 →</a>
           </li>`).join('')}</ol>
       </section>
 
@@ -10722,78 +10940,860 @@ function renderInventory() {
     ${inventoryEvidenceDisclosure(queryData)}`;
 }
 
+const RETURNS_DOMAIN_META = Object.freeze({
+  'return-applications': Object.freeze({
+    eyebrow: 'APPLICATION',
+    title: '退货申请',
+    note: '申请、原因与平台确认状态',
+    tone: 'application',
+  }),
+  'return-orders': Object.freeze({
+    eyebrow: 'REVERSE FLOW',
+    title: '退货执行',
+    note: '退货单、物流与完成节点',
+    tone: 'flow',
+  }),
+  exceptions: Object.freeze({
+    eyebrow: 'EXCEPTION',
+    title: '异常工单',
+    note: '收货 / 退货异常与处理进展',
+    tone: 'exception',
+  }),
+  'quality-reports': Object.freeze({
+    eyebrow: 'QUALITY',
+    title: '质检证据',
+    note: '质检结论、次品数量与采购关联',
+    tone: 'quality',
+  }),
+});
+
+function returnsDomain(queryData, pageId) {
+  return productRecord(queryData?.domains?.[pageId]);
+}
+
+function returnsDomainCount(domain) {
+  return isUnit(domain?.matchedRows) ? domain.matchedRows : null;
+}
+
+function returnsDomainDisplay(domain) {
+  const count = returnsDomainCount(domain);
+  if (count === null) return '—';
+  if (domain?.coverage?.status === 'COMPLETE') return numberFormatter.format(count);
+  return count > 0 ? `≥ ${numberFormatter.format(count)}` : '—';
+}
+
+function returnsCoverageLabel(domain) {
+  const coverage = productRecord(domain?.coverage);
+  if (!isUnit(coverage.completedStoreCount) || !isUnit(coverage.expectedStoreCount)) {
+    return '覆盖未知';
+  }
+  return `${numberFormatter.format(coverage.completedStoreCount)} / ${numberFormatter.format(coverage.expectedStoreCount)} 家`;
+}
+
+function returnsCoverageTone(domain) {
+  const status = domain?.coverage?.status;
+  if (status === 'COMPLETE') return 'complete';
+  if (status === 'PARTIAL') return 'partial';
+  return 'unavailable';
+}
+
+function returnsFact(row, ...names) {
+  const wanted = new Set(names);
+  const entry = [...(Array.isArray(row?.facts) ? row.facts : []), ...(Array.isArray(row?.details) ? row.details : [])]
+    .find((item) => wanted.has(item?.name) && !orderSensitiveKey(item?.name));
+  return entry?.value ?? null;
+}
+
+function returnsDeepLink(pageId) {
+  return serializeHashState({
+    ...currentHashState(),
+    route: pageId,
+    quick: 'ALL',
+  });
+}
+
+function returnsEvidenceCard(pageId, row) {
+  const factEntries = [...(Array.isArray(row?.facts) ? row.facts : []), ...(Array.isArray(row?.details) ? row.details : [])]
+    .filter((item) => item?.name && !orderSensitiveKey(item.name))
+    .slice(0, 3);
+  return `
+    <article class="returns-case-card">
+      <header>
+        <span>${escapeHtml(row.storeCode || '店铺未知')}</span>
+        <span class="row-status ${sourceStatusTone(row.statusCode)}">${escapeHtml(row.statusName || row.statusCode || '状态未知')}</span>
+      </header>
+      <strong>${escapeHtml(row.primary || row.id || '业务单号待确认')}</strong>
+      <p>${escapeHtml(row.secondary || '关联信息未返回')}</p>
+      ${factEntries.length ? `<dl>${factEntries.map((item) => `
+        <div><dt>${escapeHtml(orderFieldLabel(item.name))}</dt><dd>${escapeHtml(orderFieldValue(item.name, item.value) || '—')}</dd></div>`).join('')}</dl>` : '<p class="returns-card-unknown">当前卡片没有更多可展示字段。</p>'}
+      <footer>
+        <time>${escapeHtml(sourceTime(row.updatedAt || row.createdAt))}</time>
+        <a href="${escapeHtml(returnsDeepLink(pageId))}">查看该域 →</a>
+      </footer>
+    </article>`;
+}
+
+function returnsEvidenceLane(queryData, pageId) {
+  const domain = returnsDomain(queryData, pageId);
+  const meta = RETURNS_DOMAIN_META[pageId];
+  const rows = Array.isArray(domain.rows) ? domain.rows : [];
+  const missing = Array.isArray(domain.coverage?.missingStoreCodes)
+    ? domain.coverage.missingStoreCodes.length
+    : null;
+  let content = '';
+  if (domain.status === 'UNAVAILABLE') {
+    content = `<div class="returns-lane-state unavailable"><strong>事实不可用</strong><p>${escapeHtml(domain.reason || '当前没有可用快照；不按 0 处理。')}</p></div>`;
+  } else if (!rows.length) {
+    content = '<div class="returns-lane-state"><strong>当前筛选未命中</strong><p>只表示已物化且已覆盖范围内没有匹配行，不代表平台业务数量为 0。</p></div>';
+  } else {
+    content = `${rows.slice(0, 8).map((row) => returnsEvidenceCard(pageId, row)).join('')}${rows.length > 8 ? `<p class="returns-lane-more">当前先展示 8 条，另有 ${numberFormatter.format(rows.length - 8)} 条可从原域继续查看。</p>` : ''}`;
+  }
+  return `
+    <section class="returns-evidence-lane ${escapeHtml(meta.tone)}">
+      <header>
+        <div><span>${escapeHtml(meta.eyebrow)}</span><h2>${escapeHtml(meta.title)}</h2><p>${escapeHtml(meta.note)}</p></div>
+        <strong>${escapeHtml(returnsDomainDisplay(domain))}</strong>
+      </header>
+      <div class="returns-lane-receipt">
+        <span class="${returnsCoverageTone(domain)}">${escapeHtml(returnsCoverageLabel(domain))}</span>
+        <small>${missing === null ? '缺店未知' : `缺 ${numberFormatter.format(missing)} 家`} · ${escapeHtml(sourceTime(domain.latestSourceFetchedAt))}</small>
+      </div>
+      <div class="returns-card-stack">${content}</div>
+    </section>`;
+}
+
+function returnsDistributionRows(queryData) {
+  const buckets = new Map();
+  const ingest = (pageId, fieldNames, fallback) => {
+    const domain = returnsDomain(queryData, pageId);
+    for (const row of Array.isArray(domain.rows) ? domain.rows : []) {
+      const label = returnsFact(row, ...fieldNames) || fallback;
+      const key = `${pageId}\u001f${label}`;
+      const item = buckets.get(key) || { pageId, label: String(label), count: 0 };
+      item.count += 1;
+      buckets.set(key, item);
+    }
+  };
+  ingest('return-applications', ['returnReasonName', 'returnReasonType'], '原因未返回');
+  ingest('exceptions', ['categoryName', 'firstCategoryName', 'sceneTypeName'], '异常类型未返回');
+  ingest('quality-reports', ['inspectionResultName', 'orderQcResultName'], '质检结论未返回');
+  return [...buckets.values()]
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
+    .slice(0, 10);
+}
+
+function returnsEvidenceDistribution(queryData) {
+  const rows = returnsDistributionRows(queryData);
+  const maximum = Math.max(1, ...rows.map(({ count }) => count));
+  if (!rows.length) {
+    return systemEmptyState(
+      '当前没有可归类的原因与质检结论',
+      '字段未返回、业务域不可用或当前筛选未命中时，这里保持未知而不是生成“零原因”。',
+    );
+  }
+  return `
+    <div class="returns-distribution-list">
+      ${rows.map((row) => `
+        <div>
+          <span>${escapeHtml(RETURNS_DOMAIN_META[row.pageId].title)}</span>
+          <strong>${escapeHtml(row.label)}</strong>
+          <progress max="${maximum}" value="${row.count}">${row.count}</progress>
+          <b>${numberFormatter.format(row.count)}</b>
+        </div>`).join('')}
+    </div>`;
+}
+
+function returnsQualityEvidence(queryData) {
+  const quality = returnsDomain(queryData, 'quality-reports');
+  const rows = Array.isArray(quality.rows) ? quality.rows : [];
+  const withDefects = rows.filter((row) => {
+    const value = Number(returnsFact(row, 'defectiveTotalQty', 'orderDefectiveTotalQty'));
+    return Number.isFinite(value) && value > 0;
+  }).length;
+  const linkedPurchase = rows.filter((row) => returnsFact(row, 'purchaseCode')).length;
+  const completed = rows.filter((row) => (
+    returnsFact(row, 'inspectionResultName', 'orderQcResultName')
+    || row.statusName
+  )).length;
+  const sampleValue = (value) => {
+    if (!rows.length) return '—';
+    const complete = quality.coverage?.status === 'COMPLETE' && quality.truncated !== true;
+    return complete ? numberFormatter.format(value) : value > 0 ? `≥ ${numberFormatter.format(value)}` : '—';
+  };
+  return `
+    <div class="returns-quality-ledger">
+      <article><span>质检记录</span><strong>${escapeHtml(returnsDomainDisplay(quality))}</strong><small>物化实体数，不是质检率分母</small></article>
+      <article><span>含次品证据</span><strong>${escapeHtml(sampleValue(withDefects))}</strong><small>仅对当前返回行检查明确数量</small></article>
+      <article><span>已关联采购单</span><strong>${escapeHtml(sampleValue(linkedPurchase))}</strong><small>只认 purchaseCode 明确回读</small></article>
+      <article><span>有结论字段</span><strong>${escapeHtml(sampleValue(completed))}</strong><small>未知结论不归入通过或失败</small></article>
+    </div>`;
+}
+
+function returnsQueryState(kind) {
+  const error = kind === 'error';
+  return `
+    <section class="returns-query-state ${error ? 'error' : ''}" role="${error ? 'alert' : 'status'}">
+      <span>${error ? 'READ FAILED' : 'READING CASE EVIDENCE'}</span>
+      <h1>${error ? '退货与质量事实暂不可用' : '正在汇集四类逆向供应链证据'}</h1>
+      <p>${escapeHtml(error ? state.returns.error : '退货申请、退货单、异常工单和质检报告分别回读；任一域缺失都不会被当成零。')}</p>
+      ${error ? '<button type="button" class="clear-button" data-returns-retry="1">重新读取</button>' : ''}
+    </section>`;
+}
+
 function renderReturns() {
+  if (state.returns.loading && !state.returns.data) {
+    return `${sampleNotice()}${returnsQueryState('loading')}`;
+  }
+  if (state.returns.error && !state.returns.data) {
+    return `${sampleNotice()}${returnsQueryState('error')}`;
+  }
+  const queryData = state.returns.data;
+  if (!queryData) return `${sampleNotice()}${returnsQueryState('loading')}`;
+  const summary = productRecord(queryData.summary);
   return `
     ${sampleNotice()}
-    ${pageIntro(
-      'RETURNS & QUALITY',
-      '退货与质量',
-      '后续将在一个页面归并采购退货、收货异常与质检事实；消费者售后仍与全托采购退货严格分离。',
-      '<span>统一决策页</span><strong>待下一阶段整理</strong><small>旧深链接继续可查</small>',
-    )}
-    ${integrationGate({
-      kicker: 'RETURN DATA',
-      title: '采购退货接入条件',
-      description: '采购退货是供应链逆向单据，不能套用半托消费者退货口径。',
-      evidence: [
-        '回读采购退货申请、退货单、报废单和商品详情',
-        '保存申请、确认、出库、收货等平台业务时间与状态',
-        '按采购单、退货单、包裹与商品键建立可追溯关联',
-        '对账申请数量、退货数量、报废数量及异常原因',
-        'Webhook 变化通知与主动补查、日终补漏形成闭环',
-      ],
-      boundary: '当前没有采购退货事实，因此不展示退货数、退货率、退款金额或待确认任务。',
-      futureFields: '采购单号、退货申请、退货/报废单、包裹、商品、数量、原因、状态、节点时间',
-    })}`;
+    <div class="returns-quality-page">
+      <section class="returns-page-head">
+        <div>
+          <span>REVERSE SUPPLY · QUALITY</span>
+          <h1>退货与质量</h1>
+          <p>以证据实体而不是虚构漏斗组织采购退货：申请、执行、异常和质检各自保留覆盖与事实时间。</p>
+        </div>
+        <aside>
+          <span>当前范围 / 数据收据</span>
+          <strong>${escapeHtml(`${inventoryScopeLabel()} · ${nullableUnits(queryData.scope?.storeCount)} 家`)}</strong>
+          <small>${escapeHtml(`${nullableUnits(summary.availableDomainCount)} / ${nullableUnits(summary.totalDomainCount)} 个域有事实 · 更新 ${sourceTime(queryData.updatedAt)}`)}</small>
+        </aside>
+      </section>
+
+      <section class="returns-domain-strip" aria-label="退货与质量域覆盖">
+        ${RETURNS_CASE_PAGE_IDS.map((pageId) => {
+          const domain = returnsDomain(queryData, pageId);
+          const meta = RETURNS_DOMAIN_META[pageId];
+          return `<article class="${returnsCoverageTone(domain)}"><span>${escapeHtml(meta.title)}</span><strong>${escapeHtml(returnsDomainDisplay(domain))}</strong><small>${escapeHtml(returnsCoverageLabel(domain))} · ${escapeHtml(sourceTime(domain.latestSourceFetchedAt))}</small></article>`;
+        }).join('')}
+      </section>
+
+      <section class="returns-evidence-board" aria-label="逆向供应链证据看板">
+        ${RETURNS_CASE_PAGE_IDS.map((pageId) => returnsEvidenceLane(queryData, pageId)).join('')}
+      </section>
+
+      <section class="returns-analysis-grid">
+        <article class="panel returns-distribution-panel">
+          ${panelHeading('CAUSE DISTRIBUTION', '原因与结论分布', '仅统计当前返回行的明确字段；不同业务域不合并成一个退货率')}
+          ${returnsEvidenceDistribution(queryData)}
+        </article>
+        <article class="panel returns-quality-panel">
+          ${panelHeading('EVIDENCE LAYERS', '质量证据层', '关联、数量与结论分别核对，不因报告存在就推定质检通过')}
+          ${returnsQualityEvidence(queryData)}
+        </article>
+      </section>
+
+      <details class="returns-boundary-note">
+        <summary>口径、覆盖与隐私边界</summary>
+        <p>四列是四类业务实体，不是同一批案件的连续阶段，因此不能横向相减或相加。历史异常与质检覆盖仍按各自回读显示；缺店、未物化和不可用都保持未知。</p>
+        <p>退货地址、联系人、手机号等 PII 不进入本接口或页面；消费者售后不与全托采购退供合并。申诉、确认、复检、退货和报废等写动作全部留在平台原流程。</p>
+      </details>
+      ${state.returns.loading ? '<p class="query-refresh-note" role="status">正在重新读取当前范围的退货与质量事实…</p>' : ''}
+    </div>`;
+}
+
+function financeQueryState(kind) {
+  const error = kind === 'error';
+  return `
+    <section class="finance-query-state ${error ? 'error' : ''}" role="${error ? 'alert' : 'status'}">
+      <span>${error ? 'FINANCE READ FAILED' : 'READING SETTLEMENT FACTS'}</span>
+      <h1>${error ? '财务与结算事实暂不可用' : '正在读取当前期间与对比期间'}</h1>
+      <p>${escapeHtml(error ? state.home.error : '财务明细、账单、台账与待结算头寸按店铺和币种分别核对。')}</p>
+    </section>`;
+}
+
+function financeBundleCurrencies(bundle) {
+  return [...new Set([
+    ...(Array.isArray(bundle?.financeDaily) ? bundle.financeDaily : []),
+    ...(Array.isArray(bundle?.billDaily) ? bundle.billDaily : []),
+    ...(Array.isArray(bundle?.ledgerDaily) ? bundle.ledgerDaily : []),
+    ...(Array.isArray(bundle?.settlementPositionDaily) ? bundle.settlementPositionDaily : []),
+  ].map((row) => row.currency).filter(Boolean))];
+}
+
+function financeMetricCurrency(bundle, key) {
+  const currencyKey = key.startsWith('ledger')
+    ? 'ledgerCurrency'
+    : key === 'pendingSettlementAmount'
+      ? 'pendingCurrency'
+      : ['billSalesAmount', 'supplementAmount', 'deductionAmount', 'settlementAmount']
+        .includes(key)
+        ? 'billCurrency'
+        : 'financeCurrency';
+  const metricRows = resolvedHomeDaily(bundle).filter((row) => finiteMetric(row[key]));
+  if (!metricRows.length || metricRows.some((row) => !row[currencyKey])) return null;
+  const currencies = [...new Set(metricRows.map((row) => row[currencyKey]))];
+  return currencies.length === 1 ? currencies[0] : null;
+}
+
+function financePeriodAmount(bundle, key, options = {}) {
+  const currency = financeMetricCurrency(bundle, key);
+  if (!currency) return null;
+  const aggregate = options.aggregate || HOME_TREND_METRICS[key]?.aggregate || 'sum';
+  const coverage = homeMetricCoverage(bundle, key, {
+    aggregate,
+    signed: true,
+  });
+  if (coverage.total === 0 || coverage.complete !== coverage.total) return null;
+  return periodMetric(bundle, key, { signed: true, ...options });
+}
+
+function financePeriodUnits(bundle, key, options = {}) {
+  const aggregate = options.aggregate || HOME_TREND_METRICS[key]?.aggregate || 'sum';
+  const coverage = homeMetricCoverage(bundle, key, {
+    aggregate,
+    signed: false,
+  });
+  if (coverage.total === 0 || coverage.complete !== coverage.total) return null;
+  return periodMetric(bundle, key, { signed: false, ...options });
+}
+
+function financeMetricCard(label, value, note, comparison = '', tone = '') {
+  return `
+    <article class="finance-metric-card ${escapeHtml(tone)}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <p>${escapeHtml(note)}</p>
+      <small>${escapeHtml(comparison || '对比证据不足')}</small>
+    </article>`;
+}
+
+function financeLatestRows(rows, amountKey = '') {
+  const byStore = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const current = byStore.get(row.storeCode);
+    if (!current || row.date > current.date) byStore.set(row.storeCode, row);
+  }
+  return [...byStore.values()].sort((left, right) => {
+    if (amountKey) {
+      const leftValue = typeof left[amountKey] === 'number' ? left[amountKey] : -Infinity;
+      const rightValue = typeof right[amountKey] === 'number' ? right[amountKey] : -Infinity;
+      if (rightValue !== leftValue) return rightValue - leftValue;
+    }
+    return String(left.storeCode).localeCompare(String(right.storeCode));
+  });
+}
+
+function financeWaterfall(bundle, currency) {
+  const rows = [
+    ['结算销售款', financePeriodAmount(bundle, 'billSalesAmount'), 'positive'],
+    ['补款', financePeriodAmount(bundle, 'supplementAmount'), 'positive'],
+    ['扣款', financePeriodAmount(bundle, 'deductionAmount'), 'negative'],
+    ['实际 / 计算结算', financePeriodAmount(bundle, 'settlementAmount'), 'settlement'],
+  ];
+  const known = rows
+    .map(([, value]) => (typeof value === 'number' && Number.isFinite(value)
+      ? Math.abs(value)
+      : null))
+    .filter((value) => value !== null);
+  const maximum = Math.max(1, ...known);
+  return `
+    <div class="finance-waterfall">
+      ${rows.map(([label, value, tone]) => `
+        <div class="${escapeHtml(`${tone}${value === null ? ' unknown' : ''}`)}">
+          <span>${escapeHtml(label)}</span>
+          ${value === null
+            ? '<span class="finance-waterfall-unknown">事实未知</span>'
+            : `<progress max="${maximum}" value="${Math.abs(value)}">${Math.abs(value)}</progress>`}
+          <strong>${escapeHtml(formatMoney(value, currency))}</strong>
+        </div>`).join('')}
+    </div>
+    <p class="table-note">瀑布仅在当前范围只有一个币种时汇总；扣款保留独立正数事实，在方程中作为减项，不改写源值符号。</p>`;
+}
+
+function financeLedgerBridge(bundle, currency) {
+  const countRows = [
+    ['期初', financePeriodUnits(bundle, 'ledgerBeginCount', { aggregate: 'first' })],
+    ['入库', financePeriodUnits(bundle, 'ledgerInboundCount', { aggregate: 'sum' })],
+    ['出库', financePeriodUnits(bundle, 'ledgerOutboundCount', { aggregate: 'sum' })],
+    ['期末', financePeriodUnits(bundle, 'ledgerEndCount', { aggregate: 'last' })],
+  ];
+  const amountRows = [
+    ['期初金额', financePeriodAmount(bundle, 'ledgerBeginAmount', { aggregate: 'first' })],
+    ['入库金额', financePeriodAmount(bundle, 'ledgerInboundAmount', { aggregate: 'sum' })],
+    ['出库金额', financePeriodAmount(bundle, 'ledgerOutboundAmount', { aggregate: 'sum' })],
+    ['期末金额', financePeriodAmount(bundle, 'ledgerEndAmount', { aggregate: 'last' })],
+  ];
+  return `
+    <div class="finance-ledger-bridge">
+      <div class="finance-ledger-track">
+        ${countRows.map(([label, value], index) => `<article class="${index === countRows.length - 1 ? 'ending' : ''}"><span>${escapeHtml(label)}</span><strong>${value === null ? '—' : `${numberFormatter.format(value)} 件`}</strong></article>`).join('')}
+      </div>
+      <dl>${amountRows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(formatMoney(value, currency))}</dd></div>`).join('')}</dl>
+    </div>`;
+}
+
+function financePendingTable(bundle) {
+  const rows = financeLatestRows(bundle.settlementPositionDaily, 'pendingSettlementAmount');
+  if (!rows.length) {
+    return systemEmptyState(
+      '当前期间没有待结算头寸行',
+      '这不是待结算金额为 0；可能是当前筛选、日期或数据覆盖尚未返回头寸事实。',
+    );
+  }
+  return `
+    <div class="table-wrap">
+      <table class="data-table finance-aging-table">
+        <thead><tr><th scope="col">店铺</th><th scope="col">待结算</th><th scope="col">待结算单</th><th scope="col">逾期单</th><th scope="col">预计付款窗</th><th scope="col">头寸日期</th></tr></thead>
+        <tbody>${rows.map((row) => `
+          <tr class="${row.overdueReportCount > 0 ? 'needs-attention' : ''}">
+            <td><strong>${escapeHtml(row.storeCode)}</strong></td>
+            <td>${escapeHtml(formatMoney(row.pendingSettlementAmount, row.currency))}</td>
+            <td>${nullableUnits(row.pendingReportCount)}</td>
+            <td><span class="row-status ${row.overdueReportCount > 0 ? 'blocked' : 'complete'}">${nullableUnits(row.overdueReportCount)}</span></td>
+            <td>${escapeHtml(row.earliestEstimatedPayDate ? `${row.earliestEstimatedPayDate} → ${row.latestEstimatedPayDate || row.earliestEstimatedPayDate}` : '未知')}</td>
+            <td>${escapeHtml(row.date || '未知')}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function financeReconciliationTable(bundle) {
+  const rows = financeLatestRows(bundle.billDaily);
+  if (!rows.length) {
+    return systemEmptyState(
+      '当前期间没有账单对账行',
+      '没有账单行时不生成“全部匹配”结论；请结合财务明细与数据覆盖继续判断。',
+    );
+  }
+  return `
+    <div class="table-wrap">
+      <table class="data-table finance-reconciliation-table">
+        <thead><tr><th scope="col">店铺</th><th scope="col">销售款</th><th scope="col">补款 / 扣款</th><th scope="col">结算金额</th><th scope="col">报账单</th><th scope="col">对账状态</th><th scope="col">账单日期</th></tr></thead>
+        <tbody>${rows.map((row) => {
+          const settlement = row.reportedSettlementAmount ?? row.calculatedSettlementAmount;
+          const tone = row.reconciliationStatus === 'MATCHED'
+            ? 'complete'
+            : row.reconciliationStatus === 'MISMATCH'
+              ? 'blocked'
+              : 'pending';
+          const label = row.reconciliationStatus === 'MATCHED'
+            ? '一致'
+            : row.reconciliationStatus === 'MISMATCH'
+              ? '有差异'
+              : '待核对';
+          return `
+            <tr class="${tone === 'blocked' ? 'needs-attention' : ''}">
+              <td><strong>${escapeHtml(row.storeCode)}</strong></td>
+              <td>${escapeHtml(formatMoney(row.salesAmount, row.currency))}</td>
+              <td>${escapeHtml(`${formatMoney(row.supplementAmount, row.currency)} / ${formatMoney(row.deductionAmount, row.currency)}`)}</td>
+              <td>${escapeHtml(formatMoney(settlement, row.currency))}</td>
+              <td>${escapeHtml(`${nullableUnits(row.settledReportCount)} 已结 · ${nullableUnits(row.pendingReportCount)} 待结`)}</td>
+              <td><span class="row-status ${tone}">${escapeHtml(label)}</span></td>
+              <td>${escapeHtml(row.date || '未知')}</td>
+            </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
 }
 
 function renderFinance() {
+  if (state.home.loading && !state.home.data) {
+    return `${sampleNotice()}${financeQueryState('loading')}`;
+  }
+  if (state.home.error && !state.home.data) {
+    return `${sampleNotice()}${financeQueryState('error')}`;
+  }
+  const range = selectedHomeDateRange();
+  const current = homeScopedRows(range);
+  const previous = homeScopedRows(previousHomeDateRange(range));
+  const currencies = financeBundleCurrencies(current);
+  const currency = currencies.length === 1 ? currencies[0] : null;
+  const sales = financePeriodAmount(current, 'billSalesAmount');
+  const settlement = financePeriodAmount(current, 'settlementAmount');
+  const pendingCoverage = homeMetricCoverage(current, 'pendingSettlementAmount', {
+    aggregate: 'last',
+    signed: true,
+  });
+  const pendingMetricCurrency = financeMetricCurrency(current, 'pendingSettlementAmount');
+  const pending = currency
+    && pendingMetricCurrency === currency
+    && pendingCoverage.total > 0
+    && pendingCoverage.complete === pendingCoverage.total
+    ? availableSignedMetricSum(
+        endpointMetricRows(current.settlementPositionDaily, 'pendingSettlementAmount', 'last'),
+        'pendingSettlementAmount',
+      )
+    : null;
+  const previousSales = financePeriodAmount(previous, 'billSalesAmount');
+  const previousSettlement = financePeriodAmount(previous, 'settlementAmount');
+  const pendingCountCoverage = homeMetricCoverage(
+    current,
+    ['pendingReportCount', 'overdueReportCount'],
+    { aggregate: 'last', signed: false },
+  );
+  const pendingCountsComplete = pendingCountCoverage.total > 0
+    && pendingCountCoverage.complete === pendingCountCoverage.total;
+  const pendingRows = financeLatestRows(current.settlementPositionDaily);
+  const pendingDatesComplete = pendingCountsComplete
+    && pendingRows.length === current.storeCodes.size
+    && pendingRows.every((row) => (
+      row.pendingReportCount === 0
+      || (row.earliestEstimatedPayDate && row.latestEstimatedPayDate)
+    ));
+  const observedPendingSummary = pendingPositionSummary(current.settlementPositionDaily);
+  const pendingSummary = {
+    pendingReportCount: pendingCountsComplete ? observedPendingSummary.pendingReportCount : null,
+    overdueReportCount: pendingCountsComplete ? observedPendingSummary.overdueReportCount : null,
+    earliest: pendingDatesComplete ? observedPendingSummary.earliest : null,
+    latest: pendingDatesComplete ? observedPendingSummary.latest : null,
+  };
+  const coverage = homeHistory().coverage || {};
   return `
     ${sampleNotice()}
-    ${pageIntro(
-      'RECONCILIATION',
-      '财务与结算',
-      '报账单、预计收入、销售款、客退款、补扣款与付款状态必须来自可追溯的财务事实。',
-      '<span>金额事实</span><strong>完全未接入</strong><small>本页不显示示例金额</small>',
-    )}
-    ${integrationGate({
-      kicker: 'FINANCE DATA',
-      title: '财务域接入条件',
-      description: '只有销量件数不能推导销售款、补扣款、付款或利润。',
-      evidence: [
-        '回读财务管理业务权限、店铺授权与只读接口范围',
-        '探针报账单、报账明细、付款状态与补扣款记录',
-        '确认报账期间、币种、销售款、客退款与调整项口径',
-        '建立报账单和明细级对账键并保留原始凭证与快照时间',
-        '与平台页面抽样核验后才开放差异和汇总视图',
-      ],
-      boundary: '当前没有报账、销售款、客退款、补扣款或付款事实。本页不会显示 0、占位金额、GMV 或由销量推导的估算值。',
-      futureFields: '报账期间、报账单号、币种、预计收入、销售款、客退款、补扣款、付款状态、凭证',
-    })}`;
+    <div class="finance-settlement-page">
+      <section class="finance-page-head">
+        <div>
+          <span>FINANCE · RECONCILIATION</span>
+          <h1>财务与结算</h1>
+          <p>把账单、补扣款、结算头寸与库存台账拆开核对；金额只在单一币种、明确期间内汇总。</p>
+        </div>
+        <aside class="${currency ? '' : 'attention'}">
+          <span>期间 / 币种 / 事实时间</span>
+          <strong>${escapeHtml(`${range.start} → ${range.end} · ${currency || (currencies.length ? '多币种' : '币种未知')}`)}</strong>
+          <small>${escapeHtml(`${inventoryScopeLabel()} · 财务最新观测 ${sourceTime(coverage.latestObservedAt)}`)}</small>
+        </aside>
+      </section>
+
+      ${!currency ? `<p class="finance-currency-warning" role="status">当前范围${currencies.length > 1 ? `包含 ${currencies.join('、')} 多个币种` : '没有完整币种事实'}，跨币种金额保持“—”；下方店铺行仍按各自币种显示。</p>` : ''}
+
+      <section class="finance-equation" aria-label="结算金额方程">
+        ${financeMetricCard('结算销售款', formatMoney(sales, currency), '账单实际结算日期口径', metricComparison(sales, previousSales), 'primary')}
+        <span aria-hidden="true">+</span>
+        ${financeMetricCard('补款', formatMoney(financePeriodAmount(current, 'supplementAmount'), currency), '平台明确补款项', '', 'positive')}
+        <span aria-hidden="true">−</span>
+        ${financeMetricCard('扣款', formatMoney(financePeriodAmount(current, 'deductionAmount'), currency), '平台明确扣款项', '', 'negative')}
+        <span aria-hidden="true">=</span>
+        ${financeMetricCard('实际结算', formatMoney(settlement, currency), '优先报账值，缺失时使用计算值', metricComparison(settlement, previousSettlement), 'settlement')}
+      </section>
+
+      <section class="finance-overview-grid">
+        <article class="panel finance-waterfall-panel">
+          ${panelHeading('SETTLEMENT BRIDGE', '结算桥', '销售款、补款、扣款与实际结算分别读取，不从销量推算金额')}
+          ${financeWaterfall(current, currency)}
+        </article>
+        <article class="panel finance-aging-summary">
+          ${panelHeading('PAYMENT POSITION', '待结算与账龄', '采用期间末头寸；预计付款不等于可提现余额')}
+          <div class="finance-aging-kpis">
+            <article><span>期间末待结算</span><strong>${escapeHtml(formatMoney(pending, currency))}</strong><small>${escapeHtml(pendingPositionSubvalue(pendingSummary) || '头寸明细不足')}</small></article>
+            <article><span>逾期报账单</span><strong>${pendingSummary.overdueReportCount === null ? '—' : numberFormatter.format(pendingSummary.overdueReportCount)}</strong><small>仅统计明确 overdueReportCount</small></article>
+            <article><span>预计付款窗</span><strong>${escapeHtml(pendingSummary.earliest || '—')}</strong><small>${escapeHtml(pendingSummary.latest && pendingSummary.latest !== pendingSummary.earliest ? `最晚 ${pendingSummary.latest}` : '最晚日期未知')}</small></article>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel finance-ledger-panel">
+        ${panelHeading('INVENTORY LEDGER', '库存台账桥', '期初 / 入库 / 出库 / 期末是独立官方台账字段；这里不替代库存页实物口径')}
+        ${financeLedgerBridge(current, currency)}
+      </section>
+
+      <section class="finance-table-grid">
+        <article class="panel">
+          ${panelHeading('AGING BY STORE', '店铺待结算头寸', '每店取当前期间最后一条头寸，按待结算金额排序')}
+          ${financePendingTable(current)}
+        </article>
+        <article class="panel">
+          ${panelHeading('RECONCILIATION', '账单对账', '每店取当前期间最后一条账单；差异和未知分开显示')}
+          ${financeReconciliationTable(current)}
+        </article>
+      </section>
+
+      <details class="finance-boundary-note">
+        <summary>金额口径与安全边界</summary>
+        <p>财务明细按业务日、账单按实际结算日、待结算采用期间末头寸，三者不强行拼成同一事务时间。不同币种不求和，缺失金额不补零。</p>
+        <p>本页不计算利润，不提供提现、账单确认或资金写操作；原始凭证与账户信息不在驾驶舱展示。</p>
+      </details>
+      ${state.home.loading ? '<p class="query-refresh-note" role="status">正在刷新当前财务期间…</p>' : ''}
+    </div>`;
+}
+
+function marketingQueryState(kind) {
+  const error = kind === 'error';
+  return `
+    <section class="marketing-query-state ${error ? 'error' : ''}" role="${error ? 'alert' : 'status'}">
+      <span>${error ? 'MARKETING READ FAILED' : 'READING TRAFFIC EVIDENCE'}</span>
+      <h1>${error ? '营销证据暂不可用' : '正在读取流量、商详与成交承接'}</h1>
+      <p>${escapeHtml(error ? state.home.error : '仅从已物化的全托经营分析事实生成诊断；活动、优惠与改价不会被猜测。')}</p>
+    </section>`;
+}
+
+function marketingStoreMetrics(bundle) {
+  const expectedDates = homeRangeDates(bundle.range);
+  const grouped = new Map();
+  for (const row of resolvedHomeDaily(bundle)) {
+    const current = grouped.get(row.storeCode) || {
+      storeCode: row.storeCode,
+      exposureUsers: 0,
+      goodsDetailVisitors: 0,
+      paymentOrderCount: 0,
+      buyerCount: 0,
+      salesQuantity: 0,
+      known: Object.create(null),
+      knownDates: Object.create(null),
+    };
+    for (const key of [
+      'exposureUsers',
+      'goodsDetailVisitors',
+      'paymentOrderCount',
+      'buyerCount',
+      'salesQuantity',
+    ]) {
+      if (finiteMetric(row[key])) {
+        current[key] += row[key];
+        current.known[key] = true;
+        if (!current.knownDates[key]) current.knownDates[key] = new Set();
+        current.knownDates[key].add(row.date);
+      }
+    }
+    grouped.set(row.storeCode, current);
+  }
+  return [...grouped.values()].map((row) => {
+    const complete = Object.fromEntries([
+      'exposureUsers',
+      'goodsDetailVisitors',
+      'paymentOrderCount',
+      'buyerCount',
+      'salesQuantity',
+    ].map((key) => [key, row.knownDates[key]?.size === expectedDates.length]));
+    const normalized = {
+      ...row,
+      complete,
+      exposureUsers: row.known.exposureUsers ? row.exposureUsers : null,
+      goodsDetailVisitors: row.known.goodsDetailVisitors ? row.goodsDetailVisitors : null,
+      paymentOrderCount: row.known.paymentOrderCount ? row.paymentOrderCount : null,
+      buyerCount: row.known.buyerCount ? row.buyerCount : null,
+      salesQuantity: row.known.salesQuantity ? row.salesQuantity : null,
+    };
+    return {
+      ...normalized,
+      visitRate: complete.exposureUsers && complete.goodsDetailVisitors
+        ? boundedShare(normalized.goodsDetailVisitors, normalized.exposureUsers)
+        : null,
+      orderRate: complete.paymentOrderCount && complete.goodsDetailVisitors
+        ? boundedShare(normalized.paymentOrderCount, normalized.goodsDetailVisitors)
+        : null,
+    };
+  }).sort((left, right) => (
+    (right.exposureUsers ?? -1) - (left.exposureUsers ?? -1)
+    || left.storeCode.localeCompare(right.storeCode)
+  ));
+}
+
+function marketingCompletePeriodMetric(bundle, key) {
+  const coverage = homeMetricCoverage(bundle, key, { signed: false });
+  if (coverage.total === 0 || coverage.complete !== coverage.total) return null;
+  return periodMetric(bundle, key, { signed: false });
+}
+
+function marketingStoreMetricDisplay(row, key) {
+  const value = row?.[key];
+  if (!finiteMetric(value)) return '—';
+  if (row.complete?.[key] === true) return numberFormatter.format(value);
+  return value > 0 ? `≥ ${numberFormatter.format(value)}` : '—';
+}
+
+function median(values) {
+  const sorted = values.filter((value) => typeof value === 'number' && Number.isFinite(value))
+    .sort((left, right) => left - right);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function marketingTrafficBasis(bundle) {
+  const rows = Array.isArray(bundle?.storeDaily) ? bundle.storeDaily : [];
+  const withExposure = rows.filter((row) => finiteMetric(row.exposureUsers));
+  if (!withExposure.length) return { comparable: false, label: '曝光口径未知' };
+  const bases = [...new Set(withExposure.map((row) => row.exposureBasis || 'UNAVAILABLE'))];
+  return bases.length === 1 && bases[0] === 'STORE_DEDUP'
+    ? { comparable: true, label: '店铺去重曝光' }
+    : { comparable: false, label: `曝光口径 ${bases.join(' / ')}` };
+}
+
+function marketingFunnelStep(label, value, note, rate = null, tone = '') {
+  return `
+    <article class="marketing-funnel-step ${escapeHtml(tone)}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${value === null ? '—' : numberFormatter.format(value)}</strong>
+      <small>${escapeHtml(note)}</small>
+      <b>${rate === null ? '转化率未知' : formatRate(rate)}</b>
+    </article>`;
+}
+
+function marketingQuadrants(rows, comparable) {
+  const exposureMedian = median(rows.map((row) => row.exposureUsers));
+  const visitMedian = comparable ? median(rows.map((row) => row.visitRate)) : null;
+  const quadrants = [
+    { key: 'high-high', title: '高曝光 · 高承接', note: '保持观察，继续核对活动与价格证据', rows: [] },
+    { key: 'high-low', title: '高曝光 · 低进店', note: '优先复核商详、首图、价格与活动锁', rows: [] },
+    { key: 'low-high', title: '低曝光 · 高承接', note: '优先寻找真实活动与流量入口', rows: [] },
+    { key: 'low-low', title: '低曝光 · 低承接', note: '先核对商品、库存、质量与流量完整度', rows: [] },
+  ];
+  const unknown = [];
+  for (const row of rows) {
+    if (
+      exposureMedian === null
+      || visitMedian === null
+      || row.exposureUsers === null
+      || row.visitRate === null
+    ) {
+      unknown.push(row);
+      continue;
+    }
+    const highExposure = row.exposureUsers >= exposureMedian;
+    const highVisit = row.visitRate >= visitMedian;
+    const key = `${highExposure ? 'high' : 'low'}-${highVisit ? 'high' : 'low'}`;
+    quadrants.find((item) => item.key === key).rows.push(row);
+  }
+  return { quadrants, unknown, exposureMedian, visitMedian };
+}
+
+function marketingOpportunityMatrix(rows, comparable) {
+  const matrix = marketingQuadrants(rows, comparable);
+  if (matrix.exposureMedian === null || matrix.visitMedian === null) {
+    return systemEmptyState(
+      '当前证据不足以形成机会矩阵',
+      comparable
+        ? '曝光或商详访客缺少可比较店铺，页面不会用销量替代流量。'
+        : '曝光不是统一的店铺去重口径，转化象限保持未知。',
+    );
+  }
+  return `
+    <div class="marketing-opportunity-matrix">
+      ${matrix.quadrants.map((quadrant) => `
+        <article class="${escapeHtml(quadrant.key)}">
+          <header><strong>${escapeHtml(quadrant.title)}</strong><span>${numberFormatter.format(quadrant.rows.length)} 家</span></header>
+          <p>${escapeHtml(quadrant.note)}</p>
+          <div>${quadrant.rows.slice(0, 10).map((row) => `<a href="${escapeHtml(canonicalHref({ route: 'products', storeCode: row.storeCode, range: state.range, query: '' }))}"><span>${escapeHtml(row.storeCode)}</span><small>${formatRate(row.visitRate)}</small></a>`).join('') || '<span class="muted-value">当前无可比较店铺</span>'}</div>
+        </article>`).join('')}
+    </div>
+    <p class="table-note">分界线采用当前范围店铺中位数：曝光 ${numberFormatter.format(matrix.exposureMedian)}，商详承接 ${formatRate(matrix.visitMedian)}。这是相对诊断，不是收益预测或自动报名建议。</p>`;
+}
+
+function marketingStoreTable(rows, comparable) {
+  if (!rows.length) {
+    return systemEmptyState(
+      '当前范围没有店铺流量行',
+      '没有返回行不代表曝光、访客或成交为 0；请核对日期、范围和经营分析权限。',
+    );
+  }
+  return `
+    <div class="table-wrap">
+      <table class="data-table marketing-store-table">
+        <thead><tr><th scope="col">店铺</th><th scope="col">曝光</th><th scope="col">商详访客</th><th scope="col">商详承接</th><th scope="col">支付订单</th><th scope="col">下单承接</th><th scope="col">销量</th><th scope="col">证据判断</th></tr></thead>
+        <tbody>${rows.map((row) => {
+          const evidenceReady = comparable
+            && row.complete?.exposureUsers === true
+            && row.complete?.goodsDetailVisitors === true;
+          return `
+            <tr>
+              <td><strong>${escapeHtml(row.storeCode)}</strong></td>
+              <td>${escapeHtml(marketingStoreMetricDisplay(row, 'exposureUsers'))}</td>
+              <td>${escapeHtml(marketingStoreMetricDisplay(row, 'goodsDetailVisitors'))}</td>
+              <td>${evidenceReady ? formatRate(row.visitRate) : '—'}</td>
+              <td>${escapeHtml(marketingStoreMetricDisplay(row, 'paymentOrderCount'))}</td>
+              <td>${evidenceReady ? formatRate(row.orderRate) : '—'}</td>
+              <td>${escapeHtml(marketingStoreMetricDisplay(row, 'salesQuantity'))}</td>
+              <td><span class="row-status ${evidenceReady ? 'complete' : 'pending'}">${evidenceReady ? '可比较' : '证据不足'}</span></td>
+            </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function marketingCapabilityRail(bundle) {
+  const trafficCoverage = homeMetricCoverage(bundle, ['exposureUsers', 'goodsDetailVisitors']);
+  const capabilities = [
+    { label: '店铺流量与商详', status: trafficCoverage.available > 0 ? 'live' : 'unknown', note: trafficCoverage.label },
+    { label: '活动列表与报名窗', status: 'audited', note: 'WebAPI 合同已审，尚未形成 25 店物化事实' },
+    { label: '商品活动锁', status: 'audited', note: '字段合同已审，当前页面不据此判断可报名' },
+    { label: '价格与优惠', status: 'audited', note: 'OpenAPI / WebAPI 能力已审，未接入本页事实包络' },
+    { label: '参与成本与利润', status: 'unknown', note: '没有可核验成本闭环，不估算收益' },
+  ];
+  return `
+    <div class="marketing-capability-rail">
+      ${capabilities.map((item) => `
+        <article class="${escapeHtml(item.status)}"><span>${escapeHtml(item.label)}</span><strong>${item.status === 'live' ? '已接入' : item.status === 'audited' ? '能力已审' : '未知'}</strong><small>${escapeHtml(item.note)}</small></article>`).join('')}
+    </div>`;
 }
 
 function renderMarketing() {
+  if (state.home.loading && !state.home.data) {
+    return `${sampleNotice()}${marketingQueryState('loading')}`;
+  }
+  if (state.home.error && !state.home.data) {
+    return `${sampleNotice()}${marketingQueryState('error')}`;
+  }
+  const range = selectedHomeDateRange();
+  const current = homeScopedRows(range);
+  const previous = homeScopedRows(previousHomeDateRange(range));
+  const trafficBasis = marketingTrafficBasis(current);
+  const rows = marketingStoreMetrics(current);
+  const exposure = marketingCompletePeriodMetric(current, 'exposureUsers');
+  const visitors = marketingCompletePeriodMetric(current, 'goodsDetailVisitors');
+  const orders = marketingCompletePeriodMetric(current, 'paymentOrderCount');
+  const buyers = marketingCompletePeriodMetric(current, 'buyerCount');
+  const sales = marketingCompletePeriodMetric(current, 'salesQuantity');
+  const previousSales = marketingCompletePeriodMetric(previous, 'salesQuantity');
+  const visitRate = trafficBasis.comparable ? boundedShare(visitors, exposure) : null;
+  const orderRate = trafficBasis.comparable ? boundedShare(orders, visitors) : null;
   return `
     ${sampleNotice()}
-    ${pageIntro(
-      'MARKETING OPPORTUNITIES',
-      '营销机会',
-      '入口已经纳入新的九页信息架构；下一阶段将复用半托的机会发现逻辑，并以全托可核验能力为边界。',
-      '<span>当前状态</span><strong>规划入口</strong><small>未接入前不展示伪机会或建议动作</small>',
-    )}
-    ${integrationGate({
-      kicker: 'CAPABILITY FIRST',
-      title: '营销机会接入条件',
-      description: '先确认 OpenAPI、Webhook 与官方后台只读事实，再决定哪些机会值得进入运营待办。',
-      evidence: [
-        '复核全托商品、价格、活动与流量相关只读能力',
-        '区分可观测机会、可执行动作与必须人工确认的边界',
-        '沿用半托的机会优先级和证据回读方法，不照搬消费者侧指标',
-        '任何报名、改价或其他平台写操作继续保持关闭',
-      ],
-      boundary: '本轮只完成导航和采购履约；营销机会尚未形成可信数据合同，因此不展示数量、收益或推荐结果。',
-      futureFields: '机会类型、受影响商品/店铺、证据窗口、预计影响、风险、建议动作、回读状态',
-    })}`;
+    <div class="marketing-opportunity-page">
+      <section class="marketing-page-head">
+        <div>
+          <span>TRAFFIC · OPPORTUNITY</span>
+          <h1>营销机会</h1>
+          <p>当前先用已物化的曝光、商详、订单与销量定位承接缺口；活动、优惠和价格没有事实时不生成伪机会。</p>
+        </div>
+        <aside class="${trafficBasis.comparable ? '' : 'attention'}">
+          <span>期间 / 流量口径</span>
+          <strong>${escapeHtml(`${range.start} → ${range.end} · ${trafficBasis.label}`)}</strong>
+          <small>${escapeHtml(`${inventoryScopeLabel()} · ${rows.length} 家有经营分析行`)}</small>
+        </aside>
+      </section>
+
+      <section class="marketing-funnel" aria-label="店铺流量承接链">
+        ${marketingFunnelStep('曝光', exposure, trafficBasis.label, null, 'exposure')}
+        <span aria-hidden="true">→</span>
+        ${marketingFunnelStep('商详访客', visitors, '商品详情访问', visitRate, 'visit')}
+        <span aria-hidden="true">→</span>
+        ${marketingFunnelStep('支付订单', orders, '平台支付订单数', orderRate, 'order')}
+        <span aria-hidden="true">→</span>
+        ${marketingFunnelStep('买家 / 销量', sales, buyers === null ? '买家数未知' : `${numberFormatter.format(buyers)} 位买家`, null, 'sale')}
+      </section>
+
+      <section class="marketing-main-grid">
+        <article class="panel marketing-matrix-panel">
+          ${panelHeading('OPPORTUNITY MATRIX', '店铺机会矩阵', '曝光强度 × 商详承接；只做相对诊断，不估收益')}
+          ${marketingOpportunityMatrix(rows, trafficBasis.comparable)}
+        </article>
+        <article class="panel marketing-readiness-panel">
+          ${panelHeading('CAPABILITY RECEIPT', '营销能力收据', '区分已经接入的数据、已审但未物化的能力和仍未知的成本')}
+          ${marketingCapabilityRail(current)}
+        </article>
+      </section>
+
+      <section class="panel marketing-store-panel">
+        ${panelHeading('STORE DIAGNOSTICS', '店铺流量承接明细', `当前销量较上一同长期间 ${metricComparison(sales, previousSales)} · 未知值不补零`)}
+        ${marketingStoreTable(rows, trafficBasis.comparable)}
+      </section>
+
+      <details class="marketing-boundary-note">
+        <summary>机会判断与写入边界</summary>
+        <p>当前矩阵只证明流量与承接的相对位置，不证明某个活动可报名，也不估算活动收益。活动列表、商品活动锁、价格和优惠虽已完成能力审计，但在逐店确定性物化前只显示“能力已审”。</p>
+        <p>三类动作持续关闭：活动报名、优惠 / 优惠券设置、改价。任何后续写入仍需独立预检、精确 payload hash、串行执行和终态回读。</p>
+      </details>
+      ${state.home.loading ? '<p class="query-refresh-note" role="status">正在刷新当前营销证据…</p>' : ''}
+    </div>`;
 }
 
 function queueHasEvidence(queue) {
@@ -11407,6 +12407,52 @@ function opsFilters(queryData) {
     </div>`;
 }
 
+function opsTriageCard(item) {
+  return `
+    <article class="ops-triage-card">
+      <header>${severityBadge(item.severity)}<span>${escapeHtml(item.sourceLabel || item.domain || '运营')}</span></header>
+      <strong>${escapeHtml(item.title || '运营事项')}</strong>
+      <p>${escapeHtml(item.impact || '影响范围待回读')}</p>
+      <dl>
+        <div><dt>对象</dt><dd>${escapeHtml([item.storeCode, item.objectCode].filter(Boolean).join(' · ') || '跨店系统项')}</dd></div>
+        <div><dt>截止</dt><dd>${escapeHtml(item.dueAt ? sourceTime(item.dueAt) : '无明确截止')}</dd></div>
+        <div><dt>证据</dt><dd>${escapeHtml(sourceTime(item.evidenceAt))}</dd></div>
+      </dl>
+      <footer><span>${escapeHtml(item.nextStep || '打开业务页核对事实')}</span><a href="${escapeHtml(alertFocusHref(item))}">查看 →</a></footer>
+    </article>`;
+}
+
+function opsTriageLane(key, label, note, lane) {
+  const rows = Array.isArray(lane?.rows) ? lane.rows : [];
+  const total = lane?.completeness === 'COMPLETE' && isUnit(lane?.total)
+    ? numberFormatter.format(lane.total)
+    : rows.length > 0
+      ? `≥ ${numberFormatter.format(rows.length)}`
+      : '—';
+  return `
+    <section class="ops-triage-lane ${escapeHtml(key)}">
+      <header><div><span>${escapeHtml(label)}</span><p>${escapeHtml(note)}</p></div><strong>${escapeHtml(total)}</strong></header>
+      <div>${rows.length
+        ? rows.map(opsTriageCard).join('')
+        : '<p class="ops-triage-empty">当前筛选没有已证明属于此泳道的事项；不等于业务无风险。</p>'}</div>
+      ${lane?.truncated === true
+        ? `<small>${lane?.completeness === 'PARTIAL'
+          ? `源窗口不完整；当前只展示 ${nullableUnits(lane.returned)} 条已物化事项，不把缺口算成 0。`
+          : `当前先展示 ${nullableUnits(lane.returned)} / ${nullableUnits(lane.total)} 条，完整结果见下方清单。`}</small>`
+        : ''}
+    </section>`;
+}
+
+function opsTriageBoard(queryData) {
+  const triage = productRecord(queryData.triage);
+  return `
+    <section class="ops-triage-board" aria-label="运营事项三泳道">
+      ${opsTriageLane('now', '现在处理', '紧急、高优先或已逾期，优先核对事实', triage.now)}
+      ${opsTriageLane('today', '今日截止', `${triage.businessDate || '业务日未知'} 明确到期；无 dueAt 不进入`, triage.today)}
+      ${opsTriageLane('watch', '继续观察', '尚未达到高优先且没有今日截止证据', triage.watch)}
+    </section>`;
+}
+
 function opsEvidenceDisclosure(queryData) {
   const source = productRecord(queryData.source);
   const automation = productRecord(queryData.automation);
@@ -11459,6 +12505,7 @@ function renderOps() {
     ${sampleNotice()}
     ${focusEvidencePanel()}
     ${opsDecisionOverview(queryData)}
+    ${opsTriageBoard(queryData)}
     ${opsRankings(queryData)}
     <section class="table-section ops-workspace">
       ${panelHeading(
@@ -11754,6 +12801,44 @@ function systemCoverageTable(queryData) {
     <p class="table-note">覆盖按当前负责人或店铺范围重新计算；同步中、历史失败和缺失分别显示，不用旧成功掩盖当前问题。</p>`;
 }
 
+function systemCapabilityEvidence(queryData) {
+  const audit = productRecord(queryData.capabilities);
+  const items = Array.isArray(audit.items) ? audit.items : [];
+  if (!items.length) {
+    return systemEmptyState(
+      '低频平台能力审计凭证不可用',
+      '没有脱敏、版本化凭证时，系统页不会声称第三方应用、服务、物料、装修或检测能力已经审计。',
+    );
+  }
+  return `
+    <div class="system-capability-receipt">
+      <div>
+        <span>审计版本</span>
+        <strong>${escapeHtml(audit.auditVersion || '未知')}</strong>
+        <small>${escapeHtml(`${audit.observedDate || '日期未知'} · 单店现场样本 · 25 店覆盖未知`)}</small>
+      </div>
+      <div>
+        <span>凭证指纹</span>
+        <strong class="monospace-value">${escapeHtml(audit.auditHash ? audit.auditHash.slice(0, 16) : '未知')}</strong>
+        <small>脱敏合同 SHA-256；不是业务数据哈希</small>
+      </div>
+    </div>
+    <div class="system-capability-rack">
+      ${items.map((item) => `
+        <article class="${item.capabilityStatus === 'AUDITED' ? 'audited' : 'partial'}">
+          <header><span>${escapeHtml(item.placement || '系统状态')}</span><strong>${escapeHtml(item.label || item.key || '能力')}</strong></header>
+          <p>${escapeHtml(item.readModel || '只读字段待确认')}</p>
+          <dl>
+            <div><dt>能力审计</dt><dd>${item.capabilityStatus === 'AUDITED' ? '已完成' : '部分完成'}</dd></div>
+            <div><dt>组合覆盖</dt><dd>未知</dd></div>
+            <div><dt>来源</dt><dd>${escapeHtml(item.sourceClass || '未知')}</dd></div>
+          </dl>
+          <footer><strong>明确排除</strong><span>${escapeHtml(item.excluded || '平台写动作与敏感字段')}</span></footer>
+        </article>`).join('')}
+    </div>
+    <p class="table-note">这些卡证明“在一个当前登录的全托店铺观察到页面与接口合同”，不证明 25 店已采集，也不代表该业务有记录。任何授权、订购、申领、装修、检测申请继续在平台原流程完成。</p>`;
+}
+
 function systemBoundaryDisclosure(queryData) {
   const boundaries = productRecord(queryData.boundaries);
   const releases = productRecord(boundaries.releases);
@@ -11821,6 +12906,10 @@ function renderSystem() {
     <section class="table-section">
       ${panelHeading('DATA FRESHNESS', '数据同步覆盖', '按当前负责人或店铺范围核算 6 个只读业务域')}
       ${systemCoverageTable(queryData)}
+    </section>
+    <section class="table-section system-capability-workspace">
+      ${panelHeading('PLATFORM CAPABILITY EVIDENCE', '低频平台能力证据架', '单店现场审计与 25 店生产覆盖严格分开')}
+      ${systemCapabilityEvidence(queryData)}
     </section>
     ${systemBoundaryDisclosure(queryData)}
     ${state.system.loading ? '<p class="query-refresh-note" role="status">正在重新读取系统运行态…</p>' : ''}`;
@@ -12233,7 +13322,7 @@ function scheduleHomePresetPrefetch() {
 }
 
 async function loadHome({ force = false } = {}) {
-  if (!state.data || state.route !== 'home') return;
+  if (!state.data || !HISTORY_DECISION_ROUTES.includes(state.route)) return;
   const cacheKey = homeApiPath();
   const serial = state.home.requestSerial + 1;
   state.home.requestSerial = serial;
@@ -12262,7 +13351,7 @@ async function loadHome({ force = false } = {}) {
 let homeLoadTimer = null;
 function scheduleHomeLoad({ delay = 0, force = false } = {}) {
   if (homeLoadTimer) clearTimeout(homeLoadTimer);
-  if (state.route !== 'home') {
+  if (!HISTORY_DECISION_ROUTES.includes(state.route)) {
     state.home.requestSerial += 1;
     state.home.loading = false;
     return;
@@ -12329,7 +13418,7 @@ async function loadDashboard(options = {}) {
 
   state.loading = false;
   render();
-  if (state.data && state.route === 'home') {
+  if (state.data && HISTORY_DECISION_ROUTES.includes(state.route)) {
     scheduleHomeLoad({ force });
   }
   if (state.data && state.route === 'procurement') {
@@ -12349,6 +13438,9 @@ async function loadDashboard(options = {}) {
   }
   if (state.data && URL_ORDER_PAGE_IDS.includes(state.route)) {
     scheduleOrderLoad();
+  }
+  if (state.data && state.route === 'returns') {
+    scheduleReturnsLoad();
   }
   if (state.data && state.route === 'platform') {
     schedulePlatformLoad();
@@ -12573,8 +13665,9 @@ function syncRouteFromLocation() {
   const routeChanged = state.route !== parsed.route;
   applyHashState(parsed);
   syncUrlFromState();
+  if (state.route === 'returns') invalidateReturnsScope();
   render();
-  if (state.route === 'home') {
+  if (HISTORY_DECISION_ROUTES.includes(state.route)) {
     scheduleHomeLoad();
   } else if (routeChanged) {
     state.home.requestSerial += 1;
@@ -12619,6 +13712,12 @@ function syncRouteFromLocation() {
     state.orderWorkspace.requestSerial += 1;
     state.orderWorkspace.loading = false;
   }
+  if (state.route === 'returns') {
+    scheduleReturnsLoad();
+  } else if (routeChanged) {
+    state.returns.requestSerial += 1;
+    state.returns.loading = false;
+  }
   if (state.route === 'platform') {
     schedulePlatformLoad({ resetPage: routeChanged });
   } else if (routeChanged) {
@@ -12647,6 +13746,7 @@ function syncRouteFromLocation() {
 elements.search.addEventListener('input', (event) => {
   state.query = event.currentTarget.value;
   syncUrlFromState();
+  if (state.route === 'returns') invalidateReturnsScope();
   render();
   scheduleHomeLoad({ delay: 220 });
   scheduleProcurementLoad({ resetPage: true, delay: 220 });
@@ -12655,6 +13755,7 @@ elements.search.addEventListener('input', (event) => {
   scheduleProductLoad({ resetPages: true, delay: 220 });
   scheduleFulfilmentLoad({ resetPage: true, delay: 220 });
   scheduleOrderLoad({ resetPage: true, delay: 220 });
+  scheduleReturnsLoad({ delay: 220 });
   schedulePlatformLoad({ resetPage: true, delay: 220 });
   scheduleOpsLoad({ resetPage: true, delay: 220 });
   scheduleSystemLoad({ reset: true, delay: 220 });
@@ -12665,6 +13766,7 @@ elements.scope.addEventListener('change', (event) => {
   state.owner = value.startsWith('OWNER:') ? value.slice(6) : 'ALL';
   state.store = value.startsWith('STORE:') ? value.slice(6) : 'ALL';
   syncUrlFromState();
+  if (state.route === 'returns') invalidateReturnsScope();
   render();
   scheduleHomeLoad({ delay: 120 });
   scheduleProcurementLoad({ resetPage: true });
@@ -12673,6 +13775,7 @@ elements.scope.addEventListener('change', (event) => {
   scheduleProductLoad({ resetPages: true, delay: 120 });
   scheduleFulfilmentLoad({ resetPage: true, delay: 120 });
   scheduleOrderLoad({ resetPage: true, delay: 120 });
+  scheduleReturnsLoad({ delay: 120 });
   schedulePlatformLoad({ resetPage: true, delay: 120 });
   scheduleOpsLoad({ resetPage: true, delay: 120 });
   scheduleSystemLoad({ reset: true, delay: 120 });
@@ -12841,6 +13944,11 @@ elements.view.addEventListener('click', (event) => {
   const orderRetry = event.target.closest?.('[data-order-retry]');
   if (orderRetry && elements.view.contains(orderRetry)) {
     void loadOrder();
+    return;
+  }
+  const returnsRetry = event.target.closest?.('[data-returns-retry]');
+  if (returnsRetry && elements.view.contains(returnsRetry)) {
+    void loadReturns();
     return;
   }
   const orderPage = event.target.closest?.('[data-order-page]');
@@ -13314,6 +14422,8 @@ elements.clearFilters.addEventListener('click', () => {
   scheduleInventoryLoad({ resetPages: true });
   scheduleProductLoad({ resetPages: true });
   scheduleFulfilmentLoad({ resetPage: true });
+  scheduleOrderLoad({ resetPage: true });
+  scheduleReturnsLoad();
   schedulePlatformLoad({ resetPage: true });
   scheduleOpsLoad({ resetPage: true });
   scheduleSystemLoad({ reset: true });

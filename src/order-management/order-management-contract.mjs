@@ -422,6 +422,11 @@ function validateEntryArray(pageId, values, kind) {
       errors.push(`${kind}[${index}] must be an object`);
       return;
     }
+    const extraKeys = Object.keys(entry).filter((key) => !['name', 'value'].includes(key));
+    if (extraKeys.length > 0) {
+      errors.push(`${kind}[${index}] contains unsupported keys`);
+      return;
+    }
     const { name, value } = entry;
     if (typeof name !== 'string' || !name) {
       errors.push(`${kind}[${index}].name is required`);
@@ -437,8 +442,12 @@ function validateEntryArray(pageId, values, kind) {
       errors.push(`${kind}[${index}].value must be text or number`);
       return;
     }
-    if (value !== null && typeof value !== 'number' && containsNumericPii(value)) {
-      errors.push(`${kind}[${index}].value contains numeric PII`);
+    if (
+      value !== null
+      && typeof value !== 'number'
+      && (containsNumericPii(value) || containsSensitiveText(value))
+    ) {
+      errors.push(`${kind}[${index}].value contains sensitive text`);
     }
   });
   return errors;
@@ -460,6 +469,8 @@ export function validateOrderManagementRow(row, { pageId } = {}) {
       errors.push(`row.${key} is required`);
     }
   }
+  const extraKeys = Object.keys(row).filter((key) => !ORDER_MANAGEMENT_ROW_KEYS.includes(key));
+  if (extraKeys.length > 0) errors.push('row contains unsupported keys');
   if (typeof row.id !== 'string' || !row.id) errors.push('row.id must be a non-empty string');
   if (typeof row.storeCode !== 'string' || !row.storeCode) {
     errors.push('row.storeCode must be a non-empty string');
@@ -481,6 +492,7 @@ export function validateOrderManagementRow(row, { pageId } = {}) {
   }
   for (const [location, value] of [
     ['row.statusName', row.statusName],
+    ['row.primary', row.primary],
     ['row.secondary', row.secondary],
   ]) {
     if (value !== null && value !== undefined && containsSensitiveText(value)) {

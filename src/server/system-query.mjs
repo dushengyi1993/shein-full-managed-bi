@@ -1,3 +1,5 @@
+import { SYSTEM_CAPABILITY_AUDIT } from './system-capability-audit.mjs';
+
 const STORE_PATTERN = /^[A-Z0-9]{2,12}$/;
 const OWNER_PATTERN = /^[\p{L}\p{N}._:-]{1,64}$/u;
 const ALLOWED_PARAMS = new Set(['owner', 'store', 'q']);
@@ -564,6 +566,7 @@ export function querySystemDashboard(dashboardInput, runtimeInput, params = new 
     coverage: Object.freeze({
       rows: Object.freeze(coverage),
     }),
+    capabilities: SYSTEM_CAPABILITY_AUDIT,
     readiness: scopedReadiness(dashboard),
     boundaries: Object.freeze({
       schemaReadiness: record(dashboard.system).schemaReadiness || {},
