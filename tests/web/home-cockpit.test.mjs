@@ -731,7 +731,7 @@ test('homepage range, trend labels and renewal cadence match the operating prefe
   assert.doesNotMatch(timer, /00,04,08,12,16,20/);
 });
 
-test('active responsive shell mirrors the semi-managed top rail and keeps health below account on desktop', async () => {
+test('active responsive shell uses the flat light navigation and moves health out of the sidebar', async () => {
   const [html, app, parity] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
@@ -742,10 +742,12 @@ test('active responsive shell mirrors the semi-managed top rail and keeps health
   const navIndex = html.indexOf('class="nav primary-nav"');
   const accountIndex = html.indexOf('class="account-box sidebar-context sidebar-account"');
   const healthIndex = html.indexOf('class="side-note sidebar-health"');
-  assert.ok(navIndex < accountIndex && accountIndex < healthIndex);
+  assert.ok(navIndex < accountIndex);
+  assert.equal(healthIndex, -1);
+  for (const id of ['sidebar-account-name', 'sidebar-permission']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
   for (const id of [
-    'sidebar-account-name',
-    'sidebar-permission',
     'sidebar-operating-freshness',
     'sidebar-finance-freshness',
     'sidebar-ledger-freshness',
@@ -753,29 +755,28 @@ test('active responsive shell mirrors the semi-managed top rail and keeps health
     'live-update-badge',
     'updated-at',
   ]) {
-    assert.match(html, new RegExp(`id="${id}"`));
+    assert.doesNotMatch(html, new RegExp(`id="${id}"`));
   }
   assert.match(app, /access\.displayName \|\| access\.username/);
   assert.match(app, /全部店铺可查看/);
   assert.match(app, /写入需单独授权/);
 
   const tabletIndex = parity.lastIndexOf('@media (max-width: 1280px)');
-  const mobileIndex = parity.lastIndexOf('@media (max-width: 720px)');
+  const mobileIndex = parity.lastIndexOf('@media (max-width: 760px)');
   assert.notEqual(tabletIndex, -1);
   assert.notEqual(mobileIndex, -1);
   const tablet = parity.slice(tabletIndex, mobileIndex);
   const mobile = parity.slice(mobileIndex);
   assert.match(tablet, /\.sidebar\s*\{[^}]*grid-template-columns: auto minmax\(0, 1fr\) auto/s);
   assert.match(tablet, /\.primary-nav\s*\{[^}]*display: flex[^}]*overflow-x: auto/s);
-  assert.match(tablet, /\.sidebar-health,[\s\S]*?display: none/s);
   assert.match(mobile, /\.sidebar\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) auto/s);
   assert.match(mobile, /\.primary-nav\s*\{[^}]*grid-column: 1 \/ -1/s);
-  assert.match(mobile, /\.bar\.home-filter-bar\s*\{[^}]*grid-template-columns: 1fr/s);
-  assert.match(mobile, /\.home-filter-bar \.range-dock\s*\{[^}]*display: block[^}]*grid-area: range/s);
-  assert.match(mobile, /\.home-filter-bar \.range-toolbar-main\s*\{[^}]*display: grid/s);
-  assert.match(mobile, /\.mobile-title\s*\{[^}]*display: none/s);
-  assert.match(mobile, /\.line-chart\s*\{[^}]*overflow-x: auto/s);
-  assert.match(mobile, /\.line-chart svg\s*\{[^}]*min-width: 720px/s);
+  assert.match(mobile, /body\[data-route="procurement"\] \.bar\.home-filter-bar\s*\{[^}]*grid-template-columns: 1fr/s);
+  assert.match(parity, /\.home-filter-bar \.range-dock\s*\{[^}]*display: block[^}]*grid-area: range/s);
+  assert.match(parity, /\.home-filter-bar \.range-toolbar-main\s*\{[^}]*display: grid/s);
+  assert.match(parity, /\.mobile-title\s*\{[^}]*display: none/s);
+  assert.match(parity, /\.line-chart\s*\{[^}]*overflow-x: auto/s);
+  assert.match(parity, /\.line-chart svg\s*\{[^}]*min-width: 720px/s);
 });
 
 test('390px layout has explicit page-level overflow guards', async () => {

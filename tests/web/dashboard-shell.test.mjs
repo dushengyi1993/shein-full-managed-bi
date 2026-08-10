@@ -16,7 +16,7 @@ function functionBody(source, functionName) {
   return source.slice(start, nextFunction === -1 ? source.length : nextFunction);
 }
 
-test('full-managed primary navigation keeps home first and nests shipping orders inside the order-management group', async () => {
+test('full-managed primary navigation is a flat nine-entry list with no order group', async () => {
   const [html, app, styles] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
@@ -24,71 +24,83 @@ test('full-managed primary navigation keeps home first and nests shipping orders
   ]);
   const routes = [
     'home',
-    'fulfilment',
-    'delivery-notes',
-    'stock-records',
-    'waybills',
-    'return-applications',
-    'return-orders',
-    'exceptions',
-    'value-added-services',
-    'quality-reports',
-    'sales',
     'products',
     'inventory',
     'procurement',
-    'platform',
+    'returns',
+    'finance',
+    'marketing',
     'ops',
     'system',
   ];
 
-  for (const route of routes) {
-    assert.match(html, new RegExp(`data-route="${route}"`));
-    assert.match(app, new RegExp(`\\b['"]?${route}['"]?: \\{ title:`));
-  }
-  assert.equal((html.match(/data-route=/g) || []).length, 17);
+  // The primary nav is exactly the nine decision workspaces, in order, with
+  // home first. No secondary grouping or category labels remain.
+  assert.equal((html.match(/data-route=/g) || []).length, 9);
   assert.deepEqual(
     [...html.matchAll(/data-route="([^"]+)"/g)].map((match) => match[1]),
     routes,
   );
-  assert.doesNotMatch(html, /data-route="(?:returns|compliance|finance)"/);
-  assert.match(html, /data-route="home"><span>总控驾驶舱<\/span>/);
-  // The expandable top-level group carries the confirmed ORDER code.
-  assert.match(html, /<button type="button" class="nav-group-toggle" id="order-nav-toggle"/);
-  assert.match(html, /aria-expanded="false" aria-controls="order-nav-panel"/);
-  assert.match(html, /<span>订单管理<\/span>/);
-  assert.match(html, /<small>ORDER<\/small>/);
-  // The group panel is one flat nine-item list, with 发货订单 (#fulfilment)
-  // first and no secondary category headings.
-  const panelStart = html.indexOf('id="order-nav-panel"');
-  const panelEnd = html.indexOf('</div>', panelStart + 1);
-  const panel = html.slice(panelStart, panelEnd);
-  assert.doesNotMatch(panel, /nav-subgroup|<p[^>]*>发货履约<\/p>|<p[^>]*>退货异常<\/p>|<p[^>]*>服务质检<\/p>/);
-  assert.deepEqual(
-    [...panel.matchAll(/data-route="([^"]+)"/g)].map((match) => match[1]),
-    [
-      'fulfilment',
-      'delivery-notes',
-      'stock-records',
-      'waybills',
-      'return-applications',
-      'return-orders',
-      'exceptions',
-      'value-added-services',
-      'quality-reports',
-    ],
+  assert.doesNotMatch(
+    html,
+    /nav-group|order-nav-toggle|order-nav-panel|nav-subgroup|<small>ORDER<\/small>/,
   );
-  assert.match(html, /data-route="sales"><span>销量分析<\/span>/);
-  assert.match(html, /data-route="products"><span>商品分析<\/span>/);
-  assert.match(html, /data-route="inventory"><span>库存与备货<\/span>/);
-  assert.match(html, /data-route="platform"><span>平台动态<\/span>/);
-  assert.match(html, /data-route="ops"><span>运营工具<\/span>/);
-  assert.match(html, /data-route="system"><span>系统管理<\/span>/);
+  for (const route of routes) {
+    assert.match(html, new RegExp(`data-route="${route}"`));
+    assert.match(app, new RegExp(`\\b['"]?${route}['"]?: \\{ title:`));
+  }
+  assert.match(html, /data-route="home">\s*<svg class="nav-icon"/);
+  for (const [route, label] of [
+    ['home', '总控驾驶舱'],
+    ['products', '商品经营'],
+    ['inventory', '库存与备货'],
+    ['procurement', '采购履约'],
+    ['returns', '退货与质量'],
+    ['finance', '财务与结算'],
+    ['marketing', '营销机会'],
+    ['ops', '运营待办'],
+    ['system', '数据与系统'],
+  ]) {
+    assert.match(html, new RegExp(`data-route="${route}">[\\s\\S]*?<span>${label}<\\/span>`));
+  }
+  // The old order-management pages are compatibility deep links only: they
+  // never appear in the shell, and the sidebar health card is gone.
+  assert.doesNotMatch(
+    html,
+    /data-route="(?:fulfilment|delivery-notes|stock-records|waybills|return-applications|return-orders|exceptions|value-added-services|quality-reports|sales|compliance|platform)"/,
+  );
+  assert.doesNotMatch(html, /sidebar-health|side-note|DATA HEALTH|dataset-badge|data-health/);
+  // Old hash routes map onto the new workspaces through the alias table.
+  assert.match(app, /const NAV_ROUTE_ALIASES = Object\.freeze\(\{/);
+  for (const [oldRoute, target] of [
+    ['sales', 'products'],
+    ['fulfilment', 'procurement'],
+    ["'delivery-notes'", 'procurement'],
+    ["'stock-records'", 'inventory'],
+    ['waybills', 'procurement'],
+    ["'value-added-services'", 'procurement'],
+    ["'return-applications'", 'returns'],
+    ["'return-orders'", 'returns'],
+    ['exceptions', 'returns'],
+    ["'quality-reports'", 'returns'],
+    ['compliance', 'products'],
+    ['platform', 'system'],
+  ]) {
+    assert.match(app, new RegExp(`${oldRoute}: '${target}'`));
+  }
+  assert.match(app, /function navigationRouteFor\(route\)/);
+  assert.match(app, /return NAV_ROUTE_ALIASES\[route\] \|\| route;/);
+  // The active nav item resolves through the alias map; no group wiring left.
+  const navigation = functionBody(app, 'updateNavigation');
+  assert.match(navigation, /const activeRoute = navigationRouteFor\(state\.route\);/);
+  assert.match(navigation, /link\.dataset\.route === activeRoute/);
+  assert.match(navigation, /document\.body\.dataset\.route = state\.route/);
+  assert.match(navigation, /document\.body\.dataset\.navRoute = activeRoute/);
+  assert.doesNotMatch(app, /orderGroupToggle|toggleOrderNavPanel|closeOrderNavPanel/);
   assert.match(html, /缺失值不补零；建议不等于已执行/);
   assert.match(styles, /\.table-wrap\s*\{[^}]*max-width:\s*100%[^}]*overflow:\s*auto/s);
-  assert.match(styles, /\.nav-group-panel\s*\{/);
-  assert.match(styles, /\.nav-group-toggle\s*\{/);
-  assert.doesNotMatch(styles, /\.nav-subgroup-label\s*\{/);
+  assert.match(styles, /\.primary-nav a\s*\{/);
+  assert.match(styles, /\.primary-nav a\.active\s*\{/);
   assert.match(styles, /@media \(max-width: 620px\)/);
 });
 
@@ -238,24 +250,43 @@ test('web assets stay self-hosted and off the banned typefaces', async () => {
   assert.match(parityStyles, /\.metric-matrix\s*\{[^}]*display: grid/s);
 });
 
-test('procurement uses an independent server query and authenticated snapshot update stream', async () => {
-  const [html, app, styles] = await Promise.all([
-    read('src/web/index.html'),
+test('procurement is a combined read-only query over independent endpoints with authenticated snapshot updates', async () => {
+  const [app, styles] = await Promise.all([
     read('src/web/app.js'),
     read('src/web/styles.css'),
   ]);
-  assert.match(html, /id="live-update-badge"/);
   assert.match(app, /\/api\/procurement\?/);
   assert.match(app, /function loadProcurement\(/);
-  assert.match(app, /matchedMaterializedAttentionCount/);
-  // Truncation stays explicit; the workspace now names the source scope too.
+  // The unified workspace also reads the fulfilment endpoint, bounded to a
+  // fixed 100-row slice while its server facets still carry scoped counts.
+  assert.match(app, /function procurementFulfilmentQueryUrl\(\)/);
+  const fulfilmentUrl = functionBody(app, 'procurementFulfilmentQueryUrl');
+  assert.match(fulfilmentUrl, /`\/api\/fulfilment\?\$\{params\.toString\(\)\}`/);
+  for (const parameter of [
+    'owner', 'store', 'q', 'orderType', 'status', 'quick', 'timeField',
+    'warehouse', 'defective', 'sort', 'page', 'pageSize',
+  ]) {
+    assert.match(fulfilmentUrl, new RegExp(`${parameter}:`), parameter);
+  }
+  assert.match(fulfilmentUrl, /pageSize: '100'/);
+  assert.match(fulfilmentUrl, /timeField: 'UPDATED'/);
+  // The procurement query keeps its server-side filters, sorting and paging.
+  const load = functionBody(app, 'loadProcurement');
+  assert.match(load, /Promise\.allSettled\(\[/);
+  assert.match(load, /fetchJson\(procurementQueryUrl\(\)\)/);
+  assert.match(load, /fetchJson\(procurementFulfilmentQueryUrl\(\)\)/);
+  assert.match(load, /采购单查询结构无效/);
+  assert.match(load, /fulfilmentError/);
+  assert.match(app, /data-procurement-page/);
+  // Truncation stays explicit and the page never pretends to be realtime.
   assert.match(app, /源明细已截断/);
   assert.match(app, /源结果已截断，非仓库全量/);
-  assert.match(app, /data-procurement-page/);
+  assert.match(app, /发货辅助明细最多回读 100 条/);
+  assert.doesNotMatch(app, /实时采购|采购实时/);
+  // Snapshot updates arrive over the authenticated SSE stream.
   assert.match(app, /new EventSource\('\/api\/events'\)/);
   assert.match(app, /dashboard-updated/);
   assert.match(app, /快照自动更新/);
-  assert.doesNotMatch(app, /实时采购|采购实时/);
   assert.match(styles, /\.table-pagination\s*\{/);
 });
 

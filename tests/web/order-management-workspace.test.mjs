@@ -56,14 +56,16 @@ async function loadHashStateContract() {
   `)();
 }
 
-test('the eight order-management pages are registered routes with researched copy', async () => {
+test('the eight order-management pages stay registered compatibility deep links', async () => {
   const [html, app] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/app.js'),
   ]);
 
   for (const page of ORDER_PAGES) {
-    assert.match(html, new RegExp(`href="#${page}" data-route="${page}"`), page);
+    // The pages are no longer primary-navigation entries.
+    assert.doesNotMatch(html, new RegExp(`data-route="${page}"`), page);
+    // ... but they remain registered routes with researched copy.
     assert.match(app, new RegExp(`\\b['"]?${page}['"]?: \\{ title:`), page);
     assert.match(app, new RegExp(`['"]?${page}['"]?: \\{\\s*title:`), page);
   }
@@ -542,94 +544,43 @@ test('order paging and filter controls stay server-driven and URL-synced', async
   assert.match(app, /state\.orderPages\[pageId\]\.pageSize = URL_DEFAULT_ORDER_PAGE_SIZE/);
 });
 
-test('order-management group expands in place on desktop and stays an accordion on mobile', async () => {
+test('old order routes stay compatible deep links without any nav group', async () => {
   const [html, styles, app] = await Promise.all([
     read('src/web/index.html'),
     read('src/web/styles.css'),
     read('src/web/app.js'),
   ]);
 
-  assert.match(html, /class="nav-group-panel" id="order-nav-panel" hidden/);
-  assert.match(html, /aria-controls="order-nav-panel"/);
-  // The panel is one flat 9-item list; no secondary category labels remain.
-  const panelStart = html.indexOf('id="order-nav-panel"');
-  const panelEnd = html.indexOf('</div>', panelStart + 1);
-  const panel = html.slice(panelStart, panelEnd);
-  assert.doesNotMatch(panel, /nav-subgroup/);
-  assert.deepEqual(
-    [...panel.matchAll(/data-route="([^"]+)"/g)].map((match) => match[1]),
-    [
-      'fulfilment',
-      'delivery-notes',
-      'stock-records',
-      'waybills',
-      'return-applications',
-      'return-orders',
-      'exceptions',
-      'value-added-services',
-      'quality-reports',
-    ],
+  // The shell no longer mounts an order-management group: no toggle, no panel
+  // and no secondary category labels.
+  assert.doesNotMatch(html, /nav-group|order-nav-toggle|order-nav-panel|nav-subgroup/);
+  assert.doesNotMatch(
+    app,
+    /orderGroupToggle|orderGroupPanel|toggleOrderNavPanel|closeOrderNavPanel/,
   );
-  assert.ok(
-    panel.indexOf('<a href="#fulfilment" data-route="fulfilment">')
-      < panel.indexOf('<a href="#delivery-notes"'),
-    '发货订单 stays the first item',
-  );
-  assert.match(app, /const orderRouteActive = state\.route === 'fulfilment' \|\| URL_ORDER_PAGE_IDS\.includes\(state\.route\)/);
-  assert.match(app, /orderGroupPanel\.hidden = false/);
-  assert.doesNotMatch(app, /event\.target\.closest\?\.\('\.nav-group'\)/);
-  // Desktop: the panel expands in place inside the sidebar rail and pushes
-  // the following nav items down; it is no longer a fixed floating overlay.
-  const desktop = styles.slice(styles.indexOf('@media (min-width: 1081px)'));
-  assert.match(desktop, /\.nav-group-panel\s*\{\s*position: static;/);
-  assert.doesNotMatch(desktop, /position: fixed;/);
-  assert.match(desktop, /\.nav-group-panel\s*\{[^}]*min-width: 0[^}]*max-width: 100%/s);
-  // The rail keeps its own vertical scrollbar and clips horizontal overflow.
+  // Old order routes resolve to the new workspaces through the alias table.
+  assert.match(app, /const NAV_ROUTE_ALIASES = Object\.freeze\(\{/);
+  assert.match(app, /function navigationRouteFor\(route\)/);
+  const navigation = functionBody(app, 'updateNavigation');
+  assert.match(navigation, /const activeRoute = navigationRouteFor\(state\.route\);/);
+  assert.match(navigation, /link\.dataset\.route === activeRoute/);
+  assert.match(navigation, /document\.body\.dataset\.route = state\.route/);
+  assert.match(navigation, /document\.body\.dataset\.navRoute = activeRoute/);
+  // Hash navigation still re-parses every change into the canonical state.
   assert.match(
-    desktop,
-    /\.sidebar \.primary-nav\s*\{\s*overflow-x: hidden;\s*overflow-y: auto;/,
+    app,
+    /window\.addEventListener\('hashchange', \(\) => \{\s*syncRouteFromLocation\(\);/,
   );
-  // The unselected toggle is readable on the final dark rail and every state
-  // (default, hover, expanded, active-child) is distinct.
-  assert.match(styles, /\.nav-group-toggle\s*\{[^}]*color: #d8d0c5/s);
-  assert.match(styles, /\.nav-group-toggle:hover\s*\{/);
-  assert.match(styles, /\.nav-group-toggle\[aria-expanded="true"\]\s*\{/);
-  assert.match(styles, /\.nav-group-toggle\.nav-group-active\s*\{[^}]*color: #15130f[^}]*background: #f8f4eb/s);
-  assert.match(styles, /\.nav-group-toggle small\s*\{[^}]*color: #aaa299/s);
-  assert.match(styles, /\.nav-group-chevron\s*\{[^}]*color: #bdb5aa/s);
-  // Active and focus states are explicit for the toggle and flat panel links.
-  assert.match(styles, /\.nav-group-toggle\.nav-group-active/);
-  assert.match(desktop, /\.nav-group-panel a\.active\s*\{/);
-  assert.match(
-    desktop,
-    /\.nav-group-toggle:focus-visible,\s*\.nav-group-panel a:focus-visible/,
-  );
-  // Mobile and tablet: the same panel remains in document flow as a true
-  // accordion instead of becoming an overlay sheet.
-  assert.match(
-    styles,
-    /@media \(max-width: 1080px\)[\s\S]*?\.nav-group-panel\s*\{\s*position: static;/,
-  );
-  // The narrow phone layout keeps the true in-place accordion.
-  assert.match(
-    styles,
-    /@media \(max-width: 620px\)[\s\S]*?\.sidebar\s*\{\s*position: relative;[\s\S]*?\.nav-group-panel\s*\{\s*position: static;/,
-  );
-  assert.match(
-    styles,
-    /@media \(max-width: 620px\)[\s\S]*?\.sidebar\s*\{\s*position: relative;/,
-  );
-  assert.match(
-    styles,
-    /@media \(max-width: 620px\)[\s\S]*?\.nav-group\s*\{\s*flex: 0 0 calc\(100vw - 32px\);/,
-  );
-  // The toggle is an accessible disclosure control.
-  assert.match(app, /function toggleOrderNavPanel\(\)/);
-  assert.match(app, /function closeOrderNavPanel\(\)/);
-  assert.match(app, /toggle\.setAttribute\('aria-expanded', String\(willOpen\)\)/);
-  assert.match(app, /panel\.hidden = !willOpen/);
-  assert.match(app, /if \(event\.key === 'Escape'\) closeOrderNavPanel\(\)/);
-  assert.match(app, /window\.addEventListener\('hashchange', \(\) => \{\s*\n\s*closeOrderNavPanel\(\);/);
+  // The old order deep links keep rendering through the shared workspace.
+  const renderRoute = functionBody(app, 'renderRoute');
+  assert.match(renderRoute, /fulfilment: renderFulfilment,/);
+  for (const page of ORDER_PAGES) {
+    assert.match(
+      renderRoute,
+      new RegExp(`['"]?${page}['"]?: renderOrderWorkspace,`),
+      page,
+    );
+  }
 
   // PARTIAL, empty and unavailable states are visually distinct, and tables
   // never widen the 390px document.

@@ -17,7 +17,7 @@ const sourceUpdateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
 
 const ROUTES = Object.freeze({
   home: { title: '总控驾驶舱', code: 'CONTROL' },
-  procurement: { title: '采购单', code: 'PO' },
+  procurement: { title: '采购履约', code: 'PROCUREMENT' },
   fulfilment: { title: '发货订单', code: 'ORDER' },
   'delivery-notes': { title: '发货单列表', code: 'DELIVERY NOTES' },
   'stock-records': { title: '备货记录', code: 'STOCK RECORDS' },
@@ -27,15 +27,16 @@ const ROUTES = Object.freeze({
   exceptions: { title: '收货/退货异常', code: 'EXCEPTIONS' },
   'value-added-services': { title: '增值服务列表', code: 'VALUE-ADDED SERVICES' },
   'quality-reports': { title: '质检报告', code: 'QUALITY REPORTS' },
-  products: { title: '商品中心', code: 'MDM' },
+  products: { title: '商品经营', code: 'PRODUCT' },
   sales: { title: '销量洞察', code: 'SALES' },
-  inventory: { title: '供给与备货', code: 'SUPPLY' },
-  returns: { title: '采购退货', code: 'RETURNS' },
+  inventory: { title: '库存与备货', code: 'SUPPLY' },
+  returns: { title: '退货与质量', code: 'RETURNS' },
   compliance: { title: '合规与价格', code: 'COMPLIANCE' },
-  finance: { title: '财务结算', code: 'FINANCE' },
+  finance: { title: '财务与结算', code: 'FINANCE' },
+  marketing: { title: '营销机会', code: 'MARKETING' },
   platform: { title: '平台动态', code: 'WEBHOOK' },
   ops: { title: '运营待办', code: 'AUTOMATION' },
-  system: { title: '系统管理', code: 'SYSTEM' },
+  system: { title: '数据与系统', code: 'SYSTEM' },
 });
 
 const RANGE_META = Object.freeze({
@@ -103,7 +104,7 @@ const URL_ROUTE_KEYS = Object.freeze([
   'home', 'fulfilment', 'delivery-notes', 'stock-records',
   'waybills', 'return-applications', 'return-orders', 'exceptions',
   'value-added-services', 'quality-reports', 'procurement', 'products',
-  'sales', 'inventory', 'returns', 'compliance', 'finance', 'platform', 'ops',
+  'sales', 'inventory', 'returns', 'compliance', 'finance', 'marketing', 'platform', 'ops',
   'system',
 ]);
 
@@ -203,6 +204,27 @@ const URL_ORDER_PAGE_IDS = Object.freeze([
   'return-applications', 'return-orders', 'exceptions',
   'value-added-services', 'quality-reports',
 ]);
+
+/* Old URLs remain valid for bookmarks and audit links, while the primary
+   navigation exposes only the nine decision-oriented workspaces. */
+const NAV_ROUTE_ALIASES = Object.freeze({
+  sales: 'products',
+  fulfilment: 'procurement',
+  'delivery-notes': 'procurement',
+  'stock-records': 'inventory',
+  waybills: 'procurement',
+  'value-added-services': 'procurement',
+  'return-applications': 'returns',
+  'return-orders': 'returns',
+  exceptions: 'returns',
+  'quality-reports': 'returns',
+  compliance: 'products',
+  platform: 'system',
+});
+
+function navigationRouteFor(route) {
+  return NAV_ROUTE_ALIASES[route] || route;
+}
 const URL_ORDER_SORTS = Object.freeze([
   'LATEST',
   'UPDATED_DESC',
@@ -917,6 +939,7 @@ const state = {
     loading: false,
     error: '',
     requestSerial: 0,
+    selectedOrderNo: '',
     status: initialHashState.procurementStatus || 'ALL',
     sort: initialHashState.procurementSort || 'PRIORITY',
     page: initialHashState.procurementPage || 1,
@@ -1044,23 +1067,14 @@ const elements = {
   homeDateEnd: document.querySelector('#home-date-end'),
   clearFilters: document.querySelector('#clear-filters'),
   forceRefresh: document.querySelector('#force-refresh'),
-  datasetBadge: document.querySelector('#dataset-badge'),
-  liveUpdateBadge: document.querySelector('#live-update-badge'),
-  updatedAt: document.querySelector('#updated-at'),
   sidebarAccountName: document.querySelector('#sidebar-account-name'),
   sidebarPermission: document.querySelector('#sidebar-permission'),
-  sidebarOperatingFreshness: document.querySelector('#sidebar-operating-freshness'),
-  sidebarFinanceFreshness: document.querySelector('#sidebar-finance-freshness'),
-  sidebarLedgerFreshness: document.querySelector('#sidebar-ledger-freshness'),
-  sidebarSettlementFreshness: document.querySelector('#sidebar-settlement-freshness'),
   sidebarSampleNote: document.querySelector('#sidebar-sample-note'),
   mobilePageTitle: document.querySelector('#mobile-page-title'),
   errorPanel: document.querySelector('#error-panel'),
   errorMessage: document.querySelector('#error-message'),
   retryButton: document.querySelector('#retry-button'),
   logoutButton: document.querySelector('#logout-button'),
-  orderGroupToggle: document.querySelector('#order-nav-toggle'),
-  orderGroupPanel: document.querySelector('#order-nav-panel'),
 };
 
 let procurementLoadTimer = null;
@@ -1109,30 +1123,6 @@ function formatSourceUpdateTime(value) {
   return Number.isNaN(date.valueOf()) ? null : sourceUpdateTimeFormatter.format(date);
 }
 
-function sidebarFreshnessText(source) {
-  const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(String(source?.businessDate || ''))
-    ? String(source.businessDate)
-    : '';
-  const observed = source?.observedAt ? new Date(source.observedAt) : null;
-  const observedText = observed && !Number.isNaN(observed.valueOf())
-    ? new Intl.DateTimeFormat('zh-CN', {
-        timeZone: 'Asia/Shanghai',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      }).format(observed)
-    : '';
-  return {
-    label: observedText || (businessDate ? businessDate.slice(5).replace('-', '/') : '待回读'),
-    title: [
-      businessDate ? `最新业务日 ${businessDate}` : null,
-      observedText ? `最近读取 ${formatDateTime(source.observedAt)}` : null,
-    ].filter(Boolean).join(' · ') || '该数据源尚未回读更新时间',
-  };
-}
-
 function shanghaiToday() {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Shanghai',
@@ -1141,6 +1131,19 @@ function shanghaiToday() {
     day: '2-digit',
   }).formatToParts(new Date());
   const byType = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${byType.year}-${byType.month}-${byType.day}`;
+}
+
+function shanghaiDateFor(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.valueOf())) return null;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const byType = Object.fromEntries(parts.map(({ type, value: part }) => [type, part]));
   return `${byType.year}-${byType.month}-${byType.day}`;
 }
 
@@ -2908,6 +2911,27 @@ function procurementQueryUrl() {
   return `/api/procurement?${params.toString()}`;
 }
 
+/* Supporting fulfilment facts for the unified procurement workspace. The
+   query is deliberately bounded to 100 rows, while server facets still carry
+   scoped status counts. Open orders are not cut off by the sales date picker. */
+function procurementFulfilmentQueryUrl() {
+  const params = new URLSearchParams({
+    owner: state.owner,
+    store: state.store,
+    q: state.query,
+    orderType: 'ALL',
+    status: 'ALL',
+    quick: 'ALL',
+    timeField: 'UPDATED',
+    warehouse: 'ALL',
+    defective: 'ALL',
+    sort: 'DELIVERY_DEADLINE',
+    page: '1',
+    pageSize: '100',
+  });
+  return `/api/fulfilment?${params.toString()}`;
+}
+
 async function loadProcurement({ resetPage = false } = {}) {
   if (resetPage) state.procurement.page = 1;
   if (state.route !== 'procurement') return;
@@ -2917,8 +2941,13 @@ async function loadProcurement({ resetPage = false } = {}) {
   state.procurement.error = '';
   render();
   try {
-    const result = await fetchJson(procurementQueryUrl());
+    const [procurementResult, fulfilmentResult] = await Promise.allSettled([
+      fetchJson(procurementQueryUrl()),
+      fetchJson(procurementFulfilmentQueryUrl()),
+    ]);
     if (requestSerial !== state.procurement.requestSerial) return;
+    if (procurementResult.status !== 'fulfilled') throw procurementResult.reason;
+    const result = procurementResult.value;
     if (
       !result
       || result.readOnly !== true
@@ -2930,7 +2959,35 @@ async function loadProcurement({ resetPage = false } = {}) {
     ) {
       throw new Error('采购单查询结构无效');
     }
-    state.procurement.data = result;
+    let fulfilment = null;
+    let fulfilmentError = '';
+    if (
+      fulfilmentResult.status === 'fulfilled'
+      && fulfilmentResult.value?.readOnly === true
+      && Array.isArray(fulfilmentResult.value.orders?.rows)
+      && Array.isArray(fulfilmentResult.value.filters?.statuses)
+      && Array.isArray(fulfilmentResult.value.filters?.quick)
+    ) {
+      fulfilment = fulfilmentResult.value;
+    } else {
+      fulfilmentError = fulfilmentResult.status === 'rejected'
+        ? (fulfilmentResult.reason instanceof Error
+            ? fulfilmentResult.reason.message
+            : '发货链路查询暂不可用')
+        : '发货链路查询结构无效';
+    }
+    state.procurement.data = Object.freeze({
+      ...result,
+      fulfilment,
+      fulfilmentError,
+    });
+    const candidateOrderNos = [
+      ...result.attention.rows.map((row) => row?.orderNo),
+      ...(fulfilment?.orders?.rows || []).map((row) => row?.orderNo),
+    ].filter(Boolean);
+    if (!candidateOrderNos.includes(state.procurement.selectedOrderNo)) {
+      state.procurement.selectedOrderNo = candidateOrderNos[0] || '';
+    }
   } catch (error) {
     if (requestSerial !== state.procurement.requestSerial) return;
     state.procurement.data = null;
@@ -2967,17 +3024,17 @@ function scheduleProcurementLoad({ resetPage = false, delay = 0 } = {}) {
 function procurementLoadingState() {
   return `
     <section class="panel procurement-query-state" role="status">
-      <span class="eyebrow">PROCUREMENT QUERY</span>
-      <h2>正在按当前条件查询采购单</h2>
-      <p>筛选和分页在服务端执行；页面不会把旧筛选结果冒充新结果。</p>
+      <span class="eyebrow">PROCUREMENT &amp; FULFILMENT</span>
+      <h2>正在读取采购与履约事实</h2>
+      <p>采购关注队列与发货节点并行读取；筛选和分页仍由服务端执行。</p>
     </section>`;
 }
 
 function procurementErrorState() {
   return `
     <section class="panel procurement-query-state error" role="alert">
-      <span class="eyebrow">PROCUREMENT QUERY</span>
-      <h2>采购单独立查询暂不可用</h2>
+      <span class="eyebrow">PROCUREMENT &amp; FULFILMENT</span>
+      <h2>采购履约查询暂不可用</h2>
       <p>${escapeHtml(state.procurement.error || '请稍后重试。')}</p>
       <button type="button" class="clear-button" data-procurement-retry="1">重新查询</button>
     </section>`;
@@ -9718,6 +9775,212 @@ function procurementEvidenceDisclosure(queryData) {
     </details>`;
 }
 
+function procurementFacetCount(rows, code) {
+  const item = (Array.isArray(rows) ? rows : []).find((row) => row.code === code);
+  return isUnit(item?.count) ? item.count : null;
+}
+
+function procurementFulfilmentAvailable(queryData) {
+  const fulfilment = productRecord(queryData?.fulfilment);
+  const source = productRecord(fulfilment.source);
+  return Boolean(
+    source.updatedAt
+    || source.latestSourceFetchedAt
+    || isUnit(source.orderCount)
+    || isUnit(source.storeCount)
+    || (Array.isArray(fulfilment.orders?.rows) && fulfilment.orders.rows.length > 0)
+  );
+}
+
+function procurementLifecycle(queryData) {
+  const fulfilment = productRecord(queryData.fulfilment);
+  const statuses = Array.isArray(fulfilment.filters?.statuses)
+    ? fulfilment.filters.statuses
+    : [];
+  const quick = Array.isArray(fulfilment.filters?.quick)
+    ? fulfilment.filters.quick
+    : [];
+  const count = (rows, code) => procurementFulfilmentAvailable(queryData)
+    ? procurementFacetCount(rows, code)
+    : null;
+  return [
+    { code: 'ALL', label: '下单', count: count(statuses, 'ALL') },
+    { code: 'PENDING_SHIPMENT', label: '备货', count: count(statuses, 'PENDING_SHIPMENT') },
+    { code: 'SHIPPED', label: '发货', count: count(statuses, 'SHIPPED'), tone: 'attention' },
+    { code: 'PENDING_RECEIPT', label: '在途', count: count(quick, 'PENDING_RECEIPT'), tone: 'attention' },
+    { code: 'RECEIVED', label: '收货', count: count(statuses, 'RECEIVED'), tone: 'risk' },
+    { code: 'SHELVED', label: '上架', count: count(statuses, 'SHELVED'), tone: 'complete' },
+  ];
+}
+
+function procurementKpi(label, value, note, tone = '') {
+  return `
+    <article class="procurement-kpi ${escapeHtml(tone)}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${isUnit(value) ? numberFormatter.format(value) : '—'}</strong>
+      <small>${escapeHtml(note)}</small>
+    </article>`;
+}
+
+function procurementRemainingTime(row) {
+  const value = row?.requestedDeliveryAt;
+  if (!value) return { label: '未返回要求时间', tone: 'unknown' };
+  const instant = new Date(value).valueOf();
+  if (!Number.isFinite(instant)) return { label: '要求时间无效', tone: 'unknown' };
+  const today = shanghaiToday();
+  const deadlineDate = shanghaiDateFor(value);
+  if (!deadlineDate) return { label: '要求时间无效', tone: 'unknown' };
+  const days = Math.round(
+    (new Date(`${deadlineDate}T00:00:00.000Z`).valueOf()
+      - new Date(`${today}T00:00:00.000Z`).valueOf()) / 86_400_000,
+  );
+  if (instant < Date.now()) {
+    return {
+      label: days === 0 ? '今天已超时' : `超期 ${Math.max(1, Math.abs(days))} 天`,
+      tone: 'danger',
+    };
+  }
+  if (days === 0) return { label: '今天到期', tone: 'warning' };
+  return { label: `剩 ${days} 天`, tone: days <= 2 ? 'warning' : 'normal' };
+}
+
+function procurementQuantityChain(row) {
+  return [
+    ['订购', row?.orderQuantity],
+    ['交付', row?.deliveryQuantity],
+    ['收货', row?.receiptQuantity],
+    ['入库', row?.storageQuantity],
+  ];
+}
+
+function procurementPriorityTable(rows) {
+  if (!rows.length) {
+    return emptyEvidence(
+      '当前筛选没有采购履约关注项',
+      '只表示已物化关注队列没有命中当前条件，不代表所有采购单已经完成。',
+    );
+  }
+  const visible = orderRowsForFocus(rows, 'procurement');
+  return `
+    <div class="procurement-priority-scroll">
+      <table class="procurement-priority-table">
+        <thead><tr>
+          <th scope="col">优先级</th>
+          <th scope="col">采购单</th>
+          <th scope="col">店铺</th>
+          <th scope="col">当前节点</th>
+          <th scope="col">数量链路</th>
+          <th scope="col">剩余时间</th>
+          <th scope="col">目标仓</th>
+        </tr></thead>
+        <tbody>${visible.map((row) => {
+          const remaining = procurementRemainingTime(row);
+          const orderNo = String(row.orderNo || '采购单号待确认');
+          const selected = orderNo === state.procurement.selectedOrderNo;
+          return `
+            <tr class="${selected ? 'selected' : ''}${isFocusedRow(row, 'procurement') ? ' focused-row' : ''}">
+              <td data-label="优先级">${severityBadge(row.severity)}</td>
+              <td data-label="采购单"><button type="button" class="procurement-order-link" data-procurement-order="${escapeHtml(orderNo)}" aria-pressed="${selected}">${escapeHtml(orderNo)}</button></td>
+              <td data-label="店铺"><strong>${escapeHtml(row.storeCode || row.storeName || '待确认')}</strong></td>
+              <td data-label="当前节点"><span class="procurement-node">${escapeHtml(rowAttentionStage(row, 'procurement'))}</span></td>
+              <td data-label="数量链路" class="procurement-chain-cell">${procurementQuantityChain(row).map(([label, value]) => `<span><small>${label}</small>${nullableUnits(value)}</span>`).join('')}</td>
+              <td data-label="剩余时间"><span class="procurement-remaining ${remaining.tone}">${escapeHtml(remaining.label)}</span></td>
+              <td data-label="目标仓"><span class="procurement-warehouse">${escapeHtml(row.warehouseName || '待确认')}</span></td>
+            </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function procurementCompactLines(order) {
+  const lines = Array.isArray(order?.lines) ? order.lines : [];
+  if (!lines.length) {
+    return '<p class="procurement-detail-empty">当前返回范围没有商品行明细；不从其他订单补字段。</p>';
+  }
+  return `
+    <div class="procurement-detail-lines">
+      ${lines.slice(0, 8).map((line) => {
+        const title = line.standardGoodsName || line.standardGoodsCode
+          || line.skc || line.skuCode || '商品待确认';
+        const identifiers = [
+          line.standardGoodsCode ? `货号 ${line.standardGoodsCode}` : null,
+          line.skc ? `SKC ${line.skc}` : null,
+          line.skuCode ? `SKU ${line.skuCode}` : null,
+        ].filter(Boolean).join(' · ');
+        return `
+          <article>
+            <div><strong>${escapeHtml(title)}</strong><small>${escapeHtml(identifiers || '商品标识未返回')}</small></div>
+            <p>${procurementQuantityChain(line).map(([label, value]) => `<span>${label} <b>${nullableUnits(value)}</b></span>`).join('')}</p>
+          </article>`;
+      }).join('')}
+      ${lines.length > 8 ? `<p class="table-note">另有 ${numberFormatter.format(lines.length - 8)} 个商品行，当前详情仅展示前 8 个。</p>` : ''}
+    </div>`;
+}
+
+function procurementDetailPanel(queryData, attentionRows) {
+  const shippingRows = Array.isArray(queryData.fulfilment?.orders?.rows)
+    ? queryData.fulfilment.orders.rows
+    : [];
+  const selectedOrderNo = state.procurement.selectedOrderNo
+    || attentionRows[0]?.orderNo
+    || shippingRows[0]?.orderNo
+    || '';
+  const attention = attentionRows.find((row) => row.orderNo === selectedOrderNo) || null;
+  const shipping = shippingRows.find((row) => row.orderNo === selectedOrderNo) || null;
+  const record = attention || shipping;
+  if (!record) {
+    return `
+      <aside class="procurement-detail-panel" aria-label="单据详情" tabindex="-1">
+        <header><span>单据详情</span><h2>请选择采购单</h2></header>
+        <p class="procurement-detail-empty">当前筛选没有可展开的单据事实。</p>
+      </aside>`;
+  }
+  const status = shippingStatusLabel(shipping || record);
+  const deliveries = Array.isArray(shipping?.deliveries) ? shipping.deliveries : [];
+  const deliveryCodes = [...new Set(deliveries.map((item) => item.deliveryCode).filter(Boolean))];
+  const carriers = [...new Set(deliveries.map((item) => item.expressCompanyName).filter(Boolean))];
+  const timeline = [
+    ['采购单下达', shipping?.createdAt || record.createdAt],
+    ['要求交付', record.requestedDeliveryAt || shipping?.requestedDeliveryAt],
+    ['已发货', shipping?.deliveredAt || record.deliveredAt],
+    ['已收货', shipping?.receivedAt || record.receivedAt],
+    ['已入库 / 上架', shipping?.storedAt || record.storedAt],
+  ];
+  const details = [
+    ['店铺', record.storeCode || record.storeName],
+    ['当前节点', rowAttentionStage(record, 'procurement')],
+    ['平台状态', record.statusName || shipping?.statusName || record.statusCode],
+    ['采购类型', record.orderTypeName || shipping?.orderTypeName],
+    ['目标仓', record.warehouseName || shipping?.warehouseName],
+    ['发货单', deliveryCodes.join('、')],
+    ['承运商', carriers.join('、')],
+    ['最新事实', record.latestSourceFetchedAt || shipping?.latestSourceFetchedAt],
+  ];
+  return `
+    <aside class="procurement-detail-panel" aria-label="单据详情" tabindex="-1">
+      <header>
+        <span>单据详情</span>
+        <div><h2>${escapeHtml(selectedOrderNo || '采购单号待确认')}</h2><span class="shipping-status-badge ${status.tone}">${escapeHtml(status.label)}</span></div>
+      </header>
+      <div class="procurement-detail-grid">
+        ${details.map(([label, value], index) => `
+          <div><span>${escapeHtml(label)}</span><strong class="${index === 7 ? '' : 'copyable-id'}">${escapeHtml(index === 7 ? sourceTime(value) : (value || '未返回'))}</strong></div>
+        `).join('')}
+      </div>
+      <section class="procurement-detail-timeline" aria-label="履约节点">
+        <h3>履约节点</h3>
+        <ol>${timeline.map(([label, value]) => `
+          <li class="${value ? 'complete' : ''}"><i></i><div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(value ? sourceTime(value) : '尚无事实')}</span></div></li>
+        `).join('')}</ol>
+      </section>
+      <section class="procurement-detail-products">
+        <h3>商品与数量</h3>
+        ${procurementCompactLines(shipping)}
+      </section>
+      ${shipping ? '' : '<p class="procurement-detail-empty">当前 100 条发货明细中未命中该采购单；保留采购事实，未返回字段不补写。</p>'}
+    </aside>`;
+}
+
 function renderProcurement() {
   if (state.procurement.loading && !state.procurement.data) {
     return `${sampleNotice()}${focusEvidencePanel()}${procurementLoadingState()}`;
@@ -9727,56 +9990,112 @@ function renderProcurement() {
   }
   const queryData = state.procurement.data;
   if (!queryData) return procurementLoadingState();
-  const attention = queryData.attention.rows;
+  const attention = Array.isArray(queryData.attention?.rows) ? queryData.attention.rows : [];
   const sourceMeta = productRecord(queryData.source?.materializedAttention);
-  const attentionAvailable = sourceMeta.available === true
-    || attention.length > 0
-    || sourceMeta.truncated === true;
-  const coverageLine = operationCoverageLine(queryData.source);
+  const coverage = productRecord(queryData.source?.coverage);
+  const fulfilment = productRecord(queryData.fulfilment);
+  const shippingStatuses = Array.isArray(fulfilment.filters?.statuses)
+    ? fulfilment.filters.statuses
+    : [];
+  const shippingQuick = Array.isArray(fulfilment.filters?.quick)
+    ? fulfilment.filters.quick
+    : [];
+  const lifecycle = procurementLifecycle(queryData);
+  const fulfilmentAvailable = procurementFulfilmentAvailable(queryData);
+  const receiptDifferenceFact = (Array.isArray(queryData.summary?.attentionCodes)
+    ? queryData.summary.attentionCodes
+    : []).find((item) => item.code === 'DEFECTIVE_QUANTITY');
+  const receiptDifference = sourceMeta.available === true
+    && isUnit(receiptDifferenceFact?.count)
+    ? receiptDifferenceFact.count
+    : null;
   const statusOptions = [
     ['ALL', '全部状态'],
     ...(Array.isArray(queryData.filters?.statuses) ? queryData.filters.statuses : [])
       .map((row) => [row.code, row.name || row.code]),
   ];
+  const coverageLabel = isUnit(coverage.succeededStores) && isUnit(coverage.totalStores)
+    ? `${numberFormatter.format(coverage.succeededStores)} / ${numberFormatter.format(coverage.totalStores)} 家采购快照`
+    : '采购覆盖待确认';
+  const procurementUpdatedAt = queryData.summary?.latestSourceFetchedAt;
+  const fulfilmentUpdatedAt = fulfilment.source?.latestSourceFetchedAt
+    || fulfilment.source?.updatedAt;
   return `
     ${sampleNotice()}
     ${focusEvidencePanel()}
-    ${procurementDecisionOverview(queryData)}
-    ${procurementStoreRankings(queryData)}
-    <section class="table-section inventory-workspace">
-      ${panelHeading(
-        'PURCHASE ATTENTION',
-        '采购单关注队列',
-        attentionAvailable ? `${coverageLine} · 单据级事实优先` : '单据级事实待接入',
-      )}
-      ${quickFilterBar('procurement', '快速筛查', [
-        ['ALL', '全部关注'],
-        ['HIGH', '高优先'],
-        ['OVERDUE', '逾期'],
-        ['PENDING_DELIVERY', '待交付'],
-        ['PENDING_RECEIPT', '待收货'],
-        ['PENDING_STORAGE', '待入库'],
-        ['DEFECTIVE', '存在残次'],
-      ])}
-      <div class="operation-controls">
-        ${operationSelect('procurementStatus', '平台状态', statusOptions, state.procurement.status)}
-        ${operationSelect('procurementSort', '排序', [
-          ['PRIORITY', '优先级'],
-          ['LATEST', '证据最新'],
-          ['DELIVERY_DEADLINE', '要求交付时间'],
-        ], state.procurement.sort)}
-        ${operationSelect('procurementPageSize', '每页', [
-          [25, '25 条'], [50, '50 条'], [100, '100 条'],
-        ], pageSizeParam(state.procurement.pageSize))}
-        ${operationSearchControls('procurement')}
-      </div>
-      ${procurementPagination(queryData, 'top')}
-      ${purchaseOrderAttentionTable(attention, attentionAvailable)}
-      ${procurementPagination(queryData, 'bottom')}
-      ${state.procurement.loading ? '<p class="query-refresh-note" role="status">正在刷新当前筛选结果…</p>' : ''}
-      ${sourceMeta.truncated === true ? '<p class="table-note warning-note">当前接口只筛选物化到页面的单据级关注记录；源明细已截断，因此筛选结果不是仓库全量采购单数量。</p>' : ''}
-    </section>
-    ${procurementEvidenceDisclosure(queryData)}`;
+    <div class="procurement-fulfilment-page">
+      <section class="procurement-page-head" aria-labelledby="procurement-page-title">
+        <div>
+          <span class="procurement-kicker">供应链决策</span>
+          <h1 id="procurement-page-title">采购履约</h1>
+          <p>从采购单到入库，把影响交期的单据放在同一条处理链上。</p>
+        </div>
+        <div class="procurement-source-receipt">
+          <span><i></i>只读事实</span>
+          <strong>${escapeHtml(`采购 ${sourceTime(procurementUpdatedAt)} · 发货 ${sourceTime(fulfilmentUpdatedAt)}`)}</strong>
+          <small>${escapeHtml(`${inventoryScopeLabel()} · ${coverageLabel}`)}</small>
+        </div>
+      </section>
+
+      <section class="procurement-kpi-strip" aria-label="采购履约关键指标">
+        ${procurementKpi('待发货', fulfilmentAvailable ? procurementFacetCount(shippingStatuses, 'PENDING_SHIPMENT') : null, '发货快照口径', 'primary')}
+        ${procurementKpi('已超期', fulfilmentAvailable ? procurementFacetCount(shippingQuick, 'OVERDUE') : null, '发货快照 · 要求交付已过', 'warning')}
+        ${procurementKpi('在途待收', fulfilmentAvailable ? procurementFacetCount(shippingQuick, 'PENDING_RECEIPT') : null, '发货快照 · 已发货未收货')}
+        ${procurementKpi('收货差异', receiptDifference, '采购关注事实 · 未单列不作 0', receiptDifference > 0 ? 'danger' : '')}
+      </section>
+
+      <section class="procurement-lifecycle" aria-label="采购履约链路">
+        <header><div><span>履约链路</span><h2>当前节点快照</h2></div><p>节点存在包含关系，不作为转化漏斗。</p></header>
+        <ol>${lifecycle.map((node) => `
+          <li class="${escapeHtml(node.tone || '')}">
+            <i aria-hidden="true"></i>
+            <span>${escapeHtml(node.label)}</span>
+            <strong>${isUnit(node.count) ? numberFormatter.format(node.count) : '—'}</strong>
+          </li>`).join('')}</ol>
+      </section>
+
+      <section class="procurement-filter-panel" aria-label="采购履约筛选">
+        ${quickFilterBar('procurement', '优先处理', [
+          ['ALL', '全部'],
+          ['HIGH', '高优先'],
+          ['OVERDUE', '已超期'],
+          ['PENDING_DELIVERY', '待发货'],
+          ['PENDING_RECEIPT', '待收货'],
+          ['PENDING_STORAGE', '待入库'],
+          ['DEFECTIVE', '收货差异'],
+        ])}
+        <div class="operation-controls procurement-controls">
+          ${operationSelect('procurementStatus', '平台状态', statusOptions, state.procurement.status)}
+          ${operationSelect('procurementSort', '排序', [
+            ['PRIORITY', '优先级'],
+            ['LATEST', '事实最新'],
+            ['DELIVERY_DEADLINE', '交付时间最早'],
+          ], state.procurement.sort)}
+          ${operationSelect('procurementPageSize', '每页', [
+            [25, '25 条'], [50, '50 条'], [100, '100 条'],
+          ], pageSizeParam(state.procurement.pageSize))}
+          ${operationSearchControls('procurement')}
+        </div>
+      </section>
+
+      ${queryData.fulfilmentError ? `<p class="procurement-source-warning" role="status">发货节点暂不可用：${escapeHtml(queryData.fulfilmentError)}。当前仅显示采购事实，缺失值不补零。</p>` : ''}
+      <section class="procurement-workbench" aria-label="采购履约处理工作台">
+        <div class="procurement-priority-panel">
+          <header><div><span>行动队列</span><h2>优先处理</h2></div><p>当前页 ${numberFormatter.format(attention.length)} 条 · 点击单号查看详情</p></header>
+          ${procurementPagination(queryData, 'top')}
+          ${procurementPriorityTable(attention)}
+          ${procurementPagination(queryData, 'bottom')}
+          ${state.procurement.loading ? '<p class="query-refresh-note" role="status">正在刷新当前筛选结果…</p>' : ''}
+        </div>
+        ${procurementDetailPanel(queryData, attention)}
+      </section>
+
+      <details class="procurement-boundary-note">
+        <summary>数据口径与边界</summary>
+        <p>${escapeHtml(`${coverageLabel} · 采购关注源物化 ${nullableUnits(sourceMeta.returned, '未知')} / ${nullableUnits(sourceMeta.total, '未知')} 条${sourceMeta.truncated === true ? '，源明细已截断' : ''}。`)}</p>
+        <p>采购与发货分别标注各自事实时间，不把两个文件冒充同一事务快照；发货辅助明细最多回读 100 条。数量未知保持“—”，页面不提交发货、确认、收货或其他 SHEIN 写操作。</p>
+      </details>
+    </div>`;
 }
 
 function deliveryAttentionTable(rows, hasEvidence) {
@@ -10407,10 +10726,10 @@ function renderReturns() {
   return `
     ${sampleNotice()}
     ${pageIntro(
-      'PURCHASE RETURNS',
-      '采购退货',
-      '这里只处理 SHEIN 采购退货申请、退货单与报废单，不展示消费者退货或消费者退款。',
-      '<span>采购退货事实</span><strong>尚未接入</strong><small>与消费者售后严格分离</small>',
+      'RETURNS & QUALITY',
+      '退货与质量',
+      '后续将在一个页面归并采购退货、收货异常与质检事实；消费者售后仍与全托采购退货严格分离。',
+      '<span>统一决策页</span><strong>待下一阶段整理</strong><small>旧深链接继续可查</small>',
     )}
     ${integrationGate({
       kicker: 'RETURN DATA',
@@ -10433,7 +10752,7 @@ function renderFinance() {
     ${sampleNotice()}
     ${pageIntro(
       'RECONCILIATION',
-      '财务结算',
+      '财务与结算',
       '报账单、预计收入、销售款、客退款、补扣款与付款状态必须来自可追溯的财务事实。',
       '<span>金额事实</span><strong>完全未接入</strong><small>本页不显示示例金额</small>',
     )}
@@ -10450,6 +10769,30 @@ function renderFinance() {
       ],
       boundary: '当前没有报账、销售款、客退款、补扣款或付款事实。本页不会显示 0、占位金额、GMV 或由销量推导的估算值。',
       futureFields: '报账期间、报账单号、币种、预计收入、销售款、客退款、补扣款、付款状态、凭证',
+    })}`;
+}
+
+function renderMarketing() {
+  return `
+    ${sampleNotice()}
+    ${pageIntro(
+      'MARKETING OPPORTUNITIES',
+      '营销机会',
+      '入口已经纳入新的九页信息架构；下一阶段将复用半托的机会发现逻辑，并以全托可核验能力为边界。',
+      '<span>当前状态</span><strong>规划入口</strong><small>未接入前不展示伪机会或建议动作</small>',
+    )}
+    ${integrationGate({
+      kicker: 'CAPABILITY FIRST',
+      title: '营销机会接入条件',
+      description: '先确认 OpenAPI、Webhook 与官方后台只读事实，再决定哪些机会值得进入运营待办。',
+      evidence: [
+        '复核全托商品、价格、活动与流量相关只读能力',
+        '区分可观测机会、可执行动作与必须人工确认的边界',
+        '沿用半托的机会优先级和证据回读方法，不照搬消费者侧指标',
+        '任何报名、改价或其他平台写操作继续保持关闭',
+      ],
+      boundary: '本轮只完成导航和采购履约；营销机会尚未形成可信数据合同，因此不展示数量、收益或推荐结果。',
+      futureFields: '机会类型、受影响商品/店铺、证据窗口、预计影响、风险、建议动作、回读状态',
     })}`;
 }
 
@@ -11202,6 +11545,24 @@ function systemRouteHref(hrefOrRoute) {
   });
 }
 
+function snapshotUpdateMeta() {
+  const labels = {
+    connecting: ['连接中', 'partial'],
+    connected: ['快照自动更新', 'complete'],
+    refreshing: ['正在读取新快照', 'partial'],
+    reconnecting: ['快照流重连中', 'partial'],
+    unsupported: ['需手动刷新', 'unknown'],
+  };
+  const [label, tone] = labels[state.updates.status] || labels.connecting;
+  return {
+    label,
+    tone,
+    observed: state.updates.observedAt
+      ? `最近检测 ${formatDateTime(state.updates.observedAt)}`
+      : '尚未检测到新版本通知',
+  };
+}
+
 function systemDecisionOverview(queryData) {
   const verdict = productRecord(queryData.verdict);
   const summary = productRecord(queryData.summary);
@@ -11211,6 +11572,7 @@ function systemDecisionOverview(queryData) {
   const disks = Array.isArray(summary.disks) ? summary.disks : [];
   const rootDisk = disks.find((row) => row.filesystem === '/') || {};
   const dataDisk = disks.find((row) => row.filesystem === '/data') || {};
+  const updates = snapshotUpdateMeta();
   const writeClosed = queryData.boundaries?.actionWriteEnabled === false;
   const issueTone = verdict.level === 'critical'
     ? 'decline'
@@ -11220,7 +11582,7 @@ function systemDecisionOverview(queryData) {
       <header class="sales-workspace-head">
         <div>
           <span class="eyebrow">RUNTIME & DATA CONTROL</span>
-          <h1>系统管理</h1>
+          <h1>数据与系统</h1>
           <p>${escapeHtml(verdict.headline || '正在判断运行态')}。先处理会影响数据新鲜度的异常，再查看 Profile、同步覆盖与技术边界。</p>
         </div>
         <div class="sales-range-receipt">
@@ -11238,8 +11600,8 @@ function systemDecisionOverview(queryData) {
         ${salesPeriodMetric('写动作总闸', writeClosed ? '关闭' : '需检查', writeClosed ? '系统页只提供观测和下钻' : '服务端写开关与只读阶段不一致', writeClosed ? 'growth' : 'decline')}
       </div>
       <div class="sales-data-receipt">
-        <span><i></i>证据时间</span>
-        <p>${escapeHtml(`Dashboard ${sourceTime(queryData.source?.dashboardUpdatedAt)} · 供应链 ${sourceTime(queryData.source?.supplyEvaluatedAt)} · Profile 续期 ${sourceTime(queryData.source?.renewalGeneratedAt)} · 运行态每 5 分钟刷新`)}</p>
+        <span class="${escapeHtml(updates.tone)}"><i></i>${escapeHtml(updates.label)}</span>
+        <p>${escapeHtml(`Dashboard ${sourceTime(queryData.source?.dashboardUpdatedAt)} · 供应链 ${sourceTime(queryData.source?.supplyEvaluatedAt)} · Profile 续期 ${sourceTime(queryData.source?.renewalGeneratedAt)} · ${updates.observed} · 运行态每 5 分钟刷新`)}</p>
       </div>
     </section>`;
 }
@@ -11522,6 +11884,7 @@ function renderRoute() {
     returns: renderReturns,
     compliance: renderCompliance,
     finance: renderFinance,
+    marketing: renderMarketing,
     platform: renderPlatform,
     ops: renderOps,
     system: renderSystem,
@@ -11547,24 +11910,30 @@ function renderUnavailable() {
 }
 
 function updateNavigation() {
+  const activeRoute = navigationRouteFor(state.route);
+  const previousRoute = document.body.dataset.route;
+  let activeLink = null;
   elements.navLinks.forEach((link) => {
-    const active = link.dataset.route === state.route;
+    const active = link.dataset.route === activeRoute;
     link.classList.toggle('active', active);
-    if (active) link.setAttribute('aria-current', 'page');
+    if (active) {
+      activeLink = link;
+      link.setAttribute('aria-current', 'page');
+    }
     else link.removeAttribute('aria-current');
   });
-  const orderRouteActive = state.route === 'fulfilment' || URL_ORDER_PAGE_IDS.includes(state.route);
-  elements.orderGroupToggle?.classList.toggle('nav-group-active', orderRouteActive);
-  // An active order child keeps its parent group expanded, matching the
-  // official backend's in-place navigation. Operators can still collapse it
-  // explicitly with the group toggle or Escape.
-  if (orderRouteActive && elements.orderGroupToggle && elements.orderGroupPanel) {
-    elements.orderGroupToggle.setAttribute('aria-expanded', 'true');
-    elements.orderGroupPanel.hidden = false;
-  }
   const route = ROUTES[state.route];
+  document.body.dataset.route = state.route;
+  document.body.dataset.navRoute = activeRoute;
   elements.mobilePageTitle.textContent = route.title;
   document.title = `${route.title} · SHEIN 全托运营工作台`;
+  if (
+    previousRoute !== state.route
+    && activeLink
+    && window.matchMedia('(max-width: 1280px)').matches
+  ) {
+    activeLink.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }
 }
 
 function renderHomeCalendar() {
@@ -11650,32 +12019,14 @@ function updateFilters() {
 
 function updateDatasetChrome() {
   if (!state.data) {
-    elements.datasetBadge.textContent = state.loading ? '正在读取' : '数据不可用';
-    elements.datasetBadge.className = `status-badge ${state.loading ? 'neutral' : 'error'}`;
-    elements.updatedAt.textContent = state.loading ? '--' : '读取失败';
     elements.sidebarAccountName.textContent = state.loading ? '正在读取' : '登录状态待确认';
     elements.sidebarPermission.textContent = '账号权限待确认';
-    [
-      elements.sidebarOperatingFreshness,
-      elements.sidebarFinanceFreshness,
-      elements.sidebarLedgerFreshness,
-      elements.sidebarSettlementFreshness,
-    ].forEach((element) => {
-      element.textContent = state.loading ? '读取中' : '读取失败';
-      element.title = '';
-    });
-    elements.sidebarSampleNote.hidden = true;
+    if (elements.sidebarSampleNote) elements.sidebarSampleNote.hidden = true;
     delete document.body.dataset.dataset;
     return;
   }
 
   const status = datasetStatus();
-  const statusLabels = {
-    live: '正式数据',
-    sample: '示例数据',
-    empty: '暂无数据',
-    neutral: '状态待确认',
-  };
   const access = state.data.access || {};
   const accountName = access.displayName || access.username || '已登录';
   const accessParts = [
@@ -11683,45 +12034,13 @@ function updateDatasetChrome() {
     access.readAllStores === true ? '全部店铺可查看' : '查看范围待确认',
     access.writeEnabled === true ? '写入已启用' : '写入需单独授权',
   ].filter(Boolean);
-  elements.datasetBadge.textContent = statusLabels[status] || statusLabels.neutral;
-  elements.datasetBadge.className = `status-badge ${status}`;
-  elements.updatedAt.textContent = formatDateTime(state.data.updatedAt);
   elements.sidebarAccountName.textContent = accountName;
   elements.sidebarAccountName.title = access.username && access.username !== accountName
     ? `${accountName} · ${access.username}`
     : accountName;
   elements.sidebarPermission.textContent = accessParts.join(' · ') || '账号权限待确认';
-  const freshness = state.home.data?.source?.freshness || {};
-  [
-    [elements.sidebarOperatingFreshness, freshness.operating],
-    [elements.sidebarFinanceFreshness, freshness.finance],
-    [elements.sidebarLedgerFreshness, freshness.ledger],
-    [elements.sidebarSettlementFreshness, freshness.settlement],
-  ].forEach(([element, source]) => {
-    const display = sidebarFreshnessText(source);
-    element.textContent = display.label;
-    element.title = display.title;
-  });
-  elements.sidebarSampleNote.hidden = status !== 'sample';
+  if (elements.sidebarSampleNote) elements.sidebarSampleNote.hidden = status !== 'sample';
   document.body.dataset.dataset = status;
-}
-
-function updateLiveUpdateChrome() {
-  if (!elements.liveUpdateBadge) return;
-  const labels = {
-    connecting: ['连接中', 'neutral'],
-    connected: ['快照自动更新', 'complete'],
-    refreshing: ['读取新快照', 'partial'],
-    reconnecting: ['重新连接', 'partial'],
-    unsupported: ['需手动刷新', 'neutral'],
-  };
-  const [label, tone] = labels[state.updates.status] || labels.connecting;
-  elements.liveUpdateBadge.textContent = label;
-  elements.liveUpdateBadge.className = `status-badge ${tone}`;
-  const observed = state.updates.observedAt
-    ? `；最近检测到新快照：${formatDateTime(state.updates.observedAt)}`
-    : '';
-  elements.liveUpdateBadge.title = `只监听已物化 Dashboard 快照，不直接连接 SHEIN${observed}`;
 }
 
 function updateErrorPanel() {
@@ -11780,7 +12099,6 @@ function render() {
   updateNavigation();
   updateFilters();
   updateDatasetChrome();
-  updateLiveUpdateChrome();
   updateErrorPanel();
 
   if (state.loading && !state.data) {
@@ -12498,6 +12816,23 @@ elements.view.addEventListener('click', (event) => {
     void loadProcurement();
     return;
   }
+  const procurementOrder = event.target.closest?.('[data-procurement-order]');
+  if (procurementOrder && elements.view.contains(procurementOrder)) {
+    state.procurement.selectedOrderNo = urlSafeText(
+      procurementOrder.dataset.procurementOrder,
+      120,
+    );
+    render();
+    const detailPanel = document.querySelector('.procurement-detail-panel');
+    detailPanel?.focus({ preventScroll: true });
+    detailPanel?.scrollIntoView({
+        block: 'nearest',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ? 'auto'
+          : 'smooth',
+      });
+    return;
+  }
   const fulfilmentRetry = event.target.closest?.('[data-fulfilment-retry]');
   if (fulfilmentRetry && elements.view.contains(fulfilmentRetry)) {
     void loadFulfilment();
@@ -13053,32 +13388,6 @@ document.addEventListener('focusin', (event) => {
 });
 
 document.addEventListener('focusout', hideChartTooltip);
-function closeOrderNavPanel() {
-  const toggle = elements.orderGroupToggle;
-  const panel = elements.orderGroupPanel;
-  if (!toggle || !panel) return;
-  toggle.setAttribute('aria-expanded', 'false');
-  panel.hidden = true;
-}
-
-function toggleOrderNavPanel() {
-  const toggle = elements.orderGroupToggle;
-  const panel = elements.orderGroupPanel;
-  if (!toggle || !panel) return;
-  const willOpen = panel.hidden;
-  toggle.setAttribute('aria-expanded', String(willOpen));
-  panel.hidden = !willOpen;
-}
-
-elements.orderGroupToggle?.addEventListener('click', (event) => {
-  event.preventDefault();
-  toggleOrderNavPanel();
-});
-
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') closeOrderNavPanel();
-});
-
 // The order-management status filter is a free-text code, so it is read on
 // change rather than click. It is re-validated by the same pattern the server
 // enforces and never reaches the endpoint in another form.
@@ -13094,7 +13403,6 @@ elements.view.addEventListener('change', (event) => {
 
 document.addEventListener('scroll', hideChartTooltip, true);
 window.addEventListener('hashchange', () => {
-  closeOrderNavPanel();
   syncRouteFromLocation();
 });
 window.addEventListener('beforeunload', () => {

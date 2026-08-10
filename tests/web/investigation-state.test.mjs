@@ -411,7 +411,7 @@ test('the focused-evidence panel is read-only, honest and clearable', async () =
   );
   assert.match(
     source,
-    /\$\{focusEvidencePanel\(\)\}\s*\n\s*\$\{procurementDecisionOverview\(queryData\)\}/,
+    /\$\{focusEvidencePanel\(\)\}\s*\n\s*<div class="procurement-fulfilment-page">/,
   );
   assert.match(source, /function renderFulfilment\([\s\S]*\$\{focusEvidencePanel\(\)\}/);
   assert.match(source, /shippingOrdersList\(rows, sourceCapabilities\)/);
