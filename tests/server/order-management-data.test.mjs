@@ -167,6 +167,30 @@ test('rejects non-allowlisted metric names and numeric PII values instead of for
   );
 });
 
+test('rejects unknown top-level and nested keys before any order row can be returned', async (t) => {
+  const topLevel = indexWithDeliveryRows([deliveryRow({
+    recipientPhone: 'synthetic-sensitive-value',
+  })]);
+  await assert.rejects(
+    loadOrderManagementData(await writeTempIndex(t, topLevel), {
+      runtimeEnvironment: 'production',
+    }),
+    (error) => error instanceof OrderManagementDataError
+      && error.code === 'ORDER_MANAGEMENT_SCHEMA_INVALID',
+  );
+
+  const nested = indexWithDeliveryRows([deliveryRow({
+    facts: [{ name: 'warehouseName', value: '仓库 A', hiddenContact: 'synthetic' }],
+  })]);
+  await assert.rejects(
+    loadOrderManagementData(await writeTempIndex(t, nested), {
+      runtimeEnvironment: 'production',
+    }),
+    (error) => error instanceof OrderManagementDataError
+      && error.code === 'ORDER_MANAGEMENT_SCHEMA_INVALID',
+  );
+});
+
 test('rejects the whole index when status or tags carry sensitive text', async (t) => {
   const index = indexWithDeliveryRows([
     deliveryRow(),

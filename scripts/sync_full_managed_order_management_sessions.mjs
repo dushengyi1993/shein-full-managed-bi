@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import crypto from 'node:crypto';
 import process from 'node:process';
 
 import {
@@ -32,6 +33,63 @@ import {
 import { atomicWriteJson } from '../src/warehouse/dashboard-materializer.mjs';
 
 const ROSTER = new Set(FULL_MANAGED_STORE_CODES);
+
+/**
+ * Currency-absent value-added-services fields.  The VAS page carries no
+ * currency code, so these monetary amounts must never reach candidate rows,
+ * metrics, indexes or materialized output.  They are dropped at the session
+ * boundary even though the endpoint allowlist may still name them, so stale
+ * downstream gates cannot resurrect them.
+ */
+const VALUE_ADDED_SERVICES_DENIED_FIELDS = new Set([
+  'actualTotalAmount',
+  'estimateIncrementAmount',
+]);
+
+/**
+ * Deterministic stable JSON used only to fingerprint transport requests and
+ * responses (never persisted, never logged).  Object keys are sorted, array
+ * order is preserved and scalars use JSON serialization, so two equal payloads
+ * always produce the same text.
+ */
+function stableJson(value) {
+  if (value === null || value === undefined) return 'null';
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (typeof value === 'object') {
+    return `{${Object.keys(value).sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256Hex(value) {
+  return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+}
+
+/**
+ * Value-free response shape for schema hashing: only key names and value
+ * types, so the schema hash never embeds a business value or PII.
+ */
+function schemaShape(value) {
+  if (value === null || value === undefined) return 'null';
+  if (Array.isArray(value)) {
+    const memberShapes = [...new Set(
+      value.map((item) => stableJson(schemaShape(item))),
+    )].sort();
+    return { array: memberShapes };
+  }
+  if (typeof value === 'object') {
+    const shape = {};
+    for (const key of Object.keys(value).sort()) shape[key] = schemaShape(value[key]);
+    return shape;
+  }
+  return typeof value;
+}
+
+function responseSchemaHash(body) {
+  return sha256Hex(stableJson(schemaShape(body)));
+}
 
 /**
  * Strict YYYY-MM-DD calendar-date parse.  Returns the normalized text or
@@ -438,8 +496,6 @@ function buildValueAddedServiceRow(record, storeCode, fetchedAt) {
     secondary: String(record.subOrderNo ?? record.purchaseNo ?? '').trim() || null,
     tags: Object.freeze(['增值服务', record.totalFlagName, record.vendorReplenishStateName].filter(Boolean)),
     metrics: Object.freeze([
-      metricEntry('value-added-services', 'actualTotalAmount', record.actualTotalAmount),
-      metricEntry('value-added-services', 'estimateIncrementAmount', record.estimateIncrementAmount),
       metricEntry('value-added-services', 'defectiveQuantity', record.defectiveQuantity),
       metricEntry('value-added-services', 'skcNum', record.skcNum),
     ].filter((entry) => entry.value !== null)),
@@ -517,7 +573,15 @@ const PAGE_ROW_BUILDERS = Object.freeze({
   'quality-reports': buildQualityReportRow,
 });
 
-async function fetchPageRows(transport, endpointCode, { window, maxPages }) {
+async function fetchPageRows(transport, endpointCode, {
+  window,
+  maxPages,
+  pageId = null,
+  storeCode = null,
+  evidence = null,
+  observedAt = null,
+  pickRecords = null,
+}) {
   const endpoint = ORDER_MANAGEMENT_ENDPOINTS[endpointCode];
   if (endpoint.windowFields && !window) {
     throw new TypeError(`ORDER_MANAGEMENT_WINDOW_REQUIRED: ${endpointCode}`);
@@ -548,6 +612,22 @@ async function fetchPageRows(transport, endpointCode, { window, maxPages }) {
     if (!Array.isArray(reader.rows)) {
       failures.push(`PAGE_${page}_ROWS_PATH_MISSING`);
       break;
+    }
+    if (evidence?.onPage) {
+      const picked = typeof pickRecords === 'function' ? pickRecords(reader.rows) : [];
+      await evidence.onPage(Object.freeze({
+        storeCode,
+        pageId,
+        endpointCode,
+        pageNumber: page,
+        pageSize: endpoint.pageSizeValue ?? endpoint.defaultPageSize,
+        pageRequestFingerprint: sha256Hex(stableJson(body)),
+        responseSchemaHash: responseSchemaHash(response.body),
+        payloadHash: sha256Hex(stableJson(response.body)),
+        httpStatus: response.httpStatus,
+        observedAt,
+        rows: Object.freeze(picked),
+      }));
     }
     if (total === null) total = reader.total;
     else {
@@ -649,13 +729,34 @@ async function syncOneStore(transport, storeCode, {
   pageIds,
   includeStatistics = true,
   fetchedAt,
+  evidence = null,
 }) {
   const pages = {};
   for (const pageId of pageIds) {
     const endpointCode = ORDER_MANAGEMENT_SESSION_PAGES[pageId];
     const endpoint = ORDER_MANAGEMENT_ENDPOINTS[endpointCode];
     const pageWindow = endpoint.windowFields ? window : null;
-    const fetched = await fetchPageRows(transport, endpointCode, { window: pageWindow, maxPages });
+    const fetched = await fetchPageRows(transport, endpointCode, {
+      window: pageWindow,
+      maxPages,
+      pageId,
+      storeCode,
+      evidence,
+      observedAt: fetchedAt,
+      pickRecords: (records) => records.map((record) => {
+        const picked = pickFieldsByAllowlist(endpointAllowlistFor(pageId), record);
+        if (pageId === 'value-added-services') {
+          // In-memory hooks retain only the repository-typed VAS fields; the
+          // currency-absent amount keys never reach the hook rows either.
+          const sanitized = {};
+          for (const key of Object.keys(picked)) {
+            if (!VALUE_ADDED_SERVICES_DENIED_FIELDS.has(key)) sanitized[key] = picked[key];
+          }
+          return Object.freeze(sanitized);
+        }
+        return picked;
+      }),
+    });
     const built = buildRowsForPage(pageId, fetched.rows, storeCode, fetchedAt);
     pages[pageId] = Object.freeze({
       rows: built.rows,
@@ -673,18 +774,35 @@ async function syncOneStore(transport, storeCode, {
         ...orderManagementRequestBody('WAYBILLS_STATISTICS', { window }),
         statisticsType,
       });
+      let response = null;
+      let failure = null;
       try {
-        const response = await transport.fetch('WAYBILLS_STATISTICS', body);
-        const value = response?.body?.info;
-        statistics.push(Object.freeze({
-          statisticsType,
-          value: typeof value === 'string' || typeof value === 'number' ? value : null,
-        }));
+        response = await transport.fetch('WAYBILLS_STATISTICS', body);
       } catch (error) {
-        statistics.push(Object.freeze({
+        failure = error;
+      }
+      // Control receipt only: endpoint/type plus outcome.  The statistics
+      // payload's info value is a business figure (currency absent) and never
+      // enters candidate evidence; only hashes/status live in the stats hook.
+      statistics.push(Object.freeze(
+        failure
+          ? {
+              statisticsType,
+              errorCode: String(failure?.code ?? 'STATISTICS_FETCH_FAILED'),
+            }
+          : { statisticsType },
+      ));
+      if (evidence?.onStatistics) {
+        await evidence.onStatistics(Object.freeze({
+          storeCode,
           statisticsType,
-          value: null,
-          errorCode: String(error?.code ?? 'STATISTICS_FETCH_FAILED'),
+          pageRequestFingerprint: sha256Hex(stableJson(body)),
+          responseSchemaHash: response ? responseSchemaHash(response.body) : null,
+          payloadHash: response ? sha256Hex(stableJson(response.body)) : null,
+          httpStatus: response?.httpStatus ?? null,
+          observedAt: fetchedAt,
+          ok: response !== null,
+          errorCode: failure ? String(failure?.code ?? 'ORDER_MANAGEMENT_STATISTICS_FETCH_FAILED') : null,
         }));
       }
     }
@@ -733,6 +851,7 @@ export async function runOrderManagementSessionSync({
   openSession = ({ storeCode }) => openOrderManagementHttpSession({ storeCode, sessionStore }),
   now = new Date(),
   maxPages = ORDER_MANAGEMENT_MAX_PAGES,
+  evidence = null,
 } = {}) {
   if (!Number.isSafeInteger(storeConcurrency) || storeConcurrency < 1 || storeConcurrency > 5) {
     throw new TypeError('ORDER_MANAGEMENT_SYNC_CONCURRENCY_INVALID');
@@ -768,6 +887,7 @@ export async function runOrderManagementSessionSync({
         pageIds: scopedPageIds,
         includeStatistics,
         fetchedAt: now.toISOString(),
+        evidence,
       });
       return Object.freeze({
         storeCode,

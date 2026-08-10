@@ -82,6 +82,37 @@ function detail(pageId, name, value) {
   return Object.freeze({ name, value: normalized.slice(0, 256) });
 }
 
+/**
+ * Currency-absent value-added-services fields.  The VAS page carries no
+ * currency code, so monetary amounts must never reach the materialized read
+ * model.  This defensive denylist strips them from any session-snapshot row
+ * (even a stale candidate that still carries them) before validation and
+ * indexing; typed non-monetary fields pass through untouched.
+ */
+const VALUE_ADDED_SERVICES_DENIED_FIELDS = new Set([
+  'actualTotalAmount',
+  'estimateIncrementAmount',
+]);
+
+function sanitizeSessionPageRows(pageId, rows) {
+  if (pageId !== 'value-added-services') return rows;
+  return rows.map((row) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
+    const sanitized = { ...row };
+    for (const key of ['metrics', 'facts', 'details']) {
+      if (!Array.isArray(sanitized[key])) continue;
+      const kept = sanitized[key].filter((entry) => (
+        entry === null
+        || typeof entry !== 'object'
+        || Array.isArray(entry)
+        || !VALUE_ADDED_SERVICES_DENIED_FIELDS.has(entry.name)
+      ));
+      sanitized[key] = Object.freeze(kept);
+    }
+    return Object.freeze(sanitized);
+  });
+}
+
 export const ORDER_MANAGEMENT_SQL = Object.freeze({
   deliveries: `
     SELECT d.delivery_id, d.store_id, s.store_code,
@@ -385,7 +416,7 @@ function normalizeSnapshotPage(page, pageId, { now, expectedStoreCount } = {}) {
     && page.gates.contentVerified !== false
     && Number.isSafeInteger(page.gates.storeCount)
     && page.gates.storeCount === expectedStoreCount;
-  const rows = Array.isArray(page.rows) ? page.rows : [];
+  const rows = sanitizeSessionPageRows(pageId, Array.isArray(page.rows) ? page.rows : []);
   const declaredStoreCodes = Array.isArray(page.storeCodes)
     ? [...new Set(page.storeCodes.filter((code) => typeof code === 'string' && code))].sort()
     : [];

@@ -27,6 +27,7 @@ const DASHBOARD = Object.freeze({
         purchaseOrders: {
           status: 'partial',
           succeededStores: 23,
+          succeededStoreCodes: ['DL5477'],
           totalStores: 25,
           inProgressStores: 1,
           inProgressStoreCodes: ['FY4021'],
@@ -241,6 +242,7 @@ test('procurement query applies owner, quick filter, deterministic sort and pagi
   );
   assert.equal(result.readOnly, true);
   assert.equal(result.summary.orderCount, 48);
+  assert.equal(result.summary.coverageComplete, true);
   // PENDING_DELIVERY = OPEN_PURCHASE_ORDER or DELIVERY_OVERDUE, alice-scoped.
   assert.equal(result.summary.matchedMaterializedAttentionCount, 4);
   assert.equal(result.attention.pagination.pageCount, 1);
@@ -379,6 +381,8 @@ test('stage quantities describe the materialized attention scope, not a funnel',
 
 test('the scoped status overview is aggregated per status, never one row per store', () => {
   const result = queryProcurementDashboard(DASHBOARD, new URLSearchParams({ pageSize: '25' }));
+  assert.equal(result.summary.coverageComplete, false);
+  assert.equal(result.summary.orderCount, null);
   assert.deepEqual(result.statusOverview, [
     { statusCode: 'COMPLETED', statusName: '已完成', storeCount: 1, orderCount: 40 },
     // MZ2406 has an unknown order count, so the WAIT_DELIVERY total is unknown.
@@ -414,6 +418,31 @@ test('unknown quantities stay null and materialized counts never impersonate sou
   assert.equal(result.source.coverage.totalStores, 25);
   assert.deepEqual(result.source.coverage.inProgressStoreCodes, ['FY4021']);
   assert.equal(result.source.coverage.watermarkEnd, '2026-07-29T00:45:19.000Z');
+});
+
+test('stale aggregate COMPLETE cannot authorize an exact count for another store', () => {
+  const dashboard = structuredClone(DASHBOARD);
+  dashboard.supply.coverage.domains.purchaseOrders = {
+    status: 'complete',
+    succeededStores: 1,
+    totalStores: 1,
+    succeededStoreCodes: ['OLD111'],
+  };
+  dashboard.supply.purchaseOrderStatus = [{
+    storeCode: 'DL5477',
+    storeName: 'DL5477',
+    statusCode: 'WAIT_DELIVERY',
+    statusName: '待交付',
+    orderCount: 0,
+    latestSourceFetchedAt: '2026-07-29T00:00:00.000Z',
+  }];
+
+  const result = queryProcurementDashboard(
+    dashboard,
+    new URLSearchParams('store=DL5477'),
+  );
+  assert.equal(result.summary.coverageComplete, false);
+  assert.equal(result.summary.orderCount, null);
 });
 
 test('text and status filters are server-side and preserve an honest empty result', () => {

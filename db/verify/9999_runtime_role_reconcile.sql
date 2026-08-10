@@ -79,7 +79,20 @@ BEGIN
         'fact.full_home_finance_report_observation',
         'fact.full_home_finance_adjustment_observation',
         'fact.full_home_bill_daily',
-        'ops.full_home_finance_sync_window'
+        'ops.full_home_finance_sync_window',
+        'ops.v4_collection_contract',
+        'ops.v4_collection_run',
+        'ops.v4_collection_attempt',
+        'ops.v4_page_evidence',
+        'ops.v4_collection_coverage',
+        'ops.v4_capability_observation',
+        'fact.full_webapi_stock_record_observation',
+        'fact.full_webapi_waybill_observation',
+        'fact.full_webapi_return_application_observation',
+        'fact.full_webapi_return_order_observation',
+        'fact.full_webapi_exception_observation',
+        'fact.full_webapi_quality_report_observation',
+        'fact.full_webapi_value_added_service_observation'
     ]
     LOOP
         IF to_regclass(required_name) IS NULL THEN
@@ -100,7 +113,13 @@ BEGIN
         'ops.reopen_webhook_authorization_gate_after_probe(text,bigint)',
         'ops.reject_supply_append_only_mutation()',
         'ops.reject_webapi_evidence_mutation()',
-        'ops.guard_backfill_checkpoint_progress()'
+        'ops.guard_backfill_checkpoint_progress()',
+        'ops.guard_v4_collection_run_state()',
+        'ops.guard_v4_collection_attempt_terminal()',
+        'ops.reject_v4_evidence_mutation()',
+        'ops.guard_v4_page_evidence_mutation()',
+        'ops.guard_v4_collection_coverage()',
+        'ops.guard_v4_fact_attempt_binding()'
     ]
     LOOP
         IF to_regprocedure(required_name) IS NULL THEN
@@ -974,6 +993,51 @@ BEGIN
         RAISE EXCEPTION 'WebAPI loader must not access OpenAPI finance price evidence';
     END IF;
 
+    FOREACH required_name IN ARRAY ARRAY[
+        'ops.v4_collection_run',
+        'ops.v4_collection_attempt',
+        'ops.v4_collection_coverage'
+    ]
+    LOOP
+        IF NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'SELECT')
+           OR NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'INSERT')
+           OR NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'UPDATE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'DELETE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'TRUNCATE') THEN
+            RAISE EXCEPTION 'V4 WebAPI mutable control boundary is invalid for %',
+                required_name;
+        END IF;
+    END LOOP;
+    IF NOT has_table_privilege(
+        'sheinfm_webapi_loader', 'ops.v4_collection_contract', 'SELECT'
+    ) OR has_table_privilege(
+        'sheinfm_webapi_loader', 'ops.v4_collection_contract',
+        'INSERT,UPDATE,DELETE,TRUNCATE'
+    ) THEN
+        RAISE EXCEPTION 'V4 collection contract must stay owner-seeded and read-only';
+    END IF;
+    FOREACH required_name IN ARRAY ARRAY[
+        'ops.v4_page_evidence',
+        'ops.v4_capability_observation',
+        'fact.full_webapi_stock_record_observation',
+        'fact.full_webapi_waybill_observation',
+        'fact.full_webapi_return_application_observation',
+        'fact.full_webapi_return_order_observation',
+        'fact.full_webapi_exception_observation',
+        'fact.full_webapi_quality_report_observation',
+        'fact.full_webapi_value_added_service_observation'
+    ]
+    LOOP
+        IF NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'SELECT')
+           OR NOT has_table_privilege('sheinfm_webapi_loader', required_name, 'INSERT')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'UPDATE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'DELETE')
+           OR has_table_privilege('sheinfm_webapi_loader', required_name, 'TRUNCATE') THEN
+            RAISE EXCEPTION 'V4 WebAPI append-only boundary is invalid for %',
+                required_name;
+        END IF;
+    END LOOP;
+
     -- Negative everywhere else, including the store dimension,
     -- credential-bearing webhook receipts and the backfill plane.
     FOREACH required_name IN ARRAY ARRAY[
@@ -1056,6 +1120,28 @@ BEGIN
                 END IF;
             END LOOP;
         END LOOP;
+    END LOOP;
+
+    FOREACH required_name IN ARRAY ARRAY[
+        'ops.v4_collection_contract',
+        'ops.v4_collection_run',
+        'ops.v4_collection_attempt',
+        'ops.v4_page_evidence',
+        'ops.v4_collection_coverage',
+        'ops.v4_capability_observation',
+        'fact.full_webapi_stock_record_observation',
+        'fact.full_webapi_waybill_observation',
+        'fact.full_webapi_return_application_observation',
+        'fact.full_webapi_return_order_observation',
+        'fact.full_webapi_exception_observation',
+        'fact.full_webapi_quality_report_observation',
+        'fact.full_webapi_value_added_service_observation'
+    ]
+    LOOP
+        IF NOT has_table_privilege('sheinfm_app', required_name, 'SELECT') THEN
+            RAISE EXCEPTION 'legacy read-only app cannot inspect V4 relation %',
+                required_name;
+        END IF;
     END LOOP;
 
     -- Backfill control plane: only the two verified OpenAPI domain loaders write
@@ -1158,7 +1244,19 @@ BEGIN
             ('sheinfm_webapi_loader', 'raw.webapi_fetch_batch', 'webapi_fetch_batch_id'),
             ('sheinfm_webapi_loader', 'raw.webapi_metric_observation', 'webapi_metric_observation_id'),
             ('sheinfm_webapi_loader', 'ops.webapi_session_health', 'webapi_session_health_id'),
-            ('sheinfm_webapi_loader', 'raw.webapi_home_fetch_audit', 'webapi_home_fetch_audit_id')
+            ('sheinfm_webapi_loader', 'raw.webapi_home_fetch_audit', 'webapi_home_fetch_audit_id'),
+            ('sheinfm_webapi_loader', 'ops.v4_collection_run', 'collection_run_id'),
+            ('sheinfm_webapi_loader', 'ops.v4_collection_attempt', 'collection_attempt_id'),
+            ('sheinfm_webapi_loader', 'ops.v4_page_evidence', 'page_evidence_id'),
+            ('sheinfm_webapi_loader', 'ops.v4_collection_coverage', 'coverage_id'),
+            ('sheinfm_webapi_loader', 'ops.v4_capability_observation', 'capability_observation_id'),
+            ('sheinfm_webapi_loader', 'fact.full_webapi_stock_record_observation', 'full_webapi_stock_record_observation_id'),
+            ('sheinfm_webapi_loader', 'fact.full_webapi_waybill_observation', 'full_webapi_waybill_observation_id'),
+            ('sheinfm_webapi_loader', 'fact.full_webapi_return_application_observation', 'full_webapi_return_application_observation_id'),
+            ('sheinfm_webapi_loader', 'fact.full_webapi_return_order_observation', 'full_webapi_return_order_observation_id'),
+            ('sheinfm_webapi_loader', 'fact.full_webapi_exception_observation', 'full_webapi_exception_observation_id'),
+            ('sheinfm_webapi_loader', 'fact.full_webapi_quality_report_observation', 'full_webapi_quality_report_observation_id'),
+            ('sheinfm_webapi_loader', 'fact.full_webapi_value_added_service_observation', 'full_webapi_value_added_service_observation_id')
         ) AS expected(role_name, table_name, column_name)
     LOOP
         sequence_name := pg_get_serial_sequence(
@@ -1273,7 +1371,13 @@ BEGIN
         'ops.reopen_webhook_authorization_gate_after_probe(text,bigint)',
         'ops.reject_supply_append_only_mutation()',
         'ops.reject_webapi_evidence_mutation()',
-        'ops.guard_backfill_checkpoint_progress()'
+        'ops.guard_backfill_checkpoint_progress()',
+        'ops.guard_v4_collection_run_state()',
+        'ops.guard_v4_collection_attempt_terminal()',
+        'ops.reject_v4_evidence_mutation()',
+        'ops.guard_v4_page_evidence_mutation()',
+        'ops.guard_v4_collection_coverage()',
+        'ops.guard_v4_fact_attempt_binding()'
     ]
     LOOP
         FOREACH expected_group IN ARRAY ARRAY[

@@ -901,8 +901,96 @@ test('orders query rejects unknown, duplicated and out-of-range parameters plus 
   }
 });
 
+test('GET and HEAD /api/returns expose only the four bounded read-only domains', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'returns-server-'));
+  const file = join(directory, 'order-management.json');
+  await writeFile(file, JSON.stringify(ORDER_MANAGEMENT_INDEX));
+  const returnsServer = createDashboardServer({ dataFile: fixture, orderManagementFile: file });
+  await new Promise((resolve, reject) => {
+    returnsServer.once('error', reject);
+    returnsServer.listen(0, '127.0.0.1', resolve);
+  });
+  const returnsBaseUrl = `http://127.0.0.1:${returnsServer.address().port}`;
+  try {
+    const response = await fetch(`${returnsBaseUrl}/api/returns?owner=ALL&store=ALL`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.schemaVersion, 1);
+    assert.equal(payload.readOnly, true);
+    assert.equal(payload.scope.storeCount, 25);
+    assert.ok(payload.scope.storeCodes.includes('DL5477'));
+    assert.equal(payload.domains.exceptions.matchedRows, 1);
+    assert.deepEqual(Object.keys(payload.domains), [
+      'return-applications',
+      'return-orders',
+      'exceptions',
+      'quality-reports',
+    ]);
+    assert.doesNotMatch(
+      JSON.stringify(payload),
+      /recipientPhone|13800138000|科技园路|联系电话|联系人/,
+    );
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+
+    const head = await fetch(`${returnsBaseUrl}/api/returns`, { method: 'HEAD' });
+    assert.equal(head.status, 200);
+    assert.equal(await head.text(), '');
+    assert.equal(head.headers.get('cache-control'), 'no-store');
+
+    const duplicate = await fetch(`${returnsBaseUrl}/api/returns?q=a&q=b`);
+    assert.equal(duplicate.status, 400);
+    assert.match(await duplicate.text(), /QUERY_PARAMETER_DUPLICATED/);
+
+    const unknown = await fetch(`${returnsBaseUrl}/api/returns?raw=1`);
+    assert.equal(unknown.status, 400);
+    assert.match(await unknown.text(), /QUERY_PARAMETER_UNKNOWN/);
+
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const mutation = await fetch(`${returnsBaseUrl}/api/returns`, { method });
+      assert.equal(mutation.status, 405, method);
+      assert.equal(mutation.headers.get('allow'), 'GET, HEAD');
+    }
+  } finally {
+    await new Promise((resolve) => returnsServer.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('/api/returns fails closed when an order row gains an unknown top-level field', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'returns-pii-drift-'));
+  const file = join(directory, 'order-management.json');
+  const drifted = structuredClone(ORDER_MANAGEMENT_INDEX);
+  drifted.pages.exceptions.rows[0].recipientPhone = 'synthetic-sensitive-value';
+  await writeFile(file, JSON.stringify(drifted));
+  const returnsServer = createDashboardServer({ dataFile: fixture, orderManagementFile: file });
+  await new Promise((resolve, reject) => {
+    returnsServer.once('error', reject);
+    returnsServer.listen(0, '127.0.0.1', resolve);
+  });
+  const returnsBaseUrl = `http://127.0.0.1:${returnsServer.address().port}`;
+  try {
+    const response = await fetch(`${returnsBaseUrl}/api/returns`);
+    assert.equal(response.status, 503);
+    assert.match(await response.text(), /ORDER_MANAGEMENT_SCHEMA_INVALID/);
+  } finally {
+    await new Promise((resolve) => returnsServer.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('/api/orders fails closed when no order-management file is configured', async () => {
   const response = await fetch(`${baseUrl}/api/orders?page=delivery-notes`);
   assert.equal(response.status, 503);
   assert.match(await response.text(), /ORDER_MANAGEMENT_PAGE_UNAVAILABLE/);
+});
+
+test('/api/returns exposes only explicit unavailable domains in development without a file', async () => {
+  const response = await fetch(`${baseUrl}/api/returns`);
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.readOnly, true);
+  assert.equal(
+    Object.values(payload.domains).every((domain) => domain.status === 'UNAVAILABLE'),
+    true,
+  );
 });

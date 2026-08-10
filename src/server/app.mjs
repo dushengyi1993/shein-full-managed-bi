@@ -27,6 +27,7 @@ import { loadShippingOrdersData, ShippingOrdersDataError } from './shipping-orde
 import { queryShippingOrders, ShippingOrdersQueryError } from './shipping-orders-query.mjs';
 import { loadOrderManagementData, OrderManagementDataError } from './order-management-data.mjs';
 import { queryOrderManagement, OrderManagementQueryError } from './order-management-query.mjs';
+import { queryReturnsDashboard, ReturnsQueryError } from './returns-query.mjs';
 import {
   PlatformQueryError,
   queryPlatformDashboard,
@@ -692,6 +693,50 @@ export function createRequestHandler(options = {}) {
           error: {
             code: 'FULFILMENT_DATA_UNAVAILABLE',
             message: '发货订单查询暂不可用',
+          },
+        }, method);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/returns') {
+      if (method !== 'GET' && method !== 'HEAD') {
+        response.setHeader('Allow', 'GET, HEAD');
+        sendJson(response, 405, {
+          error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' },
+        }, method);
+        return;
+      }
+      try {
+        const [dashboard, orderManagement] = await Promise.all([
+          loadDashboardData(dataFile),
+          loadOrderManagementData(orderManagementFile, { runtimeEnvironment }),
+        ]);
+        const projected = projectDashboardForUser(dashboard, signedInUser);
+        sendJson(
+          response,
+          200,
+          queryReturnsDashboard(projected, orderManagement, url.searchParams),
+          method,
+          request,
+        );
+      } catch (error) {
+        if (error instanceof ReturnsQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        if (error instanceof OrderManagementDataError) {
+          sendJson(response, 503, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'RETURNS_DATA_UNAVAILABLE',
+            message: '退货与质量查询暂不可用',
           },
         }, method);
       }

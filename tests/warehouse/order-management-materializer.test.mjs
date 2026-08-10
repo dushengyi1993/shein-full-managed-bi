@@ -286,7 +286,13 @@ const VALUE_ADDED_SNAPSHOT_ROW = {
   primary: 'VA-9001',
   secondary: null,
   tags: ['增值服务'],
-  metrics: [{ name: 'actualTotalAmount', value: 12.5 }],
+  // Stale-candidate shape: currency-absent amounts must be stripped before
+  // the materialized index, while typed non-monetary fields survive.
+  metrics: [
+    { name: 'actualTotalAmount', value: 12.5 },
+    { name: 'estimateIncrementAmount', value: 6.78 },
+    { name: 'skcNum', value: 3 },
+  ],
   facts: [{ name: 'serviceSiteName', value: '华东仓' }],
   details: [],
 };
@@ -371,6 +377,28 @@ test('a passing session snapshot merges all seven session pages into the index',
       ? true
       : evidence.sessionSnapshotUsed, true);
   }
+  assert.equal(validateOrderManagementIndex(index).ok, true);
+});
+
+test('currency-absent VAS amounts are stripped from stale session rows before the materialized index', async () => {
+  const { pool } = mockPool(TWO_STORE_DELIVERIES);
+  const index = await materializeOrderManagement({
+    pool,
+    sessionSnapshot: snapshotWith(),
+    now: new Date('2026-08-08T06:00:00.000Z'),
+    expectedStoreCount: 2,
+  });
+  const row = index.pages['value-added-services'].rows[0];
+  assert.equal(row.id, 'VA-9001');
+  const metricNames = row.metrics.map((entry) => entry.name);
+  assert.ok(!metricNames.includes('actualTotalAmount'));
+  assert.ok(!metricNames.includes('estimateIncrementAmount'));
+  assert.ok(metricNames.includes('skcNum'));
+  assert.ok(!JSON.stringify(row).includes('actualTotalAmount'));
+  assert.ok(!JSON.stringify(row).includes('estimateIncrementAmount'));
+  assert.equal(index.pages['value-added-services'].status, 'AVAILABLE');
+  assert.equal(index.coverage.status, 'COMPLETE');
+  assert.equal(index.promotable, true);
   assert.equal(validateOrderManagementIndex(index).ok, true);
 });
 

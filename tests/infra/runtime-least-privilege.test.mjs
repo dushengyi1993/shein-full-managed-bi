@@ -214,19 +214,21 @@ test('all mutable application runtimes and timers are fail-closed behind explici
   }
 });
 
-test('9999 preflight tracks every runtime table and project function through 0011', async () => {
+test('9999 preflight tracks every runtime table and project function through 0029', async () => {
   const reconcile = await text('db/migrations/9999_runtime_role_reconcile.sql');
   const migrations = await Promise.all(
     ['0001_full_managed_bi.sql', '0002_runtime_role.sql', '0003_sales_trust.sql',
       '0004_product_identity_and_access.sql', '0005_webhook_runtime.sql',
       '0006_supply_domains.sql', '0010_product_identity_observation_sets.sql',
       '0011_product_identity_resolution.sql',
-      '0012_backfill_and_webapi_experiment.sql']
+      '0012_backfill_and_webapi_experiment.sql',
+      '0028_v4_collection_control_plane.sql',
+      '0029_v4_order_webapi_facts.sql']
       .map((name) => text(`db/migrations/${name}`)),
   );
   const allSql = migrations.join('\n');
   const tables = [
-    ...allSql.matchAll(/CREATE TABLE IF NOT EXISTS\s+([a-z_]+\.[a-z_]+)/g),
+    ...allSql.matchAll(/CREATE TABLE IF NOT EXISTS\s+([a-z0-9_]+\.[a-z0-9_]+)/g),
   ].map((match) => match[1]);
   assert.ok(tables.length > 30);
   for (const table of new Set(tables)) {
@@ -299,6 +301,75 @@ test('9999 grants one group per login and proves cross-domain negative privilege
   assert.match(verify, /materializer retained % on %/);
   assert.match(verify, /unsafe warehouse default privilege remains/);
   assert.match(verify, /ciphertext/);
+});
+
+test('9999 centrally re-derives the exact V4 WebAPI control and fact privileges', async () => {
+  const migration = await text('db/migrations/9999_runtime_role_reconcile.sql');
+  const verify = await text('db/verify/9999_runtime_role_reconcile.sql');
+  for (const sql of [migration, verify]) {
+    for (const relation of [
+      'ops.v4_collection_contract',
+      'ops.v4_collection_run',
+      'ops.v4_collection_attempt',
+      'ops.v4_page_evidence',
+      'ops.v4_collection_coverage',
+      'ops.v4_capability_observation',
+      'fact.full_webapi_stock_record_observation',
+      'fact.full_webapi_waybill_observation',
+      'fact.full_webapi_return_application_observation',
+      'fact.full_webapi_return_order_observation',
+      'fact.full_webapi_exception_observation',
+      'fact.full_webapi_quality_report_observation',
+      'fact.full_webapi_value_added_service_observation',
+    ]) {
+      assert.match(sql, new RegExp(relation.replace('.', '\\.')));
+    }
+    assert.match(sql, /V4 WebAPI mutable control boundary is invalid/);
+    assert.match(sql, /V4 WebAPI append-only boundary is invalid/);
+    const homepageBoundary = sql.match(
+      /FOREACH required_name IN ARRAY ARRAY\[\s*'fact\.full_home_store_daily',[\s\S]*?RAISE EXCEPTION 'WebAPI homepage fact boundary is invalid for %',[\s\S]*?END LOOP;/,
+    )?.[0] ?? '';
+    assert.notEqual(homepageBoundary, '');
+    assert.doesNotMatch(
+      homepageBoundary,
+      /ops\.v4_collection_|fact\.full_webapi_/,
+      'V4 read-only and append-only relations must not enter the mutable homepage boundary',
+    );
+  }
+  assert.match(
+    migration,
+    /runtime_principals[\s\S]*'sheinfm_webapi_loader'[\s\S]*'sheinfm_webapi_login'/,
+  );
+  assert.match(
+    migration,
+    /GRANT SELECT, INSERT, UPDATE ON[\s\S]*ops\.v4_collection_run,[\s\S]*ops\.v4_collection_attempt,[\s\S]*ops\.v4_collection_coverage[\s\S]*TO sheinfm_webapi_loader/,
+  );
+  assert.match(
+    migration,
+    /GRANT SELECT, INSERT ON[\s\S]*ops\.v4_page_evidence,[\s\S]*fact\.full_webapi_quality_report_observation[\s\S]*TO sheinfm_webapi_loader/,
+  );
+  assert.ok(
+    migration.includes(`'ops.guard_v4_fact_attempt_binding()'`),
+    '9999 preflight omits the v4 fact attempt binding guard',
+  );
+  assert.ok(
+    verify.includes(`'ops.guard_v4_fact_attempt_binding()'`),
+    '9999 verification omits the v4 fact attempt binding guard',
+  );
+  for (const sql of [migration, verify]) {
+    assert.match(
+      sql,
+      /\('sheinfm_webapi_loader', 'ops\.v4_collection_run', 'collection_run_id'\)/,
+    );
+    assert.match(
+      sql,
+      /\('sheinfm_webapi_loader', 'fact\.full_webapi_quality_report_observation', 'full_webapi_quality_report_observation_id'\)/,
+    );
+    assert.match(
+      sql,
+      /\('sheinfm_webapi_loader', 'fact\.full_webapi_value_added_service_observation', 'full_webapi_value_added_service_observation_id'\)/,
+    );
+  }
 });
 
 test('the materializer reads identity pipeline aggregates but never raw identity evidence', async () => {
@@ -537,6 +608,7 @@ test('9999 preserves only append permissions needed by the identity evidence and
     'ops.guard_webhook_store_gate_recovery()',
     'ops.reopen_webhook_authorization_gate_after_probe(text,bigint)',
     'ops.reject_supply_append_only_mutation()',
+    'ops.guard_v4_fact_attempt_binding()',
   ]) {
     assert.ok(
       verify.includes(`'${functionName}'`),

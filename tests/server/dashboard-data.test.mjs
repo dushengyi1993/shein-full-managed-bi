@@ -603,6 +603,7 @@ test('preserves strict operational whitelists without exposing secrets or enabli
   assert.equal(dashboard.actionPool.mode, 'observe_only');
   assert.equal(dashboard.actionPool.writeEnabled, false);
   assert.deepEqual(dashboard.actionPool.meta, {
+    available: true,
     total: 1,
     returned: 1,
     truncated: false,
@@ -736,6 +737,7 @@ test('normalizes detailed supply attention without inventing unknown values or d
   });
   assert.equal(dashboard.actionPool.candidates.length, 100);
   assert.deepEqual(dashboard.actionPool.meta, {
+    available: true,
     total: 101,
     returned: 100,
     truncated: true,
@@ -1058,6 +1060,28 @@ test('the identity pipeline whitelist keeps aggregate counts and drops raw evide
   assert.doesNotMatch(serialized, /appSecret|must not be returned/);
   assert.doesNotMatch(serialized, /srv\/full-bi\/private/);
   assert.doesNotMatch(serialized, /auto-matcher|matchedEvidence|rationale/);
+});
+
+test('supply coverage preserves the explicit succeeded-store membership', () => {
+  const dashboard = normalizeDashboardData({
+    updatedAt: '2026-08-11T01:00:00.000Z',
+    supply: {
+      coverage: {
+        domains: {
+          purchaseOrders: {
+            status: 'complete',
+            succeededStores: 2,
+            totalStores: 2,
+            succeededStoreCodes: ['MZ2406', 'DL5477', 'DL5477'],
+          },
+        },
+      },
+    },
+  });
+  assert.deepEqual(
+    dashboard.supply.coverage.domains.purchaseOrders.succeededStoreCodes,
+    ['DL5477', 'MZ2406'],
+  );
 });
 
 test('an unavailable identity pipeline stays unknown instead of reporting zero', () => {

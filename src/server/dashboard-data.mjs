@@ -638,6 +638,7 @@ function normalizeDomainCoverage(item) {
       ? source.mode
       : null,
     missingStoreCodes: normalizeStoreCodes(source.missingStoreCodes),
+    succeededStoreCodes: normalizeStoreCodes(source.succeededStoreCodes),
     failedStoreCodes: normalizeStoreCodes(source.failedStoreCodes),
     staleStoreCodes: normalizeStoreCodes(source.staleStoreCodes),
     inProgressStoreCodes: normalizeStoreCodes(source.inProgressStoreCodes),
@@ -922,6 +923,7 @@ function normalizeActionCandidate(item) {
 
 function normalizeActionPool(value) {
   const source = record(value);
+  const available = Object.hasOwn(source, 'candidates') || Object.hasOwn(source, 'meta');
   const normalizedCandidates = Array.isArray(source.candidates)
     ? source.candidates.map(normalizeActionCandidate).filter(Boolean)
     : [];
@@ -934,6 +936,7 @@ function normalizeActionPool(value) {
     writeEnabled: false,
     candidates,
     meta: {
+      available,
       total,
       returned: candidates.length,
       truncated: metaSource.truncated === true || total > candidates.length,

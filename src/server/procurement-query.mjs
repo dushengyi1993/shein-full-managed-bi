@@ -332,6 +332,31 @@ function ownerStoreSet(dashboard, ownerKey) {
   return new Set(rows(owner.storeCodes));
 }
 
+function expectedStoreSet(dashboard, store, ownerStores) {
+  if (store !== 'ALL') return new Set([store]);
+  if (ownerStores) return new Set(ownerStores);
+  const stores = new Set(rows(dashboard.stores)
+    .map((item) => String(item?.code ?? '').toUpperCase())
+    .filter((code) => STORE_PATTERN.test(code)));
+  for (const owner of rows(dashboard.owners)) {
+    for (const code of rows(owner?.storeCodes)) {
+      const normalized = String(code ?? '').toUpperCase();
+      if (STORE_PATTERN.test(normalized)) stores.add(normalized);
+    }
+  }
+  return stores;
+}
+
+function coverageCompleteForScope(coverage, expectedStores) {
+  if (expectedStores.size === 0) return false;
+  const succeeded = new Set(rows(coverage?.succeededStoreCodes)
+    .map((code) => String(code).toUpperCase()));
+  // Aggregate COMPLETE counts do not prove membership for the current owner
+  // or store scope. Only the explicit successful roster may authorize an
+  // exact count; a stale/global 1-of-1 receipt must not bless another store.
+  return [...expectedStores].every((code) => succeeded.has(code));
+}
+
 function matchesScope(row, { store, ownerStores }) {
   const storeCode = String(row.storeCode ?? '').toUpperCase();
   if (store !== 'ALL' && storeCode !== store) return false;
@@ -438,6 +463,10 @@ export function queryProcurementDashboard(dashboardValue, paramsValue = new URLS
     : Math.ceil(matchedAttentionRows.length / pageSize);
   const attentionMeta = safeMeta(record(supply.attentionMeta).purchaseOrders);
   const coverage = record(record(supply.coverage).domains).purchaseOrders;
+  const scopeCoverageComplete = coverageCompleteForScope(
+    coverage,
+    expectedStoreSet(dashboard, store, ownerStores),
+  );
   const statuses = [...new Map(
     allStatusRows
       .filter((row) => row.statusCode)
@@ -473,7 +502,8 @@ export function queryProcurementDashboard(dashboardValue, paramsValue = new URLS
       matchedStatusRowCount: scopedStatusRows.length,
       // Order count comes from the status snapshot; the stage quantities below
       // come from the attention rows. They are deliberately separate scopes.
-      orderCount: completeOrderCount(scopedStatusRows),
+      orderCount: scopeCoverageComplete ? completeOrderCount(scopedStatusRows) : null,
+      coverageComplete: scopeCoverageComplete,
       statusCount: new Set(scopedStatusRows.map((row) => row.statusCode).filter(Boolean)).size,
       storeCount: new Set([
         ...scopedStatusRows.map((row) => row.storeCode),

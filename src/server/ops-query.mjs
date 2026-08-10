@@ -48,6 +48,8 @@ const SEVERITY_RANK = Object.freeze({
   LOW: 1,
 });
 
+const TRIAGE_LIMIT = 12;
+
 const DOMAIN_META = Object.freeze({
   PROCUREMENT: Object.freeze({ label: '采购单', route: 'procurement' }),
   FULFILMENT: Object.freeze({ label: '交付入仓', route: 'fulfilment' }),
@@ -675,6 +677,50 @@ function compareRows(sort) {
   };
 }
 
+function shanghaiDate(value) {
+  const parsed = value ? new Date(value) : null;
+  if (!parsed || Number.isNaN(parsed.valueOf())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(parsed);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return values.year && values.month && values.day
+    ? `${values.year}-${values.month}-${values.day}`
+    : null;
+}
+
+function triageRows(inputRows, businessDate, evidenceComplete) {
+  const lanes = { now: [], today: [], watch: [] };
+  for (const item of inputRows) {
+    if (item.overdue === true || severityRank(item.severity) >= 3) {
+      lanes.now.push(item);
+    } else if (businessDate && shanghaiDate(item.dueAt) === businessDate) {
+      lanes.today.push(item);
+    } else {
+      lanes.watch.push(item);
+    }
+  }
+  const project = (rowsIn) => {
+    const sorted = rowsIn.slice().sort(compareRows('PRIORITY'));
+    return Object.freeze({
+      total: evidenceComplete ? sorted.length : null,
+      returned: Math.min(sorted.length, TRIAGE_LIMIT),
+      truncated: evidenceComplete !== true || sorted.length > TRIAGE_LIMIT,
+      completeness: evidenceComplete ? 'COMPLETE' : 'PARTIAL',
+      rows: Object.freeze(sorted.slice(0, TRIAGE_LIMIT)),
+    });
+  };
+  return Object.freeze({
+    businessDate: businessDate || null,
+    now: project(lanes.now),
+    today: project(lanes.today),
+    watch: project(lanes.watch),
+  });
+}
+
 function countBy(inputRows, keyOf, labelOf = null) {
   const grouped = new Map();
   for (const item of inputRows) {
@@ -709,6 +755,10 @@ function countBy(inputRows, keyOf, labelOf = null) {
 
 function sourceWindow(supply, key, fallbackRows) {
   const meta = record(record(supply.attentionMeta)[key]);
+  const available = meta.available === true || (
+    meta.available === undefined
+    && ['returned', 'total', 'truncated'].some((field) => Object.hasOwn(meta, field))
+  );
   const returned = Number.isSafeInteger(meta.returned) && meta.returned >= 0
     ? meta.returned
     : fallbackRows.length;
@@ -716,6 +766,7 @@ function sourceWindow(supply, key, fallbackRows) {
     ? meta.total
     : returned;
   return Object.freeze({
+    available,
     returned,
     total,
     truncated: meta.truncated === true || total > returned,
@@ -790,7 +841,20 @@ export function queryOpsDashboard(dashboardValue, paramsValue = new URLSearchPar
     ),
   });
   const sourceTruncated = Object.values(windows).some((window) => window.truncated);
+  const sourceUnavailable = Object.values(windows).some((window) => window.available !== true);
   const actionMeta = record(record(dashboard.actionPool).meta);
+  const candidateAvailable = actionMeta.available === true || (
+    actionMeta.available === undefined
+    && ['returned', 'total', 'truncated'].some((field) => Object.hasOwn(actionMeta, field))
+  );
+  const triage = triageRows(
+    matchedRows,
+    dashboard.businessDate,
+    sourceUnavailable !== true
+      && sourceTruncated !== true
+      && candidateAvailable === true
+      && actionMeta.truncated !== true,
+  );
 
   return Object.freeze({
     schemaVersion: 1,
@@ -801,7 +865,9 @@ export function queryOpsDashboard(dashboardValue, paramsValue = new URLSearchPar
       supplyStatus: supply.status ?? 'pending',
       businessWindows: windows,
       businessWindowTruncated: sourceTruncated,
+      businessWindowUnavailable: sourceUnavailable,
       candidateWindow: Object.freeze({
+        available: candidateAvailable,
         returned: Number.isSafeInteger(actionMeta.returned)
           ? actionMeta.returned
           : rows(record(dashboard.actionPool).candidates).length,
@@ -848,6 +914,7 @@ export function queryOpsDashboard(dashboardValue, paramsValue = new URLSearchPar
         hasNext: page < pageCount,
       }),
     }),
+    triage,
     filters: Object.freeze({
       views: VIEWS,
       severities: SEVERITIES,

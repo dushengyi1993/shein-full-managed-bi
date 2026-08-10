@@ -156,10 +156,54 @@ test('ops query defaults to a paged priority worklist with honest source evidenc
   assert.equal(result.source.businessWindowTruncated, false);
   assert.equal(result.source.candidateWindow.truncated, true);
   assert.deepEqual(result.source.businessWindows.purchaseOrders, {
+    available: true,
     returned: 2,
     total: 2,
     truncated: false,
   });
+});
+
+test('unavailable source windows keep all triage totals unknown instead of exact zero', () => {
+  const dashboard = structuredClone(DASHBOARD);
+  dashboard.quality = { status: 'healthy' };
+  dashboard.productIdentityCoverage = {
+    confirmedSkus: 1,
+    totalSkus: 1,
+    unconfirmedSkus: 0,
+  };
+  dashboard.supply = {
+    status: 'pending',
+    attentionMeta: Object.fromEntries([
+      'purchaseOrders',
+      'deliveries',
+      'inventoryRisks',
+      'stockAdviceRisks',
+    ].map((key) => [key, {
+      available: false,
+      total: 0,
+      returned: 0,
+      truncated: false,
+    }])),
+    purchaseOrderAttention: [],
+    deliveryAttention: [],
+    inventoryRisks: [],
+    stockAdviceRisks: [],
+  };
+  dashboard.actionPool = {
+    mode: 'observe_only',
+    writeEnabled: false,
+    candidates: [],
+    meta: { available: false, total: 0, returned: 0, truncated: false },
+  };
+  dashboard.platform = { health: { ok: true }, queue: { deadLetter: 0 } };
+
+  const result = queryOpsDashboard(dashboard, new URLSearchParams('view=ALL'));
+  assert.equal(result.source.businessWindowUnavailable, true);
+  for (const lane of Object.values(result.triage).filter((value) => value?.completeness)) {
+    assert.equal(lane.total, null);
+    assert.equal(lane.completeness, 'PARTIAL');
+    assert.equal(lane.truncated, true);
+  }
 });
 
 test('owner and store scope are server-side and exclude cross-store aggregates', () => {
@@ -264,4 +308,193 @@ test('ops query rejects unknown, duplicate and unbounded parameters', () => {
       OpsQueryError,
     );
   }
+});
+
+function triageDashboard(overrides = {}) {
+  const dashboard = structuredClone(DASHBOARD);
+  dashboard.businessDate = '2026-08-01';
+  dashboard.quality = { status: 'healthy' };
+  dashboard.productIdentityCoverage = {
+    confirmedSkus: 100,
+    totalSkus: 100,
+    unconfirmedSkus: 0,
+  };
+  dashboard.platform = { health: { ok: true }, queue: { deadLetter: 0 } };
+  dashboard.actionPool = {
+    mode: 'observe_only',
+    writeEnabled: false,
+    meta: { total: 0, returned: 0, truncated: false },
+    candidates: [],
+  };
+  dashboard.supply = {
+    status: 'available',
+    attentionMeta: {
+      purchaseOrders: { total: 4, returned: 4, truncated: false },
+      deliveries: { total: 0, returned: 0, truncated: false },
+      inventoryRisks: { total: 0, returned: 0, truncated: false },
+      stockAdviceRisks: { total: 0, returned: 0, truncated: false },
+    },
+    purchaseOrderAttention: [
+      {
+        storeCode: 'DL5477',
+        storeName: 'DL5477',
+        orderNo: 'PO-CRITICAL',
+        attentionCode: 'DELIVERY_OVERDUE',
+        attentionLabel: '采购单逾期',
+        severity: 'critical',
+        orderQuantity: 1,
+        deliveryQuantity: 0,
+        requestedDeliveryAt: '2026-08-01T08:00:00.000Z',
+        latestSourceFetchedAt: '2026-08-01T00:59:00.000Z',
+      },
+      {
+        storeCode: 'MZ2406',
+        storeName: 'MZ2406',
+        orderNo: 'PO-OVERDUE-MED',
+        attentionCode: 'DELIVERY_OVERDUE',
+        attentionLabel: '采购单逾期',
+        severity: 'medium',
+        orderQuantity: 1,
+        deliveryQuantity: 0,
+        requestedDeliveryAt: '2026-08-02T08:00:00.000Z',
+        latestSourceFetchedAt: '2026-08-01T00:58:00.000Z',
+      },
+      {
+        storeCode: 'JY8060',
+        storeName: 'JY8060',
+        orderNo: 'PO-TODAY',
+        attentionCode: 'DELIVERED_PENDING_RECEIPT',
+        attentionLabel: '待收货',
+        severity: 'medium',
+        orderQuantity: 1,
+        deliveryQuantity: 1,
+        receiptQuantity: 0,
+        requestedDeliveryAt: '2026-07-31T16:30:00.000Z',
+        latestSourceFetchedAt: '2026-08-01T00:57:00.000Z',
+      },
+      {
+        storeCode: 'DL5477',
+        storeName: 'DL5477',
+        orderNo: 'PO-WATCH',
+        attentionCode: 'PENDING_DELIVERY',
+        attentionLabel: '待交付',
+        severity: 'medium',
+        orderQuantity: 1,
+        deliveryQuantity: 0,
+        requestedDeliveryAt: '2026-08-03T08:00:00.000Z',
+        latestSourceFetchedAt: '2026-08-01T00:56:00.000Z',
+      },
+      {
+        storeCode: 'MZ2406',
+        storeName: 'MZ2406',
+        orderNo: 'PO-NO-DUE',
+        attentionCode: 'PENDING_DELIVERY',
+        attentionLabel: '待交付',
+        severity: 'medium',
+        orderQuantity: 1,
+        deliveryQuantity: 0,
+        latestSourceFetchedAt: '2026-08-01T00:55:00.000Z',
+      },
+    ],
+    deliveryAttention: [],
+    inventoryRisks: [],
+    stockAdviceRisks: [],
+  };
+  return { ...dashboard, ...overrides };
+}
+
+function laneCodes(result, lane) {
+  return result.triage[lane].rows.map((row) => row.objectCode);
+}
+
+test('ops triage routes critical, high and overdue into now; due-today and watch stay separate', () => {
+  const result = queryOpsDashboard(
+    triageDashboard(),
+    new URLSearchParams('view=ALL&pageSize=25'),
+  );
+
+  assert.equal(result.triage.businessDate, '2026-08-01');
+  assert.deepEqual(laneCodes(result, 'now'), ['PO-CRITICAL', 'PO-OVERDUE-MED']);
+  assert.deepEqual(laneCodes(result, 'today'), ['PO-TODAY']);
+  assert.deepEqual(laneCodes(result, 'watch'), ['PO-WATCH', 'PO-NO-DUE']);
+  assert.equal(result.triage.now.total, 2);
+  assert.equal(result.triage.today.total, 1);
+  assert.equal(result.triage.watch.total, 2);
+
+  // Today lane admits only rows with an explicit dueAt, and the dueAt is
+  // compared in Asia/Shanghai against the dashboard business date: 2026-07-31
+  // 16:30 UTC is 2026-08-01 00:30 in Shanghai.
+  assert.equal(result.triage.today.rows.every((row) => row.dueAt), true);
+  assert.equal(result.triage.today.rows.every((row) => row.severity !== 'CRITICAL'), true);
+  assert.equal(result.triage.today.rows.every((row) => row.overdue !== true), true);
+  // An overdue MEDIUM row still belongs to now, never to today or watch.
+  assert.equal(result.triage.now.rows.some((row) => row.objectCode === 'PO-OVERDUE-MED'), true);
+  // A row without dueAt can never enter today.
+  assert.equal(result.triage.today.rows.some((row) => row.objectCode === 'PO-NO-DUE'), false);
+  assert.equal(result.triage.watch.rows.some((row) => row.objectCode === 'PO-NO-DUE'), true);
+});
+
+test('ops triage only fills today when a Shanghai date matches the dashboard business date', () => {
+  const sameUtcDay = queryOpsDashboard(
+    triageDashboard({
+      supply: {
+        ...triageDashboard().supply,
+        purchaseOrderAttention: triageDashboard().supply.purchaseOrderAttention.map((row) => (
+          row.orderNo === 'PO-TODAY'
+            ? { ...row, requestedDeliveryAt: '2026-07-31T15:59:00.000Z' }
+            : row
+        )),
+      },
+    }),
+    new URLSearchParams('view=ALL&pageSize=25'),
+  );
+  // 2026-07-31 15:59 UTC is still 2026-07-31 in Shanghai, so the row must not
+  // land in a businessDate 2026-08-01 today lane.
+  assert.deepEqual(laneCodes(sameUtcDay, 'today'), []);
+  assert.equal(sameUtcDay.triage.watch.rows.some((row) => row.objectCode === 'PO-TODAY'), true);
+});
+
+test('ops triage never fills today without a business date or without a dueAt', () => {
+  const withoutBusinessDate = triageDashboard();
+  delete withoutBusinessDate.businessDate;
+  const result = queryOpsDashboard(
+    withoutBusinessDate,
+    new URLSearchParams('view=ALL&pageSize=25'),
+  );
+  assert.equal(result.triage.businessDate, null);
+  assert.equal(result.triage.today.total, 0);
+  assert.deepEqual(laneCodes(result, 'today'), []);
+  assert.equal(result.triage.watch.rows.some((row) => row.objectCode === 'PO-TODAY'), true);
+});
+
+test('ops triage reflects the current worklist filter, not an unfiltered portfolio', () => {
+  // In the default PRIORITY view a MEDIUM, non-overdue due-today row is not
+  // part of the matched worklist, so it must not appear in any triage lane.
+  const result = queryOpsDashboard(
+    triageDashboard(),
+    new URLSearchParams('view=PRIORITY&pageSize=25'),
+  );
+  const allLaneRows = [...result.triage.now.rows, ...result.triage.today.rows, ...result.triage.watch.rows];
+  assert.equal(allLaneRows.some((row) => row.objectCode === 'PO-TODAY'), false);
+  assert.equal(allLaneRows.some((row) => row.objectCode === 'PO-NO-DUE'), false);
+  assert.equal(result.triage.now.rows.some((row) => row.objectCode === 'PO-CRITICAL'), true);
+});
+
+test('ops triage never reports an exact zero or total from a truncated source window', () => {
+  const dashboard = triageDashboard();
+  dashboard.supply.attentionMeta.purchaseOrders = {
+    total: 50,
+    returned: 5,
+    truncated: true,
+  };
+  const result = queryOpsDashboard(
+    dashboard,
+    new URLSearchParams('view=ALL&pageSize=25'),
+  );
+  for (const lane of ['now', 'today', 'watch']) {
+    assert.equal(result.triage[lane].completeness, 'PARTIAL');
+    assert.equal(result.triage[lane].total, null);
+    assert.equal(result.triage[lane].truncated, true);
+  }
+  assert.ok(result.triage.now.returned > 0);
 });
