@@ -4,13 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="SHEIN 全托销量矩阵、日月趋势、店铺与商品排行、运营提醒的只读驾驶舱">
-    <meta name="theme-color" content="#171814">
+    <meta name="theme-color" content="#f7f7f3">
     <meta name="color-scheme" content="light">
     <title>SHEIN 全托运营驾驶舱</title>
-    <link rel="icon" href="/favicon.svg?v=20260809.2" type="image/svg+xml">
-    <link rel="stylesheet" href="/styles.css?v=20260809.2">
-    <link rel="stylesheet" href="/home-parity.css?v=20260809.2">
-    <script src="/app.js?v=20260809.2" defer></script>
+    <link rel="icon" href="/favicon.svg?v=20260810.1" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css?v=20260810.1">
+    <link rel="stylesheet" href="/home-parity.css?v=20260810.1">
+    <script src="/app.js?v=20260810.1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#content">跳到主要内容</a>
@@ -19,7 +19,7 @@
       <aside class="sidebar" aria-label="全托运营工作台">
         <div class="brand">
           <div class="mark" aria-hidden="true">
-            <img src="/favicon.svg?v=20260809.2" alt="">
+            <img src="/favicon.svg?v=20260810.1" alt="">
           </div>
           <div>
             <h1>SHEIN BI</h1>
@@ -28,37 +28,42 @@
         </div>
 
         <nav class="nav primary-nav" aria-label="主导航">
-          <a href="#home" data-route="home"><span>总控驾驶舱</span><small>CONTROL</small></a>
-          <div class="nav-group" data-nav-group="orders">
-            <button type="button" class="nav-group-toggle" id="order-nav-toggle"
-              aria-expanded="false" aria-controls="order-nav-panel">
-              <span>订单管理</span>
-              <span class="nav-group-tail">
-                <small>ORDER</small>
-                <svg class="nav-group-chevron" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-                  <path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </span>
-            </button>
-            <div class="nav-group-panel" id="order-nav-panel" hidden>
-              <a href="#fulfilment" data-route="fulfilment"><span>发货订单</span></a>
-              <a href="#delivery-notes" data-route="delivery-notes"><span>发货单列表</span></a>
-              <a href="#stock-records" data-route="stock-records"><span>备货记录</span></a>
-              <a href="#waybills" data-route="waybills"><span>运单报表</span></a>
-              <a href="#return-applications" data-route="return-applications"><span>退货申请</span></a>
-              <a href="#return-orders" data-route="return-orders"><span>退货列表</span></a>
-              <a href="#exceptions" data-route="exceptions"><span>收货/退货异常</span></a>
-              <a href="#value-added-services" data-route="value-added-services"><span>增值服务列表</span></a>
-              <a href="#quality-reports" data-route="quality-reports"><span>质检报告</span></a>
-            </div>
-          </div>
-          <a href="#sales" data-route="sales"><span>销量分析</span><small>SALES</small></a>
-          <a href="#products" data-route="products"><span>商品分析</span><small>PRODUCT</small></a>
-          <a href="#inventory" data-route="inventory"><span>库存与备货</span><small>SUPPLY</small></a>
-          <a href="#procurement" data-route="procurement"><span>采购单</span><small>PO</small></a>
-          <a href="#platform" data-route="platform"><span>平台动态</span><small>WEBHOOK</small></a>
-          <a href="#ops" data-route="ops"><span>运营工具</span><small>ACTIONS</small></a>
-          <a href="#system" data-route="system"><span>系统管理</span><small>SYSTEM</small></a>
+          <a href="#home" data-route="home">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14a8 8 0 1 1 16 0v5H4v-5Z"/><path d="m12 14 3-4M7 16h10"/></svg>
+            <span>总控驾驶舱</span>
+          </a>
+          <a href="#products" data-route="products">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14l-1 12H6L5 8Z"/><path d="M9 9V6a3 3 0 0 1 6 0v3"/></svg>
+            <span>商品经营</span>
+          </a>
+          <a href="#inventory" data-route="inventory">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 8 8-5 8 5v9l-8 4-8-4V8Z"/><path d="m4 8 8 4 8-4M12 12v9"/></svg>
+            <span>库存与备货</span>
+          </a>
+          <a href="#procurement" data-route="procurement">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h11v10H3V6Zm11 4h4l3 3v3h-7v-6Z"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+            <span>采购履约</span>
+          </a>
+          <a href="#returns" data-route="returns">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4Z"/><path d="m9 12 2 2 4-4"/></svg>
+            <span>退货与质量</span>
+          </a>
+          <a href="#finance" data-route="finance">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>
+            <span>财务与结算</span>
+          </a>
+          <a href="#marketing" data-route="marketing">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13V9h4l9-4v12l-9-4H4Z"/><path d="m8 13 1 6h3l-1-5M20 9v4"/></svg>
+            <span>营销机会</span>
+          </a>
+          <a href="#ops" data-route="ops">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v16H6V4Z"/><path d="m9 9 1 1 2-2M13 9h2M9 14l1 1 2-2M13 14h2"/></svg>
+            <span>运营待办</span>
+          </a>
+          <a href="#system" data-route="system">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10h4v10H4Zm6 0V4h4v16h-4Zm6 0v-7h4v7h-4Z"/></svg>
+            <span>数据与系统</span>
+          </a>
         </nav>
 
         <div class="account-box sidebar-context sidebar-account" aria-live="polite">
@@ -70,40 +75,6 @@
             <button id="logout-button" class="logout-button logout-btn" type="button">退出</button>
           </div>
           <p id="sidebar-permission">账号权限待确认</p>
-        </div>
-
-        <div class="side-note sidebar-health" aria-live="polite">
-          <div class="side-status-head">DATA HEALTH</div>
-          <div class="side-status">
-            <div class="side-status-row">
-              <span>数据状态</span>
-              <strong><span id="dataset-badge" class="status-badge neutral">正在读取</span></strong>
-            </div>
-            <div class="side-status-row">
-              <span>经营日报</span>
-              <strong id="sidebar-operating-freshness">读取中</strong>
-            </div>
-            <div class="side-status-row">
-              <span>财务明细</span>
-              <strong id="sidebar-finance-freshness">读取中</strong>
-            </div>
-            <div class="side-status-row">
-              <span>库存台账</span>
-              <strong id="sidebar-ledger-freshness">读取中</strong>
-            </div>
-            <div class="side-status-row">
-              <span>实际结算</span>
-              <strong id="sidebar-settlement-freshness">读取中</strong>
-            </div>
-            <div class="side-status-row">
-              <span>页面底稿</span>
-              <strong id="updated-at">--</strong>
-            </div>
-            <div class="side-status-row">
-              <span>自动更新</span>
-              <strong><span id="live-update-badge" class="status-badge neutral">连接中</span></strong>
-            </div>
-          </div>
         </div>
 
         <div id="sidebar-sample-note" class="sample-note" hidden>

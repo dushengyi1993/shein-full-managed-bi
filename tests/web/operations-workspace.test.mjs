@@ -23,7 +23,7 @@ function functionBody(source, functionName) {
  * whole Dashboard snapshot; they do not replace visual acceptance.
  */
 
-test('each workspace consumes only its own independent endpoint', async () => {
+test('each workspace uses explicit bounded read-only endpoints', async () => {
   const app = await read('src/web/app.js');
   const procurementUrl = functionBody(app, 'procurementQueryUrl');
   const fulfilmentUrl = functionBody(app, 'fulfilmentQueryUrl');
@@ -84,11 +84,23 @@ test('each workspace consumes only its own independent endpoint', async () => {
     assert.doesNotMatch(body, /matchesQuickFilter\(/);
     assert.doesNotMatch(body, /slice\(0, ?100\)/);
   }
-  // The old unbounded per-store status table is gone from procurement.
-  assert.match(procurement, /procurementDecisionOverview\(queryData\)/);
-  assert.match(procurement, /procurementStoreRankings\(queryData\)/);
-  assert.match(procurement, /procurementEvidenceDisclosure\(queryData\)/);
-  assert.match(functionBody(app, 'procurementEvidenceDisclosure'), /statusOverview/);
+  // The unified procurement page is one decision surface: overview KPIs, a
+  // lifecycle snapshot, a server-paged attention queue with detail panel and
+  // a boundary disclosure. The retired aggregate helpers are off the render
+  // path and no per-page status rows leak into it.
+  assert.match(procurement, /procurement-fulfilment-page/);
+  assert.match(procurement, /procurementKpi\(/);
+  assert.match(procurement, /procurementLifecycle\(queryData\)/);
+  assert.match(procurement, /procurementPriorityTable\(attention\)/);
+  assert.match(procurement, /procurementDetailPanel\(queryData, attention\)/);
+  assert.match(procurement, /procurementPagination\(queryData, 'top'\)/);
+  assert.match(procurement, /procurementPagination\(queryData, 'bottom'\)/);
+  assert.match(procurement, /不作为转化漏斗/);
+  assert.match(procurement, /queryData\.fulfilmentError/);
+  assert.doesNotMatch(
+    procurement,
+    /procurementDecisionOverview|procurementStoreRankings|procurementEvidenceDisclosure/,
+  );
   assert.doesNotMatch(procurement, /queryData\.statusRows/);
   assert.match(fulfilment, /shippingOrdersList\(rows, sourceCapabilities\)/);
   assert.match(fulfilment, /shippingOrdersPagination\(page\)/);
@@ -403,15 +415,28 @@ test('coverage, truncation and quantity wording stay honest', async () => {
   assert.match(metricNote, /拒绝补零合计/);
   assert.match(metricNote, /不代表业务数量为 0/);
 
-  // Procurement preserves the former snapshot disclosure; the shipping-order
-  // workspace instead labels OpenAPI facts and unknown portal-only fields.
-  const procurementEvidence = functionBody(app, 'procurementEvidenceDisclosure');
-  assert.match(procurementEvidence, /不是转化漏斗/);
-  assert.match(procurementEvidence, /不构成转化漏斗，也不据此推导完成率或百分比/);
+  // The unified procurement page keeps the snapshot honesty: no funnel
+  // derivation, bounded source truncation and an explicit read-only boundary;
+  // the shipping-order workspace instead labels OpenAPI facts and unknown
+  // portal-only fields.
+  assert.match(procurement, /不作为转化漏斗/);
+  assert.match(procurement, /发货辅助明细最多回读 100 条/);
+  assert.match(procurement, /采购与发货分别标注各自事实时间/);
+  assert.match(procurement, /不把两个文件冒充同一事务快照/);
+  assert.match(procurement, /页面不提交发货、确认、收货或其他 SHEIN 写操作/);
+  assert.match(procurement, /缺失值不补零/);
+  assert.match(functionBody(app, 'procurementCompactLines'), /不从其他订单补字段/);
+  assert.match(functionBody(app, 'procurementDetailPanel'), /未返回字段不补写/);
+  assert.match(functionBody(app, 'procurementPriorityTable'), /不代表所有采购单已经完成/);
+  const fulfilmentAvailable = functionBody(app, 'procurementFulfilmentAvailable');
+  assert.match(fulfilmentAvailable, /source\.updatedAt/);
+  assert.match(fulfilmentAvailable, /isUnit\(source\.orderCount\)/);
+  assert.match(fulfilmentAvailable, /fulfilment\.orders\?\.rows/);
+  assert.match(functionBody(app, 'procurementLifecycle'), /procurementFulfilmentAvailable\(queryData\)/);
+  assert.match(procurement, /sourceMeta\.available === true[\s\S]*: null/);
   assert.match(fulfilment, /订单数/);
   assert.match(fulfilment, /下单件数/);
   assert.match(fulfilment, /缺失时不编造/);
-  assert.match(functionBody(app, 'procurementDecisionOverview'), /来自当前平台状态快照，不等于关注队列/);
   // A missing expectedReceiptAt stays unknown and is never fabricated.
   const deliveryTable = functionBody(app, 'shippingOrderLineTable');
   assert.match(deliveryTable, /OpenAPI 未返回金额/);
@@ -426,12 +451,12 @@ test('coverage, truncation and quantity wording stay honest', async () => {
     for (const [button] of body.matchAll(/<button[^>]*>/g)) {
       assert.match(
         button,
-        /data-procurement-retry|data-fulfilment-retry|data-procurement-page|data-fulfilment-page|data-quick-route|data-operation-search|data-operation-reset|data-shipping-order-type|data-shipping-status|data-shipping-warehouse|data-shipping-advanced/,
+        /data-procurement-retry|data-fulfilment-retry|data-procurement-page|data-procurement-order|data-fulfilment-page|data-quick-route|data-operation-search|data-operation-reset|data-shipping-order-type|data-shipping-status|data-shipping-warehouse|data-shipping-advanced/,
         button,
       );
     }
   }
-  assert.match(functionBody(app, 'procurementEvidenceDisclosure'), /不提交任何采购单动作/);
+  assert.match(functionBody(app, 'procurementPriorityTable'), /data-procurement-order/);
   assert.match(fulfilment, /所有写操作保持关闭/);
 });
 

@@ -30,7 +30,11 @@ test('supply pages consume real purchase, shipping-order, inventory and stock-ad
   assert.match(app, /\/api\/procurement/);
   assert.match(app, /\/api\/fulfilment/);
   assert.match(app, /\/api\/inventory/);
-  assert.match(app, /采购单关注队列/);
+  assert.match(app, /采购履约处理工作台/);
+  assert.match(app, /当前节点快照/);
+  assert.match(app, /function procurementLifecycle\(/);
+  assert.match(app, /function procurementPriorityTable\(/);
+  assert.match(app, /function procurementDetailPanel\(/);
   assert.match(app, /发货订单/);
   assert.match(app, /SKU 风险与备货筛查/);
   assert.match(app, /店铺 × 库存类型汇总/);
