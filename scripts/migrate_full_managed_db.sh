@@ -40,6 +40,41 @@ apply_sql() {
   printf 'applied %s\n' "$(basename "$sql_file")"
 }
 
+bootstrap_runtime_capability_roles() {
+  # pg_dump deliberately excludes cluster-global roles. A restored database
+  # can therefore contain the complete current schema while lacking the
+  # NOLOGIN capability roles referenced by migrations before the final 9999
+  # reconciliation. Create only inert, passwordless role shells here; 9999
+  # remains the sole owner of login roles, passwords, memberships and grants.
+  docker exec -i "$container_name" sh -ceu '
+    exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+  ' <<'SQL'
+BEGIN;
+
+SELECT 'CREATE ROLE sheinfm_materializer_ro NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_materializer_ro')
+\gexec
+SELECT 'CREATE ROLE sheinfm_sales_loader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_sales_loader')
+\gexec
+SELECT 'CREATE ROLE sheinfm_supply_loader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_supply_loader')
+\gexec
+SELECT 'CREATE ROLE sheinfm_webhook_ingress NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_webhook_ingress')
+\gexec
+SELECT 'CREATE ROLE sheinfm_webhook_worker NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_webhook_worker')
+\gexec
+SELECT 'CREATE ROLE sheinfm_webapi_loader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sheinfm_webapi_loader')
+\gexec
+
+COMMIT;
+SQL
+  printf 'bootstrapped runtime capability roles\n'
+}
+
 migration_is_superseded() {
   local migration_name
   migration_name="$(basename "$1")"
@@ -110,6 +145,8 @@ migration_is_superseded() {
       ;;
   esac
 }
+
+bootstrap_runtime_capability_roles
 
 for sql_file in "$project_root"/db/migrations/*.sql; do
   if migration_is_superseded "$sql_file"; then

@@ -737,3 +737,31 @@ test('migration passwords come from one root-private manifest and values never e
   assert.match(manifest, /Generate six new, mutually[\s\S]*independent/);
   assert.doesNotMatch(manifest, /Generate seven independent/i);
 });
+
+test('migration runner bootstraps only inert capability roles before replay', async () => {
+  const runner = await text('scripts/migrate_full_managed_db.sh');
+  const start = runner.indexOf('bootstrap_runtime_capability_roles()');
+  const end = runner.indexOf('\nmigration_is_superseded()', start);
+  const invocation = runner.indexOf('\nbootstrap_runtime_capability_roles\n', end);
+  const migrationLoop = runner.indexOf('\nfor sql_file in "$project_root"/db/migrations/*.sql; do');
+
+  assert.ok(start >= 0 && end > start, 'bootstrap function must exist');
+  assert.ok(invocation > end && invocation < migrationLoop, 'bootstrap must run before migration replay');
+
+  const bootstrap = runner.slice(start, end);
+  for (const role of [
+    'sheinfm_materializer_ro',
+    'sheinfm_sales_loader',
+    'sheinfm_supply_loader',
+    'sheinfm_webhook_ingress',
+    'sheinfm_webhook_worker',
+    'sheinfm_webapi_loader',
+  ]) {
+    assert.match(
+      bootstrap,
+      new RegExp(`CREATE ROLE ${role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`),
+    );
+  }
+  assert.doesNotMatch(bootstrap, /\bPASSWORD\b|\bSHEIN_FM_[A-Z_]*PASSWORD\b/);
+  assert.doesNotMatch(bootstrap, /CREATE ROLE [^'\n]*\bLOGIN\b/);
+});
