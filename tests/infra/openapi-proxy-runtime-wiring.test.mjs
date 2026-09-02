@@ -61,6 +61,7 @@ test('exactly the seven credential-bearing OpenAPI business units require the pr
   assert.deepEqual(wiredUnits, OPENAPI_UNITS);
 
   for (const { name, content } of services) {
+    const lines = content.split(/\r?\n/);
     assert.doesNotMatch(
       content,
       /^Environment=(?:HTTP_PROXY|HTTPS_PROXY|ALL_PROXY)=/m,
@@ -68,7 +69,7 @@ test('exactly the seven credential-bearing OpenAPI business units require the pr
     );
     if (!OPENAPI_UNITS.includes(name)) continue;
     assert.equal(
-      content.split(/\r?\n/).filter((line) => line === PROXY_ENV_DIRECTIVE).length,
+      lines.filter((line) => line === PROXY_ENV_DIRECTIVE).length,
       1,
       `${name} must require the proxy env exactly once`,
     );
@@ -76,6 +77,18 @@ test('exactly the seven credential-bearing OpenAPI business units require the pr
       content,
       new RegExp(`^EnvironmentFile=-${PROXY_ENV_PATH.replaceAll('/', '\\/')}\\s*$`, 'm'),
       `${name} must fail before ExecStart when the proxy env is absent`,
+    );
+    const proxyEnvironmentFileIndex = lines.indexOf(PROXY_ENV_DIRECTIVE);
+    const otherEnvironmentFileIndexes = lines
+      .map((line, index) => (
+        line.startsWith('EnvironmentFile=') && line !== PROXY_ENV_DIRECTIVE
+          ? index
+          : -1
+      ))
+      .filter((index) => index >= 0);
+    assert.ok(
+      otherEnvironmentFileIndexes.every((index) => index < proxyEnvironmentFileIndex),
+      `${name} must load the proxy env after every other EnvironmentFile`,
     );
     assert.match(content, /^Environment=SHEIN_FM_CLOUD_EXECUTION=1$/m);
   }

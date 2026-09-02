@@ -20,9 +20,9 @@ Environment=SHEIN_FM_CLOUD_EXECUTION=1
 Environment=FULL_FM_WEBAPI_TRANSPORT=http
 Environment=FULL_BI_COORDINATOR_STATE_DIR=/srv/shein-fm/runtime/coordinator/realtime
 Environment=FULL_BI_SALES_OPENAPI_CONFIG_FILE=%d/sales_openapi_config
-EnvironmentFile=/srv/shein-fm/secrets/openapi-proxy.env
 EnvironmentFile=/srv/shein-fm/secrets/webapi-experiment/database.env
 EnvironmentFile=/srv/shein-fm/secrets/sales/database.env
+EnvironmentFile=/srv/shein-fm/secrets/openapi-proxy.env
 LoadCredential=webapi_session_key:/srv/shein-fm/secrets/webapi-session/session-key
 LoadCredential=sales_openapi_config:/srv/shein-fm/secrets/sales/openapi.json
 RuntimeDirectory=shein-fm-webapi

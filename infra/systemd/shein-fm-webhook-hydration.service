@@ -15,8 +15,8 @@ WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
 Environment=SHEIN_FM_CLOUD_EXECUTION=1
 Environment=FULL_BI_OPENAPI_CONFIG_FILE=/srv/shein-fm/secrets/supply/openapi.json
-EnvironmentFile=/srv/shein-fm/secrets/openapi-proxy.env
 EnvironmentFile=/srv/shein-fm/secrets/supply/database.env
+EnvironmentFile=/srv/shein-fm/secrets/openapi-proxy.env
 RuntimeDirectory=shein-fm-webhook-hydration
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
