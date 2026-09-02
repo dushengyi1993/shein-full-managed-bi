@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
@@ -605,29 +606,39 @@ test("PG integration keeps direct batch 73 and uses the audited SSH batch and di
   assert.doesNotMatch(sshBlock, /primaryStage\s*=\s*"/);
 });
 
-test("launcherConfiguration builds the test-mode topology from SSH env without requiring database URLs", () => {
-  const sshRoot = process.env.USERPROFILE + "\\.ssh";
-  const sshFiles = readdirSync(sshRoot).filter((name) => {
-    try { return statSync(resolvePath(sshRoot, name)).isFile(); } catch { return false; }
-  });
-  if (sshFiles.length < 2) return;
-  const [firstFile, secondFile] = sshFiles;
+test("launcherConfiguration builds the test-mode topology from SSH env without requiring database URLs", (t) => {
+  const fixtureRoot = mkdtempSync(resolvePath(tmpdir(), "fnos-cutover-ssh-config-"));
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  const userProfile = resolvePath(fixtureRoot, "operator");
+  const sshRoot = resolvePath(userProfile, ".ssh");
+  const openSshRoot = resolvePath(fixtureRoot, "System32", "OpenSSH");
+  const identityFile = resolvePath(sshRoot, "cutover_ed25519.test");
+  const knownHostsFile = resolvePath(sshRoot, "known_hosts.test");
+  mkdirSync(sshRoot, { recursive: true });
+  mkdirSync(openSshRoot, { recursive: true });
+  writeFileSync(identityFile, "non-secret test identity fixture\n", "utf8");
+  writeFileSync(knownHostsFile, "non-secret test known-hosts fixture\n", "utf8");
+  writeFileSync(resolvePath(openSshRoot, "ssh.exe"), "non-executable test fixture\n", "utf8");
   const environment = {
-    USERPROFILE: process.env.USERPROFILE,
-    SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
+    USERPROFILE: userProfile,
+    SystemRoot: fixtureRoot,
     FNOS_WEBHOOK_SSH_CLOUD_HOST: "cloud.example.test",
     FNOS_WEBHOOK_SSH_CLOUD_PORT: "22",
     FNOS_WEBHOOK_SSH_CLOUD_USER: "sheinops",
-    FNOS_WEBHOOK_SSH_CLOUD_IDENTITY_FILE: resolvePath(sshRoot, firstFile),
-    FNOS_WEBHOOK_SSH_CLOUD_KNOWN_HOSTS_FILE: resolvePath(sshRoot, secondFile),
+    FNOS_WEBHOOK_SSH_CLOUD_IDENTITY_FILE: identityFile,
+    FNOS_WEBHOOK_SSH_CLOUD_KNOWN_HOSTS_FILE: knownHostsFile,
     FNOS_WEBHOOK_SSH_FNOS_HOST: "fnos.example.test",
     FNOS_WEBHOOK_SSH_FNOS_PORT: "22",
     FNOS_WEBHOOK_SSH_FNOS_USER: "sheinops",
-    FNOS_WEBHOOK_SSH_FNOS_IDENTITY_FILE: resolvePath(sshRoot, firstFile),
-    FNOS_WEBHOOK_SSH_FNOS_KNOWN_HOSTS_FILE: resolvePath(sshRoot, secondFile),
+    FNOS_WEBHOOK_SSH_FNOS_IDENTITY_FILE: identityFile,
+    FNOS_WEBHOOK_SSH_FNOS_KNOWN_HOSTS_FILE: knownHostsFile,
     FNOS_WEBHOOK_SOURCE_DATABASE_URL: "postgresql://should-not-be-read",
     FNOS_WEBHOOK_TARGET_DATABASE_URL: "postgresql://should-not-be-read",
   };
+  assert.throws(
+    () => launcherConfiguration({ ...environment, USERPROFILE: "" }, { requireFingerprint: false }),
+    (error) => error?.code === "SSH_CONFIG_REQUIRED",
+  );
   const config = launcherConfiguration(environment, { requireFingerprint: false });
   assert.equal(config.cloud.topology, "cloud");
   assert.equal(config.fnos.topology, "fnos");
