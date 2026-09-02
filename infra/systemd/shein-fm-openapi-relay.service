@@ -1,0 +1,43 @@
+[Unit]
+Description=SHEIN OpenAPI loopback-only CONNECT relay
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/opt/shein-fm-openapi-relay/scripts/serve_shein_openapi_connect_relay.mjs
+ConditionPathExists=/opt/shein-fm-openapi-relay/src/openapi/connect-relay.mjs
+ConditionPathExists=/srv/shein-fm/runtime/openapi-relay.enabled
+
+[Service]
+Type=simple
+DynamicUser=yes
+UMask=0077
+Environment=NODE_ENV=production
+Environment=SHEIN_FM_OPENAPI_RELAY_PORT=18080
+WorkingDirectory=/opt/shein-fm-openapi-relay
+ExecStart=/usr/bin/node scripts/serve_shein_openapi_connect_relay.mjs
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+MemoryHigh=64M
+MemoryMax=96M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

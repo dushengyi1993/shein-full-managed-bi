@@ -1,5 +1,10 @@
 import crypto from 'node:crypto';
 
+import {
+  resolveOpenApiProxyConfig,
+  selectOpenApiTransport,
+} from './proxy-transport.mjs';
+
 export const FULL_MANAGED_OPENAPI_BASE_URL = 'https://openapi.sheincorp.com';
 export const FULL_MANAGED_AUTHORIZATION_HOST = 'openapi-sem.sheincorp.com';
 export const CONTENT_TYPE = 'application/json;charset=UTF-8';
@@ -267,6 +272,8 @@ export class SheinOpenApiClient {
     fetchImpl = globalThis.fetch,
     platform = process.platform,
     cloudExecution = process.env.SHEIN_FM_CLOUD_EXECUTION,
+    proxyUrl = process.env.SHEIN_FM_OPENAPI_PROXY_URL,
+    proxyRequired = process.env.SHEIN_FM_OPENAPI_PROXY_REQUIRED,
   } = {}) {
     if (typeof fetchImpl !== 'function') fail('MISSING_FETCH', 'fetch implementation is required');
     this.baseUrl = String(baseUrl).replace(/\/+$/, '');
@@ -274,7 +281,15 @@ export class SheinOpenApiClient {
     this.secretKey = secretKey;
     this.timeoutMs = Number(timeoutMs);
     this.allowFakeBaseUrl = allowFakeBaseUrl;
-    this.fetchImpl = fetchImpl;
+    const proxyConfig = resolveOpenApiProxyConfig(proxyUrl);
+    const transport = selectOpenApiTransport({
+      baseUrl: this.baseUrl,
+      proxyConfig,
+      proxyRequired,
+      fetchImpl,
+    });
+    this.fetchImpl = transport.fetchImpl;
+    this.dispatcher = transport.dispatcher;
     this.platform = platform;
     this.cloudExecution = cloudExecution;
   }
@@ -309,6 +324,7 @@ export class SheinOpenApiClient {
       },
     };
     if (body !== undefined && upperMethod !== 'GET') init.body = JSON.stringify(body);
+    if (this.dispatcher) init.dispatcher = this.dispatcher;
 
     let response;
     let text;
@@ -379,20 +395,22 @@ export class SheinOpenApiClient {
     });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const init = {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': CONTENT_TYPE,
+        'x-lt-appid': appId,
+        'x-lt-timestamp': signed.timestamp,
+        'x-lt-signature': signed.signature,
+      },
+      body: JSON.stringify({ tempToken }),
+    };
+    if (this.dispatcher) init.dispatcher = this.dispatcher;
     let response;
     let text;
     try {
-      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': CONTENT_TYPE,
-          'x-lt-appid': appId,
-          'x-lt-timestamp': signed.timestamp,
-          'x-lt-signature': signed.signature,
-        },
-        body: JSON.stringify({ tempToken }),
-      });
+      response = await this.fetchImpl(`${this.baseUrl}${path}`, init);
       text = await response.text();
     } catch (error) {
       if (controller.signal.aborted) {

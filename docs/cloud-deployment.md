@@ -1,6 +1,6 @@
 # 全托 BI 云端部署手册
 
-最后更新：2026-08-10
+最后更新：2026-09-02
 
 ## 1. 生产拓扑与边界
 
@@ -11,10 +11,17 @@ Cloudflare
   -> HAProxy 443
   -> Caddy 127.0.0.1:11443
   -> Nginx 127.0.0.1:8081
-       -> Portal 127.0.0.1:8788
-       -> Webhook Receiver 127.0.0.1:8793
+       -> /etc/nginx/shein-fm-upstreams.conf
+          -> cloud: Portal/Webhook/Store Login 127.0.0.1:8788/8793/8794
+          -> fnOS: cloud loopback 127.0.0.1:18788/18793/18794
+             -> restricted reverse SSH
+             -> fnOS loopback 127.0.0.1:8788/8793/8794
        -> Authorization Broker 127.0.0.1:8789
 ```
+
+云端固定域名、TLS 和 Nginx 是唯一公网业务入口；`shein-fm.conf` 只 include 稳定路径 `/etc/nginx/shein-fm-upstreams.conf`。安装 cloud 模板保持当前云端本地上游，安装 fnOS 模板才切到三个云端回环反向监听。Authorization 始终直连云端 `127.0.0.1:8789`，不属于 upstream 模板。任何 `18788/18793/18794` 或业务服务端口都不得监听公网地址。
+
+fnOS 的官方 OpenAPI 请求另走 `127.0.0.1:18080` 正向 SSH 到云端同名回环 relay，再从云端固定 IP 访问 SHEIN；它不经过上述 Nginx upstream。普通 WebAPI 和 Chrome 继续办公室直连，禁止设置 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 或 Docker 全局代理。
 
 PostgreSQL 独立监听 `127.0.0.1:54330`。全托与半托只共享服务器和边缘反代进程；发布目录、运行身份、数据库、端口、凭据、事实表和 systemd 单元全部隔离。
 
@@ -109,9 +116,44 @@ sudo install -d -o root -g root -m 0700 \
 | `webhook-worker/database.env` | `root:sheinfm-webhook-worker 0640` | Worker 连接 |
 | `webhook-worker/stores.json` | `root:sheinfm-webhook-worker 0640` | 解密后的店铺映射 |
 | `webhook-worker/application.secret.json` | `root:sheinfm-webhook-worker 0640` | 解密应用凭据 |
-| `db-migrate/runtime-role-passwords.env` | `root:root 0600` | 迁移期间注入六个密码 |
+| `openapi-proxy.env` | `root:root 0600` | 七个真实 OpenAPI 业务 unit 的主机角色门禁 |
+| `db-migrate/runtime-role-passwords.env` | `root:root 0600` | 迁移期间注入七个密码 |
 
 不同组件使用独立普通文件；不得用指向更宽权限目录的符号链接。数据库 `database.env` 只包含该组件 LOGIN 的连接串。Webhook Worker 不调用 OpenAPI 客户端，即使其配置中存在店铺映射。采购单/交付单的定向回查由独立 `sheinfm-supply` 服务读取指令并使用 supply 凭据；Worker 与该服务只通过固定标记和最小权限数据表交接。
+
+七个真实 OpenAPI 业务 unit 是：
+
+- `shein-fm-sales-sync.service`
+- `shein-fm-supply-sync.service`
+- `shein-fm-home-finance-daily.service`
+- `shein-fm-home-finance-backfill.service`
+- `shein-fm-home-realtime.service`
+- `shein-fm-purchase-order-history-backfill.service`
+- `shein-fm-webhook-hydration.service`
+
+这些 unit 使用非可选 `EnvironmentFile=/srv/shein-fm/secrets/openapi-proxy.env`。文件缺失时 systemd 必须在 `ExecStart` 前失败。fnOS 必须把现有示例安装到该路径，保持 `root:root 0600`：
+
+```bash
+sudo install -o root -g root -m 0600 \
+  infra/systemd/shein-fm-openapi-proxy.env.example \
+  /srv/shein-fm/secrets/openapi-proxy.env
+```
+
+fnOS 文件内容固定为：
+
+```text
+SHEIN_FM_OPENAPI_PROXY_URL=http://127.0.0.1:18080
+SHEIN_FM_OPENAPI_PROXY_REQUIRED=1
+```
+
+云端若安装这些新 unit，同一路径也必须存在兼容文件，保持 `root:root 0600`，内容固定为：
+
+```text
+SHEIN_FM_OPENAPI_PROXY_URL=
+SHEIN_FM_OPENAPI_PROXY_REQUIRED=0
+```
+
+`REQUIRED=1` 使 fnOS 在代理 URL 缺失或隧道不可达时 fail closed，不会回退到办公室公网 IP；云端兼容文件只保留现有直接 OpenAPI 出站。不得把该专用变量改成全局代理变量，也不得给纯 WebAPI/Chrome、Authorization、Webhook Receiver 或 Webhook Worker 接入此文件。
 
 Portal 会话默认有效期为 30 天。合法会话使用超过一半有效期后，任一正常访问会签发新的 `HttpOnly / Secure / SameSite=Lax` Cookie，把有效期再延长 30 天；长期完全不访问仍会自然过期。生产 unit 必须显式设置 `FULL_BI_SESSION_TTL_SECONDS=2592000`，修改会话时长后旧 Cookie 会失效并要求重新登录一次。
 
@@ -128,10 +170,10 @@ sudo install -o root -g root -m 0600 \
 重要：
 
 - `SHEIN_FM_APP_DB_PASSWORD` 必须复用当前生产 `sheinfm_app` 密码。本次切换期间不得旋转它；
-- 其余五个 LOGIN 密码应独立生成、至少 24 个 URL-safe 字符，彼此不得复用；
+- 其余六个 LOGIN 密码应独立生成、至少 24 个 URL-safe 字符，彼此不得复用；其中 `SHEIN_FM_WEBAPI_LOGIN_DB_PASSWORD` 对应隔离的 `sheinfm_webapi_login` / `sheinfm_webapi_loader` 边界；
 - 密码值不得出现在命令行、日志、Git 或 shell history；
 - `scripts/migrate_full_managed_db.sh` 只把变量名通过 `docker exec --env NAME` 注入容器，值来自 root-private EnvironmentFile；
-- 只有在五个新服务完成切换并确认没有旧进程使用 `sheinfm_app` 后，才可另行规划旧密码轮换。
+- 只有在六个新 LOGIN 完成切换并确认没有旧进程使用 `sheinfm_app` 后，才可另行规划旧密码轮换。
 
 迁移若在 `0002` 之后失败，旧 Portal 仍只读 JSON；旧数据库客户端依赖复用的 `sheinfm_app` 密码继续工作。不要在迁移失败后删除或重建现有数据库卷。
 
@@ -141,7 +183,7 @@ sudo install -o root -g root -m 0600 \
 npm ci --ignore-scripts
 npm test
 npm run check
-npm audit --omit=dev
+npm audit --omit=dev --audit-level=high
 git diff --check
 git fetch origin main --tags
 npm run check:version-lineage -- --release-ref=HEAD --main-ref=origin/main
@@ -163,7 +205,7 @@ npm run check:version-lineage -- --release-ref=HEAD --main-ref=origin/main
 2. 创建唯一临时库，例如 `shein_fm_rehearsal_20260726_<suffix>`；
 3. 以同一组迁移密码执行 `0001` 到 `9999`；
 4. 执行 `db/verify/` 全部脚本；
-5. 使用五个 LOGIN 分别做允许/拒绝的最小权限探针；
+5. 使用七个 LOGIN（现有 `sheinfm_app` 与六个新 LOGIN）分别做允许/拒绝的最小权限探针；
 6. 重跑全部 migration/verify，确认幂等；
 7. 只在精确核对临时库名后删除该临时库。
 
@@ -182,8 +224,8 @@ V4 的一次性 25 店、13 work-item 采集不属于调度部署。完整的 pl
 3. 不切换 `current`，先在 release 内跑静态检查；
 4. 安装 root-private 迁移 EnvironmentFile；
 5. 运行 `shein-fm-db-migrate.service`，确认全部 migration 与 verify 成功；
-6. 为五个组件写入独立 `database.env`，LOGIN 与能力组必须一一对应；
-7. 安装 systemd 单元，执行 `systemd-analyze verify` 和 `systemctl daemon-reload`；
+6. 为六个新组件写入独立 `database.env`，LOGIN 与能力组必须一一对应；
+7. 按主机角色先安装 root-private `openapi-proxy.env`，再安装 systemd 单元，执行 `systemd-analyze verify` 和 `systemctl daemon-reload`；
 8. 手工运行一次 Dashboard 物化，检查 `dashboard*.json`、`shipping-orders.json` 与
    订单管理 candidate 的 staging 文件、文件所有权和 JSON 契约。代码 release 切换与
    订单读模型数据提升是两个独立门禁：只有 candidate 的 `coverage=COMPLETE` 且
@@ -199,13 +241,15 @@ V4 的一次性 25 店、13 work-item 采集不属于调度部署。完整的 pl
     `portal.enabled` 与 `materializer.enabled` 门禁，启动 Portal；物化由业务 coordinator
     成功末端和 Webhook 合并 path 唤醒；Webhook 首页物化采用 5 分钟去重窗口，固定
     retry timer 保持停用，资源延期只由 pending/kick 事件 path 重试；
-12. 安装 Nginx 和 logrotate，执行 `nginx -t` 成功后只 reload；
+12. 安装 Nginx、logrotate 和 cloud upstream 模板到稳定 include 路径，执行 `nginx -t` 成功后只 reload；需要切 fnOS 时另走下述切换门禁；
 13. 从 loopback 和公网验证登录墙、Dashboard API、`/api/system`、`/api/orders`、
     9 个平铺主入口（总控驾驶舱、商品经营、库存与备货、采购履约、退货与质量、
     财务与结算、营销机会、运营待办、数据与系统）、旧订单路由的兼容深链接和
     退出登录；采购履约必须验收采购/发货只读联合页、4 个指标、6 节点快照、
     优先队列/详情、未知不补零和无 SHEIN 写；
 14. 再按下节逐域开启数据服务。
+
+fnOS upstream 切换前必须同时满足：三个反向监听仅存在于云端 `127.0.0.1:18788/18793/18794`；通过这些测试端口的 Portal、Webhook、Store Login 业务探针与切换前基线一致；七个 OpenAPI unit 已读到 fnOS `REQUIRED=1` 文件；`127.0.0.1:18080` OpenAPI CONNECT 正常；普通 WebAPI/Chrome 的办公室直连出口未改变。随后对主 Nginx 文件和当前 upstream 文件做精确备份与 SHA-256 记录，安装 fnOS 模板，执行 `nginx -t`，成功后只 reload 并逐项回读。任一条件不满足都保留 cloud 模板。完整步骤见 [fnOS 切换手册](runbooks/fnos-cutover.md)。
 
 共享 HAProxy 同时承载 443 SSH，严禁 restart；只允许在保留现有 SSH 会话时执行 `haproxy -c` 后 reload。
 
@@ -294,7 +338,7 @@ docker exec shein-fm-db pg_isready -U sheinfm -d shein_fm
 5. 不删除数据库卷、不回滚已提交事实、不旋转旧 `sheinfm_app` 密码；
 6. 修复后重新走临时库、迁移、逐域探针与回读。
 
-边缘配置回滚使用部署前保存在 `/srv/shein-fm/backups/edge-*` 的精确副本，并在 reload 前重新验证。删除任何门禁或旧 release 前必须先精确解析目标路径。
+边缘配置回滚优先把已记录哈希的 cloud upstream 模板恢复到 `/etc/nginx/shein-fm-upstreams.conf`；如主文件也发生变化，再恢复部署前保存在 `/srv/shein-fm/backups/edge-*` 的精确副本。每次都先执行 `nginx -t`，成功后只 reload，不 restart Nginx/HAProxy。随后回读 Portal、Webhook、Store Login、Authorization 与 OpenAPI 各自路径。删除任何门禁或旧 release 前必须先精确解析目标路径。
 
 ## 11. 磁盘与历史治理
 

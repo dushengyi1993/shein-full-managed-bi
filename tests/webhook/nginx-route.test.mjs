@@ -65,14 +65,30 @@ test('Nginx exposes the receiver callback path instead of sending it to the BI p
   const config = await readFile(NGINX_CONFIG, 'utf8');
   const block = exactLocationBlock(config, WEBHOOK_CALLBACK_PATH);
 
-  assert.match(block, /proxy_pass http:\/\/127\.0\.0\.1:8793;/);
+  assert.match(config, /include \/etc\/nginx\/shein-fm-upstreams\.conf;/);
+  assert.equal(
+    config.match(/include \/etc\/nginx\/shein-fm-upstreams\.conf;/g)?.length,
+    1,
+    'the stable upstream include must occur exactly once',
+  );
+  assert.match(block, /proxy_pass http:\/\/shein_fm_webhook;/);
   assert.doesNotMatch(block, /127\.0\.0\.1:8788/);
   assert.ok(
     config.indexOf(`location = ${WEBHOOK_CALLBACK_PATH}`)
       < config.indexOf('location / {'),
     'the exact webhook route must precede the portal fallback',
   );
-  assert.match(config, /location \/ \{[\s\S]*?proxy_pass http:\/\/127\.0\.0\.1:8788;/);
+  assert.match(config, /location \/ \{[\s\S]*?proxy_pass http:\/\/shein_fm_portal;/);
+  assert.doesNotMatch(
+    config,
+    /proxy_pass http:\/\/127\.0\.0\.1:(?:8788|8793|8794)\b/,
+    'Portal, Webhook, and Store Login must use the environment-owned named upstreams',
+  );
+  assert.match(
+    config,
+    /proxy_pass http:\/\/127\.0\.0\.1:8789;/,
+    'Authorization must remain directly bound to its dedicated cloud service',
+  );
 });
 
 test('Webhook Nginx route bounds ingress and forwards only receiver headers', async () => {

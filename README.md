@@ -156,13 +156,15 @@ tests/          脱敏 fixture 与自动测试
 
 ## 云端运行
 
-生产使用 `/opt/shein-fm`、`/srv/shein-fm` 和独立 PostgreSQL；Portal 监听 `127.0.0.1:8788`，Webhook Receiver 监听 `127.0.0.1:8793`，Nginx 监听 `127.0.0.1:8081`，PostgreSQL 监听 `127.0.0.1:54330`。公网链路为 Cloudflare → HAProxy → Caddy → Nginx，不改变半托服务的端口与数据库。
+生产使用 `/opt/shein-fm`、`/srv/shein-fm` 和独立 PostgreSQL。固定公网入口始终是 `https://fm.dushengyi.cc` 的 Cloudflare → HAProxy → Caddy → 云端 Nginx 链路；Nginx 监听 `127.0.0.1:8081`，并且只通过稳定的 `/etc/nginx/shein-fm-upstreams.conf` 选择业务上游。cloud 模板把 Portal、Webhook Receiver、Store Login 分别送到云端回环 `8788/8793/8794`；fnOS 模板只把它们送到云端反向 SSH 回环监听 `18788/18793/18794`，再回到 fnOS 的 `8788/8793/8794`。Authorization Broker 不参与该切换，继续由云端 Nginx 直连 `127.0.0.1:8789`；任何隧道端口都不得公网监听。
+
+fnOS 上只有官方 OpenAPI 请求使用 `127.0.0.1:18080` 经正向 SSH 从云端固定 IP 出站。七个真实 OpenAPI 业务 unit 都强制读取 root-private `/srv/shein-fm/secrets/openapi-proxy.env`：fnOS 必须使用仓库示例的 loopback URL 与 `SHEIN_FM_OPENAPI_PROXY_REQUIRED=1`；云端若安装这些新 unit，也必须放置 URL 为空、`REQUIRED=0` 的兼容文件。不得设置 `HTTP_PROXY`、`HTTPS_PROXY` 或 `ALL_PROXY`，普通 WebAPI 与 Chrome 仍从办公室直连。
 
 每个运行组件使用独立 Unix 用户、独立数据库 LOGIN 角色和独立私密目录。Portal 只读原子发布的 Dashboard JSON，不持有数据库或平台凭据；物化器只读仓库；销量、供应链、Webhook 接收与 Worker 只获得各自最小权限。生产凭据只保存在 `/srv/shein-fm/secrets/<component>`，不进入 Git。
 
 现有 24 店继续使用已经通过的权限和对账门禁；新增店只有在自身授权、真实权限探针和首轮对账通过后才加入日常同步。供应链定时任务还需要历史回填与增量回读门禁；Webhook 服务需要独立心跳和回调验收，但创建平台订阅仍保持关闭。生产空库或合法零销量使用真实空数据契约，不会回退到测试 fixture。
 
-部署、回滚、服务名和验收命令见 [云端部署手册](docs/cloud-deployment.md)。
+上游切换必须先验证三个反向端口与端到端业务响应，再对当前配置做精确备份和 SHA-256 记录；只有 `nginx -t` 成功后才 reload。失败时恢复 cloud 模板并再次 `nginx -t` 后 reload，不 restart Nginx/HAProxy。部署、服务名和验收命令见 [云端部署手册](docs/cloud-deployment.md)，完整切换与回滚见 [fnOS 切换手册](docs/runbooks/fnos-cutover.md)。
 
 本地 clone 首次参与开发时运行 `npm run hooks:install`。所有 release 必须先进入
 `main`，再创建不可变 tag；完整分支、worktree 与归档规则见

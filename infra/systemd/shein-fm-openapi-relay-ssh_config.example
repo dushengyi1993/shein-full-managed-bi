@@ -1,0 +1,22 @@
+Host shein-openapi-relay
+    HostName CLOUD_FIXED_PUBLIC_IP
+    Port 443
+    User sheinops
+    IdentityFile /srv/shein-fm/secrets/openapi-relay/id_ed25519
+    UserKnownHostsFile /srv/shein-fm/secrets/openapi-relay/known_hosts
+    GlobalKnownHostsFile /dev/null
+    IdentitiesOnly yes
+    BatchMode yes
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    StrictHostKeyChecking yes
+    ExitOnForwardFailure yes
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    TCPKeepAlive no
+    LocalForward 127.0.0.1:18080 127.0.0.1:18080
+    RemoteForward 127.0.0.1:18788 127.0.0.1:8788
+    RemoteForward 127.0.0.1:18793 127.0.0.1:8793
+    RemoteForward 127.0.0.1:18794 127.0.0.1:8794
+    RequestTTY no
+    SessionType none
