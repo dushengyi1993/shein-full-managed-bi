@@ -44,6 +44,7 @@ test('mixed statistics dates preserve granted permission but keep the service fa
   });
   assert.deepEqual(summarizeSyncResults([result]), {
     loaded: 0,
+    partial: 0,
     pending: 0,
     errors: 0,
     qualityBlocked: 1,
@@ -71,9 +72,58 @@ test('an untyped or generic error remains an ERROR even when its message resembl
   assert.equal(plainProbe.platformErrorCode, 'SYNC_ERROR');
 });
 
+test('a partial store load keeps the run failed closed with exit code 2', () => {
+  const result = { storeCode: 'DL5477', status: 'loaded', qualityStatus: 'PARTIAL' };
+  assert.deepEqual(summarizeSyncResults([result]), {
+    loaded: 1,
+    partial: 1,
+    pending: 0,
+    errors: 0,
+    qualityBlocked: 0,
+    ok: false,
+    exitCode: 2,
+  });
+});
+
+test('partial quality status propagates in mixed valid and degraded results', () => {
+  const summary = summarizeSyncResults([
+    { storeCode: 'STORE-V', status: 'loaded', qualityStatus: 'VALID' },
+    { storeCode: 'STORE-P', status: 'loaded', qualityStatus: 'PARTIAL' },
+    { storeCode: 'STORE-L', status: 'loaded', qualityStatus: 'LEGAL_ZERO_UNANCHORED' },
+  ]);
+  assert.deepEqual(summary, {
+    loaded: 3,
+    partial: 1,
+    pending: 0,
+    errors: 0,
+    qualityBlocked: 0,
+    ok: false,
+    exitCode: 2,
+  });
+});
+
+test('valid and legal-zero loads remain fully successful with exit code 0', () => {
+  assert.deepEqual(
+    summarizeSyncResults([
+      { storeCode: 'STORE-V', status: 'loaded', qualityStatus: 'VALID' },
+      { storeCode: 'STORE-L', status: 'loaded', qualityStatus: 'LEGAL_ZERO_UNANCHORED' },
+    ]),
+    {
+      loaded: 2,
+      partial: 0,
+      pending: 0,
+      errors: 0,
+      qualityBlocked: 0,
+      ok: true,
+      exitCode: 0,
+    },
+  );
+});
+
 test('an unauthorized or unconfigured store cannot make a sales run look complete', () => {
   assert.deepEqual(summarizeSyncResults([{ storeCode: 'TEST', status: 'pending' }]), {
     loaded: 0,
+    partial: 0,
     pending: 1,
     errors: 0,
     qualityBlocked: 0,

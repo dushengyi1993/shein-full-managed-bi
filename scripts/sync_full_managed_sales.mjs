@@ -157,16 +157,23 @@ export function failedResult(storeCode, probe) {
 
 export function summarizeSyncResults(results) {
   const loaded = results.filter(({ status }) => status === 'loaded').length;
+  const partial = results.filter(
+    ({ status, qualityStatus }) => status === 'loaded' && qualityStatus === 'PARTIAL',
+  ).length;
   const pending = results.filter(({ status }) => status === 'pending').length;
   const errors = results.filter(({ status }) => status === 'error').length;
   const qualityBlocked = results.filter(({ status }) => status === 'quality_blocked').length;
   return {
     loaded,
+    partial,
     pending,
     errors,
     qualityBlocked,
-    ok: pending === 0 && errors === 0 && qualityBlocked === 0,
-    exitCode: pending > 0 || errors > 0 || qualityBlocked > 0 ? 2 : 0,
+    // A PARTIAL load kept its rows but did not cover the full inventory
+    // snapshot. Exit code 2 is the scheduler's agreed partial code, so a
+    // degraded load must never surface as a fully successful run.
+    ok: pending === 0 && errors === 0 && qualityBlocked === 0 && partial === 0,
+    exitCode: pending > 0 || errors > 0 || qualityBlocked > 0 || partial > 0 ? 2 : 0,
   };
 }
 
@@ -298,6 +305,7 @@ async function main() {
     ok: summary.ok,
     config: summarizeFullManagedConfig(config),
     loadedStores: summary.loaded,
+    partialStores: summary.partial,
     qualityBlockedStores: summary.qualityBlocked,
     results,
   }, null, 2));
