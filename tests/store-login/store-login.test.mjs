@@ -9,7 +9,9 @@ import {
   normalizeFullManagedStoreCode,
 } from '../../src/config/full-managed-stores.mjs';
 import {
+  buildBatchUrl,
   createBatch,
+  parseArguments as parseCreateBatchArguments,
   sha256,
 } from '../../scripts/create_full_managed_store_login_batch.mjs';
 import {
@@ -40,7 +42,7 @@ test('the transient login browser also uses a non-ephemeral CDP port', async () 
   assert.doesNotMatch(source, /debuggingPort:\s*39_700/);
 });
 
-test('a batch persists only a hash while the one-time token remains caller-only', () => {
+test('a batch persists only a hash while the reusable bearer remains caller-only', () => {
   const bytes = Buffer.alloc(32, 7);
   const batch = createBatch({
     now: new Date('2026-07-30T00:00:00.000Z'),
@@ -82,13 +84,17 @@ test('subaccount login markers are exact, private-configured and store scoped', 
   );
 });
 
-test('store login accepts a shareable query bearer and removes it immediately', async () => {
+test('store login accepts only a fragment batch bearer and removes it immediately', async () => {
   const source = await readFile(
     new URL('../../scripts/serve_full_managed_store_login.mjs', import.meta.url),
     'utf8',
   );
-  assert.match(source, /query\.get\(['"]token/);
+  assert.match(source, /location\.hash\.slice\(1\)/);
+  assert.match(source, /fragment\.get\(['"]token/);
+  assert.doesNotMatch(source, /location\.search|query\.get\(['"]token/);
   assert.match(source, /history\.replaceState\(null,''\,location\.pathname\)/);
+  assert.match(source, /sessionStorage\.setItem\('fmStoreLoginToken'/);
+  assert.doesNotMatch(source, /one-time\s+token/);
   assert.match(source, /headers\.authorization/);
   assert.match(source, /x-fm-internal-token/);
   assert.match(source, /internalAuthorized/);
@@ -98,6 +104,34 @@ test('store login accepts a shareable query bearer and removes it immediately', 
   assert.match(source, /img-src 'self' data: blob:/);
   assert.doesNotMatch(source, /Nanmo7343/);
   assert.doesNotMatch(source, /document\.cookie|localStorage\.getItem|Network\.getAllCookies/);
+});
+
+test('batch URL contract uses a fragment and never a query bearer', async () => {
+  const source = await readFile(
+    new URL('../../scripts/create_full_managed_store_login_batch.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /\/store-login#token=/);
+  assert.doesNotMatch(source, /\/store-login\?token=/);
+  const parsed = parseCreateBatchArguments([], {});
+  assert.equal(parsed.publicOrigin, 'https://fm.dushengyi.cc');
+  const url = buildBatchUrl(parsed.publicOrigin, 'batch bearer/value');
+  assert.match(url, /^https:\/\/fm\.dushengyi\.cc\/store-login#token=/);
+  assert.equal(url.includes('?token='), false);
+});
+
+test('store-login runbooks document fragment-only reusable batch bearers', async () => {
+  for (const relativeUrl of [
+    '../../docs/runbooks/fnos-store-login-staging.md',
+    '../../docs/runbooks/data-disk-and-profile-login.md',
+  ]) {
+    const source = await readFile(new URL(relativeUrl, import.meta.url), 'utf8');
+    assert.match(source, /store-login#token=/);
+    assert.doesNotMatch(source, /store-login\?token=/);
+    assert.match(source, /fragment/);
+    assert.match(source, /不随[^\n]*HTTP|不会随[^\n]*HTTP/);
+    assert.match(source, /root:sheinfm[^\n]*0640|root:sheinfm[^\n]*640/);
+  }
 });
 
 test('nginx disables access logs for every store-login route that can carry a bearer', async () => {

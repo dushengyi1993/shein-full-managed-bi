@@ -26,17 +26,45 @@
 
 ## 外部登录页与系统内维护中心
 
-1. 以 `sheinfm` 可读写的方式创建 `/srv/shein-fm/secrets/store-login/batch.json`。
-2. 运行 `node scripts/create_full_managed_store_login_batch.mjs`，把输出的
-   `https://fm.dushengyi.cc/store-login?token=...` 交给全托同事。查询参数用于避免
-   企业微信、飞书等内置浏览器截断 `#` 后的口令；页面读取后会立即清除地址栏中的口令。
+1. `/srv/shein-fm/secrets/store-login` 的生产 owner/mode 是
+   `root:sheinfm 0750`，其中既有 `batch.json` 必须是 regular、非 symlink、
+   `root:sheinfm 0640`。`shein-fm-store-login.service` 以 `sheinfm:sheinfm`
+   运行并通过 `ReadOnlyPaths` 只读该文件；不得把 batch 改成 `0600` 或改由
+   `sheinfm` 拥有。
+2. 生成工具只允许由 root 替换 schema 有效且已经过期或已经撤销的旧 batch；
+   仍未到期且未撤销的活动 batch、文件缺失、父目录与文件 gid 不一致或
+   metadata/schema 异常都会 fail closed。
+   生成 24 小时 batch：
+
+   ```bash
+   sudo node scripts/create_full_managed_store_login_batch.mjs --expires-hours=24
+   ```
+
+   工具先独占备份旧文件，再通过同目录独占临时文件、保留 uid/gid、`fchmod 0640`、
+   fsync、rename 前二次漂移检查、原子 rename 和最终读回安装新 batch。成功后以
+   `stat` 和 SHA-256 确认当前文件为 `root:sheinfm 640`；备份使用更严格的 `600`，
+   成功输出只暴露其 basename。
+
+   ```bash
+   sudo sh -c 'cd /srv/shein-fm/secrets/store-login && stat -c "%U:%G %a" batch.json && sha256sum batch.json'
+   ```
+3. 把成功输出的 `https://fm.dushengyi.cc/store-login#token=...` 只通过私密渠道
+   交给全托同事，不重定向或记录该 stdout。`#token` 是 URL fragment，不会随 HTTP
+   请求发送给 Nginx 或 upstream。页面只从 `location.hash` 读取 batch bearer，写入
+   `sessionStorage` 后立即用 `replaceState` 清除地址栏；旧 query 链接明确不兼容。
    Nginx 对 `/store-login`、`/store-login/` 和 `/api/store-login/` 全部关闭访问日志，
    页面同时启用 `Referrer-Policy: no-referrer`。
-3. 同事逐店打开云端 Chrome，登录并允许 Chrome 保存密码，然后点击
+4. 同事逐店打开云端 Chrome，登录并允许 Chrome 保存密码，然后点击
    “登录完成并验证”。同一时间只允许一个 Profile 打开。
-4. 服务只保存店铺、进度、进程号和令牌哈希，不读取或输出密码、Cookie、
+5. batch bearer 在到期或撤销前可复用。服务只保存店铺、进度、进程号和令牌哈希，
+   不读取或输出密码、Cookie、
    Local Storage、IndexedDB 或请求头。
-5. 25 店完成后可以撤销外部批次文件，但不要停止
+6. 25 店完成后使用 `scripts/revoke_full_managed_store_login_batch.mjs` 的
+   fresh dry-run → exact-plan apply 流程撤销外部 batch，不手工编辑或删除文件。
+   apply 后读回当前 SHA-256、`root:sheinfm 640` 和独占 `600` 备份，再让撤销前
+   已打开的外部页面用 `sessionStorage` 中的已知 bearer 重试 API，必须返回 401；
+   页面本身不要求 404。详细命令与证据口径见 `fnos-store-login-staging.md`。
+   不要停止
    `shein-fm-store-login.service`：系统管理中的登录维护中心仍通过该本机服务工作。
    创建 `/srv/shein-fm/runtime/store-login/renewal.enabled` 启用续期。
 
@@ -68,6 +96,51 @@ BI 的 `#system` 页面为系统管理员提供同一套 25 店登录维护动�
 Portal 的 `/api/system/store-login/*`；Portal 使用 systemd credential 在回环地址
 代理到登录服务，不把内部令牌、Cookie 或 Profile 文件返回浏览器。普通员工仍可查看
 脱敏登录、HTTP 会话健康与恢复状态，但不能读取会话密文、Cookie 或 Profile 文件。
+
+## Store Login 状态重置工具
+
+当 UI 状态文件沿用了迁移前的登录进度（例如显示 24 completed / 1
+needs_attention），而续期报告和恢复队列证明 25 店会话实际全部过期时，
+可用受控重置工具把登录状态恢复为可操作：
+
+1. 先运行默认 dry-run：
+
+   ```bash
+   node scripts/reset_full_managed_store_login_state.mjs
+   ```
+
+   确认店码和计数后，完整保留输出中的 `plannedUpdatedAt`、
+   `plannedStateSha256`，以及 `inputSha256.state`、
+   `inputSha256.renewalReport`、`inputSha256.recoveryQueue`。计划时间已经写入
+   待落盘字节，因此五个值共同构成不可变计划门禁。
+2. 把 dry-run 的五个值原样代入 apply；不要重新生成时间或哈希：
+
+   ```bash
+   node scripts/reset_full_managed_store_login_state.mjs --apply \
+     --planned-updated-at '<plannedUpdatedAt>' \
+     --expected-planned-state-sha256 '<plannedStateSha256>' \
+     --expected-state-sha256 '<inputSha256.state>' \
+     --expected-renewal-report-sha256 '<inputSha256.renewalReport>' \
+     --expected-recovery-queue-sha256 '<inputSha256.recoveryQueue>'
+   ```
+
+   apply 必须用该时间生成与 dry-run 完全相同的状态字节，并同时匹配计划哈希和
+   三个输入哈希；任一值缺失、变化或存在 active session 都会在替换状态前失败。
+3. 工具只重写 `/srv/shein-fm/runtime/store-login/state.json`。apply 会先读取原
+   state 的 uid、gid 和权限，使用独占创建的随机临时文件，先 `chown`、后
+   `chmod` 为原值，再执行原子 rename。因此即使由 root 调用，最终文件仍保持
+   `sheinfm:sheinfm 0600`，不会阻断 `shein-fm-store-login.service` 后续写入。
+4. 原 state 会以独占创建方式备份为同目录 0600 权限的时间戳 `.bak`，已有文件
+   绝不会被覆盖；成功输出只返回备份 basename。写后哈希或 owner/mode 不匹配时，
+   工具会尽力自动恢复原 state 字节及元数据，并以失败状态退出。
+5. 会话未 ACTIVE 或在恢复队列中的店会被置为 pending 并带非敏感的
+   `SESSION_RELOGIN_REQUIRED` 标记；ACTIVE 且不在队列的店保持原状。工具不触碰
+   Profile、加密会话、续期报告、恢复队列、凭证或 token，也不启动浏览器或服务。
+   校验兼容续期生产者的真实形状：ACTIVE 项可只有四个基础字段（也接受显式
+   `recoveryQueued:false`、`errorCode:null`）；非 ACTIVE 项必须带
+   `recoveryQueued:true` 和安全 errorCode，并与恢复队列集合完全一致。
+6. 输出只包含计数、店码、计划时间、哈希和备份 basename，不包含 Cookie、token
+   或 Profile 内容。状态重置后逐店人工重新登录，完成后以状态文件回读作为证据。
 
 ## OpenAPI 历史回补
 

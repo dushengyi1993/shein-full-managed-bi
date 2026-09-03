@@ -83,6 +83,7 @@ test('a second browser requires three GiB and stricter host pressure', () => {
 test('host lanes allow two read browsers while writes and heavy IO stay exclusive', async () => {
   const browserUnitNames = [
     'shein-fm-session-recovery.service',
+    'shein-fm-session-bootstrap@.service',
   ];
   const browserUnits = await Promise.all(browserUnitNames.map((name) => (
     readFile(new URL(`infra/systemd/${name}`, root), 'utf8')
@@ -92,6 +93,7 @@ test('host lanes allow two read browsers while writes and heavy IO stay exclusiv
     assert.match(unit, /run_shein_host_lane\.sh browser-read fm browser/);
     assert.match(unit, /shein-browser-read-0\.lock/);
     assert.match(unit, /shein-browser-read-1\.lock/);
+    assert.match(unit, /^TasksMax=256$/m, browserUnitNames[index]);
   }
 
   const sessionHttpUnitNames = [
@@ -167,9 +169,11 @@ test('host lanes allow two read browsers while writes and heavy IO stay exclusiv
   assert.match(hostSlice, /CPUQuota=90%/);
   assert.match(hostSlice, /MemoryHigh=3G/);
   assert.match(hostSlice, /MemoryMax=4G/);
+  assert.match(hostSlice, /^TasksMax=512$/m);
   assert.match(childSlice, /CPUQuota=90%/);
   assert.match(childSlice, /MemoryHigh=2G/);
   assert.match(childSlice, /MemoryMax=3G/);
+  assert.match(childSlice, /^TasksMax=256$/m);
   assert.match(fullManagedSlice, /MemoryMax=3G/);
   assert.match(tmpfiles, /f \/run\/lock\/shein-host-heavy\.lock 0666 root root/);
   assert.match(tmpfiles, /f \/run\/lock\/shein-fm-heavy\.lock 0666 root root/);
