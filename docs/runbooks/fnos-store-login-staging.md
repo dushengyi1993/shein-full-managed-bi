@@ -1,7 +1,7 @@
 # StoreLogin → fnOS 混合切换（25 店人工登录窗口）
 
 面向对象：主代理与授权同事。主代理负责全部技术动作与验收；同事只负责逐店登录。
-本文只覆盖"仅 StoreLogin 路由临时指向 fnOS"的窗口，Portal 与 Webhook 全程不动。
+本文只覆盖"仅 StoreLogin 路由临时指向 fnOS"的窗口，公共路由不切（Portal 8788 与 Webhook 8793 公共路由不动），Portal 内部代理需协调指向 18794。
 准备阶段不执行任何生产操作，所有切换只在人工登录窗口进行。
 
 硬性禁令：
@@ -14,6 +14,18 @@
 
 ## 一、登录前 fresh preflight（主代理）
 
+0. stale 门禁与继续登录预检：
+   - 当前处于 25 店分批登录推进中（例如已完成大部分店铺，剩余 1-2 天窗口）；
+     **严禁为了推进进度而绕过全店门禁**。
+   - 检查 `/srv/shein-fm/runtime/store-login/` 与相关目录是否存在旧残留标记
+     （`all-25-completed`、`renewal.enabled`、`webapi-history.enabled` 等）。
+     **必须明确：历史或遗留的标记不代表当前会话有效，具体运行快照不可作为永远有效的门禁**。
+   - 全托业务 timers（续期与回补）必须继续保持 disabled 与 inactive。
+   - 若发现非本次有效授权的旧残留标记需要移除或隔离，必须由主代理在独立 fresh scope
+     中核实、受控备份并完成 readback，不得向操作人员直接发实施命令或草率就地删除。
+   - **首次重置与续登场景区分**：下文第 1 项全店非 ACTIVE 事故基线与第 4 项状态重置（reset）
+     门禁仅用于首次事故接管/全量重置，**不适用于已有已完成进度的续登窗口**；续登场景必须读回
+     canonical 25 店完整集合并核验当前实际进度（已完成店铺数与待登店铺数），**严禁对已完成店铺重复 reset 或重复重建会话**。
 1. 三份状态文件 exact readback（路径与读法以
    docs/runbooks/data-disk-and-profile-login.md 为准）：
    state.json、renewal-report.json、session-recovery.json。
@@ -53,21 +65,56 @@
      随后对新状态文件做最终 exact readback，确认哈希、owner、mode，
      才能恢复写入。
 
-## 二、安装混合 selector（主代理）
+## 二、安装混合 selector 与 Portal 内部路由（主代理）
+
+2026-09-05 settled live 事实：cloud 公共 Portal 8788 与 Webhook 8793 未切；
+StoreLogin 公网经 18794 隧道切向 fnOS。除 Nginx upstream 外，cloud Portal
+管理后台（`#system`）的内部代理也必须通过 systemd drop-in 显式指向 18794，
+否则内部请求仍会穿透到旧 cloud StoreLogin 8794，造成外部与内部视图分裂。
 
 1. 备份当前 cloud selector：
    复制 /etc/nginx/shein-fm-upstreams.conf 到受控备份位置，记录 SHA-256。
 2. 安装本仓库 infra/nginx/shein-fm-upstreams-store-login-fnos.conf
    到 /etc/nginx/shein-fm-upstreams.conf。
 3. sudo nginx -t 必须通过，然后 sudo systemctl reload nginx。
-4. 三 upstream exact readback，必须同时满足：
-   shein_fm_portal = 127.0.0.1:8788，
-   shein_fm_webhook = 127.0.0.1:8793，
-   shein_fm_store_login = 127.0.0.1:18794。
-   前两值就是"公共 Portal/Webhook 全程没切"的证据。
-5. 任一步失败：立即把备份装回 /etc/nginx/shein-fm-upstreams.conf，
-   再次 sudo nginx -t + sudo systemctl reload nginx，
-   并读回确认三值回到 8788 / 8793 / 8794。
+4. 配置 Portal 内部路由 drop-in（仅修改本次明确授权的配置项）：
+   - 创建 drop-in 目录：`/etc/systemd/system/shein-fm-portal.service.d/`。
+     若目录下已有该文件，先对旧文件做受控备份；**严禁盲目删除该目录下其他未知的既有配置**。
+   - 写入 `/etc/systemd/system/shein-fm-portal.service.d/90-fnos-store-login.conf`：
+
+     ```ini
+     [Service]
+     Environment=FULL_BI_STORE_LOGIN_INTERNAL_URL=http://127.0.0.1:18794
+     ```
+
+   - 执行配置生效与独立重启（**仅重启 Portal，不重启 Nginx，不触碰 StoreLogin 活跃窗口**）：
+
+     ```bash
+     sudo systemctl daemon-reload
+     sudo systemctl restart shein-fm-portal.service
+     ```
+
+   - 用户认证状态验证：Portal 配置重启后应先验证原用户会话；已知此前认证失效源自角色
+     credentialTag 变更而非重启必然失效。只有在实际请求收到 HTTP 401 时才提示重新登录，
+     不预先宣称重启必失效；现有用户角色体系（仅系统管理员 admin，其余不变）保持不变。
+5. 混合入口双路径一致性检查（必须全部通过）：
+   - **公网入口路径（Path A）**：Nginx upstream exact readback，必须同时满足：
+     shein_fm_portal = 127.0.0.1:8788，
+     shein_fm_webhook = 127.0.0.1:8793，
+     shein_fm_store_login = 127.0.0.1:18794。
+     前两值就是"公共 Portal/Webhook 全程没切"的证据。
+   - **Portal 内部路径（Path B）**：`systemctl show -p Environment` 仅代表 unit 管理器配置，
+     不能作为实际进程确证。必须通过 `systemctl show shein-fm-portal.service -p MainPID --value`
+     取得实际 MainPID，在受控脚本中只提取 `/proc/<MainPID>/environ`（NUL 分隔）中
+     `FULL_BI_STORE_LOGIN_INTERNAL_URL` 单一键值，**禁止输出完整 environ 或凭据内容**；
+     随后请求 Portal 内部接口（`#system` 管理页 internal status），必须返回 HTTP 200，
+     且其返回状态内容与同一 fnOS 实例的 state.json 完全一致。
+   - **一致性判定**：双路径必须同时收敛于 18794，禁止出现公网与内部端口不一致。
+6. 任一步失败：立即把备份装回 /etc/nginx/shein-fm-upstreams.conf，
+   复原或移除 drop-in，并执行：
+   `sudo systemctl daemon-reload && sudo systemctl restart shein-fm-portal.service` 与
+   `sudo nginx -t && sudo systemctl reload nginx`，
+   读回确认三值回到 8788 / 8793 / 8794。
 
 ## 三、Batch bearer（主代理）
 
@@ -163,9 +210,25 @@
      `/api/store-login/status`，Network 必须读到 HTTP 401。无需把 bearer 粘贴进
      命令行或文档。注意验收是 API 401，不要求页面 404；登录页面本身仍由本机
      服务托管。
-2. selector 回滚：把 cloud 模板装回 /etc/nginx/shein-fm-upstreams.conf，
-   sudo nginx -t + sudo systemctl reload nginx，
-   三值 readback 回到 8788 / 8793 / 8794。
+2. 内部路由与 selector 回滚（主代理）：
+   - **复原或移除 Portal drop-in**：
+     根据部署前实际情况执行对应分支，**严禁一律删除未知既有配置，不触碰 StoreLogin 活跃窗口**：
+     * 分支 A（若部署前该文件原本不存在）：安全移除本次创建的 `90-fnos-store-login.conf`。
+     * 分支 B（若部署前已存在同名配置并做了受控备份）：从受控备份文件还原原内容。
+   - 重新加载 systemd 并仅重启 Portal 服务：
+
+     ```bash
+     sudo systemctl daemon-reload
+     sudo systemctl restart shein-fm-portal.service
+     ```
+
+   - 读回 Portal 实际进程配置与 internal status：
+     取 MainPID 后受控检查 `/proc/<MainPID>/environ`，确认 `FULL_BI_STORE_LOGIN_INTERNAL_URL`
+     恢复为默认 `http://127.0.0.1:8794`（或无覆盖注入），严禁打印完整 environ；通过内部接口
+     验证 internal status 正常返回 HTTP 200 并核对状态。
+   - **selector 回滚**：把 cloud 模板装回 /etc/nginx/shein-fm-upstreams.conf，
+     sudo nginx -t + sudo systemctl reload nginx，
+     三值 readback 回到 8788 / 8793 / 8794。
 
 ## 六、另行决策（不在本 runbook 执行）
 
@@ -173,15 +236,38 @@ all-25-completed、renewal.enabled、webapi-history.enabled
 三个门禁标记，必须由主代理在 25 店全部 completed、会话真实校验、
 且后续授权门禁通过之后另行决定是否创建。准备阶段与登录过程中一律不创建。
 
-## 七、主代理证据清单（技术归档，含精确值）
+严禁将临时的、旧的或单次的运行快照视为永久有效门禁。任何门禁标记的创建与清理
+都必须走独立审批和可验证的 fresh readback。
+
+## 七、不等待剩余店铺的并行推进边界
+
+- **严禁泛化 all-25 门禁**：WebAPI 全店调度与全局续期标记（`all-25-completed`、
+  `renewal.enabled`）仍恪守真实全店完成要求、绝不伪造，但不可将该门禁泛化并阻断其余独立链路。
+- **OpenAPI 财务与供需补数**：基于平台官方 OpenAPI 的单店、单窗口补数不依赖 WebAPI 全 25 店
+  登录状态；主代理在遵循 fresh plan、串行生产提交与最终 readback 的前提下即可独立继续推进。
+- **候选 Portal 验证与临时 DB 恢复**：候选 Portal 页面逻辑验收与独立临时数据库恢复测试完全解耦，
+  不等待剩余店铺登录进度，可并行开展。
+- **Bootstrap 子集范围限制**：部分店铺 bootstrap CLI 虽支持 `--stores` 子集参数，但既有 gate
+  与 systemd unit 授权须由主代理单独评审，不能仅凭 CLI 参数支持就宣称整体链路可执行。
+- **Webhook 追平边界**：Webhook 数据追平仍需独立的流量冻结、数据库身份 pin 与可逆切换计划；
+  既不因 WebAPI 登录店铺尚未全齐而自动阻塞，也绝不能无条件直接切公网。
+
+## 八、主代理证据清单（技术归档，含精确值）
 
 - preflight：三份状态文件 readback 原文、canonical 25 集合/计数核对、
   fnOS 上 25 个 Profile 的 Singleton 检查输出、timers 状态。
 - reset：dry-run 与 apply 的完整 JSON 输出；两者共享字段、计划店码和计数的
   exact 对比；apply 额外返回的 backupBasename、备份文件存在性/0600/owner
   readback；最终状态文件 exact readback。
+- 混合入口双路径一致性：
+  Nginx 三 upstream 端口 readback（8788 / 8793 / 18794）、
+  Portal drop-in 文件、Portal 实际进程 MainPID `/proc/<MainPID>/environ` 单键提取 readback、
+  Portal 重启日志及 `#system` internal status HTTP 200 与 fnOS 状态一致性证据。
 - selector：备份 SHA-256、nginx -t 输出、systemctl reload 返回码、
   三 upstream readback、失败时的恢复记录。
 - batch：生成时间与 expiresAt（不含 token 明文）、撤销读回、
   HTTP 401 证据。
-- 收尾：回滚后三值 readback；Portal/Webhook 全程未切的端口证据。
+- 收尾：
+  Portal drop-in 移除/复原证据、MainPID `/proc/<MainPID>/environ` 恢复 readback 及 internal status 验证、
+  回滚后 Nginx 三值 readback（8788 / 8793 / 8794）；
+  Portal 与 Webhook 全程未切的端口证据。
