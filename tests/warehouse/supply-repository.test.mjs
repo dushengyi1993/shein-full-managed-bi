@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   loadFullManagedSupplySnapshot,
+  PURCHASE_ORDER_LOAD_ERROR_CODES,
   productImageUrlHash,
   readFullManagedSupplySyncHealth,
   readFullManagedSupplyDashboard,
@@ -1397,3 +1398,48 @@ test('read-only attention details preserve unknown quantities, decimals and expl
     /phone|address|contact|person/i,
   );
 });
+
+test('purchase guard codes are fixed, unique and bounded', () => {
+  assert.equal(Object.isFrozen(PURCHASE_ORDER_LOAD_ERROR_CODES), true);
+  const codes = Object.values(PURCHASE_ORDER_LOAD_ERROR_CODES);
+  assert.equal(new Set(codes).size, codes.length);
+  for (const code of codes) assert.match(code, /^[A-Z0-9_]{3,80}$/);
+});
+
+for (const scenario of [
+  { name: 'incomplete lines', code: 'PURCHASE_ORDER_LINE_SET_INCOMPLETE',
+    mutate: (order) => { order.linesComplete = false; }, message: /complete line set/ },
+  { name: 'invalid JIT evidence', code: 'PURCHASE_ORDER_JIT_EVIDENCE_INVALID',
+    mutate: (order) => { order.jitRelations = null; }, message: /invalid JIT relation evidence/ },
+  { name: 'same-time drift', code: 'PURCHASE_ORDER_SAME_TIME_PAYLOAD_DRIFT',
+    mutate: () => {}, message: /identical source timestamp/, existing: true },
+]) {
+  test(`purchase ${scenario.name} preserves rejection and rolls back with a safe code`, async () => {
+    const input = supplyInput();
+    input.inventory = null;
+    input.deliveries = null;
+    const order = input.purchaseOrders.orders[0];
+    order.orderNo = 'PRIVATE-ORDER-SENTINEL';
+    scenario.mutate(order);
+    class GuardClient extends FakeClient {
+      async query(sql, values = []) {
+        if (scenario.existing && sql.includes('SELECT purchase_order_id, payload_fingerprint, source_fetched_at')) {
+          this.calls.push({ sql, values });
+          return { rows: [{ purchase_order_id: 40, payload_fingerprint: '0'.repeat(64),
+            source_fetched_at: input.sourceFetchedAt }], rowCount: 1 };
+        }
+        return super.query(sql, values);
+      }
+    }
+    const client = new GuardClient();
+    await assert.rejects(() => loadFullManagedSupplySnapshot(pool(client), input), (error) => {
+      assert.equal(error.code, scenario.code);
+      assert.match(error.message, scenario.message);
+      assert.doesNotMatch(error.code, /PRIVATE|SENTINEL|SKU-1/);
+      return true;
+    });
+    assert.equal(client.calls.some(({ sql }) => sql === 'ROLLBACK'), true);
+    assert.equal(client.calls.some(({ sql }) => sql === 'COMMIT'), false);
+    assert.equal(client.released, true);
+  });
+}

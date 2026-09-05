@@ -357,22 +357,60 @@ export function classifyStageResult(stageName, exitCode, summary) {
       .map(({ storeCode }) => storeCode));
   }
   else if (stageName === 'sales-realtime') {
-    const results = Array.isArray(summary?.results) ? summary.results : [];
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary)) {
+      return Object.freeze({ complete: false, fatal: true, retryStores: [] });
+    }
+    const results = summary.results;
+    if (!Array.isArray(results) || results.length === 0) {
+      return Object.freeze({ complete: false, fatal: true, retryStores: [] });
+    }
+    const KNOWN_SALES_PRODUCER_STATUSES = new Set([
+      'loaded',
+      'pending',
+      'denied',
+      'error',
+      'quality_blocked',
+    ]);
+    const seenStores = new Map();
+    for (const row of results) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        return Object.freeze({ complete: false, fatal: true, retryStores: [] });
+      }
+      const canonicalCode = normalizeFullManagedStoreCode(row.storeCode);
+      if (!canonicalCode || row.storeCode !== canonicalCode) {
+        return Object.freeze({ complete: false, fatal: true, retryStores: [] });
+      }
+      if (!KNOWN_SALES_PRODUCER_STATUSES.has(row.status)) {
+        return Object.freeze({ complete: false, fatal: true, retryStores: [] });
+      }
+      const prior = seenStores.get(canonicalCode);
+      if (prior) {
+        if (prior.status !== row.status
+            || prior.qualityStatus !== row.qualityStatus
+            || (prior.errorCode ?? prior.qualityReason) !== (row.errorCode ?? row.qualityReason)) {
+          return Object.freeze({ complete: false, fatal: true, retryStores: [] });
+        }
+      }
+      seenStores.set(canonicalCode, row);
+    }
     retryStores = uniqueStoreCodes(results
       .filter(({ status }) => status === 'error')
       .map(({ storeCode }) => storeCode));
     const terminalDetails = results
-      .filter(({ status }) => !['loaded', 'error'].includes(status))
-      .map(({ storeCode, status, errorCode }) => ({
-        warning: status === 'quality_blocked'
+      .filter((row) => (
+        row.status === 'quality_blocked'
+        || (row.status === 'loaded' && row.qualityStatus === 'PARTIAL')
+        || !['loaded', 'error'].includes(row.status)
+      ))
+      .map(({ storeCode, status, qualityStatus, qualityReason, errorCode }) => ({
+        warning: (status === 'quality_blocked' || (status === 'loaded' && qualityStatus === 'PARTIAL'))
           ? 'TERMINAL_DATA_QUALITY_GAP'
           : 'TERMINAL_CAPABILITY_GAP',
         storeCode: normalizeFullManagedStoreCode(storeCode),
-        errorCode: /^[A-Z0-9_]{3,64}$/.test(String(errorCode ?? ''))
-          ? String(errorCode)
+        errorCode: /^[A-Z0-9_]{3,64}$/.test(String(errorCode ?? qualityReason ?? ''))
+          ? String(errorCode ?? qualityReason)
           : 'UNCLASSIFIED_PARTIAL',
-      }))
-      .filter(({ storeCode }) => storeCode !== null);
+      }));
     if (retryStores.length === 0 && terminalDetails.length > 0) {
       return Object.freeze({
         complete: true,
@@ -381,6 +419,9 @@ export function classifyStageResult(stageName, exitCode, summary) {
         terminalWarnings: [...new Set(terminalDetails.map(({ warning }) => warning))],
         terminalDetails,
       });
+    }
+    if (retryStores.length === 0 && terminalDetails.length === 0) {
+      return Object.freeze({ complete: false, fatal: true, retryStores: [] });
     }
   } else if (stageName === 'supply') {
     const incomplete = (summary?.results ?? [])

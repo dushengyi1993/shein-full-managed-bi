@@ -1954,6 +1954,24 @@ function canonicalRowSet(rows) {
   return [...rows].sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
 }
 
+export const PURCHASE_ORDER_LOAD_ERROR_CODES = Object.freeze({
+  LINE_SET_INCOMPLETE: 'PURCHASE_ORDER_LINE_SET_INCOMPLETE',
+  JIT_EVIDENCE_INVALID: 'PURCHASE_ORDER_JIT_EVIDENCE_INVALID',
+  SAME_TIME_PAYLOAD_DRIFT: 'PURCHASE_ORDER_SAME_TIME_PAYLOAD_DRIFT',
+  RESOLUTION_FAILED: 'PURCHASE_ORDER_RESOLUTION_FAILED',
+  LINE_SAME_TIME_DRIFT: 'PURCHASE_ORDER_LINE_SAME_TIME_DRIFT',
+  JIT_SCOPE_UNKNOWN: 'PURCHASE_ORDER_JIT_SCOPE_UNKNOWN',
+  JIT_SCOPE_CONFLICT: 'PURCHASE_ORDER_JIT_SCOPE_CONFLICT',
+  JIT_RELATION_CONTRADICTORY: 'PURCHASE_ORDER_JIT_RELATION_CONTRADICTORY',
+  JIT_RELATION_REPLAY_DRIFT: 'PURCHASE_ORDER_JIT_RELATION_REPLAY_DRIFT',
+});
+
+function purchaseOrderGuardError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 async function loadPurchaseOrders(client, {
   storeId,
   fetchBatchId,
@@ -1969,7 +1987,10 @@ async function loadPurchaseOrders(client, {
   const relationCandidates = new Map();
   for (const order of purchaseOrders.orders) {
     if (!Array.isArray(order.lines) || order.linesComplete !== true) {
-      throw new Error(`Purchase order ${order.orderNo} does not declare a complete line set`);
+      throw purchaseOrderGuardError(
+        `Purchase order ${order.orderNo} does not declare a complete line set`,
+        PURCHASE_ORDER_LOAD_ERROR_CODES.LINE_SET_INCOMPLETE,
+      );
     }
     if (
       !Array.isArray(order.jitRelations)
@@ -1979,7 +2000,10 @@ async function loadPurchaseOrders(client, {
         && order.jitRelationScopes.length === 0
       )
     ) {
-      throw new Error(`Purchase order ${order.orderNo} has invalid JIT relation evidence`);
+      throw purchaseOrderGuardError(
+        `Purchase order ${order.orderNo} has invalid JIT relation evidence`,
+        PURCHASE_ORDER_LOAD_ERROR_CODES.JIT_EVIDENCE_INVALID,
+      );
     }
     const effectiveSourceTime = isoDate(
       order.sourceUpdatedAt ?? order.fetchedAt ?? sourceFetchedAt,
@@ -2010,8 +2034,9 @@ async function loadPurchaseOrders(client, {
       existingSourceTime === effectiveSourceTime
       && existing.payload_fingerprint !== fingerprint
     ) {
-      throw new Error(
+      throw purchaseOrderGuardError(
         `Purchase order ${order.orderNo} changed at an identical source timestamp`,
+        PURCHASE_ORDER_LOAD_ERROR_CODES.SAME_TIME_PAYLOAD_DRIFT,
       );
     }
     const result = await client.query(
@@ -2094,7 +2119,12 @@ async function loadPurchaseOrders(client, {
       );
       purchaseOrderId = existing.rows[0]?.purchase_order_id;
     }
-    if (!purchaseOrderId) throw new Error(`Purchase order ${order.orderNo} could not be resolved`);
+    if (!purchaseOrderId) {
+      throw purchaseOrderGuardError(
+        `Purchase order ${order.orderNo} could not be resolved`,
+        PURCHASE_ORDER_LOAD_ERROR_CODES.RESOLUTION_FAILED,
+      );
+    }
 
     const retired = await client.query(
       `UPDATE fact.purchase_order_line
@@ -2167,8 +2197,9 @@ async function loadPurchaseOrders(client, {
         ],
       );
       if ((lineResult.rowCount ?? lineResult.rows.length) === 0) {
-        throw new Error(
+        throw purchaseOrderGuardError(
           `Purchase order ${order.orderNo} line evidence changed at an identical source timestamp`,
+          PURCHASE_ORDER_LOAD_ERROR_CODES.LINE_SAME_TIME_DRIFT,
         );
       }
       lineCount += 1;
@@ -2180,7 +2211,10 @@ async function loadPurchaseOrders(client, {
       }
       for (const direction of order.jitRelationScopes) {
         if (!['AS_MOTHER', 'AS_CHILD'].includes(direction)) {
-          throw new Error(`Purchase order ${order.orderNo} has an unknown JIT relation scope`);
+          throw purchaseOrderGuardError(
+            `Purchase order ${order.orderNo} has an unknown JIT relation scope`,
+            PURCHASE_ORDER_LOAD_ERROR_CODES.JIT_SCOPE_UNKNOWN,
+          );
         }
         const relationKeys = order.jitRelations
           .filter((relation) => (
@@ -2193,7 +2227,10 @@ async function loadPurchaseOrders(client, {
         const scopeKey = `${order.orderNo}:${direction}`;
         const prior = relationScopeSnapshots.get(scopeKey);
         if (prior && stableJson(prior.relationKeys) !== stableJson(relationKeys)) {
-          throw new Error(`Purchase order ${order.orderNo} returned conflicting JIT scopes`);
+          throw purchaseOrderGuardError(
+            `Purchase order ${order.orderNo} returned conflicting JIT scopes`,
+            PURCHASE_ORDER_LOAD_ERROR_CODES.JIT_SCOPE_CONFLICT,
+          );
         }
         relationScopeSnapshots.set(scopeKey, {
           orderNo: order.orderNo,
@@ -2214,8 +2251,9 @@ async function loadPurchaseOrders(client, {
       relationKeys.includes(relationKey)
     ));
     if (decisions.includes(true) && decisions.includes(false)) {
-      throw new Error(
+      throw purchaseOrderGuardError(
         `JIT relation ${relation.motherOrderNo}->${relation.childOrderNo} is contradictory`,
+        PURCHASE_ORDER_LOAD_ERROR_CODES.JIT_RELATION_CONTRADICTORY,
       );
     }
     if (decisions.includes(true)) finalRelations.push(relation);
@@ -2263,8 +2301,9 @@ async function loadPurchaseOrders(client, {
         ],
       );
     if ((relationResult.rowCount ?? relationResult.rows.length) === 0) {
-      throw new Error(
+      throw purchaseOrderGuardError(
         `JIT relation ${relation.motherOrderNo}->${relation.childOrderNo} replay drifted`,
+        PURCHASE_ORDER_LOAD_ERROR_CODES.JIT_RELATION_REPLAY_DRIFT,
       );
     }
     relationCount += 1;

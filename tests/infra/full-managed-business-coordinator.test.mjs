@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -129,6 +129,93 @@ test('terminal sales quality gaps are classified separately from capability gaps
   }).retryStores, ['DL5477']);
 });
 
+test('loaded sales with qualityStatus PARTIAL preserve data quality gap and fail closed on empty or invalid exit 2 summary', () => {
+  // loaded but degraded qualityStatus PARTIAL must be classified as TERMINAL_DATA_QUALITY_GAP
+  const partialLoadedResult = classifyStageResult('sales-realtime', 2, {
+    results: [{
+      storeCode: 'DL5477',
+      status: 'loaded',
+      qualityStatus: 'PARTIAL',
+      qualityReason: 'MISSING_STATISTICS_DATE',
+    }],
+  });
+  assert.deepEqual(partialLoadedResult, {
+    complete: true,
+    terminalPartial: true,
+    retryStores: [],
+    terminalWarnings: ['TERMINAL_DATA_QUALITY_GAP'],
+    terminalDetails: [{
+      warning: 'TERMINAL_DATA_QUALITY_GAP',
+      storeCode: 'DL5477',
+      errorCode: 'MISSING_STATISTICS_DATE',
+    }],
+  });
+
+  // exit 2 with missing summary, empty results, or unmapped store codes must fail closed
+  assert.deepEqual(classifyStageResult('sales-realtime', 2, null), {
+    complete: false,
+    fatal: true,
+    retryStores: [],
+  });
+  assert.deepEqual(classifyStageResult('sales-realtime', 2, {}), {
+    complete: false,
+    fatal: true,
+    retryStores: [],
+  });
+  assert.deepEqual(classifyStageResult('sales-realtime', 2, { results: [] }), {
+    complete: false,
+    fatal: true,
+    retryStores: [],
+  });
+  assert.deepEqual(classifyStageResult('sales-realtime', 2, {
+    results: [{ storeCode: 'INVALID_UNKNOWN_STORE', status: 'pending', errorCode: 'NOT_FOUND' }],
+  }), {
+    complete: false,
+    fatal: true,
+    retryStores: [],
+  });
+
+  // mixed valid store and unknown store must fail closed
+  assert.deepEqual(classifyStageResult('sales-realtime', 2, {
+    results: [
+      { storeCode: 'DL5477', status: 'loaded', qualityStatus: 'PARTIAL' },
+      { storeCode: 'UNKNOWN', status: 'error' },
+    ],
+  }), {
+    complete: false,
+    fatal: true,
+    retryStores: [],
+  });
+
+  // null member inside results array must fail closed
+  assert.deepEqual(classifyStageResult('sales-realtime', 2, {
+    results: [{ storeCode: 'DL5477', status: 'loaded', qualityStatus: 'PARTIAL' }, null],
+  }), { complete: false, fatal: true, retryStores: [] });
+
+  // duplicate same-store with contradictory status must fail closed
+  assert.deepEqual(classifyStageResult('sales-realtime', 2, {
+    results: [
+      { storeCode: 'DL5477', status: 'loaded', qualityStatus: 'PARTIAL' },
+      { storeCode: 'DL5477', status: 'error' },
+    ],
+  }), { complete: false, fatal: true, retryStores: [] });
+
+  // production sales result with qualityStatus PARTIAL but without qualityReason falls back safely
+  assert.deepEqual(classifyStageResult('sales-realtime', 2, {
+    results: [{ storeCode: 'DL5477', status: 'loaded', qualityStatus: 'PARTIAL' }],
+  }), {
+    complete: true,
+    terminalPartial: true,
+    retryStores: [],
+    terminalWarnings: ['TERMINAL_DATA_QUALITY_GAP'],
+    terminalDetails: [{
+      warning: 'TERMINAL_DATA_QUALITY_GAP',
+      storeCode: 'DL5477',
+      errorCode: 'UNCLASSIFIED_PARTIAL',
+    }],
+  });
+});
+
 test('missing platform delivery point lookups preserve prior facts without hot-looping', () => {
   assert.deepEqual(classifyStageResult('supply', 2, {
     results: [{
@@ -189,6 +276,54 @@ test('terminal sales evidence is persisted in the safe stage summary', async () 
     storeCode: 'NM8831',
     errorCode: 'MIXED_STATISTICS_DATES',
   }]);
+});
+
+test('real 25-store loaded with qualityStatus PARTIAL records terminal quality gap per store without silent completion', async (t) => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), 'fm-coordinator-25partial-'));
+  t.after(async () => { await rm(stateDir, { recursive: true, force: true }); });
+  const plan = buildCoordinatorPlan(
+    COORDINATOR_TASKS.REALTIME,
+    new Date('2026-08-07T23:02:00+08:00'),
+  );
+  const storeCodes = [
+    'CX4412', 'XL2801', 'QY8886', 'DX0571', 'NM7397', 'LQ7173', 'TS8263', 'DL5477', 'FY4021',
+    'GJ8989', 'QH8028', 'JY8060', 'ZL3133', 'MZ2406', 'YJ8177', 'RH0099', 'WY9025', 'RH2848',
+    'CX2816', 'YJ4042', 'NM4977', 'NM8787', 'NM8831', 'NM7418', 'DX2420',
+  ];
+  // Real production response from sync producer has only qualityStatus: 'PARTIAL' without qualityReason
+  const salesResults = storeCodes.map((storeCode) => ({
+    storeCode,
+    status: 'loaded',
+    qualityStatus: 'PARTIAL',
+    skuCount: 10,
+  }));
+  const result = await runCoordinator(plan, {
+    stateDir,
+    runStage: async (stage) => (stage.name === 'sales-realtime'
+      ? {
+        exitCode: 2,
+        summary: {
+          ok: false,
+          loadedStores: 25,
+          partialStores: 25,
+          results: salesResults,
+        },
+      }
+      : { exitCode: 0, summary: { ok: true } }),
+  });
+  const salesStage = result.stages['sales-realtime'];
+  assert.equal(salesStage.status, 'COMPLETE');
+  assert.equal(salesStage.lastExitCode, 2);
+  assert.deepEqual(salesStage.terminalWarnings, ['TERMINAL_DATA_QUALITY_GAP']);
+  assert.equal(salesStage.terminalDetails.length, 25);
+  assert.equal(salesStage.terminalDetails.every((d) => (
+    d.warning === 'TERMINAL_DATA_QUALITY_GAP'
+    && d.errorCode === 'UNCLASSIFIED_PARTIAL'
+    && storeCodes.includes(d.storeCode)
+  )), true);
+  // Verify stageSummary also carries exact non-silent terminal gap metadata
+  assert.deepEqual(result.stageSummary['sales-realtime'].terminalWarnings, ['TERMINAL_DATA_QUALITY_GAP']);
+  assert.equal(result.stageSummary['sales-realtime'].terminalDetails.length, 25);
 });
 
 test('one run retries only failed stores and becomes ready exactly once', async () => {
