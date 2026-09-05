@@ -260,15 +260,22 @@ function deriveWaybillStatus(waybill) {
 
 function buildStockRecordRow(record, storeCode, fetchedAt) {
   const orderNo = String(record.orderNo ?? '').trim();
-  if (!orderNo) return null;
+  // Applications can exist before an order number is assigned. Use their
+  // stable platform identity across that transition; never invent an order.
+  const rawId = record.id;
+  const recordId = typeof rawId === 'string'
+    ? rawId.trim()
+    : Number.isSafeInteger(rawId) && rawId >= 0 ? String(rawId) : '';
+  const stableId = /^[A-Za-z0-9_-]{1,128}$/.test(recordId) ? recordId : null;
+  if (!stableId && !orderNo) return null;
   return Object.freeze({
-    id: orderNo,
+    id: stableId ? `stock-record:${stableId}` : `stock-order:${orderNo}`,
     storeCode,
     statusCode: String(record.applyStatus ?? '').trim() || null,
     statusName: null,
     createdAt: parseShanghaiDateTime(record.addTime),
     updatedAt: fetchedAt,
-    primary: orderNo,
+    primary: orderNo || null,
     secondary: String(record.orderModeValue ?? record.orderMode ?? '').trim() || null,
     tags: Object.freeze(['备货记录', record.stockType, record.orderSign].filter(Boolean)),
     metrics: Object.freeze([]),

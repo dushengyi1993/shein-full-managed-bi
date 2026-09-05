@@ -319,7 +319,7 @@ test('session sync writes a gate-passing snapshot with allowlisted rows only', a
   assert.equal(snapshot.pages['value-added-services'].rows[0].id, '4');
   assert.equal(snapshot.pages['value-added-services'].rows[0].primary, 'VA-SYNC-4');
   const stockRow = snapshot.pages['stock-records'].rows[0];
-  assert.equal(stockRow.id, 'PB-SYNC-1');
+  assert.equal(stockRow.id, 'stock-record:1');
   assert.equal(stockRow.statusName, null);
   assert.ok(!JSON.stringify(stockRow).includes('applyNotes'));
   assert.ok(!JSON.stringify(stockRow).includes('orderAccount'));
@@ -329,6 +329,54 @@ test('session sync writes a gate-passing snapshot with allowlisted rows only', a
   assert.ok(!JSON.stringify(waybillRow).includes('senderProvinceName'));
   assert.ok(!JSON.stringify(waybillRow).includes('receiverCityName'));
   assert.equal(result.written, output);
+});
+
+async function syncStockFixture(records) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'om-stock-identity-'));
+  const result = await runOrderManagementSessionSync({
+    storeCodes: [...FULL_MANAGED_STORE_CODES],
+    output: path.join(directory, 'order-management.sessions.json'),
+    pageIds: ['stock-records'],
+    windowDays: 30,
+    openSession: fakeOpenSession(() => ({
+      code: '0', info: { count: records.length, list: records },
+    })),
+    now: new Date('2026-08-08T06:00:00.000Z'),
+  });
+  return result.snapshot.pages['stock-records'];
+}
+
+test('stock applications without order numbers retain exact coverage and stable identity', async () => {
+  const before = await syncStockFixture([{ id: 123, orderNo: null }, { id: '124', orderNo: '' }]);
+  assert.equal(before.status, 'AVAILABLE');
+  assert.equal(before.rows.length, FULL_MANAGED_STORE_CODES.length * 2);
+  assert.equal(before.gates.totalVerified, true);
+  assert.equal(before.gates.contentVerified, true);
+  assert.ok(before.rows.every((row) => row.primary === null));
+  const after = await syncStockFixture([{ id: 123, orderNo: 'PB-NEW-A' }, { id: '124', orderNo: 'PB-NEW-B' }]);
+  assert.deepEqual(before.rows.map((row) => row.id), after.rows.map((row) => row.id));
+  assert.equal(after.rows[0].primary, 'PB-NEW-A');
+});
+
+test('stock duplicate platform identity cannot pass dedupe using different order numbers', async () => {
+  const page = await syncStockFixture([{ id: 123, orderNo: 'PB-A' }, { id: 123, orderNo: 'PB-B' }]);
+  assert.equal(page.status, 'UNAVAILABLE');
+  assert.equal(page.gates.storeCount, 0);
+});
+
+test('stock missing or malformed identities fail closed without synthesizing rows', async () => {
+  for (const id of [undefined, null, {}, [], true, 1.5, Number.MAX_SAFE_INTEGER + 1, 'bad id']) {
+    const page = await syncStockFixture([{ id, orderNo: null }]);
+    assert.equal(page.status, 'UNAVAILABLE');
+    assert.equal(page.gates.contentVerified, false);
+    assert.equal(page.gates.totalVerified, false);
+  }
+});
+
+test('stock legacy order-only records remain representable in a separate identity namespace', async () => {
+  const page = await syncStockFixture([{ orderNo: 'PB-LEGACY' }, { id: 'PB-LEGACY', orderNo: null }]);
+  assert.equal(page.status, 'AVAILABLE');
+  assert.deepEqual(page.rows.slice(0, 2).map((row) => row.id), ['stock-order:PB-LEGACY', 'stock-record:PB-LEGACY']);
 });
 
 test('session sync sends explicit window dates in every request body', async () => {
