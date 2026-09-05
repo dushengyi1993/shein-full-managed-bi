@@ -1,0 +1,44 @@
+[Unit]
+Description=Copy a verified full-managed database archive to the independent NAS disk
+After=network-online.target shein-fm-db.service
+Wants=network-online.target
+RequiresMountsFor=/srv/shein-fm/backups/db
+ConditionPathExists=/srv/shein-fm/secrets/backup-nas-sync/id_ed25519
+ConditionPathExists=/srv/shein-fm/secrets/backup-nas-sync/known_hosts
+StartLimitIntervalSec=20min
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/opt/shein-fm/current
+ExecStart=/usr/bin/bash scripts/run_shein_host_lane.sh io-heavy fm io-heavy /usr/bin/node /opt/shein-fm/maintenance/backup-nas-sync-20260905/sync_full_managed_backup_nas.mjs --latest-completed --execute
+Restart=no
+RestartForceExitStatus=75
+RestartSec=60s
+RuntimeMaxSec=25min
+TimeoutStopSec=30s
+KillMode=control-group
+Nice=12
+CPUQuota=50%
+IOWeight=10
+MemoryMax=512M
+TasksMax=96
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1/32
+IPAddressAllow=192.168.1.59/32
+ReadWritePaths=/run/lock/shein-host-heavy.lock /srv/shein-fm/runtime
+StandardOutput=journal
+StandardError=journal
