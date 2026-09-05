@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-截至04:26，Portal/Webhook公网upstream已切到飞牛，云端回滚保留。真实回调接收处理、财务与小时任务自动运行、补采首次自动运行、真实事件触发页面物化均已有下文终态证据。迁移总目标仍未完成：05:45日更、MZ定向纠偏授权与供应门禁、局部业务数据覆盖缺口及稳定观察仍待处理；GitHub推送/发版暂缓。不得据本文删除云端。
+截至06:00，Portal/Webhook公网upstream已切到飞牛，云端回滚保留。真实回调接收处理、财务/小时/日更自动运行、补采首次自动运行、事件触发页面物化及切流后新备份独立副本与恢复均已有下文终态证据。迁移总目标仍未完成：MZ定向纠偏授权与供应门禁、订单等局部业务数据覆盖缺口、入口连接拒绝风险、NAS SMART及稳定观察仍待处理；GitHub推送/发版暂缓。不得据本文删除云端。
 
 ## 已验证的补数与回滚基线
 
@@ -259,3 +259,68 @@
 - 日志与反向入口8项测试通过，复核修正变量匹配为含数字的完整变量名（time_iso8601），日志2测试再次通过。未修改速率、连接上限、任何超时、签名校验或代理路由。
 - 云端fresh旧配置SHAa04e0f0fd3534f8ee2016bd8b5ddca77a9eebe97f959a3615ac84caa15cd5bfb，候选去除唯一日志格式块后与线上逐字相等；排他保留/var/backups/shein-fm/nginx/shein-fm.pre-timing-20260906T0532并原子替换，nginx -t和reload通过。新SHA72b43a2b5974a8eecc32ca1d16fee6e672507124d0dbcbac45868b3e89572c47；master仍1188/active。
 - 独立公网已支持的callback健康GET返回200；21:33:15Z新格式回读upstream200、两个limit均PASSED，connectTime0.001/headerTime0.536/responseTime0.536秒。此GET不访问业务入库路径，不能拿来证明有效签名POST承载能力或此前6条已重投；后续真实POST可用新字段定位耗时。upstream文件SHA仍9897c97615f08e835cd1c6c2c615039c63d529a368ae77586a28108f7bbebbbc。
+
+### 05:35–05:36 双端调度所有权复核与旧供应timer遗漏修正
+
+- 双端当前9个指定timer/path逐项读取：realtime/daily/finance/renewal/hydration timer及3个事件path均VM active/enabled、云端inactive/disabled；VM receiver/worker仍PID172753/172754、NRestarts0，云端二者MainPID0/inactive。
+- 发现例外：云端supply-sync.timer inactive但enabled，LastTrigger2026-08-19 02:20，NextElapse空；其service为历史failed/MainPID0、Invocationd2717c84c1864c6dbbf4d906b1ba3c9a。不能将“当前没运行”当作已取消开机启用。
+- 实读原timer为每日02:20、依赖供应两个门禁。向用户披露后，只执行云端原timer disable --now；精确回读inactive/disabled。历史failed服务及原Invocation保留，没有reset-failed、重启业务或改排班；VM供应timer也仍inactive/disabled，没有放行MZ纠偏或供应门禁。若回滚，不能仅因原enabled就无条件重启，仍须完成VM冻结/反向追平及新鲜业务门禁。
+- 三处forward-baseline文件（本机/云端/VM）重新计算SHA均f95313ad08bb5b4415b25e48289cc9f9bb64ab94ada20f5994150e832bb2f2fc。首次未加sudo遭读权限拒绝，随后用已有授权sudo只读取得哈希；没有据权限拒绝误判文件缺失。
+- 已验证的日志改动和此前至05:32证据本地提交5a5836ea89f2d7c3b57fa577794aedcfb3ccbb45，25项相关测试全部通过；未push/tag/Release，原scripts/__pycache__/保留。此节为之后的新证据，尚未纳入该提交。
+
+### 05:38–05:39 完整维护单元盘点与VM磁盘观察接线
+
+- 两端全部shein-fm timer/path均为15项；除了业务单元，还包括各主机本地backup/restore/disk-guard/profile-cache-prune/system-health。云端保留本机维护不等于同一业务队列双写。VM profile-cache-prune仍disabled，未启用删除缓存的任务。
+- VM disk-guard.timer此前disabled；现有service的90-fnos-data-path.conf已把第二个ExecStart改为--filesystem=/srv/shein-fm（VM没有/data）。主代理只读审阅guard确认仅df与写状态、不扫描或删除；部署脚本SHA758cb46e2b83d3537807366722189a302e7a5e2ac82c408545443178fc446675与本地一致，service inactive/MainPID0。
+- 向用户披露后仅启用原disk-guard.timer，原OnBootSec5m/OnUnitActiveSec15m不变，没有创建新排班。立即自动触发05:39:07，Invocation574c67f7c8a94090acbc90feaa697307/PID214279；管理器Deactivated successfully、service inactive/MainPID0、timer active/enabled并已有下一次时间。
+- 两份现场新状态checkedAt21:39:07.327Z/377Z：根盘usedPercent17、数据盘19.7，均severityok/observeOnlytrue。该值是VM文件系统空间，不是NAS硬盘SMART健康。
+- 发现健康物化器DATA_DISK_FILE仍固定disk-guard-data.json，未消费VM新文件disk-guard-srv-shein-fm.json。已把精确两路径白名单的显式主机配置修复交给codexapis GLM5.3Flash Franklin（01a07382-9064-7c50-8878-ad36924d5274），仅本地health脚本与直接测试；无生产/Git授权，主代理保留集成部署。当前派发已接受、尚无终态交付，不重复实现其独占范围。
+
+### 05:41–05:43 健康页面数据盘取数修复
+
+- Franklin随后明确429 retry limit终结、无代码交付，主代理向用户披露接回原两个文件范围。新增resolveSystemHealthDataDiskFile，仅接受云端和VM两个精确状态文件路径，未设置时保持云端默认；非法值在任何systemd查询/文件读取前拒绝且错误不回显输入。既有状态安全投影不变，目标7项测试全部通过。
+- 部署前VM current仍ccad2a7、原health脚本SHA05f4eef0922d0a2d8276182f9597042b253a5e759e6acda495837bdf69c55926，service MainPID0。未原地改不可变release；新脚本位于/opt/shein-fm/maintenance/system-health-5720ce81c545/scripts/，SHA5720ce81c5454b20d69d6b3b11c1e673b5b43529a6109fb44463a7acffa921f6，src链接固定到已验证release。
+- 排他保留previous-unit.txt后新建91-fnos-data-disk.conf，仅为原health服务选择VM状态文件并指定此维护脚本；dropinSHAf161150f5784cd815a734c4f9c06bfa7333599d9b45bcd6cd69940db202a644b，daemon-reload及systemd-analyze verify通过。未改云端、网络隔离、Secrets不可访问边界或原timer。
+- 05:42:39采样仍是05:38旧health产物，仅有根盘旧状态；尚不能算页面修复已生效。等待原下一次自动触发后再读取新generatedAt与两盘状态。下一次正式应用release包含此修复后，应把维护脚本ExecStart覆盖收敛回正常入口，同时保留VM数据盘环境配置，不能永久钉住旧release依赖。
+- 原timer实际05:43:29触发，Invocationf888e30524074a95a0c3dd47e299a565管理器Deactivated successfully、MainPID0；新health generatedAt21:43:30.003Z包含根盘17%与数据盘19.7%，两者checkedAt均来自21:39:07实际guard。健康数据产物接线已验证；没有进行浏览器视觉验收。
+
+### 05:45–05:52 日更首轮平台日结等待与原进程自动推进
+
+- 原daily timer触发的service Invocation0bdf64df7ec44e14a5a9442874c363aa/MainPID215913持续存在；首轮home-history于21:45:30.433Z进入WAITING_PLATFORM，25店均HOME_SETTLEMENT_NOT_READY。日志安全投影确认requiredThrough=2026-09-05、availableThrough=2026-09-04、sourceUpdatedAt=2026-09-05 05:30:29各25条；这是平台日结锚点尚未达到目标日期，不是25店统一登录过期。
+- 本地源代码resolveDataAnchor先读取UPDATE_TIME，未达到requireSettledThrough时在历史事实写入前停止；原协调器该阶段每5分钟重试。未改日期门禁、未启动重复采集，也未把旧数据发布为昨日完成。
+- 同一进程21:50:30.533Z进入home-history attempt2，05:52只读数据库确认本轮UPDATE_TIME/STORE_DAILY_HISTORY/REGION_RANK/TRADE_OVERVIEW已有24店成功，PRODUCT_DIAGNOSE_LIST23店成功；ANALYSE_MODEL另有8店HOME_ANALYSE_PERMISSION_DENIED、16店成功。以上是运行中计数，不是25店最终覆盖或发布验收。
+- 05:52采样仍RUNNING/publishedAt=null，原协调器子进程flock PID217033仍存在；继续由原运行实例持有范围。健康物化器7项本地测试复跑全部通过、无跳过；未push/tag/Release或触发CI。
+
+### 05:53 首次自动日更及发布终态核验
+
+- 同一daily Invocation于21:52:49.598Z完成：home-history COMPLETE/attempt2/exit0，home-ledger COMPLETE/attempt1/exit0；管理器明确Deactivated successfully，MainPID0。OnSuccess自动触发原dashboard-materialize，Invocationcba9fa7a132749759663806080cf7c29/初始PID218084；同Invocation管理器Deactivated successfully、inactive/MainPID0。未手动重启或另开采集。
+- 日更状态21:53:24.071Z成为PUBLISHED，publishedAt一致。独立READ ONLY按第二轮21:50:30Z至21:52:50Z审计窗口核验：UPDATE_TIME、STORE_DAILY_HISTORY、REGION_RANK、TRADE_OVERVIEW、PRODUCT_DIAGNOSE_LIST、LEDGER_DAILY各25店SUCCEEDED；这是本次实际请求覆盖，不只依赖协调器pending0。
+- ANALYSE_MODEL最终16店SUCCEEDED、9店HOME_ANALYSE_PERMISSION_DENIED；ANALYSE_SEARCH16店SUCCEEDED。源代码将此错误作为terminalShopCapabilityGap，因此主链exit0不代表分析域25店完整。保留原始审计缺口，不把运行中8店计数当终态、不扩写为订单管理快照已经恢复。
+- 云端daily timer现场inactive/disabled、daily service MainPID0，未发生日更双端执行。首次自动日更门禁证据已补齐；订单域缺口、MZ纠偏授权、入口连接拒绝风险、NAS SMART与稳定观察/正式版本收敛等仍未完成，迁移总目标保持进行中。
+
+### 05:55–06:00 备货记录缺失根因与本地修复
+
+- 新格式入口日志只读复核：仍为38条POST200、6条limit_conn REJECTED/POST503；新增耗时格式尚无POST样本。不改变连接上限、不把后续成功推定为此前6条重投。
+- 库存记录只读定位再次交给codexapis GLM5.3Flash Goodall（01a07391-fb20-7173-83c3-0b5303a471c1），其明确429重试耗尽且未交付；主代理披露后接回定位，并另行披露接手映射修复和直接测试。没有启用Gemini或其他模型替代。
+- 现场旧候选仍updatedAt2026-09-05T14:19:42.127Z、window2026-08-07至09-05；stock-records仅3店/154行，22店total/content失败，但每店paging/dedupe通过且fetch failures为空。canonical仍不存在。页面汇总paging/dedupe=false包含全店门禁影响，不能据此断言平台分页请求失败。
+- 21:58:35.599Z用DL5477已有加密会话的内存副本，仅请求STOCK_RECORDS_LIST第1页（新window2026-08-08至09-06），HTTP200/total131/rows100；8条orderNo为空，但100条均有id且本页id全部唯一。未输出原始ID、单号、响应、cookie或认证材料，未回写会话。此证据确定现有buildStockRecordRow因空orderNo丢行的实际缺陷，不证明所有22店或全窗口已经修复。
+- 本地映射改用已白名单的有效平台id作为stock-record命名空间身份，采购单号缺失时primary=null，单号后来补齐不会改变该记录身份；无有效id时保留有单号的legacy命名空间，无两种身份仍丢弃并保持门禁失败。未增加可见私密字段或放宽total/paging/dedupe/content门禁。
+- 两组CLI/回填测试45/45通过、无跳过；新增覆盖无采购单号保留、补单号身份稳定、同id不同单号仍去重失败、无效id拒绝及legacy隔离。仅完成本地代码与测试，尚未部署或新采25店，未发布canonical。
+- 新身份语义必须通过完整stock-records页替换验证，不与旧orderNo键的库存页增量拼接，避免新旧身份双计。其余订单页面不得因本修复自动升级为AVAILABLE。
+
+### 06:04–06:06 备货记录25店候选实采通过
+
+- 候选脚本独立部署于/opt/shein-fm/maintenance/stock-candidate-b5762a700b39/scripts/，主脚本SHAb5762a700b3916744a2ffd2c18a5068b7da1932a6ffd30ece581b2fbc5ff564e；受控包装入口SHA5cc4d491241e147eeac30888db4e04035360db61ed96e197e230d49a4e0ba527。src固定链接到ccad2a7已验收release，未改current或既有正式脚本。第一次传输因Windows命令行长度上限在ssh进程启动前失败；改用stdin传输，源端与目标SHA锁定后才部署。
+- 一次性shein-fm-stock-candidate-20260906T0602.service使用既有api-light/fm/openapi资源通道与order-management.lock、sheinfm用户、只读系统与仅候选目录可写；并发1、1200秒预算、512M限额。只读取既有会话加密文件，HTTP更新留在逐店内存副本，不写持久会话或数据库；未创建timer或启动浏览器。
+- Invocation77f09cf8747f4bed818363cf83272ce3管理器Deactivated successfully，service终态inactive/MainPID0。终态摘要39次分页请求、25店、2623行，其中361行采购单号为空；total/paging/dedupe/content四门禁全部true。updatedAt2026-09-05T22:04:06.028Z表示本轮采集锚点，不伪装成所有行平台更新时间。
+- 候选/run/shein-fm-webapi/order-management-stock-candidate-20260906T0602.json，3552633字节、0600，SHA256=8d663b94dd82dc4a56d70b1b72dc2adfa30807f1a4256caf08cdcd796813bc19，窗口2026-08-08至09-06。主代理独立逐店验证唯一证据行、实际行数等于平台total、id无重复、每行通过正式共享合同校验，25店全部通过，不只信候选status。
+- 以COPYFILE_EXCL保留独立持久审计副本/srv/shein-fm/runtime/migration-evidence/fnos-20260906/order-management-stock-candidate-20260906T0602.json，重新读回同SHA与0600。旧候选不覆盖。
+- 正式canonical仍不存在、未发布。当前materializeOrderManagement要求整体coverage COMPLETE才promotable；备货页通过不代表quality-reports/exceptions或其他事实页门禁通过。未为了展示这一页修改整体发布规则，后续继续处理剩余域并收敛正式代码版本。
+
+### 06:06 异常单权限缺口的新鲜判别
+
+- 旧候选exceptions失败店为WY9025、RH2848、CX2816、YJ4042、NM4977、NM8787、NM8831、NM7418、DX2420，均SSO100010；这只是旧覆盖范围，未据此宣称9店当前都已独立复测。
+- 22:06:33.994Z单独只读请求WY9025异常单第1页，仍ORDER_MANAGEMENT_BUSINESS_STATUS_FAILED/SSO100010。随后为定位原因再一次有界请求，22:06:59.804Z仅输出经既有脱敏器处理后的错误类别布尔值：permission=true，login/rateLimit/parameter/notFound均false。原始错误说明和响应未输出或保存；会话使用内存副本，不写密文或业务。
+- WY同一时段备货记录全量读取已成功；证据不支持将该异常笼统解释为整个店铺登录过期或暂时请求过快。账号平台异常单权限需要核对，未自动提权、替换账号或绕过限制。也未把单店结论放大为所有质检/异常接口共用同一原因。
+- 本地订单合同、HTTP传输、CLI采集/回填、仓库物化/合并、服务查询、前端工作区以及健康物化器10组测试合计121/121通过，无跳过；这些测试不替代平台权限或全迁移完成证据。
+- 本地版本分界：344e03c为VM健康数据盘接线修复，885a660为备货申请稳定身份修复。两项先独立检查暂存范围再提交；未push/tag/Release，未触发CI，原scripts/__pycache__/保留。正式current仍为ccad2a7，维护候选部署不等于应用已整体更新到上述提交。
