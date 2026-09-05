@@ -22,6 +22,13 @@ const LOGIN_STATE_FILE = '/srv/shein-fm/runtime/store-login/state.json';
 const RENEWAL_REPORT_FILE = '/srv/shein-fm/runtime/store-login/renewal-report.json';
 const ROOT_DISK_FILE = '/srv/shein-fm/runtime/disk-guard.json';
 const DATA_DISK_FILE = '/srv/shein-fm/runtime/disk-guard-data.json';
+const FNOS_DATA_DISK_FILE = '/srv/shein-fm/runtime/disk-guard-srv-shein-fm.json';
+
+export function resolveSystemHealthDataDiskFile(value) {
+  if (value === undefined) return DATA_DISK_FILE;
+  if (value === DATA_DISK_FILE || value === FNOS_DATA_DISK_FILE) return value;
+  throw new Error('SYSTEM_HEALTH_DATA_DISK_FILE_INVALID');
+}
 const CURRENT_RELEASE = '/opt/shein-fm/current';
 const PREVIOUS_RELEASE = '/opt/shein-fm/previous';
 
@@ -410,7 +417,11 @@ async function systemctlShow(unit) {
   }
 }
 
-export async function collectSystemHealthSnapshot({ now = new Date() } = {}) {
+export async function collectSystemHealthSnapshot({
+  now = new Date(),
+  dataDiskFile = process.env.FULL_BI_SYSTEM_HEALTH_DATA_DISK_FILE,
+} = {}) {
+  const resolvedDataDiskFile = resolveSystemHealthDataDiskFile(dataDiskFile);
   const unitRows = await Promise.all(SYSTEM_UNIT_DEFINITIONS.map(async (definition) => {
     const [service, timer] = await Promise.all([
       systemctlShow(definition.service),
@@ -429,7 +440,7 @@ export async function collectSystemHealthSnapshot({ now = new Date() } = {}) {
     readJsonOrNull(LOGIN_STATE_FILE),
     readJsonOrNull(RENEWAL_REPORT_FILE),
     readJsonOrNull(ROOT_DISK_FILE),
-    readJsonOrNull(DATA_DISK_FILE),
+    readJsonOrNull(resolvedDataDiskFile),
     releaseName(CURRENT_RELEASE),
     releaseName(PREVIOUS_RELEASE),
   ]);

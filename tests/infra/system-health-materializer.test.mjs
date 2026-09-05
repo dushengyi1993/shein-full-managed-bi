@@ -4,12 +4,31 @@ import test from 'node:test';
 
 import {
   buildSystemHealthSnapshot,
+  collectSystemHealthSnapshot,
+  resolveSystemHealthDataDiskFile,
   parseSystemctlShow,
   projectUnit,
   sanitizeLoginState,
   sanitizeRenewalReport,
   systemdTimestampToIso,
 } from '../../scripts/materialize_full_managed_system_health.mjs';
+
+test('data disk input defaults to cloud and accepts only exact host-owned status paths', () => {
+  const cloud = '/srv/shein-fm/runtime/disk-guard-data.json';
+  const fnos = '/srv/shein-fm/runtime/disk-guard-srv-shein-fm.json';
+  assert.equal(resolveSystemHealthDataDiskFile(undefined), cloud);
+  for (const value of [cloud, fnos]) assert.equal(resolveSystemHealthDataDiskFile(value), value);
+  for (const value of ['', null, false, '/etc/passwd', '/srv/shein-fm/secrets/test',
+    `${fnos}.tmp`, `${cloud}/../disk-guard-srv-shein-fm.json`, ` ${fnos}`]) {
+    assert.throws(() => resolveSystemHealthDataDiskFile(value),
+      (error) => error.message === 'SYSTEM_HEALTH_DATA_DISK_FILE_INVALID');
+  }
+});
+
+test('invalid data disk input fails before collecting systemd or reading files', async () => {
+  await assert.rejects(collectSystemHealthSnapshot({ dataDiskFile: '/invalid-private-value' }),
+    (error) => error.message === 'SYSTEM_HEALTH_DATA_DISK_FILE_INVALID');
+});
 
 test('systemd timestamps are converted from Shanghai CST without the JavaScript CST trap', () => {
   assert.equal(
