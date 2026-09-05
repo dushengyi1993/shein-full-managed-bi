@@ -11,13 +11,19 @@ import pg from "pg";
 import {
   CUTOVER_APPLICATION_NAME,
   PgEndpoint,
+  ALLOWED_PROGRESS_COUNT_KEYS,
+  PROGRESS_PHASES,
   WebhookCutoverError,
+  createProgressEvent,
   createTimestampPreservingTypes,
   identityFingerprint,
   main as coreMain,
   parseArguments,
   runIdentityInspection,
+  summarizePlanCounts,
 } from "./fnos_webhook_cutover.mjs";
+
+export { ALLOWED_PROGRESS_COUNT_KEYS, PROGRESS_PHASES, createProgressEvent, summarizePlanCounts };
 
 const { Pool } = pg;
 const DATABASE_USER = "sheinfm";
@@ -28,6 +34,8 @@ const CONTAINER_NAME = "shein-fm-db";
 const STDERR_LIMIT = 8192;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 7_200_000;
+const DIGEST_BATCH_SIZE_VARIABLE = "FNOS_WEBHOOK_DIGEST_BATCH_SIZE";
+const MAX_DIGEST_BATCH_SIZE = 10000;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const POSITIVE_DECIMAL_PATTERN = /^[1-9][0-9]*$/;
 const SIGNAL_PATTERN = /^SIG[A-Z0-9]{1,30}$/;
@@ -101,12 +109,12 @@ export function sanitizeSshTransportDiagnostics(value) {
   });
 }
 
-export class SshCutoverLauncherError extends Error {
+export class SshCutoverLauncherError extends WebhookCutoverError {
   constructor(code, message, options = {}) {
     const errorOptions = options && typeof options === "object" && Object.hasOwn(options, "cause")
       ? { cause: options.cause }
       : undefined;
-    super(message, errorOptions);
+    super(code, message, errorOptions);
     this.name = "SshCutoverLauncherError";
     this.code = code;
     const transportDiagnostics = sanitizeSshTransportDiagnostics(options?.transportDiagnostics);
@@ -230,8 +238,23 @@ function restrictedChildEnvironment(environment) {
 }
 
 function isPostgresTerminateFrame(chunk) {
-  return Buffer.isBuffer(chunk) && chunk.length === 5 && chunk[0] === 0x58 &&
-    chunk[1] === 0 && chunk[2] === 0 && chunk[3] === 0 && chunk[4] === 4;
+  if (!Buffer.isBuffer(chunk) || chunk.length < 5) return false;
+  if (chunk.length === 5) {
+    return chunk[0] === 0x58 && chunk[1] === 0 && chunk[2] === 0 && chunk[3] === 0 && chunk[4] === 4;
+  }
+  let offset = 0;
+  while (offset + 5 <= chunk.length) {
+    const type = chunk[offset];
+    const len = chunk.readInt32BE(offset + 1);
+    if (len < 4 || offset + 1 + len > chunk.length) {
+      break;
+    }
+    if (type === 0x58 && len === 4) {
+      return true;
+    }
+    offset += 1 + len;
+  }
+  return false;
 }
 
 export class SshPgDuplex extends Duplex {
@@ -456,6 +479,23 @@ export class SshPgDuplex extends Duplex {
     this.child.stdin.write(chunk, encoding, callback);
   }
 
+  _writev(chunks, callback) {
+    if (!this.connected || !this.child?.stdin || this.child.stdin.destroyed) {
+      callback(new SshCutoverLauncherError("SSH_STREAM_NOT_CONNECTED", "SSH PostgreSQL stream is not writable"));
+      return;
+    }
+    const buffers = new Array(chunks.length);
+    for (let index = 0; index < chunks.length; index += 1) {
+      const item = chunks[index];
+      const buffer = Buffer.isBuffer(item.chunk) ? item.chunk : Buffer.from(item.chunk, item.encoding);
+      if (isPostgresTerminateFrame(buffer)) this.gracefulTeardownRequested = true;
+      buffers[index] = buffer;
+    }
+    const combined = Buffer.concat(buffers);
+    if (isPostgresTerminateFrame(combined)) this.gracefulTeardownRequested = true;
+    this.child.stdin.write(combined, callback);
+  }
+
   end(...args) {
     this.gracefulTeardownRequested = true;
     return super.end(...args);
@@ -527,6 +567,20 @@ export function buildPgPoolOptions(endpoint, registry, connectTimeoutMs) {
   });
 }
 
+export function bindPoolErrorSafety(pool, onFatalError) {
+  if (!pool || typeof pool.on !== "function") return pool;
+  pool.on("connect", (client) => {
+    if (!client || typeof client.on !== "function") return;
+    client.on("error", (error) => {
+      onFatalError?.(error);
+    });
+  });
+  pool.on("error", (error) => {
+    onFatalError?.(error);
+  });
+  return pool;
+}
+
 class IdentityPinnedEndpoint extends PgEndpoint {
   constructor(pool, role, options, approvals) {
     super(pool, role, options);
@@ -573,7 +627,16 @@ export function launcherConfiguration(environment, { requireFingerprint }) {
   if (cloud.host === fnos.host && cloud.port === fnos.port && cloud.user === fnos.user) {
     fail("SSH_ENDPOINT_COLLISION", "cloud and fnOS SSH endpoints are identical");
   }
-  return Object.freeze({ sshExecutable, cloud, fnos, connectTimeoutMs, operationTimeoutMs });
+  const digestBatchSize = environment[DIGEST_BATCH_SIZE_VARIABLE] !== undefined &&
+    environment[DIGEST_BATCH_SIZE_VARIABLE] !== null &&
+    String(environment[DIGEST_BATCH_SIZE_VARIABLE]).trim() !== ""
+    ? boundedInteger(environment[DIGEST_BATCH_SIZE_VARIABLE], {
+        label: DIGEST_BATCH_SIZE_VARIABLE,
+        minimum: 1,
+        maximum: MAX_DIGEST_BATCH_SIZE,
+      })
+    : undefined;
+  return Object.freeze({ sshExecutable, cloud, fnos, connectTimeoutMs, operationTimeoutMs, digestBatchSize });
 }
 
 export function mapCutoverTopology(config, mode) {
@@ -613,6 +676,9 @@ export async function runSshLauncher({
   stderr = process.stderr,
   spawnImpl = spawn,
   PoolClass = Pool,
+  setTimeoutImpl = setTimeout,
+  clearTimeoutImpl = clearTimeout,
+  onProgress = null,
 } = {}) {
   const inspectOnly = argv.length === 1 && argv[0] === "inspect-identities";
   let sourcePool;
@@ -634,7 +700,9 @@ export async function runSshLauncher({
     });
     sourcePool = new PoolClass(buildPgPoolOptions(sourceEndpoint, registry, config.connectTimeoutMs));
     targetPool = new PoolClass(buildPgPoolOptions(targetEndpoint, registry, config.connectTimeoutMs));
-    operationTimer = setTimeout(() => {
+    bindPoolErrorSafety(sourcePool, (error) => registry?.abortAll(error));
+    bindPoolErrorSafety(targetPool, (error) => registry?.abortAll(error));
+    operationTimer = setTimeoutImpl(() => {
       registry.abortAll(new SshCutoverLauncherError("SSH_OPERATION_TIMEOUT", "SSH cutover operation exceeded its audited timeout"));
     }, config.operationTimeoutMs);
     operationTimer.unref?.();
@@ -659,7 +727,12 @@ export async function runSshLauncher({
          parsed.approvedTargetIdentityFingerprint !== approvals.target)) {
       fail("SSH_DIRECTION_APPROVAL_MISMATCH", "prepare-forward CLI approvals differ from the pinned SSH endpoint identities");
     }
-    const endpointFactory = (pool, role, options) => new IdentityPinnedEndpoint(pool, role, options, approvals);
+    const endpointFactory = (pool, role, options) => new IdentityPinnedEndpoint(
+      pool,
+      role,
+      config.digestBatchSize !== undefined ? { ...options, digestBatchSize: config.digestBatchSize } : options,
+      approvals,
+    );
     return await coreMain({
       argv,
       environment: {
@@ -671,12 +744,13 @@ export async function runSshLauncher({
       stderr,
       poolFactory: (role) => role === "source" ? sourcePool : targetPool,
       endpointFactory,
+      onProgress,
     });
   } catch (error) {
     writeFailure(stderr, error);
     return 1;
   } finally {
-    if (operationTimer) clearTimeout(operationTimer);
+    if (operationTimer) clearTimeoutImpl(operationTimer);
     registry?.abortAll();
     await sourcePool?.end().catch(() => {});
     await targetPool?.end().catch(() => {});

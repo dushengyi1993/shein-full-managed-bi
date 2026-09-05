@@ -8,14 +8,23 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 
-import { CUTOVER_APPLICATION_NAME } from "../../scripts/fnos_webhook_cutover.mjs";
 import {
+  CUTOVER_APPLICATION_NAME,
+  MANAGED_TRIGGERS,
+  TABLES,
+  identityFingerprint,
+  runPrepareForward,
+} from "../../scripts/fnos_webhook_cutover.mjs";
+import {
+  SshCutoverLauncherError,
   SshPgDuplex,
   SshTransportRegistry,
+  bindPoolErrorSafety,
   buildPgPoolOptions,
   buildSshArguments,
   launcherConfiguration,
   mapCutoverTopology,
+  runSshLauncher,
   sanitizeSshTransportDiagnostics,
 } from "../../scripts/fnos_webhook_cutover_ssh.mjs";
 
@@ -647,6 +656,37 @@ test("launcherConfiguration builds the test-mode topology from SSH env without r
   const topology = mapCutoverTopology(config, "prepare-forward");
   assert.equal(topology.source.topology, "cloud");
   assert.equal(topology.target.topology, "fnos");
+  assert.equal(config.digestBatchSize, undefined);
+
+  const configWithDigest = launcherConfiguration({
+    ...environment,
+    FNOS_WEBHOOK_DIGEST_BATCH_SIZE: "5000",
+  }, { requireFingerprint: false });
+  assert.equal(configWithDigest.digestBatchSize, 5000);
+
+  assert.throws(
+    () => launcherConfiguration({
+      ...environment,
+      FNOS_WEBHOOK_DIGEST_BATCH_SIZE: "10001",
+    }, { requireFingerprint: false }),
+    (error) => error?.code === "SSH_CONFIG_INVALID",
+  );
+
+  assert.throws(
+    () => launcherConfiguration({
+      ...environment,
+      FNOS_WEBHOOK_DIGEST_BATCH_SIZE: "0",
+    }, { requireFingerprint: false }),
+    (error) => error?.code === "SSH_CONFIG_INVALID",
+  );
+
+  assert.throws(
+    () => launcherConfiguration({
+      ...environment,
+      FNOS_WEBHOOK_DIGEST_BATCH_SIZE: "not-a-number",
+    }, { requireFingerprint: false }),
+    (error) => error?.code === "SSH_CONFIG_INVALID",
+  );
 });
 
 test("SSH test-mode pool options stay passwordless, single-use, and force the maintenance database override only", () => {
@@ -705,4 +745,654 @@ test("registry teardown destroys every outstanding SSH child exactly once", asyn
   assert.ok(children.every((item) => item.killCalls === 1));
   await new Promise((resolveTick) => setImmediate(resolveTick));
   assert.equal(registry.active.size, 0);
+});
+
+test("bindPoolErrorSafety captures checked-out Client error without uncaughtException", async () => {
+  const child = fakeChild();
+  const registry = new SshTransportRegistry({
+    sshExecutable: "ssh.exe",
+    connectTimeoutMs: 15_000,
+    lifetimeTimeoutMs: 60_000,
+    spawnImpl: () => child,
+    childEnvironment: {},
+  });
+  const capturedErrors = [];
+  const pool = bindPoolErrorSafety(
+    new Pool(buildPgPoolOptions(endpoint(), registry, 15_000)),
+    (error) => capturedErrors.push(error),
+  );
+  child.stdin.resume();
+  const connectPromise = pool.connect();
+  child.emit("spawn");
+  child.stdout.write(postgresReadyFrames());
+  const client = await connectPromise;
+
+  client.connection.stream.destroy(new SshCutoverLauncherError("SSH_CHECKED_OUT_ERROR", "checked out failure"));
+  await new Promise((resolveTick) => setImmediate(resolveTick));
+  assert.ok(capturedErrors.length >= 1);
+  assert.equal(capturedErrors[0].code, "SSH_CHECKED_OUT_ERROR");
+  client.release(true);
+  await pool.end().catch(() => {});
+});
+
+test("bindPoolErrorSafety captures idle Client error on pool without uncaughtException", async () => {
+  const child = fakeChild();
+  const registry = new SshTransportRegistry({
+    sshExecutable: "ssh.exe",
+    connectTimeoutMs: 15_000,
+    lifetimeTimeoutMs: 60_000,
+    spawnImpl: () => child,
+    childEnvironment: {},
+  });
+  const capturedErrors = [];
+  const pool = bindPoolErrorSafety(
+    new Pool({
+      ...buildPgPoolOptions(endpoint(), registry, 15_000),
+      maxUses: 5,
+    }),
+    (error) => capturedErrors.push(error),
+  );
+  child.stdin.resume();
+  const connectPromise = pool.connect();
+  child.emit("spawn");
+  child.stdout.write(postgresReadyFrames());
+  const client = await connectPromise;
+
+  client.release();
+  assert.equal(pool.idleCount, 1);
+  client.connection.stream.destroy(new SshCutoverLauncherError("SSH_IDLE_POOL_ERROR", "idle failure"));
+  await new Promise((resolveTick) => setImmediate(resolveTick));
+  assert.equal(pool.idleCount, 0);
+  assert.ok(capturedErrors.length >= 1);
+  assert.equal(capturedErrors[0].code, "SSH_IDLE_POOL_ERROR");
+  await pool.end().catch(() => {});
+});
+
+function fakeLauncherChild() {
+  const child = new EventEmitter();
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.exitCode = null;
+  child.signalCode = null;
+  child.killed = false;
+  child.kill = () => {
+    child.killed = true;
+    child.signalCode = "SIGTERM";
+    process.nextTick(() => {
+      child.stdout.end();
+      child.emit("exit", null, "SIGTERM");
+      child.emit("close", null, "SIGTERM");
+    });
+    return true;
+  };
+  return child;
+}
+
+test("runSshLauncher terminates with SSH_OPERATION_TIMEOUT and sanitized failure JSON on operation timeout", async (t) => {
+  const fixtureRoot = mkdtempSync(resolvePath(tmpdir(), "fnos-ot-test-"));
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  const userProfile = resolvePath(fixtureRoot, "operator");
+  const sshRoot = resolvePath(userProfile, ".ssh");
+  const openSshRoot = resolvePath(fixtureRoot, "System32", "OpenSSH");
+  const identityFile = resolvePath(sshRoot, "cutover_ed25519.test");
+  const knownHostsFile = resolvePath(sshRoot, "known_hosts.test");
+  mkdirSync(sshRoot, { recursive: true });
+  mkdirSync(openSshRoot, { recursive: true });
+  writeFileSync(identityFile, "test identity\n", "utf8");
+  writeFileSync(knownHostsFile, "test known-hosts\n", "utf8");
+  writeFileSync(resolvePath(openSshRoot, "ssh.exe"), "test ssh\n", "utf8");
+
+  const environment = {
+    USERPROFILE: userProfile,
+    SystemRoot: fixtureRoot,
+    FNOS_WEBHOOK_SSH_CLOUD_HOST: "cloud.example.test",
+    FNOS_WEBHOOK_SSH_CLOUD_PORT: "22",
+    FNOS_WEBHOOK_SSH_CLOUD_USER: "sheinops",
+    FNOS_WEBHOOK_SSH_CLOUD_IDENTITY_FILE: identityFile,
+    FNOS_WEBHOOK_SSH_CLOUD_KNOWN_HOSTS_FILE: knownHostsFile,
+    FNOS_WEBHOOK_SSH_CLOUD_FINGERPRINT: "a".repeat(64),
+    FNOS_WEBHOOK_SSH_FNOS_HOST: "fnos.example.test",
+    FNOS_WEBHOOK_SSH_FNOS_PORT: "22",
+    FNOS_WEBHOOK_SSH_FNOS_USER: "sheinops",
+    FNOS_WEBHOOK_SSH_FNOS_IDENTITY_FILE: identityFile,
+    FNOS_WEBHOOK_SSH_FNOS_KNOWN_HOSTS_FILE: knownHostsFile,
+    FNOS_WEBHOOK_SSH_FNOS_FINGERPRINT: "b".repeat(64),
+    FNOS_WEBHOOK_SSH_CONNECT_TIMEOUT_MS: "1000",
+    FNOS_WEBHOOK_SSH_OPERATION_TIMEOUT_MS: "60000",
+  };
+
+  let stderr = "";
+  const children = [];
+  const spawnImpl = () => {
+    const child = fakeLauncherChild();
+    children.push(child);
+    process.nextTick(() => {
+      child.emit("spawn");
+      child.stdout.write(postgresReadyFrames());
+    });
+    return child;
+  };
+
+  const exitCode = await runSshLauncher({
+    argv: ["inspect-identities"],
+    environment,
+    spawnImpl,
+    setTimeoutImpl: (fn) => setTimeout(fn, 20),
+    stderr: { write(chunk) { stderr += typeof chunk === "string" ? chunk : chunk.toString("utf8"); return true; } },
+  });
+
+  assert.equal(exitCode, 1);
+  const parsed = JSON.parse(stderr.trim());
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.errorCode, "SSH_OPERATION_TIMEOUT");
+  assert.equal(parsed.outcome, "failed_closed");
+  assert.equal(parsed.readyForCloudStart, false);
+  assert.equal(parsed.readyForForwardBaseline, false);
+  assert.ok(children.length > 0);
+  assert.ok(children.every((c) => c.killed));
+});
+
+test("runSshLauncher terminates with sanitized transport failure when idle client transport error occurs", async (t) => {
+  const fixtureRoot = mkdtempSync(resolvePath(tmpdir(), "fnos-idle-test-"));
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  const userProfile = resolvePath(fixtureRoot, "operator");
+  const sshRoot = resolvePath(userProfile, ".ssh");
+  const openSshRoot = resolvePath(fixtureRoot, "System32", "OpenSSH");
+  const identityFile = resolvePath(sshRoot, "cutover_ed25519.test");
+  const knownHostsFile = resolvePath(sshRoot, "known_hosts.test");
+  mkdirSync(sshRoot, { recursive: true });
+  mkdirSync(openSshRoot, { recursive: true });
+  writeFileSync(identityFile, "test identity\n", "utf8");
+  writeFileSync(knownHostsFile, "test known-hosts\n", "utf8");
+  writeFileSync(resolvePath(openSshRoot, "ssh.exe"), "test ssh\n", "utf8");
+
+  const environment = {
+    USERPROFILE: userProfile,
+    SystemRoot: fixtureRoot,
+    FNOS_WEBHOOK_SSH_CLOUD_HOST: "cloud.example.test",
+    FNOS_WEBHOOK_SSH_CLOUD_PORT: "22",
+    FNOS_WEBHOOK_SSH_CLOUD_USER: "sheinops",
+    FNOS_WEBHOOK_SSH_CLOUD_IDENTITY_FILE: identityFile,
+    FNOS_WEBHOOK_SSH_CLOUD_KNOWN_HOSTS_FILE: knownHostsFile,
+    FNOS_WEBHOOK_SSH_CLOUD_FINGERPRINT: "a".repeat(64),
+    FNOS_WEBHOOK_SSH_FNOS_HOST: "fnos.example.test",
+    FNOS_WEBHOOK_SSH_FNOS_PORT: "22",
+    FNOS_WEBHOOK_SSH_FNOS_USER: "sheinops",
+    FNOS_WEBHOOK_SSH_FNOS_IDENTITY_FILE: identityFile,
+    FNOS_WEBHOOK_SSH_FNOS_KNOWN_HOSTS_FILE: knownHostsFile,
+    FNOS_WEBHOOK_SSH_FNOS_FINGERPRINT: "b".repeat(64),
+    FNOS_WEBHOOK_SSH_CONNECT_TIMEOUT_MS: "1000",
+    FNOS_WEBHOOK_SSH_OPERATION_TIMEOUT_MS: "60000",
+  };
+
+  let stderr = "";
+  const children = [];
+  let firstChild = null;
+  const spawnImpl = () => {
+    const child = fakeLauncherChild();
+    children.push(child);
+    if (!firstChild) firstChild = child;
+    process.nextTick(() => {
+      child.emit("spawn");
+      child.stdout.write(postgresReadyFrames());
+    });
+    return child;
+  };
+
+  setTimeout(() => {
+    if (firstChild) {
+      firstChild.exitCode = 255;
+      firstChild.emit("exit", 255, null);
+      firstChild.emit("close", 255, null);
+    }
+  }, 40);
+
+  const exitCode = await runSshLauncher({
+    argv: ["inspect-identities"],
+    environment,
+    spawnImpl,
+    stderr: { write(chunk) { stderr += typeof chunk === "string" ? chunk : chunk.toString("utf8"); return true; } },
+  });
+
+  assert.equal(exitCode, 1);
+  const parsed = JSON.parse(stderr.trim());
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.errorCode, "SSH_CHILD_EXITED");
+  assert.equal(parsed.outcome, "failed_closed");
+  assert.equal(parsed.readyForCloudStart, false);
+  assert.equal(parsed.readyForForwardBaseline, false);
+  assert.ok(parsed.transportDiagnostics);
+  assert.equal(parsed.transportDiagnostics.exitKind, "exit");
+  assert.equal(parsed.transportDiagnostics.exitCode, 255);
+  assert.ok(children.every((c) => c.killed || c.exitCode !== null || c.signalCode !== null));
+});
+
+test("prepare-forward execute post-commit readback timeout preserves OUTCOME_UNVERIFIED without masking", async () => {
+  const objectNames = [
+    ...TABLES.map((d) => d.relation),
+    ...TABLES.filter((d) => d.sequence).map((d) => d.sequence),
+  ];
+  const objects = Object.fromEntries(objectNames.map((name, i) => [name, { oid: String(i + 1), owner: "sheinfm" }]));
+
+  const sourceIdentity = {
+    systemIdentifier: "1",
+    currentDatabase: "shein_fm",
+    sessionUser: "sheinfm",
+    currentUser: "sheinfm",
+    roleSuperuser: true,
+    roleBypassRls: true,
+    serverAddress: "127.0.0.1/32",
+    serverPort: "5432",
+    serverVersionNum: "160014",
+    applicationName: "shein_fm_fnos_webhook_cutover_v4",
+    objects,
+  };
+  const targetIdentity = {
+    ...sourceIdentity,
+    systemIdentifier: "2",
+  };
+
+  const sourceFp = identityFingerprint(sourceIdentity);
+  const targetFp = identityFingerprint(targetIdentity);
+
+  const sequenceKeys = TABLES.filter((d) => d.sequence).map((d) => d.key);
+  const sequences = Object.fromEntries(sequenceKeys.map((k) => [k, {
+    sequenceName: k + "_seq",
+    lastValue: "1",
+    startValue: "1",
+    increment: "1",
+    maxValue: "9223372036854775807",
+    minValue: "1",
+    isCycled: false,
+    isCalled: true,
+    logicalNext: "2",
+  }]));
+
+  const triggers = Object.fromEntries(MANAGED_TRIGGERS.map((t) => [t.relation + "." + t.name, "O"]));
+
+  let endpointCallCount = 0;
+  const fakeEndpointFactory = (pool, role) => {
+    endpointCallCount += 1;
+    const currentCall = endpointCallCount;
+    return {
+      role,
+      batchSize: 1,
+      transportGeneration: String(currentCall),
+      inTransaction: true,
+      async beginFrozen() {
+        if (currentCall > 2) {
+          throw new SshCutoverLauncherError("SSH_OPERATION_TIMEOUT", "SSH operation timeout during post-commit readback");
+        }
+      },
+      async readIdentity() { return role === "source" ? sourceIdentity : targetIdentity; },
+      async readSession() {
+        return {
+          backendPid: String(currentCall),
+          backendStart: "2026-09-05 00:00:0" + currentCall + ".000000+00",
+          transportGeneration: String(currentCall),
+        };
+      },
+      async readReadiness() {
+        return {
+          nonterminalJobs: "0",
+          pendingDirectives: "0",
+          retryDirectives: "0",
+          runningDirectives: "0",
+          ownedDirectiveLeases: "0",
+          expiringDirectiveLeases: "0",
+          nonterminalDirectives: "0",
+          subscriptions: "0",
+          gates: "0",
+        };
+      },
+      async readSequence(key) { return sequences[key]; },
+      async readTriggerStates() { return { ...triggers }; },
+      async setControlledTriggers() {},
+      async scanRows() { return []; },
+      async *scanDigestEntries() {},
+      async countTableRows() { return "0"; },
+      async rollback() {},
+      async commit() {},
+      release() {},
+    };
+  };
+
+  const dryRun = await runPrepareForward({
+    sourcePool: {},
+    targetPool: {},
+    execute: false,
+    approvedSourceIdentityFingerprint: sourceFp,
+    approvedTargetIdentityFingerprint: targetFp,
+    endpointFactory: fakeEndpointFactory,
+  });
+
+  endpointCallCount = 0;
+  await assert.rejects(
+    runPrepareForward({
+      sourcePool: {},
+      targetPool: {},
+      execute: true,
+      approvedPlanHash: dryRun.planHash,
+      approvedSourceIdentityFingerprint: sourceFp,
+      approvedTargetIdentityFingerprint: targetFp,
+      endpointFactory: fakeEndpointFactory,
+    }),
+    (error) => {
+      assert.equal(error.code, "OUTCOME_UNVERIFIED");
+      return true;
+    },
+  );
+});
+
+test("SshPgDuplex _writev combines corked pg protocol chunks into a single child stdin write with exact byte order", async () => {
+  const child = fakeChild();
+  const stdinWrites = [];
+  const origWrite = child.stdin.write.bind(child.stdin);
+  child.stdin.write = (chunk, encoding, cb) => {
+    stdinWrites.push(chunk);
+    return origWrite(chunk, encoding, cb);
+  };
+
+  const stream = new SshPgDuplex({
+    sshExecutable: "ssh.exe",
+    endpoint: endpoint(),
+    generation: 1,
+    connectTimeoutMs: 15_000,
+    lifetimeTimeoutMs: 60_000,
+    spawnImpl: () => child,
+  });
+
+  child.stdin.resume();
+  stream.connect(5432, "127.0.0.1");
+  child.emit("spawn");
+  child.stdout.write(postgresReadyFrames());
+  await new Promise((r) => setImmediate(r));
+
+  // Simulate pg cork/uncork during extended query: 5 frames (P, B, D, E, S)
+  const frameP = Buffer.from([0x50, 0, 0, 0, 7, 1, 2, 3]);
+  const frameB = Buffer.from([0x42, 0, 0, 0, 6, 4, 5]);
+  const frameD = Buffer.from([0x44, 0, 0, 0, 5, 6]);
+  const frameE = Buffer.from([0x45, 0, 0, 0, 8, 7, 8, 9, 10]);
+  const frameS = Buffer.from([0x53, 0, 0, 0, 4]);
+
+  stream.cork();
+  stream.write(frameP);
+  stream.write(frameB);
+  stream.write(frameD);
+  stream.write(frameE);
+  stream.write(frameS);
+  stream.uncork();
+
+  await new Promise((r) => setImmediate(r));
+
+  // Verify child.stdin received EXACTLY 1 combined write call
+  assert.equal(stdinWrites.length, 1, "corked chunks must be combined into exactly 1 child stdin write");
+  const expectedCombined = Buffer.concat([frameP, frameB, frameD, frameE, frameS]);
+  assert.deepEqual(stdinWrites[0], expectedCombined, "combined buffer must match exact concatenated byte order");
+
+  stream.destroy();
+});
+
+test("SshPgDuplex _writev handles backpressure and invokes callback exactly once", async () => {
+  const child = fakeChild();
+  let callbackCount = 0;
+  let delayedCallback = null;
+
+  child.stdin.write = (chunk, cb) => {
+    delayedCallback = cb;
+    return false; // Signal backpressure
+  };
+
+  const stream = new SshPgDuplex({
+    sshExecutable: "ssh.exe",
+    endpoint: endpoint(),
+    generation: 1,
+    connectTimeoutMs: 15_000,
+    lifetimeTimeoutMs: 60_000,
+    spawnImpl: () => child,
+  });
+
+  stream.connect(5432, "127.0.0.1");
+  child.emit("spawn");
+  await new Promise((r) => setImmediate(r));
+
+  stream._writev(
+    [{ chunk: Buffer.from("abc") }, { chunk: Buffer.from("def") }],
+    (err) => {
+      assert.equal(err, undefined);
+      callbackCount += 1;
+    }
+  );
+
+  assert.equal(callbackCount, 0, "callback must not be called before underlying write completes");
+  assert.ok(delayedCallback);
+  delayedCallback();
+  assert.equal(callbackCount, 1, "callback must be called exactly once");
+
+  stream.destroy();
+});
+
+test("SshPgDuplex _writev fails closed with SSH_STREAM_NOT_CONNECTED when stream is not connected or destroyed", async () => {
+  const stream = new SshPgDuplex({
+    sshExecutable: "ssh.exe",
+    endpoint: endpoint(),
+    generation: 1,
+    connectTimeoutMs: 15_000,
+    lifetimeTimeoutMs: 60_000,
+    spawnImpl: () => fakeChild(),
+  });
+
+  let capturedError = null;
+  stream._writev([{ chunk: Buffer.from("test") }], (err) => {
+    capturedError = err;
+  });
+
+  assert.ok(capturedError);
+  assert.equal(capturedError.code, "SSH_STREAM_NOT_CONNECTED");
+});
+
+test("SshPgDuplex _writev detects PostgreSQL terminate frame inside combined multi-frame buffer", async () => {
+  const child = fakeChild();
+  const stream = new SshPgDuplex({
+    sshExecutable: "ssh.exe",
+    endpoint: endpoint(),
+    generation: 1,
+    connectTimeoutMs: 15_000,
+    lifetimeTimeoutMs: 60_000,
+    spawnImpl: () => child,
+  });
+
+  child.stdin.resume();
+  stream.connect(5432, "127.0.0.1");
+  child.emit("spawn");
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(stream.gracefulTeardownRequested, false);
+
+  // Send query followed by terminate frame in corked batch
+  const queryFrame = Buffer.from([0x51, 0, 0, 0, 8, 1, 2, 3, 4]);
+  const termFrame = Buffer.from([0x58, 0, 0, 0, 4]); // Terminate 'X'
+
+  stream.cork();
+  stream.write(queryFrame);
+  stream.write(termFrame);
+  stream.uncork();
+
+  await new Promise((r) => setImmediate(r));
+  assert.equal(stream.gracefulTeardownRequested, true, "graceful teardown must be requested upon seeing terminate frame in combined writev");
+
+  stream.destroy();
+});
+
+test("SshPgDuplex _writev detects PostgreSQL terminate frame inside single concatenated buffer chunk without per-chunk loop", async () => {
+  const child = fakeChild();
+  const stream = new SshPgDuplex({
+    sshExecutable: "ssh.exe",
+    endpoint: endpoint(),
+    generation: 1,
+    connectTimeoutMs: 15_000,
+    lifetimeTimeoutMs: 60_000,
+    spawnImpl: () => child,
+  });
+
+  child.stdin.resume();
+  stream.connect(5432, "127.0.0.1");
+  child.emit("spawn");
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(stream.gracefulTeardownRequested, false);
+
+  // Write a single pre-combined Buffer containing [queryFrame, termFrame]
+  const queryFrame = Buffer.from([0x51, 0, 0, 0, 8, 1, 2, 3, 4]);
+  const termFrame = Buffer.from([0x58, 0, 0, 0, 4]);
+  const preCombinedBuffer = Buffer.concat([queryFrame, termFrame]);
+
+  // Single write call, so _write / _writev receives this as a single chunk
+  stream.write(preCombinedBuffer);
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(
+    stream.gracefulTeardownRequested,
+    true,
+    "gracefulTeardownRequested must be true even when terminate frame is embedded inside a single chunk"
+  );
+  stream.destroy();
+});
+
+test("SshPgDuplex _writev does NOT misidentify embedded X00000004 inside Bind payload as terminate", async () => {
+  const child = fakeChild();
+  const stream = new SshPgDuplex({
+    sshExecutable: "ssh.exe",
+    endpoint: endpoint(),
+    generation: 1,
+    connectTimeoutMs: 15_000,
+    lifetimeTimeoutMs: 60_000,
+    spawnImpl: () => child,
+  });
+
+  child.stdin.resume();
+  stream.connect(5432, "127.0.0.1");
+  child.emit("spawn");
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(stream.gracefulTeardownRequested, false);
+
+  // Construct a Bind message (0x42) where the payload data contains [0x58, 0, 0, 0, 4]
+  // Payload: 3 leading bytes, 5 pseudo-terminate bytes, 2 trailing bytes = 10 payload bytes
+  // Total message length field = 4 + 10 = 14 (0x0E)
+  const bindPayloadWithX = Buffer.from([
+    0x42, // 'B'
+    0x00, 0x00, 0x00, 0x0E, // length = 14 (includes 4 length bytes + 10 payload bytes)
+    0x01, 0x02, 0x03,
+    0x58, 0x00, 0x00, 0x00, 0x04, // embedded pseudo-terminate inside Bind data
+    0x08, 0x09,
+  ]);
+  const syncFrame = Buffer.from([0x53, 0, 0, 0, 4]); // 'S'
+
+  stream.cork();
+  stream.write(bindPayloadWithX);
+  stream.write(syncFrame);
+  stream.uncork();
+
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(
+    stream.gracefulTeardownRequested,
+    false,
+    "gracefulTeardownRequested must NOT be set when X00000004 is payload inside Bind"
+  );
+  stream.destroy();
+});
+
+test("SshPgDuplex _writev propagates child.stdin callback error to every user write callback and emits stream error exactly once", async () => {
+  const child = fakeChild();
+  child.stdin.write = (chunk, cb) => {
+    cb(new Error("injected child stdin write error"));
+    return false;
+  };
+
+  const stream = new SshPgDuplex({
+    sshExecutable: "ssh.exe",
+    endpoint: endpoint(),
+    generation: 1,
+    connectTimeoutMs: 15_000,
+    lifetimeTimeoutMs: 60_000,
+    spawnImpl: () => child,
+  });
+
+  child.stdin.resume();
+  stream.connect(5432, "127.0.0.1");
+  child.emit("spawn");
+  await new Promise((r) => setImmediate(r));
+
+  const userCallbackErrors = [];
+  const streamErrors = [];
+  stream.on("error", (err) => {
+    streamErrors.push(err);
+  });
+
+  stream.cork();
+  stream.write(Buffer.from([0x50, 0, 0, 0, 4]), (err) => {
+    userCallbackErrors.push({ write: 1, err });
+  });
+  stream.write(Buffer.from([0x42, 0, 0, 0, 4]), (err) => {
+    userCallbackErrors.push({ write: 2, err });
+  });
+  stream.write(Buffer.from([0x53, 0, 0, 0, 4]), (err) => {
+    userCallbackErrors.push({ write: 3, err });
+  });
+  stream.uncork();
+
+  await new Promise((r) => setImmediate(r));
+
+  // Verify every user callback was called exactly once with the error
+  assert.equal(userCallbackErrors.length, 3, "every user write callback must be called exactly once");
+  assert.ok(userCallbackErrors.every((e) => e.err?.message === "injected child stdin write error"));
+  // Verify stream error was emitted exactly once
+  assert.equal(streamErrors.length, 1, "stream error must be emitted exactly once without duplication");
+  assert.equal(streamErrors[0]?.message, "injected child stdin write error");
+  assert.equal(stream.destroyed, true, "stream must be destroyed upon write error");
+});
+
+test("SshPgDuplex _writev preserves large binary payloads without corruption or truncation", async () => {
+  const child = fakeChild();
+  const stdinWrites = [];
+  child.stdin.write = (chunk, encoding, cb) => {
+    stdinWrites.push(chunk);
+    return true;
+  };
+
+  const stream = new SshPgDuplex({
+    sshExecutable: "ssh.exe",
+    endpoint: endpoint(),
+    generation: 1,
+    connectTimeoutMs: 15_000,
+    lifetimeTimeoutMs: 60_000,
+    spawnImpl: () => child,
+  });
+
+  child.stdin.resume();
+  stream.connect(5432, "127.0.0.1");
+  child.emit("spawn");
+  await new Promise((r) => setImmediate(r));
+
+  // Generate large random vectors: 3 chunks of 32KB each (total 96KB)
+  const chunk1 = Buffer.alloc(32768, 0xaa);
+  const chunk2 = Buffer.alloc(32768, 0xbb);
+  const chunk3 = Buffer.alloc(32768, 0xcc);
+
+  stream.cork();
+  stream.write(chunk1);
+  stream.write(chunk2);
+  stream.write(chunk3);
+  stream.uncork();
+
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(stdinWrites.length, 1);
+  assert.equal(stdinWrites[0].length, 98304);
+  assert.deepEqual(stdinWrites[0], Buffer.concat([chunk1, chunk2, chunk3]));
+
+  stream.destroy();
 });

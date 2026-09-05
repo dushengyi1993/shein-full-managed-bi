@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { resolve as resolvePath } from "node:path";
+import { once } from "node:events";
+import { createReadStream, realpathSync } from "node:fs";
+import { chmod, mkdtemp, open, readFile, rmdir, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join as joinPath, resolve as resolvePath } from "node:path";
+import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 
@@ -17,6 +20,8 @@ const BATCH_SIZE_VARIABLE = "FNOS_WEBHOOK_BATCH_SIZE";
 const LOCK_TEXT = "shein-fm:fnos-webhook-cutover:v4";
 const DEFAULT_BATCH_SIZE = 250;
 const MAX_BATCH_SIZE = 1000;
+const MAX_DIGEST_BATCH_SIZE = 10000;
+export const MAX_INSERT_PARAMETERS = 60000;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const BIGINT_PATTERN = /^-?[0-9]+$/;
 const READINESS_KEYS = Object.freeze([
@@ -30,6 +35,95 @@ const READINESS_KEYS = Object.freeze([
   "subscriptions",
   "gates",
 ]);
+export const PROGRESS_PHASES = Object.freeze([
+  "begin",
+  "presnapshot",
+  "plan",
+  "validatehash",
+  "apply",
+  "finalvalidation",
+  "commit",
+  "freshreadback",
+  "finish",
+]);
+
+export const ALLOWED_PROGRESS_COUNT_KEYS = Object.freeze([
+  "sourceTables",
+  "targetTables",
+  "inserts",
+  "updates",
+  "total",
+]);
+
+function sanitizeProgressCounts(counts) {
+  if (!counts || typeof counts !== "object" || Array.isArray(counts)) return undefined;
+  const clean = {};
+  for (const key of ALLOWED_PROGRESS_COUNT_KEYS) {
+    if (!Object.hasOwn(counts, key)) continue;
+    const val = counts[key];
+    if (typeof val === "number" && Number.isSafeInteger(val) && val >= 0) {
+      clean[key] = val;
+    }
+  }
+  return Object.keys(clean).length > 0 ? Object.freeze(clean) : undefined;
+}
+
+export function summarizePlanCounts(planCounts) {
+  let inserts = 0n;
+  let updates = 0n;
+  if (planCounts && typeof planCounts === "object") {
+    for (const item of Object.values(planCounts)) {
+      if (item && typeof item === "object") {
+        if (item.inserted !== undefined && item.inserted !== null) {
+          inserts += BigInt(item.inserted);
+        }
+        if (item.updated !== undefined && item.updated !== null) {
+          updates += BigInt(item.updated);
+        }
+      }
+    }
+  }
+  const total = inserts + updates;
+  if (total > BigInt(Number.MAX_SAFE_INTEGER)) {
+    fail("COUNT_OVERFLOW", "plan count exceeds safe integer range");
+  }
+  return Object.freeze({
+    inserts: Number(inserts),
+    updates: Number(updates),
+    total: Number(total),
+  });
+}
+
+export function createProgressEvent(phase, durationMs, counts = null) {
+  if (!PROGRESS_PHASES.includes(phase)) {
+    fail("INVALID_PROGRESS_PHASE", "unsupported progress phase");
+  }
+  const safeDuration = Number.isSafeInteger(durationMs) && durationMs >= 0 ? durationMs : 0;
+  const sanitizedCounts = sanitizeProgressCounts(counts);
+  const event = {
+    phase,
+    durationMs: safeDuration,
+  };
+  if (sanitizedCounts) {
+    event.counts = sanitizedCounts;
+  }
+  return Object.freeze(event);
+}
+
+function emitProgress(onProgress, phase, durationMs, counts = null) {
+  if (typeof onProgress !== "function") return;
+  try {
+    const event = createProgressEvent(phase, durationMs, counts);
+    const maybePromise = onProgress(event);
+    if (maybePromise && typeof maybePromise.catch === "function") {
+      maybePromise.catch(() => {});
+    }
+  } catch {
+    // strictly isolate progress sink errors so telemetry never disrupts
+    // transaction gates, commit, authoritative readback, or rollback outcome
+  }
+}
+
 export const CUTOVER_APPLICATION_NAME = "shein_fm_fnos_webhook_cutover_v4";
 const EXPECTED_DATABASE = "shein_fm";
 const EXPECTED_ROLE = "sheinfm";
@@ -237,6 +331,25 @@ function parseBatchSize(value) {
     fail("BATCH_SIZE_INVALID", "batch size must be between 1 and " + MAX_BATCH_SIZE);
   }
   return parsed;
+}
+
+function parseDigestBatchSize(value, fallback) {
+  if (value === undefined || value === null || String(value).trim() === "") return fallback;
+  const text = String(value).trim();
+  if (!/^[0-9]+$/.test(text)) fail("BATCH_SIZE_INVALID", "digest batch size must be an integer");
+  const parsed = Number(text);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > MAX_DIGEST_BATCH_SIZE) {
+    fail("BATCH_SIZE_INVALID", "digest batch size must be between 1 and " + MAX_DIGEST_BATCH_SIZE);
+  }
+  return parsed;
+}
+
+function parseMaxInsertParameters(value) {
+  if (value === undefined || value === null) return MAX_INSERT_PARAMETERS;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > MAX_INSERT_PARAMETERS) {
+    fail("BATCH_SIZE_INVALID", "max insert parameters must be a safe integer between 1 and " + MAX_INSERT_PARAMETERS);
+  }
+  return value;
 }
 
 export function canonicalJson(value) {
@@ -499,10 +612,12 @@ function immutableJsonExpression(definition) {
 }
 
 export class PgEndpoint {
-  constructor(pool, role, { batchSize = DEFAULT_BATCH_SIZE } = {}) {
+  constructor(pool, role, { batchSize = DEFAULT_BATCH_SIZE, digestBatchSize, maxInsertParameters = MAX_INSERT_PARAMETERS } = {}) {
     this.pool = pool;
     this.role = role;
     this.batchSize = parseBatchSize(batchSize);
+    this.digestBatchSize = parseDigestBatchSize(digestBatchSize, this.batchSize);
+    this.maxInsertParameters = parseMaxInsertParameters(maxInsertParameters);
     this.client = null;
     this.inTransaction = false;
     this.transportGeneration = null;
@@ -583,14 +698,14 @@ export class PgEndpoint {
         select.push("snapshot_row." + quoteIdent("duplicate_count"));
         select.push("snapshot_row." + quoteIdent("last_duplicate_at"));
       }
-      values.push(this.batchSize);
+      values.push(this.digestBatchSize);
       const result = await this.client.query(
         "SELECT " + select.join(", ") + " FROM " + quotedRelation(definition.relation) + " AS snapshot_row" +
         where + " ORDER BY " + definition.primaryKey.map((column) => "snapshot_row." + quoteIdent(column)).join(", ") +
         " LIMIT $" + values.length,
         values
       );
-      if (result.rows.length > this.batchSize) fail("BATCH_BOUND_EXCEEDED", "database returned an oversized digest batch");
+      if (result.rows.length > this.digestBatchSize) fail("BATCH_BOUND_EXCEEDED", "database returned an oversized digest batch");
       for (const raw of result.rows) {
         const current = cursorFor(definition, raw);
         if (previous && comparePrimaryKeys(definition, previous, current) >= 0) {
@@ -612,7 +727,7 @@ export class PgEndpoint {
         }
         yield entry;
       }
-      if (result.rows.length < this.batchSize) break;
+      if (result.rows.length < this.digestBatchSize) break;
       cursor = cursorFor(definition, result.rows[result.rows.length - 1]);
     }
   }
@@ -958,6 +1073,42 @@ export class PgEndpoint {
       values
     );
     if (result.rowCount !== 1) fail("UPDATE_CARDINALITY_MISMATCH", "update did not affect exactly one row for " + definition.key);
+  }
+
+  async applyInsertBatch(tableKey, rows) {
+    const definition = tableForKey(tableKey);
+    if (!Array.isArray(rows)) fail("INSERT_ROWS_INVALID", "rows must be an array");
+    if (rows.length === 0) return;
+    for (const row of rows) {
+      assertNoDate(row);
+    }
+    const columns = definition.columns;
+    const maxRowsByParams = Math.floor(this.maxInsertParameters / columns.length);
+    if (maxRowsByParams < 1) {
+      fail("BATCH_SIZE_INVALID", "table column count exceeds maximum insert parameter capacity");
+    }
+    const chunkLimit = Math.min(this.batchSize, maxRowsByParams);
+    for (let offset = 0; offset < rows.length; offset += chunkLimit) {
+      const chunk = rows.slice(offset, offset + chunkLimit);
+      const values = [];
+      const valueTuples = [];
+      for (const row of chunk) {
+        const itemPlaceholders = [];
+        for (const column of columns) {
+          values.push(row[column]);
+          itemPlaceholders.push("$" + values.length + (definition.jsonColumns.includes(column) ? "::jsonb" : ""));
+        }
+        valueTuples.push("(" + itemPlaceholders.join(", ") + ")");
+      }
+      const sql = "INSERT INTO " + quotedRelation(definition.relation) +
+        " (" + columns.map(quoteIdent).join(", ") + ")" +
+        (definition.identityColumn ? " OVERRIDING SYSTEM VALUE" : "") +
+        " VALUES " + valueTuples.join(", ");
+      const result = await this.client.query(sql, values);
+      if (result.rowCount !== chunk.length) {
+        fail("INSERT_CARDINALITY_MISMATCH", "insert batch did not affect expected rows for " + definition.key);
+      }
+    }
   }
 
   async restartSequence(tableKey, logicalNext) {
@@ -1324,6 +1475,7 @@ export async function runForward({
   endpointFactory = defaultEndpointFactory,
   batchSize = DEFAULT_BATCH_SIZE,
   testDatabaseNames = null,
+  onProgress = null,
 }) {
   if (!sourcePool || !targetPool) fail("POOL_INVALID", "source and target pools are required");
   const size = parseBatchSize(batchSize);
@@ -1469,7 +1621,7 @@ async function streamOperations({ sourceEndpoint, targetEndpoint, baseline, emit
   }
 }
 
-class PlanAccumulator {
+export class PlanAccumulator {
   constructor({ mode, baseline = null, sourceSnapshot, targetSnapshot, targetState }) {
     this.hash = createHash("sha256");
     this.counts = Object.fromEntries(TABLES.map((definition) => [definition.key, { inserted: 0n, updated: 0n }]));
@@ -1621,18 +1773,127 @@ async function flushPreparedKeys(sourceEndpoint, definition, pending, emit) {
   pending.length = 0;
 }
 
-async function streamPreparePass({
+export class InsertSpool {
+  constructor(tableKey) {
+    this.tableKey = tableKey;
+    this.tempDir = null;
+    this.filePath = null;
+    this.fileHandle = null;
+    this.count = 0;
+  }
+
+  async init() {
+    this.tempDir = await mkdtemp(joinPath(tmpdir(), "cutover-spool-"), { mode: 0o700 });
+    await chmod(this.tempDir, 0o700);
+    this.filePath = joinPath(this.tempDir, `inserts_${this.tableKey}.jsonl`);
+    this.fileHandle = await open(this.filePath, "w", 0o600);
+    await chmod(this.filePath, 0o600);
+  }
+
+  async append(key) {
+    if (!this.fileHandle) {
+      await this.init();
+    }
+    await this.fileHandle.writeFile(canonicalJson(key) + "\n", "utf8");
+    this.count += 1;
+  }
+
+  async closeWrite() {
+    if (this.fileHandle) {
+      await this.fileHandle.close();
+      this.fileHandle = null;
+    }
+  }
+
+  async *readBatches(batchSize) {
+    await this.closeWrite();
+    if (!this.filePath || this.count === 0) return;
+    const fileStream = createReadStream(this.filePath, { encoding: "utf8" });
+    const lineReader = readline.createInterface({
+      input: fileStream,
+      crlfDelay: Infinity,
+    });
+    let readCount = 0;
+    let currentBatch = [];
+    try {
+      for await (const line of lineReader) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let key;
+        try {
+          key = JSON.parse(trimmed);
+        } catch (err) {
+          fail("SPOOL_CORRUPT", "corrupt JSON entry in spool file for " + this.tableKey, { cause: err });
+        }
+        currentBatch.push(key);
+        readCount += 1;
+        if (currentBatch.length >= batchSize) {
+          yield currentBatch;
+          currentBatch = [];
+        }
+      }
+      if (currentBatch.length) {
+        yield currentBatch;
+      }
+    } finally {
+      lineReader.close();
+      fileStream.destroy();
+      if (!fileStream.closed) {
+        try {
+          await once(fileStream, "close");
+        } catch {}
+      }
+    }
+    if (readCount !== this.count) {
+      fail("SPOOL_COUNT_MISMATCH", `spool readback count mismatch for ${this.tableKey}: expected ${this.count}, read ${readCount}`);
+    }
+  }
+
+  async cleanup() {
+    let firstError = null;
+    if (this.fileHandle) {
+      try {
+        await this.fileHandle.close();
+      } catch (err) {
+        if (!firstError) firstError = err;
+      }
+      this.fileHandle = null;
+    }
+    if (this.filePath) {
+      try {
+        await unlink(this.filePath);
+      } catch (err) {
+        if (err.code !== "ENOENT" && !firstError) firstError = err;
+      }
+      this.filePath = null;
+    }
+    if (this.tempDir) {
+      try {
+        await rmdir(this.tempDir);
+      } catch (err) {
+        if (err.code !== "ENOENT" && !firstError) firstError = err;
+      }
+      this.tempDir = null;
+    }
+    if (firstError) {
+      fail("SPOOL_CLEANUP_FAILED", "failed to clean up spool file/directory for " + this.tableKey, { cause: firstError });
+    }
+  }
+}
+
+async function streamPrepareSinglePass({
   sourceEndpoint,
   targetEndpoint,
   batchSize,
   definition,
-  phase,
   emit,
 }) {
-    const key = definition.key;
-    const sourceIterator = sourceEndpoint.scanDigestEntries(key)[Symbol.asyncIterator]();
-    const targetIterator = targetEndpoint.scanDigestEntries(key)[Symbol.asyncIterator]();
-    const pending = [];
+  const key = definition.key;
+  const sourceIterator = sourceEndpoint.scanDigestEntries(key)[Symbol.asyncIterator]();
+  const targetIterator = targetEndpoint.scanDigestEntries(key)[Symbol.asyncIterator]();
+  const updatePending = [];
+  const insertSpool = new InsertSpool(key);
+  try {
     let sourceEntry = await nextValue(sourceIterator);
     let targetEntry = await nextValue(targetIterator);
     while (sourceEntry !== null || targetEntry !== null) {
@@ -1640,23 +1901,13 @@ async function streamPreparePass({
         fail("PREPARE_TARGET_ONLY_KEY", "prepare-forward target contains a key absent from source in " + key);
       }
       if (targetEntry === null) {
-        if (phase === "insert") {
-          pending.push({ action: "insert", key: sourceEntry.key });
-          if (pending.length >= batchSize) {
-            await flushPreparedKeys(sourceEndpoint, definition, pending, emit);
-          }
-        }
+        await insertSpool.append(sourceEntry.key);
         sourceEntry = await nextValue(sourceIterator);
         continue;
       }
       const comparison = comparePrimaryKeys(definition, sourceEntry.key, targetEntry.key);
       if (comparison < 0) {
-        if (phase === "insert") {
-          pending.push({ action: "insert", key: sourceEntry.key });
-          if (pending.length >= batchSize) {
-            await flushPreparedKeys(sourceEndpoint, definition, pending, emit);
-          }
-        }
+        await insertSpool.append(sourceEntry.key);
         sourceEntry = await nextValue(sourceIterator);
         continue;
       }
@@ -1671,44 +1922,41 @@ async function streamPreparePass({
         if (sourceEntry.immutableHash !== targetEntry.immutableHash) {
           fail("RECEIPT_IMMUTABLE_DRIFT", "prepare-forward receipt immutable fields differ");
         }
-        if (phase === "update" && receiptUpdateNeeded(sourceEntry.mutable, targetEntry.mutable)) {
+        if (receiptUpdateNeeded(sourceEntry.mutable, targetEntry.mutable)) {
           await emit(Object.freeze({
             table: definition.key,
             action: "update",
             row: sourceEntry.mutable,
           }));
-        } else if (phase !== "update") {
-          receiptUpdateNeeded(sourceEntry.mutable, targetEntry.mutable);
         }
-      } else if (phase === "update" && sourceEntry.fullHash !== targetEntry.fullHash) {
-        pending.push({ action: "update", key: sourceEntry.key });
-        if (pending.length >= batchSize) {
-          await flushPreparedKeys(sourceEndpoint, definition, pending, emit);
+      } else if (sourceEntry.fullHash !== targetEntry.fullHash) {
+        updatePending.push({ action: "update", key: sourceEntry.key });
+        if (updatePending.length >= batchSize) {
+          await flushPreparedKeys(sourceEndpoint, definition, updatePending, emit);
         }
       }
       sourceEntry = await nextValue(sourceIterator);
       targetEntry = await nextValue(targetIterator);
     }
-    await flushPreparedKeys(sourceEndpoint, definition, pending, emit);
+    await flushPreparedKeys(sourceEndpoint, definition, updatePending, emit);
+
+    for await (const batchKeys of insertSpool.readBatches(batchSize)) {
+      const pendingInserts = batchKeys.map((k) => ({ action: "insert", key: k }));
+      await flushPreparedKeys(sourceEndpoint, definition, pendingInserts, emit);
+    }
+  } finally {
+    await insertSpool.cleanup();
+  }
 }
 
-async function streamPrepareOperations({ sourceEndpoint, targetEndpoint, batchSize, emit }) {
+export async function streamPrepareOperations({ sourceEndpoint, targetEndpoint, batchSize, emit }) {
   for (const key of APPLY_ORDER) {
     const definition = tableForKey(key);
-    await streamPreparePass({
+    await streamPrepareSinglePass({
       sourceEndpoint,
       targetEndpoint,
       batchSize,
       definition,
-      phase: "update",
-      emit,
-    });
-    await streamPreparePass({
-      sourceEndpoint,
-      targetEndpoint,
-      batchSize,
-      definition,
-      phase: "insert",
       emit,
     });
   }
@@ -1758,7 +2006,7 @@ function classifyPrepareOperation(definition, sourceEntry, targetEntry) {
   return sourceEntry.fullHash === targetEntry.fullHash ? null : "update";
 }
 
-async function applyPrepareBatch({ sourceEndpoint, targetEndpoint, definition, sourceEntries }) {
+export async function applyPrepareBatch({ sourceEndpoint, targetEndpoint, definition, sourceEntries }) {
   const keys = sourceEntries.map((entry) => entry.key);
   const targetEntries = await targetEndpoint.fetchDigestEntriesByKeys(definition.key, keys);
   const targetByKey = new Map(targetEntries.map((entry) => [primaryKeyToken(definition.key, entry.key), entry]));
@@ -1781,13 +2029,35 @@ async function applyPrepareBatch({ sourceEndpoint, targetEndpoint, definition, s
       if (!descriptor.row) fail("SOURCE_ROW_MISSING_DURING_APPLY", "source row vanished during prepare apply");
     }
   }
+  const flushInserts = async (insertRows) => {
+    if (insertRows.length === 0) return;
+    if (typeof targetEndpoint.applyInsertBatch === "function") {
+      await targetEndpoint.applyInsertBatch(definition.key, insertRows);
+    } else {
+      for (const row of insertRows) {
+        await targetEndpoint.applyOperation(Object.freeze({
+          table: definition.key,
+          action: "insert",
+          row,
+        }));
+      }
+    }
+    insertRows.length = 0;
+  };
+  const pendingInserts = [];
   for (const descriptor of descriptors) {
-    await targetEndpoint.applyOperation(Object.freeze({
-      table: definition.key,
-      action: descriptor.action,
-      row: descriptor.row,
-    }));
+    if (descriptor.action === "insert") {
+      pendingInserts.push(descriptor.row);
+    } else {
+      await flushInserts(pendingInserts);
+      await targetEndpoint.applyOperation(Object.freeze({
+        table: definition.key,
+        action: descriptor.action,
+        row: descriptor.row,
+      }));
+    }
   }
+  await flushInserts(pendingInserts);
 }
 
 async function applyPrepareConvergence({ sourceEndpoint, targetEndpoint, batchSize }) {
@@ -2023,6 +2293,7 @@ export async function runPrepareForward({
   endpointFactory = defaultEndpointFactory,
   batchSize = DEFAULT_BATCH_SIZE,
   testDatabaseNames = null,
+  onProgress = null,
 }) {
   if (!sourcePool || !targetPool) fail("POOL_INVALID", "source and target pools are required");
   const size = parseBatchSize(batchSize);
@@ -2037,7 +2308,10 @@ export async function runPrepareForward({
   let targetCommitAttempted = false;
   let targetCommitError = null;
   try {
+    const t0 = Date.now();
+    emitProgress(onProgress, "begin", 0);
     pair = await beginPair({ sourcePool, targetPool, endpointFactory, batchSize: size });
+    const tPresnapshot = Date.now();
     const frozenSource = await snapshotEndpoint(pair.source, { testDatabaseNames });
     const frozenTarget = await snapshotEndpoint(pair.target, { testDatabaseNames });
     assertApprovedPrepareDirection(
@@ -2052,6 +2326,11 @@ export async function runPrepareForward({
       fail("PREPARE_SIDE_TABLE_NOT_EMPTY", "authoritative source subscription and gate must be empty before forward preparation");
     }
     assertSequenceConfigurationsCompatible(frozenSource, frozenTarget);
+    const presnapshotDuration = Date.now() - tPresnapshot;
+    emitProgress(onProgress, "presnapshot", presnapshotDuration, {
+      sourceTables: Object.keys(frozenSource.tables).length,
+      targetTables: Object.keys(frozenTarget.tables).length,
+    });
 
     const alreadyApplied = snapshotsEqual(frozenSource, frozenTarget);
     if (alreadyApplied) {
@@ -2065,6 +2344,9 @@ export async function runPrepareForward({
       if (execute && approvedPlanHash !== plan.planHash) {
         fail("PLAN_HASH_MISMATCH", "frozen prepare-forward plan differs from the approved plan hash");
       }
+      if (execute) {
+        emitProgress(onProgress, "validatehash", 0, { inserts: 0, updates: 0, total: 0 });
+      }
       const sourceRollback = await safeRollback(pair.source);
       const targetRollback = await safeRollback(pair.target);
       if (sourceRollback || targetRollback) fail("OUTCOME_UNVERIFIED", "already-applied prepare snapshot release failed");
@@ -2072,6 +2354,7 @@ export async function runPrepareForward({
       safeRelease(pair.target);
       pair = null;
       if (!execute) {
+        emitProgress(onProgress, "finish", Date.now() - t0, { inserts: 0, updates: 0, total: 0 });
         return prepareResult({
           mode: "dry-run",
           state: "already_applied",
@@ -2082,6 +2365,7 @@ export async function runPrepareForward({
           readyForForwardBaseline: true,
         });
       }
+      const tReadback = Date.now();
       const readback = await authoritativeReadback({
         sourcePool,
         targetPool,
@@ -2092,6 +2376,11 @@ export async function runPrepareForward({
         commitUncertain: false,
         testDatabaseNames,
       });
+      emitProgress(onProgress, "freshreadback", Date.now() - tReadback, {
+        sourceTables: Object.keys(readback.source.tables).length,
+        targetTables: Object.keys(readback.target.tables).length,
+      });
+      emitProgress(onProgress, "finish", Date.now() - t0, { inserts: 0, updates: 0, total: 0 });
       return prepareResult({
         mode: "execute",
         state: "already_applied",
@@ -2110,6 +2399,9 @@ export async function runPrepareForward({
       targetSnapshot: frozenTarget,
       batchSize: size,
     });
+    const planDuration = Date.now() - tPresnapshot - presnapshotDuration;
+    const planCounts = summarizePlanCounts(planned.counts);
+    emitProgress(onProgress, "plan", planDuration, planCounts);
     if (!execute) {
       const sourceRollback = await safeRollback(pair.source);
       const targetRollback = await safeRollback(pair.target);
@@ -2117,6 +2409,7 @@ export async function runPrepareForward({
       safeRelease(pair.source);
       safeRelease(pair.target);
       pair = null;
+      emitProgress(onProgress, "finish", Date.now() - t0, planCounts);
       return prepareResult({
         mode: "dry-run",
         state: "planned",
@@ -2127,6 +2420,7 @@ export async function runPrepareForward({
         readyForForwardBaseline: false,
       });
     }
+    const tValidate = Date.now();
     if (approvedPlanHash !== planned.planHash) {
       fail("PLAN_HASH_MISMATCH", "frozen prepare-forward plan differs from the approved plan hash");
     }
@@ -2139,7 +2433,10 @@ export async function runPrepareForward({
       batchSize: size,
     });
     assertPlanMatches(planned, recalculated, "PREPARE_PLAN_DRIFT");
+    const validateDuration = Date.now() - tValidate;
+    emitProgress(onProgress, "validatehash", validateDuration, planCounts);
 
+    const tApply = Date.now();
     assertExpectedTriggers(await pair.target.readTriggerStates());
     await pair.target.setControlledTriggers(false);
     assertExpectedTriggers(await pair.target.readTriggerStates(), { controlledEnabled: false });
@@ -2151,6 +2448,9 @@ export async function runPrepareForward({
     await alignTargetSequences(pair.target, frozenSource);
     await pair.target.setControlledTriggers(true);
     assertExpectedTriggers(await pair.target.readTriggerStates());
+    const applyDuration = Date.now() - tApply;
+    emitProgress(onProgress, "apply", applyDuration, planCounts);
+    const tFinalValidation = Date.now();
     await verifyFrozenFinalState({
       sourceEndpoint: pair.source,
       targetEndpoint: pair.target,
@@ -2163,7 +2463,10 @@ export async function runPrepareForward({
     if (sourceRollback) fail("SOURCE_RELEASE_FAILED", "prepare source frozen transaction could not be released");
     safeRelease(pair.source);
     pair.source = null;
+    const finalValidationDuration = Date.now() - tFinalValidation;
+    emitProgress(onProgress, "finalvalidation", finalValidationDuration);
 
+    const tCommit = Date.now();
     targetCommitAttempted = true;
     try {
       await pair.target.commit();
@@ -2172,7 +2475,10 @@ export async function runPrepareForward({
     }
     safeRelease(pair.target, Boolean(targetCommitError));
     pair.target = null;
+    const commitDuration = Date.now() - tCommit;
+    emitProgress(onProgress, "commit", commitDuration);
 
+    const tReadback = Date.now();
     const readback = await authoritativeReadback({
       sourcePool,
       targetPool,
@@ -2184,6 +2490,12 @@ export async function runPrepareForward({
       testDatabaseNames,
     });
     pair = null;
+    const readbackDuration = Date.now() - tReadback;
+    emitProgress(onProgress, "freshreadback", readbackDuration, {
+      sourceTables: Object.keys(readback.source.tables).length,
+      targetTables: Object.keys(readback.target.tables).length,
+    });
+    emitProgress(onProgress, "finish", Date.now() - t0, planCounts);
     return prepareResult({
       mode: "execute",
       state: "applied",
@@ -2406,6 +2718,7 @@ export function parseArguments(argv) {
   let approvedPlanHash = null;
   let approvedSourceIdentityFingerprint = null;
   let approvedTargetIdentityFingerprint = null;
+  let progress = false;
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (mode === null && (token === "forward" || token === "prepare-forward" || token === "reverse")) {
@@ -2415,6 +2728,11 @@ export function parseArguments(argv) {
     if (token === "--execute") {
       if (execute) fail("DUPLICATE_ARGUMENT", "--execute was repeated");
       execute = true;
+      continue;
+    }
+    if (token === "--progress") {
+      if (progress) fail("DUPLICATE_ARGUMENT", "--progress was repeated");
+      progress = true;
       continue;
     }
     if (token === "--baseline" || token === "--approved-plan-hash" ||
@@ -2465,14 +2783,21 @@ export function parseArguments(argv) {
       fail("IDENTITY_FINGERPRINT_INVALID", "approved identity fingerprints must be lowercase SHA-256");
     }
   }
-  return Object.freeze({
+  const result = {
     mode,
     execute,
     baselinePath,
     approvedPlanHash,
     approvedSourceIdentityFingerprint,
     approvedTargetIdentityFingerprint,
+  };
+  Object.defineProperty(result, "progress", {
+    value: progress,
+    enumerable: progress,
+    writable: false,
+    configurable: true,
   });
+  return Object.freeze(result);
 }
 
 function databaseUrl(environment, role) {
@@ -2498,11 +2823,20 @@ export async function main({
   stderr = process.stderr,
   poolFactory = defaultPoolFactory,
   endpointFactory = defaultEndpointFactory,
+  onProgress = null,
 } = {}) {
   let sourcePool;
   let targetPool;
   try {
     const args = parseArguments(argv);
+    const progressOptIn = Boolean(
+      args.progress ||
+      environment.FNOS_WEBHOOK_PROGRESS === "1" ||
+      environment.FNOS_WEBHOOK_PROGRESS === "true"
+    );
+    const progressSink = onProgress ?? (progressOptIn ? (event) => {
+      stderr.write(JSON.stringify(event) + "\n");
+    } : null);
     const sourceUrl = databaseUrl(environment, "source");
     const targetUrl = databaseUrl(environment, "target");
     if (sourceUrl === targetUrl) fail("SAME_DATABASE", "source and target database URLs must differ");
@@ -2522,6 +2856,7 @@ export async function main({
         approvedTargetIdentityFingerprint: args.approvedTargetIdentityFingerprint,
         endpointFactory,
         batchSize,
+        onProgress: progressSink,
       });
     } else {
       let baseline;

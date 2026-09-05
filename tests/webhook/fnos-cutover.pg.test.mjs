@@ -26,6 +26,54 @@ const SSH_ENABLED = process.env.FNOS_WEBHOOK_PG_TEST_SSH === "1";
 const SSH_ACKNOWLEDGEMENT = "CREATE_AND_DROP_DEDICATED_DATABASES_OVER_SSH_STDIO";
 const ACKNOWLEDGEMENT = "CREATE_AND_DROP_DEDICATED_DATABASES";
 const SSH_BATCH_SIZE = 250;
+const SSH_TIMING_ENABLED = process.env.FNOS_WEBHOOK_PG_TEST_TIMING === "1";
+
+export function createTimingProgressSink(kind, { stream = process.stderr, enabled = SSH_TIMING_ENABLED } = {}) {
+  if (!enabled) return null;
+  if (kind !== "dry" && kind !== "execute") {
+    throw new Error("Invalid timing sink kind");
+  }
+  return (event) => {
+    if (!event || typeof event !== "object") return;
+    const payload = {
+      kind,
+      phase: String(event.phase),
+      durationMs: typeof event.durationMs === "number" ? event.durationMs : 0,
+    };
+    if (event.counts && typeof event.counts === "object") {
+      payload.counts = event.counts;
+    }
+    stream.write(JSON.stringify(payload) + "\n");
+  };
+}
+
+export class InstrumentedPgEndpoint extends PgEndpoint {
+  constructor(pool, role, options, metricsCollector) {
+    super(pool, role, options);
+    this.metricsCollector = metricsCollector;
+  }
+
+  async applyInsertBatch(tableKey, rows) {
+    const result = await super.applyInsertBatch(tableKey, rows);
+    if (this.metricsCollector) {
+      this.metricsCollector.insertBatches += 1;
+      this.metricsCollector.insertedRows += rows.length;
+    }
+    return result;
+  }
+
+  async applyOperation(operation) {
+    const result = await super.applyOperation(operation);
+    if (this.metricsCollector) {
+      if (operation.action === "insert") {
+        this.metricsCollector.singleInserts += 1;
+      } else if (operation.action === "update") {
+        this.metricsCollector.singleUpdates += 1;
+      }
+    }
+    return result;
+  }
+}
 const FORWARD_BASELINE_DIRECTIVE_READINESS = Object.freeze({
   pending_directives: "60",
   retry_directives: "60",
@@ -1273,11 +1321,24 @@ test("SSH stdio PostgreSQL prepare/reverse covers topology, fnOS delta reverse, 
       ...direction,
       batchSize: SSH_BATCH_SIZE,
       testDatabaseNames,
+      onProgress: createTimingProgressSink("dry"),
     });
     assert.deepEqual(dry.counts.receipt, { inserted: "1000", updated: "1" });
     assert.equal(dry.counts.heartbeat.inserted, "1000");
 
     primaryStage = reportSshPrimaryStage(t, "prepare_forward_execute");
+    const targetMetrics = {
+      insertBatches: 0,
+      insertedRows: 0,
+      singleInserts: 0,
+      singleUpdates: 0,
+    };
+    const instrumentedEndpointFactory = (pool, role, options) => {
+      if (role === "target") {
+        return new InstrumentedPgEndpoint(pool, role, options, targetMetrics);
+      }
+      return new PgEndpoint(pool, role, options);
+    };
     const executed = await runPrepareForward({
       sourcePool,
       targetPool,
@@ -1286,10 +1347,21 @@ test("SSH stdio PostgreSQL prepare/reverse covers topology, fnOS delta reverse, 
       approvedPlanHash: dry.planHash,
       batchSize: SSH_BATCH_SIZE,
       testDatabaseNames,
+      onProgress: createTimingProgressSink("execute"),
+      endpointFactory: instrumentedEndpointFactory,
     });
     assert.equal(executed.readyForForwardBaseline, true);
     assert.deepEqual(executed.source.tables, executed.target.tables);
     assert.deepEqual(executed.source.sequences, executed.target.sequences);
+    assert.equal(targetMetrics.insertedRows, 5000);
+    // Source batches include 200 baseline rows: inserts per table are
+    // 50 + 250 + 250 + 250 + 200, not four independent delta-only batches.
+    assert.equal(targetMetrics.insertBatches, 25);
+    assert.equal(targetMetrics.singleInserts, 0);
+    assert.equal(targetMetrics.singleUpdates, 4);
+    if (SSH_TIMING_ENABLED) {
+      process.stderr.write(JSON.stringify({ kind: "execute_metrics", ...targetMetrics }) + "\n");
+    }
 
     primaryStage = reportSshPrimaryStage(t, "forward_baseline");
     const baseline = await runForward({
@@ -1414,4 +1486,219 @@ test("SSH stdio PostgreSQL prepare/reverse covers topology, fnOS delta reverse, 
       registry,
     }),
   });
+});
+
+test("SSH timing sink defaults to null and silent when FNOS_WEBHOOK_PG_TEST_TIMING is unset", () => {
+  const sink = createTimingProgressSink("dry", { enabled: false });
+  assert.equal(sink, null);
+  const defaultSink = createTimingProgressSink("dry");
+  if (process.env.FNOS_WEBHOOK_PG_TEST_TIMING !== "1") {
+    assert.equal(defaultSink, null);
+  }
+});
+
+test("SSH timing sink outputs NDJSON with controlled kind and safe event fields when enabled", () => {
+  const lines = [];
+  const mockStream = {
+    write(chunk) {
+      lines.push(chunk);
+      return true;
+    },
+  };
+  const drySink = createTimingProgressSink("dry", { stream: mockStream, enabled: true });
+  assert.equal(typeof drySink, "function");
+  drySink({ phase: "plan", durationMs: 120, counts: { inserts: 1000, updates: 1, total: 1001 } });
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].endsWith("\n"));
+  const parsedDry = JSON.parse(lines[0].trim());
+  assert.deepEqual(parsedDry, {
+    kind: "dry",
+    phase: "plan",
+    durationMs: 120,
+    counts: { inserts: 1000, updates: 1, total: 1001 },
+  });
+
+  const execSink = createTimingProgressSink("execute", { stream: mockStream, enabled: true });
+  execSink({ phase: "apply", durationMs: 450, counts: { inserts: 1000, updates: 1, total: 1001 } });
+  assert.equal(lines.length, 2);
+  const parsedExec = JSON.parse(lines[1].trim());
+  assert.deepEqual(parsedExec, {
+    kind: "execute",
+    phase: "apply",
+    durationMs: 450,
+    counts: { inserts: 1000, updates: 1, total: 1001 },
+  });
+});
+
+test("SSH timing sink strictly strips sensitive sentinels like SQL, connection strings, DB names, and payloads", () => {
+  const lines = [];
+  const mockStream = {
+    write(chunk) {
+      lines.push(chunk);
+      return true;
+    },
+  };
+  const sink = createTimingProgressSink("dry", { stream: mockStream, enabled: true });
+  sink({
+    phase: "apply",
+    durationMs: 100,
+    counts: { inserts: 50 },
+    sql: "SELECT * FROM secrets",
+    connectionUrl: "postgresql://user:pass@host:5432/db",
+    databaseName: "shein_fm_test_123",
+    payload: { sensitive: "data" },
+    rows: [{ receipt_id: 1 }],
+  });
+  assert.equal(lines.length, 1);
+  const parsed = JSON.parse(lines[0].trim());
+  assert.deepEqual(parsed, {
+    kind: "dry",
+    phase: "apply",
+    durationMs: 100,
+    counts: { inserts: 50 },
+  });
+  assert.equal("sql" in parsed, false);
+  assert.equal("connectionUrl" in parsed, false);
+  assert.equal("databaseName" in parsed, false);
+  assert.equal("payload" in parsed, false);
+  assert.equal("rows" in parsed, false);
+});
+
+test("SSH timing sink validates kind and handles invalid inputs gracefully", () => {
+  assert.throws(() => createTimingProgressSink("invalid_kind", { enabled: true }), {
+    message: "Invalid timing sink kind",
+  });
+  const lines = [];
+  const mockStream = { write(chunk) { lines.push(chunk); return true; } };
+  const sink = createTimingProgressSink("dry", { stream: mockStream, enabled: true });
+  sink(null);
+  sink(undefined);
+  sink("not_an_object");
+  assert.equal(lines.length, 0);
+});
+
+test("InstrumentedPgEndpoint tracks applyInsertBatch batches and row counts without leaking rows", async () => {
+  const metrics = {
+    insertBatches: 0,
+    insertedRows: 0,
+    singleInserts: 0,
+    singleUpdates: 0,
+  };
+  let delegateCalledWith = null;
+  const fakePool = { async connect() {} };
+  const endpoint = new InstrumentedPgEndpoint(fakePool, "target", {}, metrics);
+  let capturedSql = null;
+  endpoint.client = {
+    async query(sql, values) {
+      capturedSql = sql;
+      return { rowCount: values.length / 16 }; // receipt has 16 columns
+    },
+  };
+  endpoint.applyOperation = async (op) => {
+    delegateCalledWith = op;
+  };
+
+  // Simulate a batch of 250 rows
+  const fakeRows = Array.from({ length: 250 }, (_, i) => ({
+    receipt_id: String(i + 1),
+    idempotency_key: "k".repeat(64),
+    app_key_hash: "a".repeat(64),
+    open_key_hash: "o".repeat(64),
+    event_code: "1234567",
+    event_path: "/event/test",
+    store_id: "1",
+    delivery_scope: "STORE",
+    platform_timestamp: "2026-09-03 12:34:56.789123+00",
+    cipher_sha256: "c".repeat(64),
+    ciphertext: "ciphertext",
+    safe_projection: {},
+    duplicate_count: 0,
+    last_duplicate_at: null,
+    received_at: "2026-09-03 12:34:56.789123+00",
+    created_at: "2026-09-03 12:34:56.789123+00",
+  }));
+  await endpoint.applyInsertBatch("receipt", fakeRows);
+
+  assert.equal(metrics.insertBatches, 1);
+  assert.equal(metrics.insertedRows, 250);
+  assert.equal(metrics.singleInserts, 0);
+  assert.equal(metrics.singleUpdates, 0);
+  assert.ok(capturedSql && capturedSql.includes("INSERT INTO"));
+  assert.equal(Object.keys(metrics).length, 4);
+  // Metrics contain purely numbers
+  for (const val of Object.values(metrics)) {
+    assert.equal(typeof val, "number");
+  }
+});
+
+test("InstrumentedPgEndpoint tracks single updates and ensures batch inserts do not increment single updates", async () => {
+  const metrics = {
+    insertBatches: 0,
+    insertedRows: 0,
+    singleInserts: 0,
+    singleUpdates: 0,
+  };
+  const fakePool = { async connect() {} };
+  const endpoint = new InstrumentedPgEndpoint(fakePool, "target", {}, metrics);
+  let capturedSql;
+  endpoint.client = { async query(sql) { capturedSql = sql; return { rowCount: 1 }; } };
+
+  await endpoint.applyOperation({ table: "receipt", action: "update", row: { receipt_id: "1", duplicate_count: 5 } });
+  assert.match(capturedSql, /^UPDATE "raw"\."webhook_receipt"/);
+  assert.equal(metrics.singleUpdates, 1);
+  assert.equal(metrics.singleInserts, 0);
+  assert.equal(metrics.insertBatches, 0);
+  assert.equal(metrics.insertedRows, 0);
+});
+
+test("InstrumentedPgEndpoint metrics do not pollute planHash or expose row payloads", () => {
+  const metrics = {
+    insertBatches: 25,
+    insertedRows: 5000,
+    singleInserts: 0,
+    singleUpdates: 4,
+  };
+  const serialized = JSON.stringify({ kind: "execute_metrics", ...metrics });
+  const parsed = JSON.parse(serialized);
+  assert.deepEqual(parsed, {
+    kind: "execute_metrics",
+    insertBatches: 25,
+    insertedRows: 5000,
+    singleInserts: 0,
+    singleUpdates: 4,
+  });
+  assert.equal("payload" in parsed, false);
+  assert.equal("row" in parsed, false);
+  assert.equal("planHash" in parsed, false);
+});
+
+test("instrumentation never reports a missing or failed batch method as successful", async (t) => {
+  const metrics = { insertBatches: 0, insertedRows: 0, singleInserts: 0, singleUpdates: 0 };
+  const endpoint = new InstrumentedPgEndpoint({}, "target", {}, metrics);
+  let queries = 0;
+  endpoint.client = { async query() { queries += 1; throw new Error("synthetic_batch_failure"); } };
+  await assert.rejects(endpoint.applyInsertBatch("receipt", [{}]), /synthetic_batch_failure/);
+  assert.equal(queries, 1);
+  assert.deepEqual(metrics, { insertBatches: 0, insertedRows: 0, singleInserts: 0, singleUpdates: 0 });
+  const original = PgEndpoint.prototype.applyInsertBatch;
+  try {
+    PgEndpoint.prototype.applyInsertBatch = undefined;
+    await assert.rejects(endpoint.applyInsertBatch("receipt", [{}]), TypeError);
+    assert.equal(queries, 1, "missing batch implementation must not fall back to single inserts");
+    assert.equal(metrics.insertedRows, 0);
+  } finally {
+    PgEndpoint.prototype.applyInsertBatch = original;
+  }
+});
+
+test("SSH fixture insert batch arithmetic includes the baseline prefix", () => {
+  const counts = [];
+  for (let start = 1; start <= 1200; start += SSH_BATCH_SIZE) {
+    const end = Math.min(start + SSH_BATCH_SIZE - 1, 1200);
+    const inserted = Math.max(0, end - Math.max(start, 201) + 1);
+    if (inserted) counts.push(inserted);
+  }
+  assert.deepEqual(counts, [50, 250, 250, 250, 200]);
+  assert.equal(counts.length * 5, 25);
+  assert.equal(counts.reduce((sum, n) => sum + n, 0) * 5, 5000);
 });

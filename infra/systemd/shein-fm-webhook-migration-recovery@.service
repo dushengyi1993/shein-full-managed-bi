@@ -1,0 +1,19 @@
+[Unit]
+Description=Bounded pre-cutover cloud Webhook recovery (%i seconds)
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/node -e "const s=Number(process.argv[1]);if(![900,1260].includes(s))process.exit(64);setTimeout(()=>{try{require('node:child_process').execFileSync('/usr/bin/systemctl',['start','shein-fm-webhook-receiver.service','shein-fm-webhook-worker.service'],{stdio:'ignore',timeout:30000});}catch{process.exitCode=1;}},s*1000)" %i
+TimeoutStopSec=10s
+KillMode=control-group
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX
+
+# Install only in /run/systemd/system, never enable. Retain this definition
+# until handover is verified so a stopped instance remains queryable.
+# Pre-cutover cloud recovery ONLY: all instances must be stopped and verified
+# before enabling the VM Webhook writer or changing the public upstream.
