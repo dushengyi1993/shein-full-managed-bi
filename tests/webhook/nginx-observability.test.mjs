@@ -34,8 +34,15 @@ test('Webhook safe log format contains exact discriminator variables and preserv
   assert.ok(match, 'log_format shein_fm_webhook_safe must exist in nginx config');
   const logFormat = match[1];
 
-  // 1. Fixed three discriminator variables at the end
+  // 1. Preserve rejection discriminators and add only built-in timing fields.
   assert.match(logFormat, /upstream=\$upstream_status\s+limit_conn=\$limit_conn_status\s+limit_req=\$limit_req_status/);
+  assert.match(logFormat, /connect_time=\$upstream_connect_time\s+header_time=\$upstream_header_time\s+response_time=\$upstream_response_time/);
+  assert.deepEqual([...new Set(logFormat.match(/\$[a-z0-9_]+/g))].sort(), [
+    '$remote_addr', '$time_iso8601', '$request_method', '$uri', '$status',
+    '$request_time', '$request_length', '$upstream_status', '$limit_conn_status',
+    '$limit_req_status', '$upstream_connect_time', '$upstream_header_time',
+    '$upstream_response_time',
+  ].sort(), 'Log fields must remain a closed allowlist');
 
   // 2. Existing baseline log fields must be preserved
   assert.match(logFormat, /\$remote_addr/);

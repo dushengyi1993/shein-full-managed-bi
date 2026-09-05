@@ -155,3 +155,107 @@
 - 两个服务分别按Invocation读管理器日志均Deactivated successfully；pending marker最终不存在。dashboard.home.json mtime20:25:39.544Z、dashboard.json mtime20:25:40.252Z，证明本次生成完成，不证明业务源时间推进：两者内容updatedAt仍19:17:37.698Z/20:04:40.801Z，销量quality仍partial。
 - order-management.next.json updatedAt20:25:45.826Z、coverage PARTIAL/promotable=false，继续禁止晋升。事件监听→合并等待→物化路径通过，局部数据覆盖门禁没有放宽。
 - 本地Webhook全套228测试：226通过、0失败、2项真实数据库测试跳过；新增安全日志2测试通过，staged diff检查通过。代码/文档仅准备本地版本记录，不推送、发tag或触发CI。
+
+### 04:30后订单Session快照缺失定位（只读）
+
+- canonical `/srv/shein-fm/runtime/dashboard/order-management.sessions.json` 现场不存在；当前物化候选六个SESSION_HTTP页均为SESSION_SNAPSHOT_ABSENT。0行表示未取得快照，不代表这些域无业务记录。
+- 旧候选 `/run/shein-fm-webapi/order-management-candidate-20260905.json` 仍存在，12096553字节、mtime2026-09-05T14:21:19.390Z，内容updatedAt14:19:42.127Z、roster25。未替换正式快照、未重新采集。
+- 旧候选四页AVAILABLE且25店四项校验全通过：waybills3378、return-applications472、return-orders696、value-added-services382行。stock-records PARTIAL/storeCount3、exceptions PARTIAL/storeCount16、quality-reports UNAVAILABLE/storeCount0。
+- 独立汇总perStore证据：stock22店totalVerified/contentVerified为false，但25店paging/dedupe均true；exceptions9店total/paging/content为false；quality25店total/paging/content为false，三页dedupe均true。exceptions/quality存在字符串形式fetch failures，尚未解析具体原因；不能从这些门禁单独断言认证过期或真实缺单数。
+- 后续静态生成/推广链路核对已交给GLM5.3Flash；已按用户要求关闭此前Gemini子代理。此时05:45日更timer仍active且未触发，不能保证它将自动补齐全部候选。
+
+### 新日志已区分入口503（04:29样本）
+
+- 新格式实际32条POST：26条200/upstream200/limit_connPASSED/limit_reqPASSED，6条503/upstream-/limit_connREJECTED/limit_reqPASSED。这六条可明确归因为Nginx并发连接限制，而非应用拒绝；不得将此证据倒推至03:10旧格式样本。
+- 聚合来源只有一个IP（未输出IP值）；成功耗时min0.551s/median0.618s/p950.802s/max0.803s。04:29:24–25突发20成功、6拒绝，04:30:38–04:31:03另有6成功；后者数量相同不证明与先前拒绝请求逐条对应。
+- 保持现有限制不变，GLM只读审查当前并发、超时与PG池约束后再决定是否需要变更；未用HTTP状态码改名冒充解决投递可靠性。
+- 首个bai GLM快照explorer明确以通道401鉴权错误终结，已关闭；这不是SHEIN认证过期。按用户先前指定的codexapis渠道重新分配同一GLM5.3Flash只读任务；派发已接受，但尚未取得终态交付。未回退Gemini、未修改全局配置。
+- 随后codexapis任务通知为429重试耗尽，未形成交付。另需保留状态差异：首个bai任务关闭调用返回previous_status=running，与先前errored通知不一致；已显式关闭并取消其旧只读范围，不将其描述为始终停止。通道错误不计为业务故障或迁移验收通过。
+
+### 04:40前后日更接线独立核对
+
+- 失败explorer范围由主代理明确接回只读检查。主代理实读源码，并在VM导入当前release的buildCoordinatorPlan('daily-operations')独立输出阶段：只有home-history与home-ledger。05:45日更不会生成order-management.sessions.json；不能以等待此日更替代修复订单快照缺口。
+- sync_full_managed_order_management_sessions.mjs会将构造出的快照写到明确output，包含PARTIAL页也会写候选；CLI要求完整25店范围。没有证据可将canonical不存在单独归因于它的全量写出门禁，也不能为单店诊断直接放宽该CLI范围要求。
+- 按源码safeFetchFailure格式对白名单错误码脱敏分类旧候选：quality-reports 25店ORDER_MANAGEMENT_AUTH_EXPIRED/PLATFORM_100004及PAGING_INCOMPLETE；exceptions9店ORDER_MANAGEMENT_BUSINESS_STATUS_FAILED及PAGING_INCOMPLETE。stock-records没有fetch failure、但22店内容/总数校验失败。均为14:19Z旧样本，不证明当前已恢复会话仍失败。
+- 限流advisor亦由运行时明确返回通道400错误，未交付建议。没有把其超时观察当失败，也没有在错误后切回Gemini或更换其他模型；现有限流参数未动。
+
+### 04:49–04:51 当前会话最小端点对照
+
+- 本轮重新读取两项GLM句柄：Banach明确errored/400，Kuhn明确errored/429 retry limit；没有有效交付，主代理继续已披露的只读检查，不启用Gemini或改全局配置。
+- VM现场04:49:12 receiver、worker、hydration timer均active，release仍ccad2a7；hydration LastTrigger04:47:11，realtime下一次05:02、daily下一次05:45。这些运行状态不替代任务终态或完整迁移验收。
+- 使用当前release现有单店HTTP适配器及createEphemeralWebApiSessionStore，将DL5477加密会话读取到内存；仅白名单只读端点、每端点第一页、30天窗口2026-08-08至2026-09-06。未改全25店采集CLI守卫，未打开浏览器，未持久化会话或业务数据。
+- 首个transient诊断因ProtectSystem=strict未给两个既有api-light锁文件可写权限而在网络请求前退出。输出的API_LIGHT_SLOTS_BUSY属于该包装器的误导性分类，本次实际原因是Read-only file system，不能称服务压力繁忙。随后只补两个锁文件的ReadWritePaths，其余文件系统继续只读；资源门禁READY。
+- 20:50:17.398Z质检单页返回ORDER_MANAGEMENT_AUTH_EXPIRED/platformCode100004，未取得记录；20:50:46.092Z同店同来源会话运单单页HTTP200、total164、firstPageRows50。没有全量翻页，164是接口报告总数，不是本次已采集164行。
+- 对照证明当前DL会话可以读取运单，而质检仍失败；不能解释为全店登录态失效，也不能将DL结果推广为25店现况。质检独立认证/权限/请求上下文原因尚未确定；没有要求同事盲目重新登录、放宽门禁或推广旧PARTIAL候选。
+
+### 04:52–04:54 质检认证响应与Cookie范围核对
+
+- 源码profile-session-exporter.mjs的Network.getCookies仅传HOME_ENDPOINTS对应URL，理论上可能遗漏订单独立path的Cookie。已向codexapis GLM5.3Flash派发隔离tmp范围的无网络复现实验（Kierkegaard，01a07357-f8b5-7cc0-a072-6b7c9b449476）；运行时返回429 retry limit，无实验交付。未把理论缺陷当现场根因、未改导出代码或切换模型。
+- 20:53:07Z只读取DL加密bundle的元数据计数：15个Cookie、/gmpj路径0个。起初查Default目录无数据库，随后从现场发现实际Profile 1/Cookies，与两处Chrome启动代码的--profile-directory=Profile 1一致；未据错误目录判断Profile丢失。
+- 20:53:48.462Z使用SQLite mode=ro查询实际Profile 1数据库，仅统计geiwohuo.com域Cookie元数据，不取值：持久化9个、/gmpj路径0个、非根路径0个。因此没有现场证据支持“浏览器已有质检专用path Cookie但导出遗漏”；持久化库不代表浏览器全部内存会话，9/15数量差不作为丢失证明。
+- 为补齐旧诊断未记录HTTP状态的证据，使用同一白名单单页读取，fetch包装器只记录HTTP状态及Location存在性、不修改请求、不跟随跳转。20:54:07.573Z实际HTTP302、Location不存在、platformCode100004；适配器据HTTP状态分类AUTH_EXPIRED，并非本地文本正则误报。仍不能确定为独立认证、权限或请求上下文问题。
+- 上述临时诊断全部只在内存更新会话，未写登录文件/业务数据库，未打开本机或VM浏览器；未推广订单候选。下一步若需要浏览器对照，应按原VM Profile独占锁和身份验证流程进入真实质检页面，不能凭本次响应伪造页面URL或清空登录态。
+
+### 04:56 VM真实浏览器会话对照
+
+- fresh preflight：人工登录state.active=false、DL62041端口未监听、webapi-history门禁存在；browser资源READY。虚拟机agent-browser未安装，使用现有createLinuxExperimentRuntime及openSession，在原renewal.lock、browser-read资源通道、DL Profile锁下启动；未打开本机浏览器、未安装新工具。
+- 单次transient unit shein-fm-quality-browser-readonly-20260906T0457（名称时分是标识，不代替实际时间），report.checkedAt为20:56:18.901Z。DL browser identityProven=true后，仅对既有白名单QUALITY_REPORTS_PAGE发同样30天窗口第一页只读查询；实际HTTP302/platformCode100004、total与rows均null。ok=true仅代表诊断执行结束，不是质检业务读取成功。
+- 同源浏览器上下文也失败，对照此前HTTP会话结果，不能把故障仅归因于HTTP适配器或导出Cookie遗漏。未证明平台权限/独立子系统认证的具体根因，未放宽认证守卫或标记质检页面可用。
+- 对a/button/menuitem的限定质检入口查找为空；这不证明页面没有质检入口，可能使用其他DOM结构或菜单层级。未伪造路由跳转。
+- finally关闭所拥有的浏览器/显示进程及runtime；随后service inactive/MainPID0。未持久化新HTTP会话或写业务数据库，浏览器正常运行可能更新自己Profile。仍保留云端回滚、订单候选不推广、MZ纠偏未授权和供应门禁关闭。
+- 管理器日志独立终验InvocationID da10536cd5d04d5097b01b76cda638d5为Deactivated successfully，DL62041端口不再监听；并非仅依据已被GC的空Invocation字段判定清理完成。
+
+### 04:58–04:59 回调入口承载边界复核
+
+- VM接收进程仍PID172753，从进程环境仅投影FULL_BI_WEBHOOK_DB_POOL_MAX得到实际池上限4；healthz HTTP200/ok=true，accepted84/duplicates40/appScopedOnly44/quarantined0/rejected0。这些计数是本次进程生命周期，不等于新日志时段计数。
+- 云端新格式日志截至20:58:23.125Z共44条POST，其中38为200/upstream200/limit_connPASSED/limit_reqPASSED，6为503/upstream-/limit_connREJECTED/limit_reqPASSED。与上次新格式统计相比新增12条成功、没有新增该类拒绝；仍无逐条关联证明此前6条已经重投。
+- 初次pg_stat_activity按默认application_name=shein_fm_webhook查为0，不能解释为接收器无数据库连接。实读原service覆盖为shein_fm_webhook_receiver，按该精确名称重查为connections1/active0/lockWait0。空闲时点无锁等待不能推导突发吞吐或未来容量。
+- 接收器现有总预算1200ms、单SQL超时最高800ms、池连接等待2000ms；Nginx速率20/s、突发80 nodelay、连接上限20。若提高入口上限，必须验证有效签名、实际事务与连接排队在预算内；健康GET或无签名POST压测不覆盖该路径。当前未修改任何阈值、池大小、超时、路由或签名门禁，也未对生产发送模拟业务回调。
+
+### 05:00后切流后备份补齐启动
+
+- VM现场最新归档仍为deploy-20260905T163150Z（1286486067字节），latest restore报告仍精确绑定该切流前归档：16:53:12Z/ok=true、storeCount43/salesRows4880004/webhookReceipts137279。不能把该报告称为03:05切流后增量已备份。
+- NAS /vol3当前ZFS ONLINE、READ/WRITE/CKSUM均0、无已知数据错误，317G可用，旧deploy归档大小一致。普通PATH未找到zpool后用/usr/sbin/zpool成功读取；SMART读取/dev/sda被权限拒绝、sudo -n也要求密码。ZFS在线不替代SMART健康验收，仍不宣称500GB硬盘健康已验证。
+- fresh preflight：VM备份/恢复/同步/realtime/hydration服务均inactive/MainPID0，158G可用，单次目标unit不存在；backup脚本SHA2c641655a585ae082420b93112d739e43d047052c6ba34f59680328db4161877与资源lane脚本SHA893d82da6dffe4d77b72fd9238cefbf606696dec15fc019d1b6574f07d3645f6均与本地实读一致。
+- 启动单次shein-fm-postcutover-backup-20260906T0501.service，MainPID201860、InvocationID8c54e210148045fea23f1f811189b5bc；原脚本--mode deploy、FULL_BI_SKIP_BACKUP_RETENTION=1，保留旧归档。沿用io-heavy资源门禁、heavy锁、原db-backup互斥；OnSuccess指向现有NAS同步服务，不新增timer、不中止现有业务调度。
+- 当前仅证明启动，尚需同Invocation终态、新归档精确哈希、NAS最新回执和目标副本独立读回；不能用旧latest回执替代本次完成证据。新归档恢复演练亦尚未完成。
+
+### 05:03 切流后新归档完成，自动同步暂缓
+
+- 原备份Invocation8c54e210148045fea23f1f811189b5bc完整报告ok=true且管理器Deactivated successfully；新归档shein-fm-deploy-20260905T210131Z.dump，1291926858字节，SHA256=feb3cfb6eeaf7d39358a45116485305927f0c48edea4a329f1ec48fa6377cbba，retention=skipped。没有重复启动备份。
+- OnSuccess实际触发原NAS同步，首次Invocation db244cf7a15849cb9ff0e7d4d665906b资源门禁DEFERRED/MEMORY_STALL_PRESSURE+IO_STALL_PRESSURE（memoryFull2.37/ioFull33.68），service处于自动重试等待。旧latest回执仍绑定163150Z归档，不能作为本次同步成功证据。保留原仅exit75有界重试，不绕过资源门禁。
+- 05:02原realtime timer实际自动启动，Invocation5d5fc71f281e497c960a8c10da97568c/PID202007；协调器startedAt21:02:00.729Z，home阶段21:02:46.787Z COMPLETE/attempt1/exit0，sales仍RUNNING。此次小时链路尚未终验，不根据pending0认定完成。
+
+### 05:05–05:07 新归档独立副本完成与小时发布暂缓
+
+- NAS同步由既有自动重试进入Invocation5e31d24f073940759c5439af14329007/PID203083，latest回执21:05:13.072Z copied/archiveVerified=true，精确绑定新210131Z归档、1291926858字节、feb3cfb6eeaf7d39358a45116485305927f0c48edea4a329f1ec48fa6377cbba；管理器同Invocation为Deactivated successfully。
+- 主代理独立SSH到NAS正式目标重新sha256sum与stat：同一SHA、1291926858字节、0600。新独立盘副本完成；旧恢复报告不代表新归档已经恢复成功。
+- 小时协调器21:05:49.770Z为READY_TO_PUBLISH：home COMPLETE/attempt1/exit0，sales COMPLETE/attempt2/exit2，TERMINAL_DATA_QUALITY_GAP、terminalDetails2。05:05首次物化实际因IO_STALL_PRESSURE暂缓（ioFull12.83），未发布；不得将小时采集结束说成页面已经刷新。
+- 恢复演练脚本现场SHA173217f102f8b6f86fd44a1fe1698dfd58eac5430bf0403cfcd26267e9436420与本地一致，但暂未启动，先完成当前页面更新。fresh物化门禁随后READY/ioFull5.38，相关materialize/retry/enqueue服务均inactive；单次启动原shein-fm-dashboard-materialize.service，不重跑采集、不新增排班。
+- 物化Invocation05fcda7f24f9451ebc88e1c640d094ff（初始PID204493）管理器Deactivated successfully、MainPID0；05时协调器21:08:19.399Z为PUBLISHED，仍明确保留销售数据质量告警。其后恢复演练预检io-heavy DEFERRED/IO_STALL_PRESSURE（ioFull3.28），未启动恢复；不能用物化门禁READY替代阈值更严格的io-heavy门禁。
+
+### 05:09 新归档恢复演练已启动
+
+- 05:09:06 fresh io-heavy门禁READY（availableMemory11075MiB/ioFull0.83），restore/materialize/sync均inactive/MainPID0。仅启动原shein-fm-db-restore-test.service，不创建新排班或修改服务定义。
+- 运行实例Invocatione55a805a65b04bd4ae9410a52aa6925e，初始MainPID205082、activating。原脚本选择最新已完成归档，预期绑定210131Z新归档；最终必须以报告精确SHA与新归档一致、临时库清理、同Invocation管理器终态证明，不将预期选择当已恢复成功。
+- 后续READ ONLY确认本次临时库shein_fm_restore_check_20260905_205096存在且有实际活动恢复连接；05:11:35采样COPY当前操作bytesProcessed136252244/tuplesProcessed555033，不作为整库进度百分比。同刻receiver health HTTP200/ok=true/rejected0，PID172753/NRestarts0。
+
+### 恢复期间本地代理隔离回归
+
+- 独立重跑tests/openapi/proxy-transport.test.mjs、tests/infra/openapi-proxy-runtime-wiring.test.mjs、tests/infra/fnos-edge-tunnel.test.mjs，23/23通过、无跳过。覆盖官方域名精确匹配、代理缺失fail-closed、普通global fetch不受OpenAPI dispatcher影响、七个既有业务单元接线和三条反向入口模板。测试中的本机CONNECT探针不作为真实云端出口IP或SHEIN业务读取证据。
+- 本轮未对VM增加重磁盘任务，恢复仍由原Invocation/PID205082持有；未push、tag或触发GitHub CI。
+
+### 05:29 切流后新备份恢复终验通过
+
+- 原restore Invocatione55a805a65b04bd4ae9410a52aa6925e于报告completedAt2026-09-05T21:29:12Z完成，管理器同Invocation明确Deactivated successfully，service inactive/MainPID0。持续跟踪原任务，没有因等待或COPY/索引阶段切换而重启或重复恢复。
+- 最新报告ok=true，精确绑定shein-fm-deploy-20260905T210131Z.dump、1291926858字节、SHA256 feb3cfb6eeaf7d39358a45116485305927f0c48edea4a329f1ec48fa6377cbba，与VM归档及已独立核验的NAS副本一致。
+- 实际恢复校验storeCount43（dim.store全表，不是本次25店会话数量）、salesRows4908420、webhookReceipts144113、criticalRelationsReady=true；脚本已执行pg_restore --exit-on-error。此为可恢复归档与关键结构/计数验证，不宣称所有业务域数据完整无异常。
+- 独立READ ONLY确认临时恢复库列表为空、restoreConnections0/activeRestoreConnections0，本次shein_fm_restore_check_20260905_205096已清理。回调healthz ok=true/rejected0。业务库未覆盖，旧备份保留。
+- 本次新归档生成→原OnSuccess同步→NAS独立哈希→临时整库恢复→关键验证→清理链路完成。迁移总目标仍未完成：05:45日更自动终验、平台/数据遗留异常及相关门禁、入口限流风险、500GB盘SMART健康和稳定观察/后续版本管理仍须分别处理。
+
+### 05:32 安全日志后端耗时补齐
+
+- GLM通道持续明确失败且未交付，主代理事先向用户披露接手这处小范围诊断实现；只修改infra/nginx/shein-fm.conf和对应nginx-observability测试。新增upstream_connect_time/header_time/response_time三个内建耗时变量，闭合变量白名单，不记录query/body/认证头。无其他agent持有该写范围。
+- 日志与反向入口8项测试通过，复核修正变量匹配为含数字的完整变量名（time_iso8601），日志2测试再次通过。未修改速率、连接上限、任何超时、签名校验或代理路由。
+- 云端fresh旧配置SHAa04e0f0fd3534f8ee2016bd8b5ddca77a9eebe97f959a3615ac84caa15cd5bfb，候选去除唯一日志格式块后与线上逐字相等；排他保留/var/backups/shein-fm/nginx/shein-fm.pre-timing-20260906T0532并原子替换，nginx -t和reload通过。新SHA72b43a2b5974a8eecc32ca1d16fee6e672507124d0dbcbac45868b3e89572c47；master仍1188/active。
+- 独立公网已支持的callback健康GET返回200；21:33:15Z新格式回读upstream200、两个limit均PASSED，connectTime0.001/headerTime0.536/responseTime0.536秒。此GET不访问业务入库路径，不能拿来证明有效签名POST承载能力或此前6条已重投；后续真实POST可用新字段定位耗时。upstream文件SHA仍9897c97615f08e835cd1c6c2c615039c63d529a368ae77586a28108f7bbebbbc。
