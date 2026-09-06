@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-截至06:00，Portal/Webhook公网upstream已切到飞牛，云端回滚保留。真实回调接收处理、财务/小时/日更自动运行、补采首次自动运行、事件触发页面物化及切流后新备份独立副本与恢复均已有下文终态证据。迁移总目标仍未完成：MZ定向纠偏授权与供应门禁、订单等局部业务数据覆盖缺口、入口连接拒绝风险、NAS SMART及稳定观察仍待处理；GitHub推送/发版暂缓。不得据本文删除云端。
+Portal/Webhook公网upstream已切到飞牛，云端回滚保留。真实回调接收处理、财务/小时/日更自动运行、补采首次自动运行、事件触发页面物化及切流后新备份独立副本与恢复均已有下文终态证据。用户于9月6日上午明确将MZ定向纠偏、质检/异常单权限问题延期，不再以这两项阻塞其余迁移；不代表准许纠偏、提权或放宽数据发布门禁。10:28正式current已收敛至9ba4a53，常驻进程有意保持原版本未重启；继续稳定观察，GitHub推送/发版暂缓，不得据本文删除云端。
 
 ## 已验证的补数与回滚基线
 
@@ -324,3 +324,46 @@
 - WY同一时段备货记录全量读取已成功；证据不支持将该异常笼统解释为整个店铺登录过期或暂时请求过快。账号平台异常单权限需要核对，未自动提权、替换账号或绕过限制。也未把单店结论放大为所有质检/异常接口共用同一原因。
 - 本地订单合同、HTTP传输、CLI采集/回填、仓库物化/合并、服务查询、前端工作区以及健康物化器10组测试合计121/121通过，无跳过；这些测试不替代平台权限或全迁移完成证据。
 - 本地版本分界：344e03c为VM健康数据盘接线修复，885a660为备货申请稳定身份修复。两项先独立检查暂存范围再提交；未push/tag/Release，未触发CI，原scripts/__pycache__/保留。正式current仍为ccad2a7，维护候选部署不等于应用已整体更新到上述提交。
+
+### 06:11–06:12 质检页面上下文只读检查边界
+
+- 仅VM运行DL5477原Profile，沿用browser-read/fm/browser资源通道、renewal.lock及原Profile锁；启动前检查manual login active=false，未启动本机浏览器。一次性unit shein-fm-quality-nav-20260906T0610，Invocationd2fc830db99142edabbe68c65119f91d、初始PID222719。
+- 22:11:04.351Z会话identityProven=true；限定a/button/menuitem/menu-item元素、质检/质量/品质/售后/供应链/订单管理短标签的可见导航投影为空。此检查只证明该首页DOM选择范围没找到入口，不证明平台没有入口、账号无权限或需要短信。未执行新的质检API请求、业务点击或登录态导出。
+- 同Invocation管理器Deactivated successfully，service MainPID0；DL调试端口62041独立ss检查无监听，浏览器已清理。不能凭历史质量接口100004自动认定为整个DL登录过期，独立页面上下文仍待进一步核对。
+
+### 06:02小时链路后续回读与持续运行边界
+
+- 原小时service Invocationf3acad49eb344389a1b6a08ecfb50c8a管理器Deactivated successfully，MainPID0。协调器startedAt22:02:00.744Z，publishedAt22:05:33.044Z，PUBLISHED；home阶段attempt1/exit0，sales阶段attempt1/exit2并保留25条UNCLASSIFIED_PARTIAL终态明细，未追加重复采集。
+- dashboard.json业务updatedAt22:04:52.412Z，quality.status=partial，明确25/25店可用于当前口径、4个非零SKU因缺统计日期被隔离，当前不是完整总量。相比此前3个隔离SKU，此为新轮次事实；未升级为全量成功。
+- receiver/worker仍为切流时PID172753/172754、原Invocation5b4d8b470d7b4e7b8249f2f0957d817e/c7c127a4ead2404e804533fc812bfd0f、active/NRestarts0。realtime/daily timer均active/enabled。此为数小时内持续运行证据，不等于已完成用户要求的稳定数日观察。
+
+### 上午继续推进与正式版本候选
+
+- 用户已明确延期MZ纠偏及质检/异常权限：保留对应安全门禁和原数据，不再反复索要此两项确认，不借延期推定数据完整或权限已获得。
+- 10:03真实Nginx日志新增POST样本483条（06:33:48至10:03:51），全部200/upstream200且连接/速率检查PASSED；新耗时格式request p50=0.607s、p95=0.750s、max=1.117s，connect max=0.002s。不能证明此前6条拒绝已被重投，也不是极限并发压测；没有放宽限流。
+- 09时协调器实际PUBLISHED于09:05:40.813；sales仍带25条终态数据质量明细。10时采样receiver/worker仍为切流原PID、NRestarts0。
+- 子代理按用户最新指示改为Sol/high：Hegel（01a0747e-26d0-70f2-9fcc-0c46b541182f）只读审阅版本切换和回滚。先前GLM核查句柄不可用且无交付，主代理已披露接回；没有将等待超时当故障。
+- 固定目标9ba4a533c08e4a96689af1ae1b759c73d32532fc的Git归档27279360字节，SHA8487ed146ca60dc44240da603a32e45948808b9c77d060097430a4a23be23512，已上传并在新独立release目录展开。核对旧/新package.json及package-lock.json相同后复制既有node_modules；未npm安装、迁移数据库、清理旧版本或切current。
+- 新release健康脚本SHA5720ce81c5454b20d69d6b3b11c1e673b5b43529a6109fb44463a7acffa921f6，备货脚本SHAb5762a700b3916744a2ffd2c18a5068b7da1932a6ffd30ece581b2fbc5ff564e，与此前验证候选一致。新Linux目录以sheinfm用户执行24项针对性测试全部通过，无跳过。正式切换仍需review结果、新鲜旧链接/dropin核对和终态回读。
+
+### 10:24–10:29 正式版本收敛完成
+
+- Sol/high复核指出的来源、进程身份和health组合回滚条件均由主代理现场关闭：归档get-tar-commit-id明确为9ba4a533c08e4a96689af1ae1b759c73d32532fc、Git tree4001964deef5a48fee9cba012958c05272b32178；新目录566文件tar --compare通过、无额外文件，npm ls --omit=dev --all成功。来源回执release-9ba4a53-integrity.json为0600，存于本次迁移证据目录。
+- 发现StoreLogin实际原始cwd为afcb8e8...而非ccad。独立确认其入口跨两个版本零差异；reviewer追加核对确认不引入此次切换新风险。以每服务真实切前基线验收，保留afcb目录，不能因previous改指ccad就删除它。
+- 10:18已排他保存旧current/previous元组及原health dropin；原配置SHAf161150f5784cd815a734c4f9c06bfa7333599d9b45bcd6cd69940db202a644b。完整回滚顺序为停health timer、current回ccad、previous回afcb、恢复原dropin维护ExecStart、daemon-reload、单次health回读、恢复原timer；本次成功，未实际执行回滚演练。
+- 10:28:41.577–41.982在新鲜前置核对后完成切换：仅短暂停原health.timer并确认health无PID；先previous→ccad，再current→9ba，每条链接各自同目录临时symlink+rename，不宣称双指针整体原子。dropin只保留VM数据盘Environment，移除维护ExecStart，daemon-reload后单次运行原health。未重启常驻服务、安装Nginx配置、运行DB迁移、清理或提升订单候选。
+- health Invocation0510fd9b94a44603a3613cdc2d2fc2c5，generatedAt02:28:41.875Z，根盘17.4%、数据盘19.4%；独立管理器日志明确Deactivated successfully。有效入口回到正式脚本，新dropinSHAbef77ef31906f364890cb75ff27ce74bfb990e940e37d28b908e949d48edd52b。原timer恢复active/enabled并有下一触发时间。
+- 切前/后Portal PID163597/Invocationfc31a34d5669483a99f0e372df1587cd/cwdccad，StoreLogin PID3988/Invocationb981eefbe30540cabfcc51e767b196ae/cwdafcb，receiver PID172753/worker172754及原Invocation/cwdccad均不变，全部NRestarts0。current=9ba不代表这些既有进程已换版；其本次相关运行代码无差异，故有意不重启。
+- release-9ba4a53-switch-baseline.json及switch-result.json以0600保存全部切前/后元组和终态。独立公网/health返回HTTP200/status=ok。发布包及全部旧版本保留；GitHub未push/tag/Release，未触发CI。
+
+### 10:33 正式版本首次自然健康定时运行
+
+- 未手动触发或重启服务。原health.timer于10:33:42自然触发，Invocationa095da01f9c444ef83f5de73ad347722，与切换时手动验证的Invocation不同；ExecMainStatus=0、Result=success、MainPID=0，独立管理器日志明确Deactivated successfully。
+- current仍为9ba4a533c08e4a96689af1ae1b759c73d32532fc，有效WorkingDirectory=/opt/shein-fm/current、ExecStart为正式相对脚本。system-health.json生成于02:33:42.251Z，根盘17.4%、数据盘19.4%；磁盘原始checkedAt仍为02:27:11/12Z，不将物化时间冒充新的磁盘采样时间。原timer继续active/enabled且有下一触发时间。
+
+## 稳定观察与最终收尾条件
+
+- 用户要求“跑几天没问题”后再做最终版本管理；本次按连续72小时作为观察窗口，从最后正式代码切换2026-09-06 10:28:41起，最早2026-09-09 10:28:41后复核。不能用重复手动测试或几小时无异常替代这段实际运行时间；也不因此自动删除云端。
+- 只使用现有小时、日更、财务、续期、回调、备份与恢复链路的实际运行证据，不创建heartbeat或新的排班。终验检查单边业务写入、正常调度与页面发布、仅OpenAPI走固定出口、有效备份及独立副本、入口响应和服务恢复记录；出现新的故障时才追加针对性诊断。
+- MZ纠偏和质检/异常权限按用户要求列为延期问题，不再阻塞其他迁移工作；继续保留供应门禁和未完整订单页面不提升规则，最终报告必须列明影响，不把延期包装成修复完成。NAS备份盘SMART仍未取得特权级读回，不得把空间百分比或ZFS在线状态说成硬盘SMART健康。
+- GitHub推送/标签/Release等到稳定观察通过后按单次有意义版本执行；此前仅保留本地提交和部署证据。既有云端反向入口/OpenAPI出口及可逆数据基线保留，停止旧业务不等于可以关掉整台云服务器。
