@@ -8,6 +8,7 @@ import {
 import { readFileSync, statSync } from 'node:fs';
 
 const DEFAULT_COOKIE_NAME = 'fm_bi_session';
+const LAN_COOKIE_NAME = 'fm_bi_lan_session';
 const DEFAULT_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_RATE_LIMIT_MAX_ATTEMPTS = 5;
@@ -59,6 +60,18 @@ export function isLoopbackHost(host = '') {
 function isLoopbackAddress(address = '') {
   const normalized = String(address).replace(/^::ffff:/i, '');
   return isLoopbackHost(normalized);
+}
+
+function isPrivateHttpOrigin(value) {
+  if (typeof value !== 'string' || !/^http:\/\/\d+\.\d+\.\d+\.\d+(?::\d+)?$/.test(value)) return false;
+  try {
+    const origin = new URL(value);
+    if (origin.origin !== value) return false;
+    const [a, b] = origin.hostname.split('.').map(Number);
+    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  } catch {
+    return false;
+  }
 }
 
 function assertPrivateFile(filePath, label) {
@@ -430,6 +443,19 @@ function clientKey(request, trustProxy) {
 export function createAuthService(options = {}) {
   const runtimeEnvironment = String(options.runtimeEnvironment || 'development').toLowerCase();
   const host = options.host || '127.0.0.1';
+  const allowLanHttp = options.allowLanHttp === true;
+  if (allowLanHttp && (
+    runtimeEnvironment !== 'production'
+    || !isLoopbackHost(host)
+    || options.trustProxy !== true
+    || options.secureCookie !== false
+    || !isPrivateHttpOrigin(options.publicOrigin)
+    || (options.cookieName !== undefined && options.cookieName !== LAN_COOKIE_NAME)
+  )) {
+    throw new AuthConfigurationError(
+      'LAN HTTP requires production, a loopback listener, trusted proxy, an exact RFC1918 HTTP origin, insecure cookies and the dedicated LAN cookie name.',
+    );
+  }
   const usersFile = String(options.usersFile || '').trim();
   const configuredSessionSecret = String(options.sessionSecret || '');
   const sessionSecretFile = String(options.sessionSecretFile || '').trim();
@@ -470,7 +496,7 @@ export function createAuthService(options = {}) {
 
   const users = parseUsers(usersFile);
   const secretBytes = Buffer.from(sessionSecret, 'utf8');
-  const cookieName = String(options.cookieName || DEFAULT_COOKIE_NAME);
+  const cookieName = allowLanHttp ? LAN_COOKIE_NAME : String(options.cookieName || DEFAULT_COOKIE_NAME);
   if (!/^[A-Za-z0-9_-]+$/.test(cookieName)) {
     throw new AuthConfigurationError('Session cookie name is invalid.');
   }
@@ -497,7 +523,7 @@ export function createAuthService(options = {}) {
   );
   const secureCookie = options.secureCookie ?? runtimeEnvironment === 'production';
   const trustProxy = options.trustProxy === true;
-  if (runtimeEnvironment === 'production' && !secureCookie) {
+  if (runtimeEnvironment === 'production' && !secureCookie && !allowLanHttp) {
     throw new AuthConfigurationError('Secure session cookies cannot be disabled in production.');
   }
   if (trustProxy && !isLoopbackHost(host)) {
@@ -511,7 +537,7 @@ export function createAuthService(options = {}) {
       if (parsedOrigin.origin !== configuredPublicOrigin || !['http:', 'https:'].includes(parsedOrigin.protocol)) {
         throw new Error('invalid origin');
       }
-      if (runtimeEnvironment === 'production' && parsedOrigin.protocol !== 'https:') {
+      if (runtimeEnvironment === 'production' && parsedOrigin.protocol !== 'https:' && !allowLanHttp) {
         throw new Error('insecure origin');
       }
       publicOrigin = parsedOrigin.origin;

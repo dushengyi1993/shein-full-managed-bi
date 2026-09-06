@@ -69,6 +69,7 @@ const server = createDashboardServer({
     maxRateLimitClients: optionalPositiveInteger('FULL_BI_AUTH_MAX_CLIENTS'),
     maxConcurrentKdfs: optionalPositiveInteger('FULL_BI_AUTH_MAX_CONCURRENT_KDFS'),
     secureCookie: optionalBoolean('FULL_BI_COOKIE_SECURE'),
+    allowLanHttp: process.env.FULL_BI_ALLOW_LAN_HTTP === 'true',
     trustProxy: optionalBoolean('FULL_BI_TRUST_PROXY'),
     publicOrigin: process.env.FULL_BI_PUBLIC_ORIGIN,
   },

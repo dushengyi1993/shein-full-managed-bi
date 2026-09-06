@@ -1,0 +1,66 @@
+[Unit]
+Description=SHEIN full-managed LAN BI portal
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/srv/shein-fm/runtime/portal.enabled
+ConditionPathExists=/srv/shein-fm/runtime/dashboard/dashboard.json
+ConditionPathExists=/srv/shein-fm/runtime/dashboard/order-management.json
+
+[Service]
+Type=simple
+User=sheinfm-portal
+Group=sheinfm-portal
+SupplementaryGroups=sheinfm-dashboard
+UMask=0077
+WorkingDirectory=/opt/shein-fm/maintenance/lan-http-13fdfabea1df-3fcc1e725d71
+Environment=NODE_ENV=production
+Environment=FULL_BI_HOST=127.0.0.1
+Environment=FULL_BI_PORT=8787
+Environment=FULL_BI_TRUST_PROXY=true
+Environment=FULL_BI_ALLOW_LAN_HTTP=true
+Environment=FULL_BI_COOKIE_SECURE=false
+Environment=FULL_BI_PUBLIC_ORIGIN=http://192.168.1.79
+Environment=FULL_BI_SESSION_TTL_SECONDS=2592000
+Environment=FULL_BI_DATA_FILE=/srv/shein-fm/runtime/dashboard/dashboard.json
+Environment=FULL_BI_HOME_DATA_FILE=/srv/shein-fm/runtime/dashboard/dashboard.home.json
+Environment=FULL_BI_SHIPPING_ORDERS_FILE=/srv/shein-fm/runtime/dashboard/shipping-orders.json
+Environment=FULL_BI_ORDER_MANAGEMENT_FILE=/srv/shein-fm/runtime/dashboard/order-management.json
+Environment=FULL_BI_SYSTEM_HEALTH_FILE=/srv/shein-fm/runtime/dashboard/system-health.json
+Environment=FULL_BI_STORE_LOGIN_INTERNAL_URL=http://127.0.0.1:8794
+# The promoted order-management index is about 260 MiB on disk and peaks near
+# 1.3 GiB while V8 decodes and parses it on the first authenticated request.
+Environment=NODE_OPTIONS=--max-old-space-size=1536
+Environment=FULL_BI_AUTH_FILE=/srv/shein-fm/secrets/portal/bi_users.json
+Environment=FULL_BI_SESSION_SECRET_FILE=/srv/shein-fm/secrets/portal/lan-session-secret
+LoadCredential=store_login_internal_token:/srv/shein-fm/secrets/store-login/internal.token
+ExecStart=/usr/bin/node src/server/index.mjs
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/srv/shein-fm/runtime/dashboard/dashboard.json
+ReadOnlyPaths=/srv/shein-fm/runtime/dashboard/dashboard.home.json
+ReadOnlyPaths=/srv/shein-fm/runtime/dashboard/shipping-orders.json
+ReadOnlyPaths=/srv/shein-fm/runtime/dashboard/order-management.json
+ReadOnlyPaths=/srv/shein-fm/runtime/dashboard/system-health.json
+ReadOnlyPaths=/srv/shein-fm/secrets/portal/bi_users.json
+ReadOnlyPaths=/srv/shein-fm/secrets/portal/lan-session-secret
+MemoryHigh=1792M
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

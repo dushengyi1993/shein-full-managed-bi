@@ -1,0 +1,59 @@
+[Unit]
+Description=SHEIN full-managed isolated office LAN HTTP gateway
+Wants=network-online.target
+Requires=docker.service
+After=network-online.target docker.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=root
+UMask=0077
+# Main owner supplies this root-owned environment file after locking the digest:
+# LAN_NGINX_IMAGE=docker.io/library/nginx@sha256:<64 lowercase hex characters>
+# For an offline docker-save/load transfer, an immutable sha256:<64 hex> image ID
+# is also accepted ONLY after the owner verifies its official-image provenance.
+# No mutable tags or alternate registries are accepted; this unit never pulls.
+EnvironmentFile=/etc/shein-fm/lan-gateway.env
+RuntimeDirectory=shein-fm-lan-gateway
+RuntimeDirectoryMode=0700
+# Remove unit-owned runtime metadata on stop, including automatic restart.
+# Each invocation additionally gets a fresh CID filename, never a stale CID.
+RuntimeDirectoryPreserve=no
+ExecStartPre=/usr/bin/test -s /etc/shein-fm/lan-nginx.conf
+ExecStartPre=/bin/sh -ec 'echo "$$LAN_NGINX_IMAGE" | /usr/bin/grep -Eq "^(docker[.]io/library/nginx@)?sha256:[0-9a-f]{64}$$"'
+ExecStartPre=/usr/bin/docker image inspect ${LAN_NGINX_IMAGE}
+# No entrypoint scripts, port publishing, image pulls, compose or shared volumes.
+# host networking is limited to LAN IPv4:80 by the standalone nginx config.
+ExecStart=/usr/bin/docker run --rm --pull=never \
+    --name shein-fm-lan-gateway \
+    --cidfile /run/shein-fm-lan-gateway/${INVOCATION_ID}.cid \
+    --label io.shein-fm.lan-gateway.invocation=${INVOCATION_ID} \
+    --network host --read-only \
+    --memory 256m --memory-swap 256m --cpus 1 --pids-limit 64 \
+    --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE \
+    --security-opt no-new-privileges:true \
+    --tmpfs /var/cache/nginx:rw,noexec,nosuid,nodev,size=64m,mode=0755 \
+    --tmpfs /var/run:rw,noexec,nosuid,nodev,size=16m,mode=0755 \
+    --mount type=bind,src=/etc/shein-fm/lan-nginx.conf,dst=/etc/nginx/nginx.conf,readonly \
+    --log-driver local --log-opt max-size=10m --log-opt max-file=3 \
+    --entrypoint /usr/sbin/nginx \
+    ${LAN_NGINX_IMAGE} -g "daemon off;"
+# Stop only the ID recorded by this invocation in the root-only runtime directory.
+# --rm removes its container on exit; systemd removes its CID metadata on stop.
+# Never remove/stop by name. A surviving orphan/name collision fails closed and
+# requires owner inspection; no automatic docker rm, especially no forced rm.
+# Linux acceptance: normal restart and failed-process restart must each use a new
+# INVOCATION_ID/CID, remove the old runtime metadata and leave unrelated IDs intact.
+ExecStop=/bin/sh -ec 'if test -s "/run/shein-fm-lan-gateway/$$INVOCATION_ID.cid"; then exec /usr/bin/docker stop --time 20 "$$(/bin/cat "/run/shein-fm-lan-gateway/$$INVOCATION_ID.cid")"; fi'
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=35
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
