@@ -14,8 +14,8 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function exactLocationBlock(config, locationPath) {
-  const marker = `location = ${locationPath}`;
+function exactLocationBlock(config, locationPath, modifier = '=') {
+  const marker = `location ${modifier} ${locationPath} {`;
   const markerIndex = config.indexOf(marker);
   assert.notEqual(markerIndex, -1, `missing exact Nginx location ${locationPath}`);
   assert.equal(
@@ -23,7 +23,7 @@ function exactLocationBlock(config, locationPath) {
     -1,
     `exact Nginx location ${locationPath} must occur once`,
   );
-  const open = config.indexOf('{', markerIndex + marker.length);
+  const open = markerIndex + marker.length - 1;
   assert.notEqual(open, -1, `location ${locationPath} has no opening brace`);
   let depth = 0;
   for (let index = open; index < config.length; index += 1) {
@@ -84,11 +84,25 @@ test('Nginx exposes the receiver callback path instead of sending it to the BI p
     /proxy_pass http:\/\/127\.0\.0\.1:(?:8788|8793|8794)\b/,
     'Portal, Webhook, and Store Login must use the environment-owned named upstreams',
   );
-  assert.match(
-    config,
-    /proxy_pass http:\/\/127\.0\.0\.1:8789;/,
-    'Authorization must remain directly bound to its dedicated cloud service',
-  );
+  for (const [path, modifier] of [
+    ['/openapi/authorize/callback', '='],
+    ['/authorize', '='],
+    ['/authorize/', '^~'],
+  ]) {
+    const authorization = exactLocationBlock(config, path, modifier);
+    assert.deepEqual(
+      [...authorization.matchAll(/\bproxy_pass\s+([^;]+);/g)].map((match) => match[1]),
+      ['http://127.0.0.1:18789'],
+      `${path} must use only the dedicated loopback VM authorization tunnel, not a business upstream`,
+    );
+    assert.match(authorization, /limit_req_status 429;/);
+    assert.match(authorization, /limit_req zone=shein_fm_auth_(?:callback|web) burst=\d+ nodelay;/);
+    assert.match(authorization, /error_log \/dev\/null crit;/);
+    assert.match(authorization, /access_log \/var\/log\/nginx\/shein-fm-auth-security\.log shein_fm_auth_safe;/);
+    assert.match(authorization, /proxy_set_header Host \$host;/);
+    assert.ok(config.indexOf(`location ${modifier} ${path} {`) < config.indexOf('location / {'));
+  }
+  assert.doesNotMatch(config, /proxy_pass http:\/\/127\.0\.0\.1:8789;/);
 });
 
 test('Webhook Nginx route bounds ingress and forwards only receiver headers', async () => {
