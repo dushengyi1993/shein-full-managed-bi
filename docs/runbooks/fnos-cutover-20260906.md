@@ -2,7 +2,9 @@
 
 ## 当前结论
 
-Portal/Webhook公网upstream已切到飞牛，云端回滚保留。真实回调接收处理、财务/小时/日更自动运行、补采首次自动运行、事件触发页面物化及切流后新备份独立副本与恢复均已有下文终态证据。用户于9月6日上午明确将MZ定向纠偏、质检/异常单权限问题延期，不再以这两项阻塞其余迁移；不代表准许纠偏、提权或放宽数据发布门禁。10:28正式current已收敛至9ba4a53，常驻进程有意保持原版本未重启；继续稳定观察，GitHub推送/发版暂缓，不得据本文删除云端。
+截至2026-09-06下午，Portal/Webhook/StoreLogin及OpenAPI授权服务均已迁入飞牛；云端全托业务已停，仅保留公网入口转发与OpenAPI固定出口。用户后续明确授权结束迁移收尾、删除云端全托数据库并发布一个GitHub Release，取代此前暂缓删除/发布的安排。云端全托数据库容器及专属卷已删除，备份与审计文件保留；回滚现为“备份恢复并追平飞牛新增数据”，不再是启动旧容器。
+
+真实回调、财务/小时/日更、补采、自动物化及独立数据库备份恢复已有下文证据。MZ定向纠偏、质检/异常权限按用户要求延期，未放宽安全或数据发布门禁，不能据迁移完成声称业务数据全部完整。下文按时间保留历史记录；历史待验、72小时观察及不得删库描述由本节和末尾收尾记录更新。版本发布状态以GitHub实际Release及CI结果为准。
 
 ## 已验证的补数与回滚基线
 
@@ -361,9 +363,26 @@ Portal/Webhook公网upstream已切到飞牛，云端回滚保留。真实回调�
 - 未手动触发或重启服务。原health.timer于10:33:42自然触发，Invocationa095da01f9c444ef83f5de73ad347722，与切换时手动验证的Invocation不同；ExecMainStatus=0、Result=success、MainPID=0，独立管理器日志明确Deactivated successfully。
 - current仍为9ba4a533c08e4a96689af1ae1b759c73d32532fc，有效WorkingDirectory=/opt/shein-fm/current、ExecStart为正式相对脚本。system-health.json生成于02:33:42.251Z，根盘17.4%、数据盘19.4%；磁盘原始checkedAt仍为02:27:11/12Z，不将物化时间冒充新的磁盘采样时间。原timer继续active/enabled且有下一触发时间。
 
-## 稳定观察与最终收尾条件
+## 历史稳定观察安排（后被用户明确收尾授权更新）
 
 - 用户要求“跑几天没问题”后再做最终版本管理；本次按连续72小时作为观察窗口，从最后正式代码切换2026-09-06 10:28:41起，最早2026-09-09 10:28:41后复核。不能用重复手动测试或几小时无异常替代这段实际运行时间；也不因此自动删除云端。
 - 只使用现有小时、日更、财务、续期、回调、备份与恢复链路的实际运行证据，不创建heartbeat或新的排班。终验检查单边业务写入、正常调度与页面发布、仅OpenAPI走固定出口、有效备份及独立副本、入口响应和服务恢复记录；出现新的故障时才追加针对性诊断。
 - MZ纠偏和质检/异常权限按用户要求列为延期问题，不再阻塞其他迁移工作；继续保留供应门禁和未完整订单页面不提升规则，最终报告必须列明影响，不把延期包装成修复完成。NAS备份盘SMART仍未取得特权级读回，不得把空间百分比或ZFS在线状态说成硬盘SMART健康。
 - GitHub推送/标签/Release等到稳定观察通过后按单次有意义版本执行；此前仅保留本地提交和部署证据。既有云端反向入口/OpenAPI出口及可逆数据基线保留，停止旧业务不等于可以关掉整台云服务器。
+
+## 下午最终迁移与云端退役记录
+
+- 用户明确要求云端只保留入口转发和OpenAPI固定出口，随后明确允许删除云端数据库；又要求核实完成后发一个Release并停止goal。没有声称原先拟定的72小时已经经过，未增加heartbeat或排班。
+- LAN入口为 `http://192.168.1.79`，公网入口保持 `https://fm.dushengyi.cc`。LAN独立Portal及HTTP网关、认证隔离、Linux验证和恢复测试见 `fnos-lan-entry-20260906.md`；HTTP仅办公室网段使用，用户已接受明文传输限制。
+- 授权服务在云端确认无未过期待处理状态、无锁后停止，9个私密文件迁至VM并逐文件比对一致。VM单独用户、0700目录、0600文件；原始云端归档SHA256为 `5236c29cb481af4279f8c35581f3fc5afdbb5a9f10ff5aa7e046b91cadfe6405`，未将凭据写入仓库。
+- 新VM授权单元来自 `infra/systemd/shein-fm-authorization-fnos.service`；运行于localhost:8789，保留原HTTPS公开域名，OpenAPI代理强制为localhost:18080。独立授权SSH隧道仅新增云端localhost:18789至VM:8789，未重启既有业务/OpenAPI隧道。云端Nginx仅三处授权upstream由8789改为18789，当前配置SHA256为 `585499826b4c165e9b72748a2334e26321fadef0f0c029b2d7a4990dadf57db0`。
+- 授权服务与独立隧道在VM均active/enabled，健康页及公开 `/authorize` 返回200；这不等于迁移后执行过真实新授权换票，未为了验收重复索取授权或制造业务请求。授权文件有云端冻结归档和VM独立冷备；不能把PostgreSQL备份说成包含这些文件，也不能声称已新增授权文件持续备份任务。
+- 云端Portal、StoreLogin、授权服务、数据库及五项维护timer已停用。29个云端全托业务unit加退役条件守卫，标记 `/srv/shein-fm/runtime/cloud-business-retired` 存在时不得启动；OpenAPI relay排除在守卫之外。云端全托运行服务只剩relay，公共Nginx/Caddy/HAProxy/SSH及其他项目保留。
+- 删除前锁定 `shein-fm-db` 完整容器ID `7a5155e42edd033db03289cf5ae6d54f896a9e501d2cc8805e6d9ce5b1180a1c`，确认停止、restart=no、卷唯一消费者；仅删除该容器及 `shein-fm-postgres`，未force/prune。完成于17:19:54 CST，容器与卷均不存在，其他容器集合不变，实际释放9,651,572,736字节（8.99 GiB）。
+- 删除前VM与NAS现有备份均重新计算SHA256，匹配 `feb3cfb6eeaf7d39358a45116485305927f0c48edea4a329f1ec48fa6377cbba`；文件 `shein-fm-deploy-20260905T210131Z.dump`，1,291,926,858字节。VM路径 `/srv/shein-fm/backups/db/`，NAS路径 `/vol3/shein-fm-backups/`；该精确备份此前完整恢复测试已通过，不是仅校验文件存在。
+- 退役审计目录为云端 `/var/backups/shein-fm/migration/cloud-retire-20260906/`，包含phase1-before、authorization-manifest、database-before、retirement-guards、database-delete-plan与database-delete-result等记录及原配置备份，私密材料保持不公开。
+- 删除后主代理独立复核：VM数据库healthy且pg_isready接受连接，VM授权active；公网 `/health`、`/authorize` 及LAN `/health` 均200；云端DB容器/卷查无结果，云端全托运行服务仅relay。
+
+### 删除后的恢复边界
+
+恢复云端前必须冻结VM写入、确认无在途执行，以独立备份恢复新建数据库，并按既有reverse dry-run、精确hash执行和权威回读追平飞牛新增数据；审查后再解除相应退役守卫、切入口及单边writer。不能直接启用旧云端unit，不能仅切Nginx，不能把9月6日凌晨备份说成覆盖其后的全部新数据。授权文件须单独恢复并核对状态/凭据，数据库dump不能替代它。当前未执行灾难恢复回切，不宣称回切演练已完成。

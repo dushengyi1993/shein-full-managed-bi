@@ -1,0 +1,42 @@
+[Unit]
+Description=SHEIN authorization SSH loopback reverse tunnel
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/srv/shein-fm/secrets/openapi-relay
+ConditionPathExists=/srv/shein-fm/secrets/openapi-relay/authorization_ssh_config
+ConditionPathExists=/srv/shein-fm/secrets/openapi-relay/id_ed25519
+
+[Service]
+Type=simple
+User=sheinops
+Group=sheinops
+UMask=0077
+ExecStart=/usr/bin/ssh -F /srv/shein-fm/secrets/openapi-relay/authorization_ssh_config -NT shein-openapi-relay
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/srv/shein-fm/secrets/openapi-relay
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+MemoryHigh=32M
+MemoryMax=64M
+TasksMax=16
+
+[Install]
+WantedBy=multi-user.target
