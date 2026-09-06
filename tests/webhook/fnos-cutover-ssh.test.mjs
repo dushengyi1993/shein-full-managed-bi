@@ -808,11 +808,21 @@ test("bindPoolErrorSafety captures idle Client error on pool without uncaughtExc
   await pool.end().catch(() => {});
 });
 
-function fakeLauncherChild() {
+function fakeLauncherChild(t) {
   const child = new EventEmitter();
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
+  // Real spawned children/pipes keep the loop alive until close; these in-memory
+  // streams do not. Model that lifetime without changing production unref timers.
+  const processHandle = setInterval(() => {}, 1000);
+  child.once("close", () => clearInterval(processHandle));
+  t.after(() => {
+    clearInterval(processHandle);
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+  });
   child.exitCode = null;
   child.signalCode = null;
   child.killed = false;
@@ -829,7 +839,7 @@ function fakeLauncherChild() {
   return child;
 }
 
-test("runSshLauncher terminates with SSH_OPERATION_TIMEOUT and sanitized failure JSON on operation timeout", async (t) => {
+test("runSshLauncher terminates with SSH_OPERATION_TIMEOUT and sanitized failure JSON on operation timeout", { timeout: 5000 }, async (t) => {
   const fixtureRoot = mkdtempSync(resolvePath(tmpdir(), "fnos-ot-test-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const userProfile = resolvePath(fixtureRoot, "operator");
@@ -865,7 +875,7 @@ test("runSshLauncher terminates with SSH_OPERATION_TIMEOUT and sanitized failure
   let stderr = "";
   const children = [];
   const spawnImpl = () => {
-    const child = fakeLauncherChild();
+    const child = fakeLauncherChild(t);
     children.push(child);
     process.nextTick(() => {
       child.emit("spawn");
@@ -893,7 +903,7 @@ test("runSshLauncher terminates with SSH_OPERATION_TIMEOUT and sanitized failure
   assert.ok(children.every((c) => c.killed));
 });
 
-test("runSshLauncher terminates with sanitized transport failure when idle client transport error occurs", async (t) => {
+test("runSshLauncher terminates with sanitized transport failure when idle client transport error occurs", { timeout: 5000 }, async (t) => {
   const fixtureRoot = mkdtempSync(resolvePath(tmpdir(), "fnos-idle-test-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const userProfile = resolvePath(fixtureRoot, "operator");
@@ -930,7 +940,7 @@ test("runSshLauncher terminates with sanitized transport failure when idle clien
   const children = [];
   let firstChild = null;
   const spawnImpl = () => {
-    const child = fakeLauncherChild();
+    const child = fakeLauncherChild(t);
     children.push(child);
     if (!firstChild) firstChild = child;
     process.nextTick(() => {
