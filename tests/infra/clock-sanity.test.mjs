@@ -4,8 +4,10 @@ import test from 'node:test';
 
 import {
   CLOCK_TIMEZONE,
+  clockSkewSeconds,
   futureStamps,
-  localRtcForJump,
+  localRtcForSkew,
+  parseBootTimeEpoch,
   parseInitialClockEpoch,
 } from '../../scripts/check_full_managed_clock_sanity.mjs';
 
@@ -23,12 +25,24 @@ test('boot clock jump is read from the kernel RTC seeding line', () => {
   assert.equal(parseInitialClockEpoch(''), null);
 });
 
-test('only a whole-hour boot jump changes the RTC interpretation', () => {
-  assert.equal(localRtcForJump(28800), 'yes');
-  assert.equal(localRtcForJump(-28800), 'no');
-  assert.equal(localRtcForJump(30), null);
-  assert.equal(localRtcForJump(-30), null);
-  assert.equal(localRtcForJump(Number.NaN), null);
+test('the skew is measured against the true boot instant, not against now', () => {
+  // Real fnOS boot: the kernel seeded 2026-09-15T12:06:37Z while the true boot
+  // instant was 1789445197, i.e. exactly one +08:00 offset.
+  const seeded = 1789473997;
+  const bootTime = parseBootTimeEpoch('cpu  1 2 3\nbtime ' + 1789445197 + '\nprocesses 1');
+  assert.equal(bootTime, 1789445197);
+  assert.equal(clockSkewSeconds(seeded, bootTime), 28800);
+  assert.equal(clockSkewSeconds(seeded, seeded + 18248), -18248);
+  assert.equal(clockSkewSeconds(null, bootTime), null);
+  assert.equal(clockSkewSeconds(seeded, null), null);
+});
+
+test('only a whole-hour boot skew changes the RTC interpretation', () => {
+  assert.equal(localRtcForSkew(28800), 'yes');
+  assert.equal(localRtcForSkew(-28800), 'no');
+  assert.equal(localRtcForSkew(30), null);
+  assert.equal(localRtcForSkew(-30), null);
+  assert.equal(localRtcForSkew(Number.NaN), null);
 });
 
 test('only persistent timer stamps dated into the future are repaired', () => {
@@ -49,11 +63,11 @@ test('clock sanity unit runs before timers, fixes nothing else and never retries
   assert.match(unit, /^Before=timers\.target$/m);
   assert.match(unit, /^DefaultDependencies=no$/m);
   assert.match(unit, /^Type=oneshot$/m);
-  assert.match(unit, /^ExecStart=\/usr\/bin\/node \/opt\/shein-fm\/current\/scripts\/check_full_managed_clock_sanity\.mjs$/m);
+  assert.match(unit, /^WorkingDirectory=\/opt\/shein-fm\/current$/m);
+  assert.match(unit, /^ExecStart=\/usr\/bin\/node scripts\/check_full_managed_clock_sanity\.mjs$/m);
   assert.match(unit, /^TimeoutStartSec=45$/m);
   assert.match(unit, /^WantedBy=sysinit\.target$/m);
   assert.equal(lines.some((line) => line.startsWith('Restart=')), false);
   assert.equal(lines.some((line) => /^(User|Group)=/.test(line)), false);
   assert.equal(CLOCK_TIMEZONE, 'Asia/Shanghai');
 });
-

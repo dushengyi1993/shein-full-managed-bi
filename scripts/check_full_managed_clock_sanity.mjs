@@ -15,10 +15,10 @@
  * never triggers a catch-up run.
  */
 import { execFile } from 'node:child_process';
-import path from 'node:path';
+import { realpathSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { readdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const run = promisify(execFile);
 
@@ -37,14 +37,37 @@ export function parseInitialClockEpoch(journalText) {
   return Number.isSafeInteger(found) ? found : null;
 }
 
-// The kernel seeds the clock from the RTC as if it were UTC. A whole-hour
-// positive jump therefore means the hypervisor handed us local time and the RTC
-// must be read as local; a negative jump means it really was UTC.
-export function localRtcForJump(jumpSeconds) {
-  if (!Number.isFinite(jumpSeconds)) return null;
-  if (jumpSeconds >= WHOLE_HOUR_SECONDS) return 'yes';
-  if (jumpSeconds <= -WHOLE_HOUR_SECONDS) return 'no';
+export function parseBootTimeEpoch(statText) {
+  const match = String(statText).match(/^btime\s+(\d+)\s*$/m);
+  return match ? Number(match[1]) : null;
+}
+
+// The kernel seeds the clock from the RTC as if it were UTC, so that seed
+// reading differs from the true boot instant (btime) by exactly the RTC
+// misinterpretation. Comparing the seed against "now" would only measure
+// uptime, so the true boot instant has to come from btime, which the corrected
+// clock derives from monotonic uptime.
+export function clockSkewSeconds(initialClockEpoch, bootTimeEpoch) {
+  if (!Number.isSafeInteger(initialClockEpoch) || !Number.isSafeInteger(bootTimeEpoch)) return null;
+  return initialClockEpoch - bootTimeEpoch;
+}
+
+// A whole-hour positive skew means the hypervisor handed us local time and the
+// RTC must be read as local; a negative one means it really was UTC.
+export function localRtcForSkew(skewSeconds) {
+  if (!Number.isFinite(skewSeconds)) return null;
+  if (skewSeconds >= WHOLE_HOUR_SECONDS) return 'yes';
+  if (skewSeconds <= -WHOLE_HOUR_SECONDS) return 'no';
   return null;
+}
+
+function isEntryPoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
 
 export function futureStamps(entries, nowMs, toleranceMs = STAMP_FUTURE_TOLERANCE_MS) {
@@ -111,10 +134,11 @@ async function main() {
   const timezonePinned = await pinTimezone();
   const ntpSynced = await waitForNtp(startedAt + NTP_WAIT_TIMEOUT_MS);
   const journal = await tryRun('/usr/bin/journalctl', ['-b', '-k', '--no-pager', '-o', 'short-iso'], 15_000);
+  const procStat = await tryRun('/usr/bin/cat', ['/proc/stat'], 5_000);
   const initialEpoch = journal === null ? null : parseInitialClockEpoch(journal);
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const jumpSeconds = initialEpoch === null ? null : initialEpoch - nowSeconds;
-  const desiredLocalRtc = ntpSynced ? localRtcForJump(jumpSeconds) : null;
+  const bootEpoch = procStat === null ? null : parseBootTimeEpoch(procStat);
+  const skewSeconds = clockSkewSeconds(initialEpoch, bootEpoch);
+  const desiredLocalRtc = ntpSynced ? localRtcForSkew(skewSeconds) : null;
   let localRtc = await tryRun('/usr/bin/timedatectl', ['show', '-p', 'LocalRTC', '--value'], 5_000);
   let localRtcChanged = false;
   if (desiredLocalRtc !== null && desiredLocalRtc !== localRtc) {
@@ -130,14 +154,15 @@ async function main() {
     timezonePinned,
     ntpSynced,
     initialClockEpoch: initialEpoch,
-    jumpSeconds,
+    bootTimeEpoch: bootEpoch,
+    skewSeconds,
     localRtc,
     localRtcChanged,
     repairedStamps,
   }) + '\n');
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (isEntryPoint()) {
   main().catch((error) => {
     process.stderr.write(JSON.stringify({
       ok: false,

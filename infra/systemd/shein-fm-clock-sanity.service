@@ -8,9 +8,9 @@ ConditionPathExists=/opt/shein-fm/current/scripts/check_full_managed_clock_sanit
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/node /opt/shein-fm/current/scripts/check_full_managed_clock_sanity.mjs
+WorkingDirectory=/opt/shein-fm/current
+ExecStart=/usr/bin/node scripts/check_full_managed_clock_sanity.mjs
 TimeoutStartSec=45
 
 [Install]
 WantedBy=sysinit.target
-
