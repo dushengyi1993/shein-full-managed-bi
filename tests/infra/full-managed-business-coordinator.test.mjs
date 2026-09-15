@@ -211,7 +211,7 @@ test('loaded sales with qualityStatus PARTIAL preserve data quality gap and fail
     terminalDetails: [{
       warning: 'TERMINAL_DATA_QUALITY_GAP',
       storeCode: 'DL5477',
-      errorCode: 'UNCLASSIFIED_PARTIAL',
+      errorCode: 'SALES_DATE_ANCHOR_PARTIAL',
     }],
   });
 });
@@ -318,7 +318,7 @@ test('real 25-store loaded with qualityStatus PARTIAL records terminal quality g
   assert.equal(salesStage.terminalDetails.length, 25);
   assert.equal(salesStage.terminalDetails.every((d) => (
     d.warning === 'TERMINAL_DATA_QUALITY_GAP'
-    && d.errorCode === 'UNCLASSIFIED_PARTIAL'
+    && d.errorCode === 'SALES_DATE_ANCHOR_PARTIAL'
     && storeCodes.includes(d.storeCode)
   )), true);
   // Verify stageSummary also carries exact non-silent terminal gap metadata

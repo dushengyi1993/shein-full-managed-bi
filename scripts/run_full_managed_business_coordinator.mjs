@@ -402,15 +402,19 @@ export function classifyStageResult(stageName, exitCode, summary) {
         || (row.status === 'loaded' && row.qualityStatus === 'PARTIAL')
         || !['loaded', 'error'].includes(row.status)
       ))
-      .map(({ storeCode, status, qualityStatus, qualityReason, errorCode }) => ({
-        warning: (status === 'quality_blocked' || (status === 'loaded' && qualityStatus === 'PARTIAL'))
-          ? 'TERMINAL_DATA_QUALITY_GAP'
-          : 'TERMINAL_CAPABILITY_GAP',
-        storeCode: normalizeFullManagedStoreCode(storeCode),
-        errorCode: /^[A-Z0-9_]{3,64}$/.test(String(errorCode ?? qualityReason ?? ''))
-          ? String(errorCode ?? qualityReason)
-          : 'UNCLASSIFIED_PARTIAL',
-      }));
+      .map(({ storeCode, status, qualityStatus, qualityReason, errorCode }) => {
+        const partialDateAnchor = status === 'loaded' && qualityStatus === 'PARTIAL';
+        const rawCode = String(errorCode ?? qualityReason ?? '');
+        return {
+          warning: (status === 'quality_blocked' || partialDateAnchor)
+            ? 'TERMINAL_DATA_QUALITY_GAP'
+            : 'TERMINAL_CAPABILITY_GAP',
+          storeCode: normalizeFullManagedStoreCode(storeCode),
+          errorCode: /^[A-Z0-9_]{3,64}$/.test(rawCode)
+            ? rawCode
+            : (partialDateAnchor ? 'SALES_DATE_ANCHOR_PARTIAL' : 'UNCLASSIFIED_PARTIAL'),
+        };
+      });
     if (retryStores.length === 0 && terminalDetails.length > 0) {
       return Object.freeze({
         complete: true,
