@@ -70,6 +70,51 @@ test('systemctl projection keeps failed oneshots visible even when inactive', ()
   assert.equal(row.nextRunAt, '2026-07-31T19:29:10.000Z');
 });
 
+test('event-driven critical jobs stay healthy while idle between triggers', () => {
+  const definition = {
+    key: 'dashboardMaterialize',
+    label: 'Dashboard 物化',
+    service: 'shein-fm-dashboard-materialize.service',
+    kind: 'job',
+    critical: true,
+    route: 'system',
+    eventDriven: true,
+  };
+  const idleSuccess = parseSystemctlShow([
+    'LoadState=loaded',
+    'ActiveState=inactive',
+    'SubState=dead',
+    'Result=success',
+    'ExecMainStatus=0',
+  ].join('\n'));
+  const row = projectUnit(definition, idleSuccess, null);
+  assert.equal(row.state, 'healthy');
+  assert.equal(row.timerUnit, null);
+
+  const failed = parseSystemctlShow([
+    'LoadState=loaded',
+    'ActiveState=failed',
+    'SubState=failed',
+    'Result=exit-code',
+    'ExecMainStatus=2',
+  ].join('\n'));
+  assert.equal(projectUnit(definition, failed, null).state, 'attention');
+
+  const missing = parseSystemctlShow([
+    'LoadState=not-found',
+    'ActiveState=inactive',
+  ].join('\n'));
+  assert.equal(projectUnit(definition, missing, null).state, 'unknown');
+
+  const running = parseSystemctlShow([
+    'LoadState=loaded',
+    'ActiveState=activating',
+    'SubState=start',
+    'Result=success',
+  ].join('\n'));
+  assert.equal(projectUnit(definition, running, null).state, 'running');
+});
+
 test('Profile projections expose only status evidence and discard private fields', () => {
   const login = sanitizeLoginState({
     updatedAt: '2026-07-31T08:16:54.000Z',

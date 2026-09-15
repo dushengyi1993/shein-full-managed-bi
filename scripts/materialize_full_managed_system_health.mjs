@@ -93,6 +93,7 @@ export const SYSTEM_UNIT_DEFINITIONS = Object.freeze([
     kind: 'job',
     critical: true,
     route: 'system',
+    eventDriven: true,
   }),
   Object.freeze({
     key: 'homeRealtime',
@@ -238,7 +239,11 @@ export function projectUnit(definition, serviceInput, timerInput = null) {
   if (failed) state = 'attention';
   else if (definition.kind === 'daemon') state = serviceActive === 'active' ? 'healthy' : 'attention';
   else if (running) state = 'running';
-  else if (timerActive === 'active' && ['success', ''].includes(String(service.Result || ''))) {
+  else if (definition.eventDriven === true
+      && service.LoadState !== 'not-found'
+      && ['success', ''].includes(String(service.Result || ''))) {
+    state = 'healthy';
+  } else if (timerActive === 'active' && ['success', ''].includes(String(service.Result || ''))) {
     state = 'healthy';
   } else if (timerActive === 'active') {
     state = 'scheduled';
