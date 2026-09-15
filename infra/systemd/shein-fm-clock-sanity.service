@@ -1,0 +1,16 @@
+[Unit]
+Description=SHEIN full-managed boot clock sanity
+Documentation=https://github.com/dushengyi1993/shein-full-managed-bi
+DefaultDependencies=no
+After=systemd-journald.socket local-fs.target
+Before=timers.target
+ConditionPathExists=/opt/shein-fm/current/scripts/check_full_managed_clock_sanity.mjs
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node /opt/shein-fm/current/scripts/check_full_managed_clock_sanity.mjs
+TimeoutStartSec=45
+
+[Install]
+WantedBy=sysinit.target
+
