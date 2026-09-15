@@ -180,9 +180,9 @@ export function createFullManagedWebhookRepository({ pool } = {}) {
     const ciphertext = requiredText(input.ciphertext, 'ciphertext', 2 * 1024 * 1024);
     const projection = safeJson(input.safeProjection, 'safeProjection', 4 * 1024);
     const statementTimeoutMs = positiveInteger(
-      input.statementTimeoutMs ?? 800,
+      input.statementTimeoutMs ?? 4_000,
       'statementTimeoutMs',
-      { minimum: 50, maximum: 800 },
+      { minimum: 50, maximum: 4_000 },
     );
 
     return transaction(pool, async (client) => {

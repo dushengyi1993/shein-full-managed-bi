@@ -17,8 +17,14 @@ import {
   readWebhookBody,
 } from './payload.mjs';
 
-export const WEBHOOK_INGRESS_BUDGET_MS = 1_200;
-export const WEBHOOK_DB_STATEMENT_TIMEOUT_MS = 800;
+// A push is only acknowledged after the receipt and its job commit, and SHEIN
+// re-delivers the same event while an earlier delivery is still committing, so
+// every duplicate waits on the first transaction's receipt write. The budget has
+// to absorb real database latency spikes on the shared disk instead of failing
+// the push closed; widening it never weakens signature, identity or idempotency
+// checks, it only tolerates a slow but correct write.
+export const WEBHOOK_INGRESS_BUDGET_MS = 8_000;
+export const WEBHOOK_DB_STATEMENT_TIMEOUT_MS = 4_000;
 export const WEBHOOK_RETRY_DEDUP_WINDOW_MS = 10 * 60_000;
 
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -104,8 +110,8 @@ export function createFullManagedWebhookReceiver({
 } = {}) {
   if (!repository?.storeReceiptAndJob) throw new TypeError('Webhook repository is required.');
   if (!credentialRegistry?.resolveIngress) throw new TypeError('Webhook credential registry is required.');
-  const budget = boundedInteger(ingressBudgetMs, 1_200, 250, 1_200);
-  const databaseTimeout = boundedInteger(statementTimeoutMs, 800, 50, 800);
+  const budget = boundedInteger(ingressBudgetMs, 8_000, 250, 8_000);
+  const databaseTimeout = boundedInteger(statementTimeoutMs, 4_000, 50, 4_000);
   const bodyLimit = boundedInteger(maxBodyBytes, WEBHOOK_MAX_BODY_BYTES, 1, WEBHOOK_MAX_BODY_BYTES);
   const skewLimit = boundedInteger(maxSkewMs, WEBHOOK_MAX_SKEW_MS, 0, WEBHOOK_MAX_SKEW_MS);
   const counters = {
@@ -295,6 +301,8 @@ export function createFullManagedWebhookReceiver({
     server,
     counters,
     ingest,
+    ingressBudgetMs: budget,
+    statementTimeoutMs: databaseTimeout,
     async start({ host = '127.0.0.1', port = 8793 } = {}) {
       await new Promise((resolve, reject) => {
         server.once('error', reject);

@@ -4,6 +4,8 @@ import test from 'node:test';
 
 import { createFullManagedWebhookCredentialRegistry } from '../../src/webhook/credentials.mjs';
 import {
+  WEBHOOK_DB_STATEMENT_TIMEOUT_MS,
+  WEBHOOK_INGRESS_BUDGET_MS,
   WEBHOOK_RETRY_DEDUP_WINDOW_MS,
   createFullManagedWebhookReceiver,
 } from '../../src/webhook/receiver.mjs';
@@ -57,6 +59,15 @@ function headers(overrides = {}) {
   };
 }
 
+test('ingress budgets tolerate shared-disk write latency instead of failing pushes closed', () => {
+  assert.equal(WEBHOOK_INGRESS_BUDGET_MS, 8_000);
+  assert.equal(WEBHOOK_DB_STATEMENT_TIMEOUT_MS, 4_000);
+  // The statement budget must stay inside the request budget so a single slow
+  // statement is cancelled by PostgreSQL before the ingress budget expires and
+  // the difference stays attributable to the database rather than the handler.
+  assert.ok(WEBHOOK_DB_STATEMENT_TIMEOUT_MS < WEBHOOK_INGRESS_BUDGET_MS);
+});
+
 test('ingress returns success only after storing receipt and job with no decrypted body', async () => {
   let persisted;
   let release;
@@ -88,7 +99,7 @@ test('ingress returns success only after storing receipt and job with no decrypt
   assert.equal(result.ok, true);
   assert.equal(result.quarantined, false);
   assert.equal(persisted.storeCode, 'DL');
-  assert.equal(persisted.statementTimeoutMs <= 800, true);
+  assert.equal(persisted.statementTimeoutMs <= 4_000, true);
   assert.equal(persisted.ciphertext, FIXTURE.ciphertext);
   const serialized = JSON.stringify(persisted);
   for (const forbidden of [

@@ -56,6 +56,8 @@ export async function runFullManagedWebhookReceiver({ env = process.env } = {}) 
     service: 'shein-fm-webhook-receiver',
     host,
     port: address.port,
+    ingressBudgetMs: service.ingressBudgetMs,
+    statementTimeoutMs: service.statementTimeoutMs,
     credentialCoverage: credentialRegistry.summary,
   }));
 
