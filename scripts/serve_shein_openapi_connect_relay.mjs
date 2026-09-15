@@ -1,10 +1,23 @@
 #!/usr/bin/env node
 import {
   createSheinOpenApiConnectRelay,
+  SHEIN_OPENAPI_CONNECT_AUTHORITIES,
 } from '../src/openapi/connect-relay.mjs';
 
 const LISTEN_HOST = '127.0.0.1';
 const DEFAULT_LISTEN_PORT = 18_080;
+
+function parseAuthorities(value) {
+  if (value === undefined || value === '') return SHEIN_OPENAPI_CONNECT_AUTHORITIES;
+  const entries = String(value).split(',').map((entry) => entry.trim()).filter((entry) => entry !== '');
+  if (entries.length === 0) throw new TypeError('relay authorities must not be empty');
+  for (const entry of entries) {
+    if (!/^[a-z0-9.-]+:\d{1,5}$/i.test(entry)) {
+      throw new TypeError('relay authority must be a host:port pair');
+    }
+  }
+  return [...new Set(entries.map((entry) => entry.toLowerCase()))];
+}
 
 function parsePort(value) {
   if (value === undefined || value === '') return DEFAULT_LISTEN_PORT;
@@ -17,7 +30,8 @@ function parsePort(value) {
 }
 
 const listenPort = parsePort(process.env.SHEIN_FM_OPENAPI_RELAY_PORT);
-const relay = createSheinOpenApiConnectRelay();
+const allowedAuthorities = parseAuthorities(process.env.SHEIN_FM_OPENAPI_RELAY_AUTHORITIES);
+const relay = createSheinOpenApiConnectRelay({ allowedAuthorities });
 const { server } = relay;
 let shuttingDown = false;
 
@@ -53,6 +67,7 @@ server.listen(listenPort, LISTEN_HOST, () => {
     event: 'listening',
     host: LISTEN_HOST,
     port: listenPort,
-    authority: 'openapi.sheincorp.com:443',
+    authority: relay.allowedAuthorities[0],
+    authorities: relay.allowedAuthorities,
   }) + '\n');
 });

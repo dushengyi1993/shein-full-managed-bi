@@ -6,6 +6,8 @@ import test from 'node:test';
 
 import {
   SHEIN_OPENAPI_CONNECT_AUTHORITY,
+  SHEIN_OPENAPI_CONNECT_AUTHORIZATION_AUTHORITY,
+  SHEIN_OPENAPI_CONNECT_AUTHORITIES_WITH_AUTHORIZATION,
   createSheinOpenApiConnectRelay,
   isAllowedSheinConnectAuthority,
 } from '../../src/openapi/connect-relay.mjs';
@@ -83,6 +85,66 @@ test('allowed CONNECT tunnels bytes to the fixed dial target', async () => {
     );
     assert.match(response.toString('latin1'), /^HTTP\/1\.1 200 Connection Established\r\n/);
     assert.ok(response.includes(Buffer.from('echo:PING')));
+  } finally {
+    relay.destroySockets();
+    await closeServer(relay.server);
+    await closeServer(upstream);
+  }
+});
+
+test('authorization authority stays denied until a deployment opts in', () => {
+  assert.equal(isAllowedSheinConnectAuthority(SHEIN_OPENAPI_CONNECT_AUTHORIZATION_AUTHORITY), false);
+  assert.equal(
+    isAllowedSheinConnectAuthority(
+      SHEIN_OPENAPI_CONNECT_AUTHORIZATION_AUTHORITY,
+      SHEIN_OPENAPI_CONNECT_AUTHORITIES_WITH_AUTHORIZATION,
+    ),
+    true,
+  );
+  assert.equal(
+    isAllowedSheinConnectAuthority(
+      'OPENAPI-SEM.SHEINCORP.COM:443',
+      SHEIN_OPENAPI_CONNECT_AUTHORITIES_WITH_AUTHORIZATION,
+    ),
+    true,
+  );
+  for (const authority of [
+    'openapi-sem.sheincorp.com',
+    'openapi-sem.sheincorp.com:80',
+    'evil.openapi-sem.sheincorp.com:443',
+    'openapi-sem.sheincorp.com.evil.test:443',
+  ]) {
+    assert.equal(
+      isAllowedSheinConnectAuthority(authority, SHEIN_OPENAPI_CONNECT_AUTHORITIES_WITH_AUTHORIZATION),
+      false,
+      String(authority),
+    );
+  }
+});
+
+test('opted-in authorization CONNECT dials the authorization host, not the OpenAPI host', async () => {
+  const upstream = net.createServer((socket) => {
+    socket.on('data', (chunk) => socket.write(Buffer.concat([Buffer.from('auth:'), chunk])));
+  });
+  const upstreamPort = await listen(upstream);
+  const dials = [];
+  const relay = createSheinOpenApiConnectRelay({
+    allowedAuthorities: SHEIN_OPENAPI_CONNECT_AUTHORITIES_WITH_AUTHORIZATION,
+    connectImpl: ({ host, port }) => {
+      dials.push(host + ':' + port);
+      return net.connect({ host: '127.0.0.1', port: upstreamPort });
+    },
+  });
+  const relayPort = await listen(relay.server);
+  try {
+    const response = await rawRequest(
+      relayPort,
+      'CONNECT ' + SHEIN_OPENAPI_CONNECT_AUTHORIZATION_AUTHORITY + ' HTTP/1.1\r\n'
+        + 'Host: ' + SHEIN_OPENAPI_CONNECT_AUTHORIZATION_AUTHORITY + '\r\n\r\nPING',
+      (value) => value.includes(Buffer.from('auth:PING')),
+    );
+    assert.match(response.toString('latin1'), /^HTTP\/1\.1 200 Connection Established\r\n/);
+    assert.deepEqual(dials, [SHEIN_OPENAPI_CONNECT_AUTHORIZATION_AUTHORITY]);
   } finally {
     relay.destroySockets();
     await closeServer(relay.server);
