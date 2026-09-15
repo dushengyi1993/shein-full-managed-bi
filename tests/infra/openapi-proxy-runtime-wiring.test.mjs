@@ -58,7 +58,10 @@ test('exactly the seven credential-bearing OpenAPI business units require the pr
     .sort();
 
   assert.deepEqual(credentialBearingUnits, OPENAPI_UNITS);
-  assert.deepEqual(wiredUnits, OPENAPI_UNITS);
+  assert.deepEqual(
+    wiredUnits,
+    [...OPENAPI_UNITS, 'shein-fm-authorization-fnos.service'].sort(),
+  );
 
   for (const { name, content } of services) {
     const lines = content.split(/\r?\n/);
@@ -183,7 +186,7 @@ test('host-role documentation fixes fnOS fail-closed and cloud compatibility val
     text('docs/runbooks/fnos-cutover.md'),
   ]);
 
-  assert.match(example, /^SHEIN_FM_OPENAPI_PROXY_URL=http:\/\/127\.0\.0\.1:18080$/m);
+  assert.match(example, /^SHEIN_FM_OPENAPI_PROXY_URL=http:\/\/127\.0\.0\.1:18090$/m);
   assert.match(example, /^SHEIN_FM_OPENAPI_PROXY_REQUIRED=1$/m);
   assert.match(example, /root-owned and mode 0600/);
 

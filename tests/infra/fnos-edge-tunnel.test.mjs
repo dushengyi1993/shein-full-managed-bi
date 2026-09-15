@@ -90,16 +90,15 @@ test("VM authorization broker retains loopback, fixed-egress and production guar
   const unit = read("infra/systemd/shein-fm-authorization-fnos.service");
   const lines = unit.split(/\r?\n/);
   const required = [
-    "Requires=shein-fm-openapi-tunnel.service",
-    "After=network-online.target shein-fm-openapi-tunnel.service",
+    "Requires=shein-fm-friend-edge-tunnel.service",
+    "After=network-online.target shein-fm-friend-edge-tunnel.service",
     "ConditionPathExists=/srv/shein-fm/runtime/authorization/authorization.enabled",
     "User=sheinfm-auth",
     "Group=sheinfm-auth",
     "UMask=0077",
     "Environment=NODE_ENV=production",
     "Environment=SHEIN_FM_CLOUD_EXECUTION=1",
-    "Environment=SHEIN_FM_OPENAPI_PROXY_URL=http://127.0.0.1:18080",
-    "Environment=SHEIN_FM_OPENAPI_PROXY_REQUIRED=1",
+    "EnvironmentFile=/srv/shein-fm/secrets/openapi-proxy.env",
     "Environment=FULL_AUTH_HOST=127.0.0.1",
     "Environment=FULL_AUTH_PORT=8789",
     "Environment=FULL_AUTH_PUBLIC_ORIGIN=https://fm.dushengyi.cc",
@@ -117,7 +116,7 @@ test("VM authorization broker retains loopback, fixed-egress and production guar
       : line.slice(0, line.indexOf("=") + 1);
     assert.deepEqual(lines.filter((entry) => entry.startsWith(key)), [line], key);
   }
-  assert.doesNotMatch(unit, /^EnvironmentFile=/m);
+  assert.doesNotMatch(unit, /^Environment=SHEIN_FM_OPENAPI_PROXY_/m);
 });
 
 test("authorization reverse tunnel remains separately configured and sandboxed", () => {
@@ -144,14 +143,15 @@ test("authorization reverse tunnel remains separately configured and sandboxed",
   // this static contract does not claim to validate that unavailable file.
 });
 
-test("SSH example preserves OpenAPI forward and adds only the audited reverse listeners", () => {
-  const ssh = read("infra/systemd/shein-fm-openapi-relay-ssh_config.example");
+test("friend edge SSH example pins the audited host and loopback forwards", () => {
+  const ssh = read("infra/systemd/shein-fm-friend-edge-ssh_config.example");
   const lines = ssh.split(/\r?\n/);
   const expectedForwards = [
-    "LocalForward 127.0.0.1:18080 127.0.0.1:18080",
+    "LocalForward 127.0.0.1:18090 127.0.0.1:18090",
     "RemoteForward 127.0.0.1:18788 127.0.0.1:8788",
     "RemoteForward 127.0.0.1:18793 127.0.0.1:8793",
     "RemoteForward 127.0.0.1:18794 127.0.0.1:8794",
+    "RemoteForward 127.0.0.1:18789 127.0.0.1:8789",
   ];
 
   for (const forward of expectedForwards) {
@@ -168,8 +168,19 @@ test("SSH example preserves OpenAPI forward and adds only the audited reverse li
   );
   assert.equal(
     lines.filter((line) => line.startsWith("    RemoteForward ")).length,
-    3,
+    4,
   );
+
+  for (const line of [
+    "Host shein-openapi-relay",
+    "    HostName 43.165.185.3",
+    "    Port 22",
+    "    User ubuntu",
+    "    IdentityFile /srv/shein-fm/secrets/openapi-relay/id_ed25519",
+  ]) {
+    assert.ok(lines.includes(line), "missing SSH endpoint setting: " + line);
+  }
+  assert.doesNotMatch(ssh, /18080|CLOUD_FIXED_PUBLIC_IP/);
 
   const guards = [
     "ExitOnForwardFailure yes",
@@ -178,7 +189,7 @@ test("SSH example preserves OpenAPI forward and adds only the audited reverse li
     "BatchMode yes",
     "PasswordAuthentication no",
     "KbdInteractiveAuthentication no",
-    "UserKnownHostsFile /srv/shein-fm/secrets/openapi-relay/known_hosts",
+    "UserKnownHostsFile /srv/shein-fm/secrets/openapi-relay/friend_known_hosts",
     "RequestTTY no",
     "SessionType none",
   ];
@@ -191,8 +202,9 @@ test("SSH example preserves OpenAPI forward and adds only the audited reverse li
 });
 
 test("tunnel unit retains its fail-closed execution boundary", () => {
-  const unit = read("infra/systemd/shein-fm-openapi-tunnel.service");
+  const unit = read("infra/systemd/shein-fm-friend-edge-tunnel.service");
 
+  assert.match(unit, /friend_ssh_config/);
   assert.match(unit, /^ExecStart=\/usr\/bin\/ssh .* -NT shein-openapi-relay$/m);
   assert.match(unit, /^Restart=always$/m);
   assert.match(unit, /^NoNewPrivileges=true$/m);

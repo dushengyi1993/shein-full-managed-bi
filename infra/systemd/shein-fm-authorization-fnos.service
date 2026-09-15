@@ -1,8 +1,8 @@
 [Unit]
 Description=SHEIN full-managed remote authorization broker
 Wants=network-online.target
-Requires=shein-fm-openapi-tunnel.service
-After=network-online.target shein-fm-openapi-tunnel.service
+Requires=shein-fm-friend-edge-tunnel.service
+After=network-online.target shein-fm-friend-edge-tunnel.service
 RequiresMountsFor=/srv/shein-fm
 ConditionPathExists=/srv/shein-fm/runtime/authorization/authorization.enabled
 
@@ -14,8 +14,7 @@ UMask=0077
 WorkingDirectory=/opt/shein-fm/releases/9ba4a533c08e4a96689af1ae1b759c73d32532fc
 Environment=NODE_ENV=production
 Environment=SHEIN_FM_CLOUD_EXECUTION=1
-Environment=SHEIN_FM_OPENAPI_PROXY_URL=http://127.0.0.1:18080
-Environment=SHEIN_FM_OPENAPI_PROXY_REQUIRED=1
+EnvironmentFile=/srv/shein-fm/secrets/openapi-proxy.env
 Environment=FULL_AUTH_HOST=127.0.0.1
 Environment=FULL_AUTH_PORT=8789
 Environment=FULL_AUTH_PUBLIC_ORIGIN=https://fm.dushengyi.cc
