@@ -113,6 +113,39 @@ test('ingress returns success only after storing receipt and job with no decrypt
   }
 });
 
+test('a storage failure logs only its bounded cause code, never the message', async () => {
+  const events = [];
+  const receiver = createFullManagedWebhookReceiver({
+    credentialRegistry: registry(),
+    repository: {
+      async storeReceiptAndJob() {
+        throw Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432 user=sheinfm'), {
+          code: 'ECONNREFUSED',
+        });
+      },
+    },
+    logger: { warn: (line) => events.push(JSON.parse(line)) },
+    now: () => Number(FIXTURE.timestamp),
+  });
+  const address = await receiver.start({ host: '127.0.0.1', port: 0 });
+  try {
+    const response = await fetch('http://127.0.0.1:' + address.port + '/api/shein/webhook/v1/events', {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ eventData: FIXTURE.ciphertext }),
+    });
+    assert.equal(response.status, 503);
+  } finally {
+    await receiver.stop();
+  }
+  const logged = events.find((entry) => entry.event === 'webhook-ingress-rejected');
+  assert.equal(logged.code, 'WEBHOOK_STORAGE_UNAVAILABLE');
+  assert.equal(logged.causeCode, 'ECONNREFUSED');
+  assert.equal(logged.category, 'availability');
+  assert.equal(JSON.stringify(logged).includes('5432'), false);
+  assert.equal(JSON.stringify(logged).includes('sheinfm'), false);
+});
+
 test('technical tests remain appScopedOnly without a guessed store', async () => {
   let persisted;
   const receiver = createFullManagedWebhookReceiver({

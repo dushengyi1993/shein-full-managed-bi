@@ -54,8 +54,14 @@ function publicErrorStatus(error) {
 
 function safeLogError(error) {
   const code = String(error?.code ?? 'WEBHOOK_INVALID').toUpperCase();
+  // The wrapped storage failure keeps its original error as cause, but only a
+  // bounded code is projected: the message can carry connection details and must
+  // never reach the log. Without this the log cannot tell a database timeout from
+  // a refused connection, which makes a 503 impossible to attribute.
+  const rawCauseCode = String(error?.cause?.code ?? '').toUpperCase();
   return {
     code: /^[A-Z0-9_]{1,80}$/.test(code) ? code : 'WEBHOOK_INVALID',
+    ...(/^[A-Z0-9_]{1,80}$/.test(rawCauseCode) ? { causeCode: rawCauseCode } : {}),
     category: publicErrorStatus(error) >= 500 ? 'availability' : 'rejected',
   };
 }
