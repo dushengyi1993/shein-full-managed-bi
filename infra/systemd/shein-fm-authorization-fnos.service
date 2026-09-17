@@ -11,7 +11,7 @@ Type=simple
 User=sheinfm-auth
 Group=sheinfm-auth
 UMask=0077
-WorkingDirectory=/opt/shein-fm/releases/9ba4a533c08e4a96689af1ae1b759c73d32532fc
+WorkingDirectory=/opt/shein-fm/current
 Environment=NODE_ENV=production
 Environment=SHEIN_FM_CLOUD_EXECUTION=1
 EnvironmentFile=/srv/shein-fm/secrets/openapi-proxy.env

@@ -117,6 +117,11 @@ test("VM authorization broker retains loopback, fixed-egress and production guar
     assert.deepEqual(lines.filter((entry) => entry.startsWith(key)), [line], key);
   }
   assert.doesNotMatch(unit, /^Environment=SHEIN_FM_OPENAPI_PROXY_/m);
+  // A pinned release directory silently freezes this service at that commit
+  // across every later deployment, and it also keeps the old release alive so
+  // it can never be pruned. It must follow the release pointer like the rest.
+  assert.match(unit, /^WorkingDirectory=\/opt\/shein-fm\/current$/m);
+  assert.doesNotMatch(unit, /^WorkingDirectory=.*releases\//m);
 });
 
 test("authorization reverse tunnel remains separately configured and sandboxed", () => {
