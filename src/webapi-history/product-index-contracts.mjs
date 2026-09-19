@@ -135,7 +135,9 @@ export const PRODUCT_INDEX_ENDPOINTS = Object.freeze({
   GOODS_SKC_LIST: Object.freeze({
     method: 'POST',
     path: '/idms/goods-skc/list',
-    pageKey: 'pageNum',
+    // Verified 2026-09-20: this endpoint silently ignores pageNum/page/offset
+    // and returns page 1 every time; only pageNumber advances the page.
+    pageKey: 'pageNumber',
     pageSizeKey: 'pageSize',
     defaultPageSize: 100,
     totalPath: Object.freeze(['info', 'count']),
@@ -269,4 +271,3 @@ export function pickProductFields(row, allowlist) {
   }
   return result;
 }
-

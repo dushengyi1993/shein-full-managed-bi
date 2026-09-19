@@ -56,8 +56,11 @@ test('the goods-skc endpoint pages through body keys, not a query string', () =>
   assert.equal(productIndexRequestQuery('GOODS_SKC_LIST', { page: 3, pageSize: 50 }), '');
   assert.deepEqual(
     productIndexRequestBody('GOODS_SKC_LIST', { page: 3, pageSize: 50 }),
-    { pageNum: 3, pageSize: 50 },
+    { pageNumber: 3, pageSize: 50 },
   );
+  // Verified against the live endpoint: pageNum/page/offset are silently
+  // ignored and return page 1 forever, so the page key must stay pageNumber.
+  assert.equal(PRODUCT_INDEX_ENDPOINTS.GOODS_SKC_LIST.pageKey, 'pageNumber');
 });
 
 test('site status accepts a bounded unique id list and rejects empty input', () => {
@@ -110,4 +113,3 @@ test('shelf statuses and level groups are the captured platform taxonomy', () =>
   const all = Object.values(PRODUCT_LEVEL_GROUPS).flat();
   assert.equal(new Set(all).size, all.length, 'level groups must not overlap');
 });
-
