@@ -28,6 +28,7 @@ const ROUTES = Object.freeze({
   'value-added-services': { title: '增值服务列表', code: 'VALUE-ADDED SERVICES' },
   'quality-reports': { title: '质检报告', code: 'QUALITY REPORTS' },
   products: { title: '商品经营', code: 'PRODUCT' },
+  'product-manager': { title: '商品管理', code: 'PRODUCT MANAGER' },
   sales: { title: '销量洞察', code: 'SALES' },
   inventory: { title: '库存与备货', code: 'SUPPLY' },
   returns: { title: '退货与质量', code: 'RETURNS' },
@@ -104,6 +105,7 @@ const URL_ROUTE_KEYS = Object.freeze([
   'home', 'fulfilment', 'delivery-notes', 'stock-records',
   'waybills', 'return-applications', 'return-orders', 'exceptions',
   'value-added-services', 'quality-reports', 'procurement', 'products',
+  'product-manager',
   'sales', 'inventory', 'returns', 'compliance', 'finance', 'marketing', 'platform', 'ops',
   'system',
 ]);
@@ -235,6 +237,7 @@ const NAV_ROUTE_ALIASES = Object.freeze({
   exceptions: 'returns',
   'quality-reports': 'returns',
   compliance: 'products',
+  'product-manager': 'products',
   platform: 'system',
 });
 
@@ -1069,6 +1072,21 @@ const state = {
     canonicalPage: initialHashState.productCanonicalPage || 1,
     pageSize: initialHashState.productPageSize || URL_DEFAULT_INVENTORY_PAGE_SIZE,
   },
+  productManager: {
+    data: null,
+    loading: false,
+    error: '',
+    requestSerial: 0,
+    shelfStatus: 'ALL',
+    levelGroup: 'ALL',
+    label: '',
+    site: '',
+    hasPrice: null,
+    query: '',
+    sort: 'SHELF_DAYS_DESC',
+    page: 1,
+    pageSize: 50,
+  },
   updates: {
     status: 'connecting',
     observedAt: null,
@@ -1103,6 +1121,7 @@ let procurementLoadTimer = null;
 let salesLoadTimer = null;
 let inventoryLoadTimer = null;
 let productLoadTimer = null;
+let productManagerLoadTimer = null;
 let fulfilmentLoadTimer = null;
 let orderLoadTimer = null;
 let returnsLoadTimer = null;
@@ -9558,6 +9577,265 @@ function renderSales() {
     </section>`;
 }
 
+const PRODUCT_MANAGER_SHELF_STATUSES = Object.freeze([
+  ['ALL', '全部'],
+  ['ON_SHELF', '已上架'],
+  ['WAIT_SHELF', '待上架'],
+  ['SOLD_OUT', '已售罄'],
+  ['OUT_SHELF', '已下架'],
+]);
+
+const PRODUCT_MANAGER_LEVEL_GROUPS = Object.freeze([
+  ['ALL', '全部层次'],
+  ['NEW', '新款 / 新款A'],
+  ['STOCK_A', '备货款A'],
+  ['STOCK_B', '备货款B'],
+  ['GUARANTEED', '保证在售款'],
+  ['CLEARANCE', '清仓/退供'],
+  ['BLOCKED', '异常/问题'],
+  ['UNCLASSIFIED', '未归类'],
+]);
+
+const PRODUCT_MANAGER_SORTS = Object.freeze([
+  ['SHELF_DAYS_DESC', '上架天数 多→少'],
+  ['SHELF_DAYS_ASC', '上架天数 少→多'],
+  ['SALES_30D_DESC', '近 30 天销量'],
+  ['SALES_7D_DESC', '近 7 天销量'],
+  ['PREDICT_DAILY_DESC', '预测日销'],
+  ['STOCK_ASC', 'SHEIN 仓库存 少→多'],
+  ['SUPPLIER_CODE_ASC', '货号'],
+]);
+
+const PRODUCT_MANAGER_PRIORITY_SITES = Object.freeze([
+  ['shein-de', '德国'],
+  ['shein-sa', '沙特'],
+  ['shein-jp', '日本'],
+]);
+
+function productManagerQueryUrl() {
+  const manager = state.productManager;
+  const params = new URLSearchParams();
+  if (manager.shelfStatus !== 'ALL') params.set('shelfStatus', manager.shelfStatus);
+  if (manager.levelGroup !== 'ALL') params.set('levelGroup', manager.levelGroup);
+  if (manager.label) params.set('label', manager.label);
+  if (manager.site) params.set('site', manager.site);
+  if (manager.hasPrice !== null) params.set('hasPrice', manager.hasPrice ? '1' : '0');
+  if (manager.query) params.set('query', manager.query);
+  params.set('sort', manager.sort);
+  params.set('page', String(manager.page));
+  params.set('pageSize', String(manager.pageSize));
+  return `/api/product-index?${params.toString()}`;
+}
+
+async function loadProductManager() {
+  if (state.route !== 'product-manager') return;
+  const requestSerial = state.productManager.requestSerial + 1;
+  state.productManager.requestSerial = requestSerial;
+  state.productManager.loading = true;
+  state.productManager.error = '';
+  render();
+  try {
+    const result = await fetchJson(productManagerQueryUrl());
+    if (requestSerial !== state.productManager.requestSerial) return;
+    if (!result || !Array.isArray(result.rows) || !result.pagination || !result.levelCounts) {
+      throw new Error('商品管理查询结构无效');
+    }
+    state.productManager.data = result;
+  } catch (error) {
+    if (requestSerial !== state.productManager.requestSerial) return;
+    state.productManager.data = null;
+    state.productManager.error = error instanceof Error ? error.message : '商品管理查询暂不可用';
+  } finally {
+    if (requestSerial === state.productManager.requestSerial) {
+      state.productManager.loading = false;
+      render();
+    }
+  }
+}
+
+function scheduleProductManagerLoad({ resetPage = false, delay = 0 } = {}) {
+  if (productManagerLoadTimer !== null) window.clearTimeout(productManagerLoadTimer);
+  state.productManager.requestSerial += 1;
+  if (resetPage) state.productManager.page = 1;
+  if (state.route !== 'product-manager') return;
+  productManagerLoadTimer = window.setTimeout(() => {
+    productManagerLoadTimer = null;
+    void loadProductManager();
+  }, delay);
+}
+
+function productManagerState(kind) {
+  const error = kind === 'error';
+  return `
+    <section class="panel procurement-query-state${error ? ' error' : ''}" role="${error ? 'alert' : 'status'}">
+      <span class="eyebrow">PRODUCT MANAGER</span>
+      <h2>${error ? '商品管理数据暂不可用' : '正在加载商品管理数据'}</h2>
+      <p>${error
+        ? escapeHtml(state.productManager.error || '请稍后重试。')
+        : '正在读取平台商品列表、层次、标签与站点覆盖。'}</p>
+    </section>`;
+}
+
+function productManagerCount(value) {
+  return Number.isSafeInteger(value) ? numberFormatter.format(value) : '未知';
+}
+
+function productManagerSiteCell(coverage, siteCode) {
+  const entry = coverage && coverage.priority ? coverage.priority[siteCode] : null;
+  if (!entry || entry.onSale === null || entry.onSale === undefined) {
+    return '<span class="muted-value" title="未采集到该站点状态">未知</span>';
+  }
+  return entry.onSale
+    ? '<span class="badge ok">已上架</span>'
+    : '<span class="badge">未上架</span>';
+}
+
+function productManagerLevelBadge(skc) {
+  const name = skc.goodsLevelName || '未归类';
+  const group = skc.goodsLevelGroup || 'UNCLASSIFIED';
+  return `<span class="badge level-${escapeHtml(group.toLowerCase())}" title="${escapeHtml(skc.goodsLevelNote || '')}">${escapeHtml(name)}</span>`;
+}
+
+function productManagerSkuAggregate(skc) {
+  const skus = Array.isArray(skc.skus) ? skc.skus : [];
+  let price = null;
+  let purchase = null;
+  let predict = null;
+  let c7 = null;
+  let c30 = null;
+  let stock = null;
+  for (const sku of skus) {
+    if (price === null && Number.isFinite(sku.price)) price = sku.price;
+    if (purchase === null && Number.isFinite(sku.purchasePrice)) purchase = sku.purchasePrice;
+    if (Number.isFinite(sku.predictDaySales)) predict = (predict ?? 0) + sku.predictDaySales;
+    if (Number.isFinite(sku.c7dSaleCnt)) c7 = (c7 ?? 0) + sku.c7dSaleCnt;
+    if (Number.isFinite(sku.c30dSaleCnt)) c30 = (c30 ?? 0) + sku.c30dSaleCnt;
+    if (Number.isFinite(sku.stock)) stock = (stock ?? 0) + sku.stock;
+  }
+  return { price, purchase, predict, c7, c30, stock, skuCount: skus.length };
+}
+
+function productManagerMetric(value, { digits = 0, suffix = '' } = {}) {
+  if (!Number.isFinite(value)) return '<span class="muted-value">未知</span>';
+  return escapeHtml((digits > 0 ? value.toFixed(digits) : numberFormatter.format(value)) + suffix);
+}
+
+function productManagerLabelList(skc) {
+  const labels = Array.isArray(skc.labels) ? skc.labels : [];
+  if (labels.length === 0) return '<span class="muted-value">无</span>';
+  return labels.map((label) => `<span class="badge tag">${escapeHtml(label)}</span>`).join(' ');
+}
+
+function renderProductManager() {
+  if (state.productManager.loading && !state.productManager.data) {
+    return productManagerState('loading');
+  }
+  if (state.productManager.error && !state.productManager.data) {
+    return productManagerState('error');
+  }
+  const data = state.productManager.data;
+  if (!data) return productManagerState('loading');
+  const manager = state.productManager;
+  const statusCounts = data.shelfStatusCounts || {};
+  const levelCounts = data.levelCounts || {};
+  const prioritySites = Array.isArray(data.prioritySiteCodes) ? data.prioritySiteCodes : [];
+  const capturedAt = data.capturedAt ? escapeHtml(String(data.capturedAt).replace('T', ' ').slice(0, 19)) : '未知';
+  const headline = ['NEW', 'STOCK_A', 'STOCK_B', 'GUARANTEED']
+    .map((group) => {
+      const meta = PRODUCT_MANAGER_LEVEL_GROUPS.find(([key]) => key === group);
+      return `<button type="button" class="metric-tile" data-product-manager-level="${group}">
+        <span class="metric-label">${escapeHtml(meta ? meta[1] : group)}</span>
+        <span class="metric-value">${productManagerCount(levelCounts[group])}</span>
+      </button>`;
+    }).join('');
+  const statusTabs = PRODUCT_MANAGER_SHELF_STATUSES.map(([code, label]) => {
+    const active = manager.shelfStatus === code ? ' active' : '';
+    const count = code === 'ALL' ? statusCounts.ALL : statusCounts[code];
+    return `<button type="button" class="chip${active}" data-product-manager-status="${code}">
+      ${escapeHtml(label)} <small>${productManagerCount(count)}</small></button>`;
+  }).join('');
+  const levelOptions = PRODUCT_MANAGER_LEVEL_GROUPS.map(([code, label]) => {
+    const selected = manager.levelGroup === code ? ' selected' : '';
+    return `<option value="${code}"${selected}>${escapeHtml(label)}</option>`;
+  }).join('');
+  const sortOptions = PRODUCT_MANAGER_SORTS.map(([code, label]) => {
+    const selected = manager.sort === code ? ' selected' : '';
+    return `<option value="${code}"${selected}>${escapeHtml(label)}</option>`;
+  }).join('');
+  const siteOptions = [
+    `<option value=""${manager.site === '' ? ' selected' : ''}>全部站点</option>`,
+    ...prioritySites.map((code) => {
+      const meta = PRODUCT_MANAGER_PRIORITY_SITES.find(([key]) => key === code);
+      return `<option value="${code}"${manager.site === code ? ' selected' : ''}>${escapeHtml(meta ? meta[1] : code)}</option>`;
+    }),
+  ].join('');
+  const rows = data.rows.map((skc) => {
+    const aggregate = productManagerSkuAggregate(skc);
+    const coverage = data.siteCoverage ? data.siteCoverage[skc.skc] : null;
+    const siteCells = prioritySites
+      .map((code) => `<td class="site-cell">${productManagerSiteCell(coverage, code)}</td>`)
+      .join('');
+    return `<tr>
+      <td><code>${escapeHtml(skc.supplierCode || '—')}</code></td>
+      <td><code>${escapeHtml(skc.skc || '—')}</code></td>
+      <td>${productManagerLevelBadge(skc)}</td>
+      <td class="num">${productManagerMetric(aggregate.price, { digits: 2 })}</td>
+      <td class="num">${productManagerMetric(aggregate.purchase, { digits: 2 })}</td>
+      <td class="num">${productManagerMetric(aggregate.c7)}</td>
+      <td class="num">${productManagerMetric(aggregate.c30)}</td>
+      <td class="num">${productManagerMetric(aggregate.stock)}</td>
+      <td class="num">${productManagerMetric(aggregate.predict, { digits: 1 })}</td>
+      <td class="num">${productManagerMetric(skc.shelfDays, { suffix: ' 天' })}</td>
+      <td>${productManagerLabelList(skc)}</td>
+      ${siteCells}
+    </tr>`;
+  }).join('');
+  const siteHeaders = prioritySites
+    .map((code) => {
+      const meta = PRODUCT_MANAGER_PRIORITY_SITES.find(([key]) => key === code);
+      return `<th class="site-cell">${escapeHtml(meta ? meta[1] : code)}</th>`;
+    }).join('');
+  const pagination = data.pagination || {};
+  return `
+    ${sampleNotice()}
+    <section class="panel">
+      ${panelHeading('PRODUCT MANAGER', '商品管理',
+        `平台采集 ${capturedAt} · 店铺 ${escapeHtml(data.storeCode || '未知')} · 命中 ${productManagerCount(data.total)} 条`)}
+      <div class="metric-strip">${headline}</div>
+      <div class="chip-row">${statusTabs}</div>
+      <div class="filter-row">
+        <label>层次 <select data-product-manager-select="level">${levelOptions}</select></label>
+        <label>站点 <select data-product-manager-select="site">${siteOptions}</select></label>
+        <label>排序 <select data-product-manager-select="sort">${sortOptions}</select></label>
+        <label>每页 <select data-product-manager-select="pageSize">
+          ${[25, 50, 100].map((n) => `<option value="${n}"${manager.pageSize === n ? ' selected' : ''}>${n}</option>`).join('')}
+        </select></label>
+        <label>标签 <input type="search" data-product-manager-input="label" value="${escapeHtml(manager.label)}" placeholder="平台标签"></label>
+        <label>搜索 <input type="search" data-product-manager-input="query" value="${escapeHtml(manager.query)}" placeholder="货号 / SKC / SPU"></label>
+        <label class="checkbox"><input type="checkbox" data-product-manager-toggle="hasPrice"${manager.hasPrice === true ? ' checked' : ''}> 仅有价格</label>
+      </div>
+    </section>
+    <section class="table-section">
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr>
+            <th>货号</th><th>SKC</th><th>层次</th><th class="num">价格</th><th class="num">供货价</th>
+            <th class="num">近 7 天</th><th class="num">近 30 天</th><th class="num">SHEIN 仓</th>
+            <th class="num">预测日销</th><th class="num">上架天数</th><th>平台标签</th>
+            ${siteHeaders}
+          </tr></thead>
+          <tbody>${rows || `<tr><td colspan="${11 + prioritySites.length}" class="muted-value">当前条件没有匹配的商品</td></tr>`}</tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button type="button" data-product-manager-page="prev"${pagination.hasPrevious ? '' : ' disabled'}>上一页</button>
+        <span>第 ${escapeHtml(String(pagination.page ?? 1))} / ${escapeHtml(String(pagination.pageCount ?? 0))} 页</span>
+        <button type="button" data-product-manager-page="next"${pagination.hasNext ? '' : ' disabled'}>下一页</button>
+      </div>
+    </section>`;
+}
+
+
 function renderProducts() {
   if (state.products.loading && !state.products.data) {
     return `${sampleNotice()}${focusEvidencePanel()}${productQueryState('loading')}`;
@@ -12968,6 +13246,7 @@ function renderRoute() {
     'value-added-services': renderOrderWorkspace,
     'quality-reports': renderOrderWorkspace,
     products: renderProducts,
+    'product-manager': renderProductManager,
     sales: renderSales,
     inventory: renderInventory,
     returns: renderReturns,
@@ -13433,6 +13712,9 @@ async function loadDashboard(options = {}) {
   if (state.data && state.route === 'products') {
     scheduleProductLoad();
   }
+  if (state.data && state.route === 'product-manager') {
+    scheduleProductManagerLoad();
+  }
   if (state.data && state.route === 'fulfilment') {
     scheduleFulfilmentLoad();
   }
@@ -13698,6 +13980,12 @@ function syncRouteFromLocation() {
     state.products.requestSerial += 1;
     state.products.loading = false;
   }
+  if (state.route === 'product-manager') {
+    scheduleProductManagerLoad({ resetPage: routeChanged });
+  } else if (routeChanged) {
+    state.productManager.requestSerial += 1;
+    state.productManager.loading = false;
+  }
   if (state.route === 'fulfilment') {
     scheduleFulfilmentLoad({ resetPage: routeChanged });
   } else if (routeChanged) {
@@ -13744,6 +14032,7 @@ function syncRouteFromLocation() {
 }
 
 elements.search.addEventListener('input', (event) => {
+  if (state.route === 'product-manager') return;
   state.query = event.currentTarget.value;
   syncUrlFromState();
   if (state.route === 'returns') invalidateReturnsScope();
@@ -13759,6 +14048,19 @@ elements.search.addEventListener('input', (event) => {
   schedulePlatformLoad({ resetPage: true, delay: 220 });
   scheduleOpsLoad({ resetPage: true, delay: 220 });
   scheduleSystemLoad({ reset: true, delay: 220 });
+});
+
+elements.view.addEventListener('input', (event) => {
+  const managerInput = event.target.closest?.('[data-product-manager-input]');
+  if (!managerInput || !elements.view.contains(managerInput)) return;
+  const kind = String(managerInput.dataset.productManagerInput || '');
+  const raw = String(managerInput.value || '');
+  if (kind === 'label') state.productManager.label = raw.slice(0, 40);
+  else if (kind === 'query') state.productManager.query = raw.slice(0, 80);
+  else return;
+  state.productManager.page = 1;
+  syncUrlFromState();
+  scheduleProductManagerLoad({ delay: 260 });
 });
 
 elements.scope.addEventListener('change', (event) => {
@@ -13858,6 +14160,41 @@ for (const element of [elements.homeDateStart, elements.homeDateEnd]) {
 }
 
 elements.view.addEventListener('click', (event) => {
+  const managerLevel = event.target.closest?.('[data-product-manager-level]');
+  if (managerLevel && elements.view.contains(managerLevel)) {
+    const group = String(managerLevel.dataset.productManagerLevel || '');
+    const allowed = PRODUCT_MANAGER_LEVEL_GROUPS.map(([code]) => code);
+    state.productManager.levelGroup = allowed.includes(group) ? group : 'ALL';
+    state.productManager.page = 1;
+    syncUrlFromState();
+    void loadProductManager();
+    return;
+  }
+  const managerStatus = event.target.closest?.('[data-product-manager-status]');
+  if (managerStatus && elements.view.contains(managerStatus)) {
+    const code = String(managerStatus.dataset.productManagerStatus || '');
+    const allowed = PRODUCT_MANAGER_SHELF_STATUSES.map(([value]) => value);
+    state.productManager.shelfStatus = allowed.includes(code) ? code : 'ALL';
+    state.productManager.page = 1;
+    syncUrlFromState();
+    void loadProductManager();
+    return;
+  }
+  const managerPage = event.target.closest?.('[data-product-manager-page]');
+  if (managerPage && elements.view.contains(managerPage)) {
+    const direction = String(managerPage.dataset.productManagerPage || '');
+    const pagination = state.productManager.data?.pagination || {};
+    if (direction === 'prev' && pagination.hasPrevious) {
+      state.productManager.page = Math.max(1, state.productManager.page - 1);
+    } else if (direction === 'next' && pagination.hasNext) {
+      state.productManager.page += 1;
+    } else {
+      return;
+    }
+    syncUrlFromState();
+    void loadProductManager();
+    return;
+  }
   const latestHomeDate = event.target.closest?.('[data-home-latest-date]');
   if (latestHomeDate && elements.view.contains(latestHomeDate)) {
     const date = String(latestHomeDate.dataset.homeLatestDate || '');
@@ -14269,11 +14606,45 @@ elements.view.addEventListener('click', (event) => {
   if (route === 'sales') scheduleSalesLoad({ resetPages: true });
   if (route === 'inventory') scheduleInventoryLoad({ resetPages: true });
   if (route === 'products') scheduleProductLoad({ resetPages: true });
+  if (route === 'product-manager') scheduleProductManagerLoad({ resetPage: true });
   if (route === 'fulfilment') scheduleFulfilmentLoad({ resetPage: true });
   if (route === 'ops') scheduleOpsLoad({ resetPage: true });
 });
 
 elements.view.addEventListener('change', (event) => {
+  const managerSelect = event.target.closest?.('[data-product-manager-select]');
+  if (managerSelect && elements.view.contains(managerSelect)) {
+    const kind = String(managerSelect.dataset.productManagerSelect || '');
+    const raw = String(managerSelect.value || '');
+    const manager = state.productManager;
+    if (kind === 'level') {
+      const allowed = PRODUCT_MANAGER_LEVEL_GROUPS.map(([code]) => code);
+      manager.levelGroup = allowed.includes(raw) ? raw : 'ALL';
+    } else if (kind === 'site') {
+      manager.site = /^[a-z0-9-]{2,32}$/.test(raw) ? raw : '';
+    } else if (kind === 'sort') {
+      const allowed = PRODUCT_MANAGER_SORTS.map(([code]) => code);
+      manager.sort = allowed.includes(raw) ? raw : 'SHELF_DAYS_DESC';
+    } else if (kind === 'pageSize') {
+      manager.pageSize = pageSizeParam(raw);
+    } else {
+      return;
+    }
+    manager.page = 1;
+    syncUrlFromState();
+    void loadProductManager();
+    return;
+  }
+  const managerToggle = event.target.closest?.('[data-product-manager-toggle]');
+  if (managerToggle && elements.view.contains(managerToggle)) {
+    const kind = String(managerToggle.dataset.productManagerToggle || '');
+    if (kind !== 'hasPrice') return;
+    state.productManager.hasPrice = managerToggle.checked === true ? true : null;
+    state.productManager.page = 1;
+    syncUrlFromState();
+    void loadProductManager();
+    return;
+  }
   const inventorySelectControl = event.target.closest?.('[data-inventory-select]');
   if (inventorySelectControl && elements.view.contains(inventorySelectControl)) {
     const kind = String(inventorySelectControl.dataset.inventorySelect || '');
