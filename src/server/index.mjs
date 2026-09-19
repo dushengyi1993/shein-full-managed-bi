@@ -54,6 +54,7 @@ const server = createDashboardServer({
   homeDataFile: process.env.FULL_BI_HOME_DATA_FILE,
   shippingOrdersFile: process.env.FULL_BI_SHIPPING_ORDERS_FILE,
   orderManagementFile: process.env.FULL_BI_ORDER_MANAGEMENT_FILE,
+  productIndexFile: process.env.FULL_BI_PRODUCT_INDEX_FILE,
   systemHealthFile: process.env.FULL_BI_SYSTEM_HEALTH_FILE,
   storeLogin: storeLoginOptions(),
   host,

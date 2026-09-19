@@ -27,6 +27,8 @@ import { loadShippingOrdersData, ShippingOrdersDataError } from './shipping-orde
 import { queryShippingOrders, ShippingOrdersQueryError } from './shipping-orders-query.mjs';
 import { loadOrderManagementData, OrderManagementDataError } from './order-management-data.mjs';
 import { queryOrderManagement, OrderManagementQueryError } from './order-management-query.mjs';
+import { loadProductIndexData, ProductIndexDataError } from './product-index-data.mjs';
+import { queryProductIndex, ProductIndexQueryError } from './product-index-query.mjs';
 import { queryReturnsDashboard, ReturnsQueryError } from './returns-query.mjs';
 import {
   PlatformQueryError,
@@ -200,6 +202,7 @@ export function createRequestHandler(options = {}) {
   const homeDataFile = options.homeDataFile;
   const shippingOrdersFile = options.shippingOrdersFile;
   const orderManagementFile = options.orderManagementFile;
+  const productIndexFile = options.productIndexFile;
   const systemHealthFile = options.systemHealthFile;
   const webRoot = options.webRoot || DEFAULT_WEB_ROOT;
   const updateBroker = options.updateBroker || null;
@@ -737,6 +740,46 @@ export function createRequestHandler(options = {}) {
           error: {
             code: 'RETURNS_DATA_UNAVAILABLE',
             message: '退货与质量查询暂不可用',
+          },
+        }, method);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/product-index') {
+      if (method !== 'GET' && method !== 'HEAD') {
+        response.setHeader('Allow', 'GET, HEAD');
+        sendJson(response, 405, {
+          error: { code: 'METHOD_NOT_ALLOWED', message: '请求方法不受支持' },
+        }, method);
+        return;
+      }
+      try {
+        const index = await loadProductIndexData(productIndexFile, { runtimeEnvironment });
+        sendJson(
+          response,
+          200,
+          queryProductIndex(index, url.searchParams),
+          method,
+          request,
+        );
+      } catch (error) {
+        if (error instanceof ProductIndexQueryError) {
+          sendJson(response, error.statusCode, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        if (error instanceof ProductIndexDataError) {
+          sendJson(response, 503, {
+            error: { code: error.code, message: error.message },
+          }, method);
+          return;
+        }
+        sendJson(response, 503, {
+          error: {
+            code: 'PRODUCT_INDEX_UNAVAILABLE',
+            message: '商品管理数据暂不可用',
           },
         }, method);
       }
